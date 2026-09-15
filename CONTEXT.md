@@ -180,9 +180,9 @@ the tests load it.
   jobs/runs split and the channel lift: DMs, mention → thread, `/status`,
   reactions, `aivi_jobs` through the plugin, outcomes re-entering a thread,
   report threads adopting the run's session, the progress placeholder in both
-  channels. Not yet seen live: Slack replies as a `markdown` block (headings,
-  bold, links, lists; `chat.update` on the placeholder; ephemeral command
-  answers), and dreaming writing into a project's memory.
+  channels, Slack replies as a `markdown` block. Not yet seen live: dreaming
+  writing into a project's memory; Slack's `response_url` answered 500 to a
+  `markdown` block for `/…-context` (plain-text fallback added).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 landed
   2026-09-15 (`getting-started.md`, `operations.md`; `application.md` folded

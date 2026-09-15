@@ -160,6 +160,8 @@ export interface HostClient {
   status(): Promise<Status>;
   sources(selection?: SourceSelection): Promise<KnowledgeSource[]>;
   projects(): Promise<ProjectSummary[]>;
+  /** Markdown describing an OpenCode session's context window, totals and knowledge scope. */
+  context(sessionId: string): Promise<{ text: string }>;
   search(request: SearchRequest): Promise<SearchHit[]>;
   jobs(request: JobRequest): Promise<JobResponse>;
   /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */

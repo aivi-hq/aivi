@@ -70,6 +70,8 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       return get<KnowledgeSource[]>(`/v1/sources?${params}`);
     },
     projects: () => get<ProjectSummary[]>('/v1/projects'),
+    context: sessionId =>
+      request<{ text: string }>(`/v1/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
     wake: () => request<{ woken: boolean }>('/v1/wake', { method: 'POST', timeoutMs: 3_000 }),
     jobs(body) {
       // Creating a job checks the calling session and agent against OpenCode; a few seconds at most.

@@ -12,12 +12,16 @@ const bar = (share: number) => {
 const home = (path: string) => (path.startsWith(homedir()) ? `~${path.slice(homedir().length)}` : path);
 const short = (id: string) => (id.length > 28 ? `${id.slice(0, 24)}…` : id);
 
+const scopeLine = (loaded: LoadedConfig) => {
+  const projects = loaded.projects.filter(p => !p.removed).map(p => p.id);
+  const core = loaded.sources.filter(s => s.scope === 'core').length;
+  return `**Knowledge in scope** ${core} core source${core === 1 ? '' : 's'}${projects.length ? ` · projects: ${projects.join(', ')}` : ' · no projects'}`;
+};
+
 /**
- * What a conversation's session knows, for a `/context` command: the window in
- * use against the model's limit, the session's totals and cost, the knowledge in
- * scope and what is still pending here. Read from OpenCode, which owns the
- * transcript and the model catalogue; aivi adds only its binding and its queue.
- * Markdown that both Discord and Slack's `markdown` block render.
+ * What a conversation's session knows, for a `/context` command: `describeSession`
+ * plus what aivi adds, its binding and its queue. Before the first message it says
+ * what the first one would start.
  */
 export async function describeConversation(
   store: ConversationStore,
@@ -29,9 +33,6 @@ export async function describeConversation(
 ): Promise<string> {
   const binding = store.sessionOf(channel);
   const pending = store.list(channel).filter(t => !['sent', 'discarded'].includes(t.state));
-  const projects = loaded.projects.filter(p => !p.removed).map(p => p.id);
-  const core = loaded.sources.filter(s => s.scope === 'core').length;
-  const scope = `**Knowledge in scope** ${core} core source${core === 1 ? '' : 's'}${projects.length ? ` · projects: ${projects.join(', ')}` : ' · no projects'}`;
   const queue = pending.length
     ? `${pending.length} pending turn${pending.length === 1 ? '' : 's'} here: ${pending.map(t => t.state).join(', ')}.`
     : 'Nothing pending here.';
@@ -40,12 +41,26 @@ export async function describeConversation(
       `🧠 **Context** · no session yet`,
       `The next message starts one with agent \`${binding?.agent ?? config.agent}\` in \`${home(binding?.directory ?? config.directory)}\`.`,
       '',
-      scope,
+      scopeLine(loaded),
       queue,
     ].join('\n');
+  return `${await describeSession(await opencode(), binding.session, loaded, signal)}\n${queue}`;
+}
 
-  const client = await opencode();
-  const session = await client.session.get({ sessionID: binding.session }, { signal });
+/**
+ * The context of one OpenCode session: the window in use against the model's
+ * limit (the last answer's prompt plus output, from the transcript and the model
+ * catalogue), compactions, the session's totals and cost, and the knowledge in
+ * scope. Everything shown is read from OpenCode; nothing is estimated. Markdown
+ * that Discord, Slack's `markdown` block and an agent relaying it all render.
+ */
+export async function describeSession(
+  client: OpenCodeClient,
+  sessionID: string,
+  loaded: LoadedConfig,
+  signal: AbortSignal = AbortSignal.timeout(10_000),
+): Promise<string> {
+  const session = await client.session.get({ sessionID }, { signal });
   let users = 0;
   let answers = 0;
   let compactions = 0;
@@ -56,9 +71,7 @@ export async function describeConversation(
   let cursor: string | undefined;
   while (true) {
     const page = await client.message.list(
-      cursor
-        ? { sessionID: binding.session, limit: 200, cursor }
-        : { sessionID: binding.session, limit: 200, order: 'asc' },
+      cursor ? { sessionID, limit: 200, cursor } : { sessionID, limit: 200, order: 'asc' },
       { signal },
     );
     for (const message of page.data) {
@@ -117,13 +130,12 @@ export async function describeConversation(
     `🧠 **Context** · \`${session.agent}\` in \`${home(session.location.directory)}\``,
     ...window,
     '',
-    `**This session** since ${since} UTC · \`${short(binding.session)}\``,
+    `**This session** since ${since} UTC · \`${short(sessionID)}\``,
     `${n(users)} message${users === 1 ? '' : 's'} · ${n(answers)} answer${answers === 1 ? '' : 's'}`,
     `Input ${n(totals.input)} · Output ${n(totals.output)} · Reasoning ${n(totals.reasoning)} · Cache read ${n(totals.read)} / written ${n(totals.write)}`,
     cost ? `Billed $${cost.toFixed(4)}` : 'Billed: no cost reported by the provider',
     `_Totals are throughput, not context size: each answer re-sends the window above._`,
     '',
-    scope,
-    queue,
+    scopeLine(loaded),
   ].join('\n');
 }

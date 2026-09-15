@@ -174,12 +174,16 @@ resent. Blocked turns keep their capacity until the operator runs
 native session. Messages received while aivi was offline are not backfilled
 from platform history.
 
-`describeConversation` (host) backs a `/context` command in every channel: the
-window in use against the model's limit (last answer's input + cache + output
-vs `model.list().limit.context`), compactions, the session's token and cost
-totals, the knowledge in scope and the conversation's pending turns, as
-markdown both platforms render. Read from OpenCode's transcript and catalogue
-plus aivi's binding.
+`describeSession` (host) renders one session's context: the window in use
+against the model's limit (last answer's input + cache + output vs
+`model.list().limit.context`), compactions, the session's token and cost
+totals and the knowledge in scope, as markdown both platforms render, read
+from OpenCode's transcript and catalogue. It backs three surfaces: the
+channels' `/context` command (`describeConversation`, which adds the
+conversation's binding and pending turns), `GET /v1/context?session=` and the
+plugin tool `aivi_context`, so an agent asked "what's the context?" answers
+with the same text. Slack refuses slash commands inside threads; there the
+agent is the way to ask.
 
 ## Live gate
 

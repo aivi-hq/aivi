@@ -79,6 +79,8 @@ export interface HostServerOptions {
   wake?: (() => void) | undefined;
   /** Module health for `/v1/status`; absent from the CLI. */
   health?: (() => ModuleHealth[]) | undefined;
+  /** `GET /v1/context?session=`: describe an OpenCode session for the agent running in it; absent without OpenCode. */
+  context?: ((sessionID: string, signal: AbortSignal) => Promise<string>) | undefined;
   log?: Logger | undefined;
 }
 
@@ -94,6 +96,7 @@ export function createHostServer({
   jobs,
   wake,
   health,
+  context,
   log = silentLogger,
 }: HostServerOptions) {
   const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
@@ -156,6 +159,25 @@ export function createHostServer({
     }
     if (url.pathname === '/v1/projects') {
       send(200, projectSummaries(loaded));
+      return;
+    }
+    if (url.pathname === '/v1/context') {
+      const session = url.searchParams.get('session');
+      if (!session) {
+        send(400, { error: 'session is required' });
+        return;
+      }
+      if (!context) {
+        send(503, { error: 'Session context is unavailable' });
+        return;
+      }
+      context(session, AbortSignal.timeout(15_000)).then(
+        text => send(200, { text }),
+        error => {
+          log.warn('context.failed', { session, error });
+          send(502, { error: 'Could not read that session from OpenCode' });
+        },
+      );
       return;
     }
     send(404, { error: 'Not found' });

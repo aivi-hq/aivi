@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { retentionJob, silentLogger } from '@aivi/core';
+import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { EventStream, type SessionEvents } from './events.ts';
 import { createJobHandler } from './jobs.ts';
@@ -145,6 +146,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
       health: () => supervisor?.health() ?? [],
+      context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
       log,
     });
     server = http;

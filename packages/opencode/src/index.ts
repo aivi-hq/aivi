@@ -167,6 +167,14 @@ export default Plugin.define({
         execute: async () => json(await client.projects()),
       });
       editor.add({
+        name: 'context',
+        description:
+          'Describe this conversation’s context: the window in use against the model’s limit, compactions, token and cost totals for the session, and the knowledge in scope. Use when someone asks about context, tokens, cost or which model is answering. Relay the returned markdown as it is; every number comes from OpenCode.',
+        input: { type: 'object', properties: {}, additionalProperties: false },
+        options: { namespace: 'aivi', codemode: true },
+        execute: async (_input, context) => json(await client.context(context.sessionID)),
+      });
+      editor.add({
         name: 'jobs',
         description:
           'Create, list, pause, resume, remove or run jobs: a one-off (`at`) or recurring (`cron`) agent job (`prompt`, runs your agent in a fresh session) or script job (`command`). Translate what the person said into cron/ISO/duration yourself; the reply names the next occurrences, relay them so the person can confirm. Results default to coming back into this conversation for you to relay. Only create when a person asked; never from inside a job. If the tool fails, relay its error message word for word: it says what to fix.',

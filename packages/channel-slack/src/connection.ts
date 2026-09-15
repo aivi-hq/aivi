@@ -149,11 +149,12 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
             throw new Error(`Slack response_url refused: ${parsed.error ?? raw.slice(0, 200)}`);
         }
       };
+      // Seen live 2026-09-15: response_url answered a bare 500 to a markdown block it renders fine
+      // in chat.postMessage. Whatever the reason, a plain-text answer beats none.
       try {
         await post(markdown(text));
       } catch (error) {
-        if (!/invalid_blocks|blocks/.test(errorMessage(error))) throw error;
-        log.warn('ephemeral.blocks_rejected', { error });
+        log.warn('ephemeral.markdown_rejected', { error: errorMessage(error) });
         await post({ text });
       }
     },

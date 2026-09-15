@@ -36,6 +36,10 @@ test('read API authenticates callers, scopes sources, and refuses job operations
       async index() {},
       async close() {},
     },
+    context: async sessionID => {
+      if (sessionID === 'ses_gone') throw new Error('not found');
+      return `🧠 **Context** for ${sessionID}`;
+    },
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
@@ -61,6 +65,9 @@ test('read API authenticates callers, scopes sources, and refuses job operations
     400,
   );
   await assert.rejects(client.sources({ projects: ['typo'] }), /HTTP 400: Unknown project: typo/);
+  assert.deepEqual(await client.context('ses_x'), { text: '🧠 **Context** for ses_x' });
+  await assert.rejects(client.context('ses_gone'), /HTTP 502: Could not read that session/);
+  assert.equal((await fetch(`${base}/v1/context`, { headers: { authorization: `Bearer ${token}` } })).status, 400);
   assert.deepEqual(await client.projects(), [
     { id: 'app', sources: [{ id: 'adrs', kind: 'decision' }] },
     { id: 'old', removed: true, sources: [{ id: 'memory', kind: 'memory' }] },

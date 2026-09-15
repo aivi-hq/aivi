@@ -54,7 +54,8 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   carry no thread, so in a `threads` channel they speak for the channel:
   `-new` says that every new top-level message already starts a fresh
   conversation, `-status` counts the pending turns of all its threads, and
-  `-context` says it cannot tell which thread is meant. In a DM or a
+  `-context` says it cannot tell which thread is meant (Slack itself refuses
+  slash commands inside threads; ask the agent for the context there). In a DM or a
   `channel`-mode channel they behave like Discord's `/new`, `/status` and
   `/context` ([discord](discord.md#behavior)).
   `-search` treats the last word as a project only when it names a

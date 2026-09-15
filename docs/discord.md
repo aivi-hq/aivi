@@ -53,7 +53,8 @@ the host's. This page has what is Discord's.
   and transcript), compactions, then the session's totals (messages, answers,
   input/output/reasoning/cache tokens, billed cost), the knowledge in scope
   and what is pending here. Before the first message it says what the first
-  one would start. No per-category breakdown: OpenCode does not expose one.
+  one would start. Asking the agent in prose gives the same text through
+  `aivi_context`.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
