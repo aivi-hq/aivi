@@ -10,7 +10,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 0. OpenCode boundary | **Done, live-verified** on OpenCode 2.0.3 ([opencode.md](opencode.md)). Repeat with `npm run live:opencode`. |
 | 1. Native librarian and minimal core | **Done.** Plugin tools, CLI, schema-validated config, fnox/`.env` secrets. |
 | 2. Scoped knowledge search | **Done** for documents: QMD keyword search, kinds, scope never widens on unknown IDs. Conversation export and semantic retrieval not started. |
-| 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_schedule`), one-offs, outcomes re-entering conversations, per-job abort added 2026-09-15; Discord parts await their live gate ([backlog/jobs.md](backlog/jobs.md)). |
+| 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_jobs`), one-offs, outcomes re-entering conversations, per-run abort added 2026-09-15; definitions vs runs, the misfire grace and retention as a system job the same day; Discord parts await their live gate ([backlog/jobs.md](backlog/jobs.md)). |
 | 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. Lifted onto the channel contract 2026-09-15; live re-check pending. |
 | 5b. Slack adapter | **Built, mock-tested only** ([slack.md](slack.md)); live gate pending. |

@@ -26,36 +26,52 @@ methods; shared capacity uses `acquireLease`/`releaseLease`/`blockLease`.
 
 OpenCode plugins live inside the native runtime, so they use the host's
 authenticated API. `knowledge_search` reaches the same service used by Discord's
-`/search` command and scheduled indexing jobs. A future permission-checked Discord
-job command can similarly use host job operations.
+`/search` command and scheduled indexing jobs; `aivi_jobs` reaches the same
+store the CLI edits.
 
 Startup validates the auth mode and token first (so a missing `AIVI_TOKEN`
 never launches QMD or Chrome), acquires installation ownership, initializes
-shared services, refreshes the search index when configured, opens the API on
+shared services, reconciles the job definitions it owns (`jobs[]` from
+`aivi.json` and the system job `retention` seeded from `scheduler.retention`;
+`Store.syncJobs`), refreshes the search index when configured, opens the API on
 `host.bind:host.port`, then starts modules. Only after configured modules start
 does it announce readiness and dispatch scheduled work. From then on the loop
 sleeps until the next due instant and wakes early when something changes the
-queue (`HostServices.wake`, `POST /v1/wake` from the CLI, a job or turn
+queue (`HostServices.wake`, `POST /v1/wake` from the CLI, a run or turn
 releasing capacity); `scheduler.pollMs` is a safety net, not the clock. Startup failure unwinds
 already-started modules. `aivi tick` runs the same lifecycle in one-shot mode:
 no API, no modules (and no token needed), one dispatch round, drain, exit.
 
-Shutdown stops dispatch and aborts running jobs at once: a shell command gets
-`SIGTERM`, an agent turn stops waiting. Each interrupted job ends `blocked` with
+Each tick first materializes due job occurrences into runs. An occurrence
+found later than its misfire grace (`scheduler.misfire.graceSeconds`, per-job
+`misfire`) is recorded as one `missed` run for the whole gap and reported like
+a failure; nothing is executed for it and the job moves to its next future
+occurrence ([configuration](configuration.md#jobs-runs-tasks)). Then the tick
+claims queued runs within capacity and executes them.
+
+Shutdown stops dispatch and aborts running runs at once: a shell command gets
+`SIGTERM`, an agent turn stops waiting. Each interrupted run ends `blocked` with
 the reason "Host stopped …" and keeps its capacity, because aivi cannot know
-what the external side had already done; `aivi jobs resolve` releases it after a
-look. `aivi jobs abort ID` does the same to one job while the host keeps
-running (reason "Aborted by operator"); every job has its own abort signal
-combined with the host's. Modules are then stopped in reverse startup order, the aborted jobs are
+what the external side had already done; `aivi runs resolve` releases it after a
+look. `aivi runs abort ID` does the same to one run while the host keeps
+running (reason "Aborted by operator"); every run has its own abort signal
+combined with the host's. Modules are then stopped in reverse startup order, the aborted runs are
 awaited so their outcomes are recorded and reported, HTTP requests finish, the
 browser/MCP and QMD close, and ownership is released. A grace period that lets
 work finish first is a design choice not yet made
 ([shutdown-hooks](backlog/shutdown-hooks.md)).
 
-Job outcomes distinguish "nothing happened" from "unknown": OpenCode not
+Run outcomes distinguish "nothing happened" from "unknown": OpenCode not
 reachable or a command that cannot start ends `failed`, and the next occurrence
 simply tries again; anything after the first request or after the process
 started ends `blocked` when it cannot be verified.
+
+Retention is a job like any other: `retention` (source `system`, task
+`runs.prune`) runs through the queue in its pool, appears in `aivi jobs list`
+and `/status`, and deletes finished runs with their audit rows and finished
+one-off definitions older than `olderThanDays`; blocked runs, active work and
+recurring definitions are never pruned. `scheduler.retention: false` removes
+the job at the next startup.
 
 OpenCode runs as its own background service; aivi discovers it through the SDK's
 service registration at the start of each job or conversation turn (one file

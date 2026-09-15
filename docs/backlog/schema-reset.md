@@ -5,7 +5,7 @@ Status: idea, agreed 2026-09-15. Do it once, right before the first release.
 ## Idea
 
 While aivi is unreleased, every schema change is an additive migration step
-(host `PRAGMA user_version` 1→5, Discord namespace steps 1→3). That history is
+(host `PRAGMA user_version` 1→7, channel namespace steps 1→3). That history is
 noise for anyone installing a released version: they will never have a v1
 database. At release, collapse the steps into one `CREATE TABLE` set per
 namespace and start counting from 1 again.
@@ -14,7 +14,7 @@ namespace and start counting from 1 again.
 
 - Collapse `Store`'s version steps into a single v1 that creates the final
   shape; same for each adapter's `migrate(namespace, steps)` list.
-- Delete the "schema v1 upgrades in place" test and replace it with one that
+- Delete the "schema v1 upgrades in place" and "schema v7" tests and replace them with one that
   proves a fresh database is created at version 1 and that a *newer* database
   is refused (that check stays).
 - Keep `Store.migrate` and the `PRAGMA user_version` mechanism: released

@@ -157,10 +157,10 @@ async function snapshot(directory: string): Promise<Map<string, string>> {
  */
 export async function dream(
   task: DreamingTask,
-  jobId: string,
+  runId: string,
   deps: DreamingDeps,
 ): Promise<{ state: 'succeeded' | 'blocked'; result: DreamingResult; reason?: string }> {
-  const log = (deps.log ?? silentLogger).child({ component: 'dreaming', job: jobId });
+  const log = (deps.log ?? silentLogger).child({ component: 'dreaming', run: runId });
   const now = deps.now ?? Date.now;
   deps.store.migrate('dreaming', CURSOR_MIGRATIONS);
   const since = readCursor(deps.store, task.memoryDirectory);
@@ -184,7 +184,7 @@ export async function dream(
       '# Facts\n\nDurable facts and decisions, dated and attributed. Maintained by dreaming; humans may edit.\n',
     ),
   );
-  const transcript = join(runDir, `${jobId}.md`);
+  const transcript = join(runDir, `${runId}.md`);
   await writeFile(transcript, renderTranscript(sessions, since), { mode: 0o600 });
 
   const before = await snapshot(memory);
@@ -198,8 +198,8 @@ export async function dream(
     { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
     { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
   ];
-  const { sessionId, messageId } = turnIdsFor(jobId);
-  const metadata = { aivi: { origin: 'dreaming', job: jobId } };
+  const { sessionId, messageId } = turnIdsFor(runId);
+  const metadata = { aivi: { origin: 'dreaming', run: runId } };
   const turn = await runTurn(
     client,
     {

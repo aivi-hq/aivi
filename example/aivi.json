@@ -29,9 +29,16 @@
     "resources": {
       "local-model": 1,
       "maintenance": 1
+    },
+    "misfire": { "graceSeconds": 60 },
+    "retention": {
+      "cron": "0 4 * * *",
+      "timezone": "UTC",
+      "olderThanDays": 30,
+      "resource": "maintenance"
     }
   },
-  "schedules": [
+  "jobs": [
     {
       "id": "check-sources",
       "cron": "*/5 * * * *",

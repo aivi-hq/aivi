@@ -221,7 +221,7 @@ test('once mode dispatches due work without opening the API or starting modules'
     signal: new AbortController().signal,
   });
   assert.equal(indexed, 1);
-  assert.equal(store.get(job.id).state, 'succeeded');
+  assert.equal(store.run(job.id).state, 'succeeded');
   assert.equal(moduleStarted, false);
   store.acquireDaemon('another');
   store.releaseDaemon('another');
@@ -251,7 +251,7 @@ test('scheduled knowledge indexing uses the same injected service', async t => {
   scheduler.tick();
   await scheduler.drain();
   assert.equal(indexed, 1);
-  assert.equal(store.get(job.id).state, 'succeeded');
+  assert.equal(store.run(job.id).state, 'succeeded');
 });
 
 test('the host sleeps until the next due instant and a wake dispatches a job created meanwhile at once', async t => {

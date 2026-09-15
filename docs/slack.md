@@ -133,7 +133,7 @@ The example home enables Slack with placeholder ids in `example/slack.json`;
 (`report: { "to": "channel", "module": "slack", "channel": … }`). A posted
 outcome's thread is a conversation: for an agent job it continues the job's
 own session; for a script job it gets a fresh session seeded with the output.
-Slack threads have no titles, so the schedule's `title` is not used.
+Slack threads have no titles, so the job's `title` is not used.
 
 ```sh
 npm run aivi -- config check

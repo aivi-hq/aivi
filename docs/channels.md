@@ -17,9 +17,9 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 | --- | --- |
 | `id` | The module id (`discord`, `slack`): `report.module`, table prefix, lease owner, `metadata.aivi.origin` |
 | `ownsSession(sessionId)` | This OpenCode session is one of the module's conversations (bound or adopted) |
-| `reenter(sessionId, text, context)` | Bring a job outcome into the conversation bound to that session as a turn of kind `job` |
+| `reenter(sessionId, text, context)` | Bring a run's outcome into the conversation bound to that session as a turn of kind `job`; `context` is `{ run, state }` |
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
-| `accepts(channel)` | Whether a report to that channel could be delivered; refuses a job before it spends anything |
+| `accepts(channel)` | Whether a report to that channel could be delivered; refuses a job before anything is spent |
 | `channelOf(sessionId)` | The platform channel the conversation bound to that session lives in (a thread's parent, a DM itself); "post it to this channel" resolves through it |
 
 Registering is the whole integration with reports: `Channels` (the router on
@@ -27,7 +27,7 @@ Registering is the whole integration with reports: `Channels` (the router on
 module with that id and `{ to: "session" }` reports to the module that owns
 the session, falling back to a native `session.prompt` into the OpenCode
 session when nobody owns it. `channels.ownerOf(sessionId)` is how the
-schedule tool defaults `module` for a conversation that asks for a channel
+jobs tool defaults `module` for a conversation that asks for a channel
 report. `register` returns the unregister function; call it in `stop`.
 
 ## What a module inherits
@@ -77,8 +77,8 @@ or one OpenCode:
 | Lease | id `<id>:<turn id>`, owner `<id>` |
 | Session | `ses_<id>_<uuid>`, title `<label> <conversation>`, `metadata.aivi = { origin: <id>, channel }` |
 | Message | `msg_<id>_<turn id>` with every character outside `[A-Za-z0-9_]` replaced by `_` |
-| Message metadata | `{ origin: <id>, channel, user, sourceMessage: <turn id> }`; job outcomes `{ origin: "job-result", channel, job }` |
-| Job turn | id `job:<job id>`, user and name `aivi` |
+| Message metadata | `{ origin: <id>, channel, user, sourceMessage: <turn id> }`; job outcomes `{ origin: "job-result", channel, run }` |
+| Job turn | id `run:<run id>`, user and name `aivi` |
 
 A turn id is the platform's message id (a Discord snowflake, a Slack
 `channel:ts`); it deduplicates gateway replays.
@@ -89,7 +89,7 @@ A turn id is the platform's message id (a Discord snowflake, a Slack
 `{ to: "session", session, on }` or `{ to: "channel", module, channel, on }`.
 A session report re-enters the owning module's conversation as a `job` turn,
 ordered behind the messages already waiting; a channel report is posted by
-the named module, which opens a thread that adopts the job's session (agent
+the named module, which opens a thread that adopts the run's session (agent
 job) or is seeded with the output (script job), so replying to an outcome
 meets an agent that knows what it did. Configuration and defaults:
 [configuration](configuration.md#reporting).

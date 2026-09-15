@@ -5,8 +5,17 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
-import type { LoadedConfig, Logger, LogLevel } from '@aivi/core';
-import { createLogger, errorMessage, loadConfig, parseDue, reportSchema, selectSources, taskSchema } from '@aivi/core';
+import type { LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
+import {
+  createLogger,
+  errorMessage,
+  jobSchema,
+  loadConfig,
+  parseDue,
+  reportSchema,
+  selectSources,
+  taskSchema,
+} from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
 import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
@@ -15,25 +24,26 @@ import { z } from 'zod';
 const usage = `aivi <command>
 
   serve                        Start the host: API, scheduler, knowledge, configured modules
-  tick                         Materialize schedules and dispatch due jobs once, then exit
+  tick                         Materialize due jobs and dispatch their runs once, then exit
   status                       Inspect durable queue counts
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
   knowledge search QUERY       Search via the running host [--project ID --core-only --no-core --limit N]
-  knowledge index              Queue a source refresh [--resource maintenance]
-  jobs list                    List jobs (operator output, including prompts)
-  jobs show ID                 Inspect one job and its audit history
-  jobs enqueue FILE            Enqueue a task file: a task, or {task, report?, resource?}
-                               [--key ID --resource POOL --at ISO|30m|2h|1d]
-  jobs cancel ID               Cancel a queued job only
-  jobs abort ID                Ask the scheduler to stop a running job; it ends blocked for resolve
-  jobs resolve ID              Release a blocked job after inspection/repair
+  knowledge index              Queue a source refresh now [--resource maintenance]
+  jobs list                    Job definitions: configured, system, agent- and operator-created
+  jobs show ID                 One job with its runs
+  jobs add FILE                Add a job from a task file: a task, or {task, report?, resource?}
+                               [--at ISO|30m|2h|1d | --cron EXPR --timezone TZ] [--title T --resource POOL --key ID]
+                               Without --at or --cron it runs once, now
+  jobs pause|resume ID         Pause or resume an agent- or operator-created job
+  jobs remove ID               Remove an agent- or operator-created job
+  jobs run ID                  Queue one run of a job now
+  runs list                    Runs (operator output, including prompts) [--job ID --state S --limit N]
+  runs show ID                 One run with its audit history
+  runs cancel ID               Cancel a queued run only
+  runs abort ID                Ask the scheduler to stop a running run; it ends blocked for resolve
+  runs resolve ID              Release a blocked run after inspection/repair
                                --outcome succeeded|failed --reason TEXT --confirm-stopped
-  schedules sync               Reconcile configured schedules
-  schedules list               Configured and agent-created schedules with their next occurrence
-  schedules pause|resume ID    Pause or resume an agent-created schedule
-  schedules remove ID          Remove an agent-created schedule
-  schedules run ID             Enqueue one occurrence of a schedule now
   discord register             Register slash commands for the configured application
   discord status               Inspect Discord turns and leases
   discord resolve ID           Release a blocked turn --reason TEXT --confirm-stopped
@@ -63,6 +73,11 @@ async function main(): Promise<void> {
       project: { type: 'string', multiple: true },
       key: { type: 'string' },
       at: { type: 'string' },
+      cron: { type: 'string' },
+      timezone: { type: 'string' },
+      title: { type: 'string' },
+      job: { type: 'string' },
+      state: { type: 'string' },
       resource: { type: 'string' },
       outcome: { type: 'string' },
       reason: { type: 'string' },
@@ -179,66 +194,28 @@ async function main(): Promise<void> {
       print(status(store, loaded));
       return;
     }
-    if (command === 'schedules') {
-      switch (subcommand) {
-        case 'sync':
-          store.syncSchedules(loaded.config.schedules);
-          print({ schedules: loaded.config.schedules.length });
-          await poke();
-          return;
-        case 'list':
-          print(
-            store.schedules().map(s => ({
-              id: s.spec.id,
-              source: s.source,
-              enabled: s.enabled,
-              cron: s.spec.cron,
-              timezone: s.spec.timezone,
-              nextAt: new Date(s.nextAt).toISOString(),
-              kind: s.spec.task.kind,
-              lastRun: store.lastRun(s.spec.id)?.state ?? null,
-            })),
-          );
-          return;
-        case 'pause':
-        case 'resume':
-          if (!argument) break;
-          print(store.setScheduleEnabled(argument, subcommand === 'resume'));
-          await poke();
-          return;
-        case 'remove':
-          if (!argument) break;
-          store.removeSchedule(argument);
-          print({ removed: argument });
-          return;
-        case 'run':
-          if (!argument) break;
-          print(store.runSchedule(argument));
-          await poke();
-          return;
-      }
-    }
-    if (command === 'knowledge' && subcommand === 'index') {
-      if (!loaded.config.search) throw new Error('Knowledge search is not configured');
-      const resource = values.resource ?? 'maintenance';
-      if (!(resource in loaded.config.scheduler.resources))
-        throw new Error('Configure a maintenance resource pool or pass --resource');
-      print(store.enqueue({ kind: 'knowledge.index' }, resource, `index:${randomUUID()}`));
-      await poke();
-      return;
-    }
     if (command === 'jobs') {
       switch (subcommand) {
         case 'list':
-          print(store.list());
+          print(
+            store.jobs().map(j => ({
+              id: j.spec.id,
+              title: j.spec.title ?? null,
+              source: j.source,
+              state: j.state,
+              when: j.spec.at !== undefined ? `at ${j.spec.at}` : `cron ${j.spec.cron} (${j.spec.timezone})`,
+              nextAt: j.nextAt === null ? null : new Date(j.nextAt).toISOString(),
+              kind: j.spec.task.kind,
+              resource: j.spec.resource,
+              lastRun: store.lastRun(j.spec.id)?.state ?? null,
+            })),
+          );
           return;
         case 'show':
-          if (argument) {
-            print({ job: store.get(argument), history: store.history(argument) });
-            return;
-          }
-          break;
-        case 'enqueue': {
+          if (!argument) break;
+          print({ job: store.job(argument), runs: store.runs({ jobId: argument }) });
+          return;
+        case 'add': {
           if (!argument) break;
           // A task file is either a bare task or { task, report?, resource? }.
           const raw: unknown = JSON.parse(await readFile(resolve(argument), 'utf8'));
@@ -255,37 +232,83 @@ async function main(): Promise<void> {
           if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home, task.cwd);
           const resource = values.resource ?? fileResource ?? 'local-model';
           if (!(resource in loaded.config.scheduler.resources)) throw new Error(`Unknown resource pool: ${resource}`);
+          if (values.at && values.cron) throw new Error('Choose --at (one-off) or --cron (recurring)');
           const now = Date.now();
-          print(
-            store.enqueue(task, resource, `manual:${values.key ?? randomUUID()}`, now, report ?? null, {
-              ...(values.at ? { due: parseDue(values.at, now) } : {}),
-            }),
-          );
+          const spec = jobSchema.parse({
+            id: `job-${randomUUID().slice(0, 8)}`,
+            ...(values.title ? { title: values.title } : {}),
+            ...(values.cron
+              ? { cron: values.cron, timezone: values.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone }
+              : { at: new Date(values.at ? parseDue(values.at, now) : now).toISOString() }),
+            resource,
+            task,
+            ...(report ? { report } : {}),
+          });
+          const job = store.addJob(spec, 'operator', now, { dedupeKey: `manual:${values.key ?? randomUUID()}` });
+          print({ job, runs: store.runs({ jobId: job.spec.id }) });
           await poke();
           return;
         }
+        case 'pause':
+        case 'resume':
+          if (!argument) break;
+          print(store.setJobEnabled(argument, subcommand === 'resume'));
+          await poke();
+          return;
+        case 'remove':
+          if (!argument) break;
+          store.removeJob(argument);
+          print({ removed: argument });
+          return;
+        case 'run':
+          if (!argument) break;
+          print(store.runJob(argument));
+          await poke();
+          return;
+      }
+    }
+    if (command === 'knowledge' && subcommand === 'index') {
+      if (!loaded.config.search) throw new Error('Knowledge search is not configured');
+      const resource = values.resource ?? 'maintenance';
+      if (!(resource in loaded.config.scheduler.resources))
+        throw new Error('Configure a maintenance resource pool or pass --resource');
+      print(store.enqueue({ kind: 'knowledge.index' }, resource, `index:${randomUUID()}`));
+      await poke();
+      return;
+    }
+    if (command === 'runs') {
+      switch (subcommand) {
+        case 'list':
+          print(
+            store.runs({
+              ...(values.job ? { jobId: values.job } : {}),
+              ...(values.state ? { state: runState(values.state) } : {}),
+              ...(values.limit ? { limit: Number(values.limit) } : {}),
+            }),
+          );
+          return;
+        case 'show':
+          if (!argument) break;
+          print({ run: store.run(argument), history: store.history(argument) });
+          return;
         case 'cancel':
-          if (argument) {
-            store.cancelQueued(argument);
-            print(store.get(argument));
-            return;
-          }
-          break;
+          if (!argument) break;
+          store.cancelQueued(argument);
+          print(store.run(argument));
+          return;
         case 'abort':
-          if (argument) {
-            store.requestCancel(argument);
-            print(store.get(argument));
-            await poke();
-            return;
-          }
-          break;
+          if (!argument) break;
+          store.requestCancel(argument);
+          print(store.run(argument));
+          await poke();
+          return;
         case 'resolve': {
           if (!argument) break;
           if (!values['confirm-stopped'] || !values.reason || !['succeeded', 'failed'].includes(values.outcome ?? '')) {
             throw new Error('Resolution requires --confirm-stopped, --outcome succeeded|failed and --reason');
           }
           store.resolveBlocked(argument, values.outcome as 'succeeded' | 'failed', values.reason);
-          print(store.get(argument));
+          print(store.run(argument));
           return;
         }
       }
@@ -341,6 +364,13 @@ function loadEnvFile(path: string, log: { debug(event: string, fields?: Record<s
   process.loadEnvFile(path);
   log.debug('env.loaded', { path });
   return Object.keys(parseEnv(readFileSync(path, 'utf8')));
+}
+
+const RUN_STATES: RunState[] = ['queued', 'running', 'succeeded', 'failed', 'blocked', 'cancelled', 'missed'];
+function runState(value: string): RunState {
+  if (!RUN_STATES.includes(value as RunState))
+    throw new Error(`Unknown run state: ${value}. One of ${RUN_STATES.join(', ')}`);
+  return value as RunState;
 }
 
 const jobFileSchema = z.strictObject({

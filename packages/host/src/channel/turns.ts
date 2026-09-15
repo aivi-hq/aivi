@@ -67,7 +67,7 @@ export async function createTurnRunner(
         messageMetadata: {
           aivi:
             turn.kind === 'job'
-              ? { origin: 'job-result', channel: turn.channel, job: turn.id.slice('job:'.length) }
+              ? { origin: 'job-result', channel: turn.channel, run: turn.id.slice('run:'.length) }
               : { origin: platform.id, channel: turn.channel, user: turn.user, sourceMessage: turn.id },
         },
       },

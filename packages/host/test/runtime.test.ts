@@ -30,7 +30,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
       method: req.method!,
       path: req.url!,
       body,
-      attached: store.get(job.id).sessionId,
+      attached: store.run(job.id).sessionId,
       auth: req.headers.authorization,
     });
     res.setHeader('content-type', 'application/json');
@@ -97,9 +97,9 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
   assert.equal(create.body.agent, 'librarian');
   assert.equal(create.attached, create.body.id, 'session id is persisted before the create request');
   assert.equal(create.auth, `Basic ${Buffer.from('opencode:secret').toString('base64')}`);
-  assert.deepEqual(create.body.metadata, { aivi: { origin: 'job', job: job.id } });
+  assert.deepEqual(create.body.metadata, { aivi: { origin: 'job', run: job.id } });
   assert.equal(received.filter(r => r.path.endsWith('/prompt')).length, 1, 'a second tick must not resubmit');
-  const done = store.get(job.id);
+  const done = store.run(job.id);
   assert.equal(done.state, 'succeeded');
   assert.deepEqual(done.result, { sessionId: create.body.id, text: 'Handbook read.', rejectedPermissions: [] });
   assert.ok(done.finishedAt);
@@ -124,7 +124,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   );
   scheduler.tick();
   await scheduler.drain();
-  const result = store.get(job.id);
+  const result = store.run(job.id);
   assert.equal(result.state, 'failed');
   assert.equal(result.sessionId, null, 'no session id is attached when no request was made');
   assert.match(result.error ?? '', /not started: No running OpenCode/);
@@ -199,7 +199,7 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
   );
   scheduler.tick();
   await scheduler.drain();
-  const result = store.get(job.id);
+  const result = store.run(job.id);
   assert.equal(result.state, 'failed');
   assert.match(result.error ?? '', /^Turn not started: /);
 });
@@ -214,7 +214,7 @@ test('a dreaming job persists its session id before the first request and blocks
   let attachedAtRequest: string | null | undefined;
   const server = createServer(async (req, res) => {
     for await (const _ of req) void _;
-    attachedAtRequest ??= store.get(job.id).sessionId;
+    attachedAtRequest ??= store.run(job.id).sessionId;
     res.writeHead(500);
     res.end('{}');
   });
@@ -238,7 +238,7 @@ test('a dreaming job persists its session id before the first request and blocks
   await scheduler.drain();
   const expected = `ses_aivi_${job.id.replaceAll('-', '')}`;
   assert.equal(attachedAtRequest, expected, 'session id is on the job row before OpenCode is asked anything');
-  const result = store.get(job.id);
+  const result = store.run(job.id);
   assert.equal(result.state, 'blocked');
   assert.equal(result.sessionId, expected);
   assert.match(result.error ?? '', /Inspect session ses_aivi_/);
@@ -272,14 +272,14 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   );
   scheduler.tick();
   await scheduler.drain();
-  const done = store.get(ok.id);
+  const done = store.run(ok.id);
   assert.equal(done.state, 'succeeded');
   assert.deepEqual(
     done.result,
     { exitCode: 0, signal: null, stdout: 'hi $HOME\n', stderr: 'warn\n' },
     'no shell expansion',
   );
-  const failed = store.get(bad.id);
+  const failed = store.run(bad.id);
   assert.equal(failed.state, 'failed');
   assert.match(failed.error ?? '', /exited with 3/);
   assert.equal((failed.result as { exitCode: number }).exitCode, 3);
@@ -327,7 +327,7 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
   );
   scheduler.tick();
   await scheduler.drain();
-  const done = store.get(job.id);
+  const done = store.run(job.id);
   assert.equal(done.state, 'succeeded');
   assert.deepEqual(JSON.parse((done.result as { stdout: string }).stdout), {
     token: null,
@@ -361,7 +361,7 @@ test('a command that cannot start fails instead of blocking capacity', async t =
   );
   scheduler.tick();
   await scheduler.drain();
-  const result = store.get(job.id);
+  const result = store.run(job.id);
   assert.equal(result.state, 'failed');
   assert.match(result.error ?? '', /could not start: \/nonexistent\/aivi-binary/);
   assert.match((result.result as { stderr: string }).stderr, /ENOENT/);
@@ -395,6 +395,6 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
   );
   scheduler.tick();
   await scheduler.drain();
-  assert.equal(store.get(job.id).state, 'blocked');
-  assert.match(store.get(job.id).error ?? '', /killed by SIGTERM/);
+  assert.equal(store.run(job.id).state, 'blocked');
+  assert.match(store.run(job.id).error ?? '', /killed by SIGTERM/);
 });

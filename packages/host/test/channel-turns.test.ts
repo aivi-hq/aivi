@@ -127,16 +127,16 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
   await ask({ ...turn, id: 'unseeded', ready: true, seed: 'stale' }, AbortSignal.timeout(3000), () => {});
   assert.doesNotMatch(requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body.text, /Earlier in this thread/);
 
-  // A job outcome re-entering the thread is marked as such, with the job id in its metadata.
-  await ask({ ...turn, id: 'job:abc', kind: 'job', ready: true, text: '✅ done' }, AbortSignal.timeout(3000), () => {});
+  // A run's outcome re-entering the thread is marked as such, with the run id in its metadata.
+  await ask({ ...turn, id: 'run:abc', kind: 'job', ready: true, text: '✅ done' }, AbortSignal.timeout(3000), () => {});
   const reentry = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
   assert.match(reentry.text, /^\[aivi delivers the outcome of a scheduled job[^\]]*\]\n✅ done$/);
-  assert.equal(reentry.id, 'msg_discord_job_abc');
+  assert.equal(reentry.id, 'msg_discord_run_abc');
   assert.deepEqual(reentry.metadata.aivi, {
     origin: 'job-result',
     channel: 'dm',
-    job: 'abc',
-    message: 'msg_discord_job_abc',
+    run: 'abc',
+    message: 'msg_discord_run_abc',
   });
 
   // A thread that adopted an agent job's session is checked against that job's agent and directory.

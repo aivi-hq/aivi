@@ -20,12 +20,13 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 | Word | Meaning |
 | --- | --- |
-| task | what to do: `kind` + parameters (`system.check`, `knowledge.index`, `shell`, `opencode.prompt`, `dreaming`) |
-| schedule | cron + timezone + pool + task (+ report); one outstanding occurrence at a time; source `config` (aivi.json) or `agent` (created through `aivi_schedule`) |
-| job | one unit of queued/running/finished work; one row, one audit trail; a one-off is a job with a future due time |
+| task | what to do: `kind` + parameters (`system.check`, `knowledge.index`, `runs.prune`, `shell`, `opencode.prompt`, `dreaming`) |
+| job | a definition: a task plus *when*, recurring (`cron` + `timezone`) or one-off (`at`), with `id`, `title`, `resource`, `report`, `misfire`, `enabled`; state `active`/`paused`/`done`/`missed`; source `config` (aivi.json), `system` (seeded by the host: `retention`), `agent` (created through `aivi_jobs`) or `operator` (`aivi jobs add`); one outstanding run at a time |
+| run | one execution of a job: `queued → running → succeeded / failed / blocked`, or `cancelled`, or `missed`; one row, one audit trail, always a `jobId`; snapshots the task |
+| missed | a run recorded for an occurrence found later than its misfire grace; terminal, never executed, reported like a failure |
 | turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a conversation turn is of kind `message` (a person) or `job` (an outcome re-entering) |
-| pool / lease | named capacity (`local-model`, `maintenance`); jobs and conversation turns take leases from the same pools |
-| blocked | ended without proof that the external side stopped; keeps its capacity until `jobs resolve` |
+| pool / lease | named capacity (`local-model`, `maintenance`); runs and conversation turns take leases from the same pools |
+| blocked | ended without proof that the external side stopped; keeps its capacity until `runs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
 | report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing |
 | channel module | a chat platform adapter (`discord`, `slack`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
@@ -36,10 +37,23 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 ## Decisions and why
 
-- **Two queues, one capacity.** Conversation turns are not host jobs: they run
+- **Two queues, one capacity.** Conversation turns are not host runs: they run
   in order per conversation, continue its session, reply into it, and start in
-  seconds. Jobs are fresh sessions in any order. Both take leases from the
+  seconds. Runs are fresh sessions in any order. Both take leases from the
   same pools ([architecture](docs/architecture.md#two-queues-one-capacity)).
+- **Definitions and executions are two tables.** A job says what and when; a
+  run is one execution and always belongs to a job, so a one-off is a job
+  with `at` and not a special run. Operators reason about `jobs …`, inspect
+  `runs …` ([configuration](docs/configuration.md#jobs-runs-tasks)).
+- **It matched or it didn't.** A due occurrence found within
+  `misfire.graceSeconds` runs; found later it becomes one `missed` run for the
+  whole gap, never executed, reported like a failure, and the job moves on.
+  No coalesce-and-run-late, no silent skip; "run whenever" is a large grace
+  ([architecture](docs/architecture.md#sqlite-and-croner)).
+- **Retention is a system job.** `scheduler.retention` seeds `retention`
+  (task `runs.prune`) into the same table, so it is listed, pooled, run and
+  reported like everything else instead of being a hidden timer
+  ([application](docs/application.md)).
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
   `blocked`, capacity kept, human resolves. Exception: a conversation turn
@@ -58,7 +72,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **No timers hold state.** The loop sleeps until `Store.nextDue()` and is
   woken by whatever changed the queue; `pollMs` (30 s) is only a safety net.
   SQLite is the single truth, so restarts reconcile nothing.
-- **Shutdown aborts** running jobs; they end `blocked`. A grace period is a
+- **Shutdown aborts** running runs; they end `blocked`. A grace period is a
   design choice not yet made ([shutdown-hooks](docs/backlog/shutdown-hooks.md)).
 - **The agent file is the boundary.** Discord, jobs and dreaming run the
   configured OpenCode agent as defined; aivi adds only what the file cannot
@@ -77,7 +91,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   routing, sending and commands ([channels](docs/channels.md)).
 - **Memory is files** inside a knowledge source, never system-prompt state.
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
-  through `aivi_schedule` (`POST /v1/schedule`, the one job mutation on the
+  through `aivi_jobs` (`POST /v1/jobs`, the one job mutation on the
   API, on by default; `scheduler.agentSchedules: false` turns it off); the host derives agent and
   directory from the calling session and refuses sessions with origin `job` or
   `dreaming`, unless a Discord thread adopted that session. Whoever may talk
@@ -86,11 +100,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Outcomes are conversations, not posts.** The default report of an
   agent-created job is `session`: the outcome re-enters the asking thread as
   a turn and the librarian says what matters. A channel report opens a thread
-  that continues the job's own session, so replying never meets an agent that
+  that continues the run's own session, so replying never meets an agent that
   does not know what it did ([discord](docs/discord.md)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
-- **Blocked jobs hold global capacity** on purpose until per-project pools
+- **Blocked runs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
 - **Linear config exists ahead of the module** to record the lane → app →
   agent invariant; nothing reads it yet.
@@ -127,12 +141,14 @@ the tests load it.
 
 ## Open threads
 
-- Live gates: OpenCode passed 2026-09-15 including the schedule handler
-  (session lookup, `agent.list` validation, create/refuse). Discord still to
-  re-check after today's changes (the lift into the host, the report union):
-  librarian directory, feedback messages, job outcomes re-entering threads,
-  report threads adopting job sessions, `/status` lists. Slack has never run
-  live ([slack.md](docs/slack.md)).
+- Live gates: OpenCode passed 2026-09-15 with the schedule handler (session
+  lookup, `agent.list` validation, create/refuse); the tool has since been
+  renamed to `aivi_jobs` and the route to `/v1/jobs`, so that gate needs a
+  re-run after `opencode service restart`. Discord still to re-check after
+  today's changes (the lift into the host, the report union, `{ run }` in the
+  delivery context): librarian directory, feedback messages, job outcomes
+  re-entering threads, report threads adopting run sessions, `/status` lists.
+  Slack has never run live ([slack.md](docs/slack.md)).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
   deferred until the projects work settles.

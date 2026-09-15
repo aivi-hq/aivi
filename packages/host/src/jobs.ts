@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import type { Job, LoadedConfig, Report, Schedule, ScheduleItem, ScheduleRequest, ScheduleResponse } from '@aivi/core';
-import { nextOccurrences, parseDue, scheduleSchema, taskSchema } from '@aivi/core';
+import type { Job, JobItem, JobRequest, JobResponse, LoadedConfig, Report } from '@aivi/core';
+import { formatInstant, jobSchema, nextOccurrences, parseDue, taskSchema } from '@aivi/core';
 import type { Channels } from './channel/router.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import { SESSION_DESTINATION } from './reports.ts';
-import type { ScheduleEntry, Store } from './store.ts';
+import type { JobEntry, Store } from './store.ts';
 
 /** A request the host will not carry out; the message is meant for the agent to relay. */
-export class ScheduleRefused extends Error {
+export class JobRefused extends Error {
   readonly status: number;
   constructor(message: string, status = 400) {
     super(message);
@@ -15,7 +15,7 @@ export class ScheduleRefused extends Error {
   }
 }
 
-export interface ScheduleHandlerDeps {
+export interface JobHandlerDeps {
   store: Store;
   loaded: LoadedConfig;
   channels: Channels;
@@ -24,18 +24,16 @@ export interface ScheduleHandlerDeps {
   wake?: () => void;
   now?: () => number;
 }
-export type ScheduleHandler = (request: ScheduleRequest) => Promise<ScheduleResponse>;
+export type JobHandler = (request: JobRequest) => Promise<JobResponse>;
 
 const hostTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
-const when = (at: number, timezone: string) =>
-  new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(at);
 
 /**
- * `aivi_schedule` on the host side. Agent jobs default to the calling agent in
+ * `aivi_jobs` on the host side. Agent jobs default to the calling agent in
  * the calling directory; the caller's session decides whether it may schedule
  * at all (a job's own session may not, unless a conversation adopted it).
  */
-export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandler {
+export function createJobHandler(deps: JobHandlerDeps): JobHandler {
   const { store, loaded, channels } = deps;
   const now = deps.now ?? Date.now;
   const wake = deps.wake ?? (() => {});
@@ -43,10 +41,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
 
   return async request => {
     if (!settings)
-      throw new ScheduleRefused(
-        'Agent-created schedules are disabled by the operator (scheduler.agentSchedules is false).',
-        403,
-      );
+      throw new JobRefused('Agent-created jobs are disabled by the operator (scheduler.agentSchedules is false).', 403);
     switch (request.action) {
       case 'create':
         return create(request);
@@ -55,65 +50,56 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       case 'pause':
       case 'resume': {
         const enabled = request.action === 'resume';
-        const entry = withRefusal(() => store.setScheduleEnabled(request.id, enabled, now()));
+        const entry = withRefusal(() => store.setJobEnabled(request.id, enabled, now()));
         wake();
-        const item = scheduleItem(entry);
+        const item = jobItem(entry);
         return {
-          summary: `${enabled ? 'Resumed' : 'Paused'} ${item.title} (${item.id}).${enabled ? ` Next: ${item.next[0]}.` : ''}`,
+          summary: `${enabled ? 'Resumed' : 'Paused'} ${item.title} (${item.id}).${enabled && item.next.length ? ` Next: ${item.next[0]}.` : ''}`,
           items: [item],
         };
       }
       case 'remove': {
-        const oneOff = store.agentOneOffs().find(j => j.id === request.id);
-        if (oneOff) {
-          store.cancelQueued(oneOff.id, now());
-          return { summary: `Removed the one-off ${titleOf(oneOff.task)} (${oneOff.id}).`, items: [] };
-        }
-        const entry = withRefusal(() => store.schedule(request.id));
-        withRefusal(() => store.removeSchedule(request.id, now()));
+        const entry = withRefusal(() => store.job(request.id));
+        withRefusal(() => store.removeJob(request.id, now()));
         return { summary: `Removed ${entry.spec.title ?? titleOf(entry.spec.task)} (${request.id}).`, items: [] };
       }
       case 'run': {
-        const job = withRefusal(() => store.runSchedule(request.id, now()));
+        const run = withRefusal(() => store.runJob(request.id, now()));
         wake();
         return {
-          summary: `Queued one run of ${request.id} now (job ${job.id.slice(0, 8)}). Its outcome is reported like a scheduled one.`,
-          items: [scheduleItem(store.schedule(request.id))],
+          summary: `Queued one run of ${request.id} now (run ${run.id.slice(0, 8)}). Its outcome is reported like a scheduled one.`,
+          items: [jobItem(store.job(request.id))],
         };
       }
     }
   };
 
-  async function create(input: Extract<ScheduleRequest, { action: 'create' }>): Promise<ScheduleResponse> {
+  async function create(input: Extract<JobRequest, { action: 'create' }>): Promise<JobResponse> {
     if (!settings) throw new Error('unreachable');
     if ((input.prompt === undefined) === (input.command === undefined))
-      throw new ScheduleRefused('Give exactly one of prompt (an agent job) or command (a script job).');
+      throw new JobRefused('Give exactly one of prompt (an agent job) or command (a script job).');
     if ((input.at === undefined) === (input.cron === undefined))
-      throw new ScheduleRefused('Give exactly one of at (one-off) or cron (recurring).');
+      throw new JobRefused('Give exactly one of at (one-off) or cron (recurring).');
 
     const client = await deps.opencode().catch(error => {
-      throw new ScheduleRefused(
-        `OpenCode is not reachable: ${error instanceof Error ? error.message : String(error)}`,
-        503,
-      );
+      throw new JobRefused(`OpenCode is not reachable: ${error instanceof Error ? error.message : String(error)}`, 503);
     });
     const session = await client.session.get({ sessionID: input.sessionId }).catch(() => {
-      throw new ScheduleRefused(`Unknown session ${input.sessionId}.`, 404);
+      throw new JobRefused(`Unknown session ${input.sessionId}.`, 404);
     });
     const origin = (session.metadata as { aivi?: { origin?: string } } | undefined)?.aivi?.origin;
     if ((origin === 'job' || origin === 'dreaming') && !channels.ownsSession(input.sessionId))
-      throw new ScheduleRefused('Jobs do not create jobs. Ask a person in a conversation to schedule this.', 403);
+      throw new JobRefused('Jobs do not create jobs. Ask a person in a conversation to schedule this.', 403);
 
     const directory = input.directory ?? session.location.directory;
     const agent = input.agent ?? session.agent;
-    let task: Schedule['task'];
+    let task: Job['task'];
     if (input.prompt !== undefined) {
-      if (!agent) throw new ScheduleRefused('This session has no agent; pass agent explicitly.');
+      if (!agent) throw new JobRefused('This session has no agent; pass agent explicitly.');
       // Verified against OpenCode 2.0.3: `agent.list` with a location sees agents defined under that
       // directory's .opencode/, where `agent.get` does not.
       const agents = await client.agent.list({ location: { directory } }).catch(() => ({ data: [] }));
-      if (!agents.data.some(a => a.id === agent))
-        throw new ScheduleRefused(`No agent "${agent}" exists in ${directory}.`);
+      if (!agents.data.some(a => a.id === agent)) throw new JobRefused(`No agent "${agent}" exists in ${directory}.`);
       task = taskSchema.parse({
         kind: 'opencode.prompt',
         agent,
@@ -136,7 +122,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       // "Post it to this channel": the channel the asking conversation lives in.
       const here = await channels.channelOf(input.sessionId);
       if (!here)
-        throw new ScheduleRefused(
+        throw new JobRefused(
           'report "channel" needs the channel id when the asking session is not a chat conversation.',
         );
       report = { to: 'channel', module: input.module ?? here.module, channel: here.channel, on: input.on };
@@ -144,84 +130,85 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       // A conversation asking for a post defaults to its own platform; a native session must say which.
       const module = input.module ?? channels.ownerOf(input.sessionId);
       if (!module)
-        throw new ScheduleRefused('report "channel" needs the module (for example "discord") from a native session.');
+        throw new JobRefused('report "channel" needs the module (for example "discord") from a native session.');
       report = { to: 'channel', module, channel: input.channel!, on: input.on };
     } else if (input.report === 'session') report = { to: SESSION_DESTINATION, session: input.sessionId, on: input.on };
     if (report) {
       const refusal = channels.refuse(report);
-      if (refusal) throw new ScheduleRefused(`${refusal}. Use report "none" or a channel aivi may post to.`);
+      if (refusal) throw new JobRefused(`${refusal}. Use report "none" or a channel aivi may post to.`);
     }
 
-    const existing = store.schedules().filter(s => s.source === 'agent').length + store.agentOneOffs().length;
-    if (existing >= settings.max)
-      throw new ScheduleRefused(
-        `The limit of ${settings.max} agent-created schedules is reached; remove one first.`,
-        409,
-      );
+    // A retried tool call carries the same message id and lands on the job it already made.
+    const dedupeKey = `agent:${input.sessionId}:${input.messageId ?? randomUUID()}`;
+    const agents = agentJobs();
+    const existing = agents.filter(j => j.state === 'active' || j.state === 'paused').length;
+    if (existing >= settings.max && !agents.some(j => j.dedupeKey === dedupeKey))
+      throw new JobRefused(`The limit of ${settings.max} agent-created jobs is reached; remove one first.`, 409);
 
     const at = now();
     const timezone = input.timezone ?? hostTimezone();
-    if (input.at !== undefined) {
-      const due = parseDueOrRefuse(input.at, at);
-      const job = store.enqueue(
-        task,
-        settings.resource,
-        `agent:${input.sessionId}:${input.messageId ?? randomUUID()}`,
-        at,
-        report,
-        {
-          due,
-          reason: `agent:${input.sessionId}`,
-        },
-      );
-      wake();
-      const item = oneOffItem(job, timezone);
-      return {
-        summary: `Created a one-off ${item.title} (${item.id}) for ${item.next[0]}. ${reportText(report)}`,
-        items: [item],
-      };
-    }
-    const parsed = scheduleSchema.safeParse({
-      id: `agent-${randomUUID().slice(0, 8)}`,
+    const id = `agent-${randomUUID().slice(0, 8)}`;
+    const base = {
+      id,
       ...(input.title ? { title: input.title } : {}),
-      cron: input.cron,
       timezone,
       resource: settings.resource,
       task,
       ...(report ? { report } : {}),
-    });
-    if (!parsed.success)
-      throw new ScheduleRefused(`Invalid cron expression or timezone: "${input.cron}" in ${timezone}.`);
-    const entry = store.addSchedule(parsed.data, at);
+    };
+    if (input.at !== undefined) {
+      const due = parseDueOrRefuse(input.at, at);
+      const entry = store.addJob(jobSchema.parse({ ...base, at: new Date(due).toISOString() }), 'agent', at, {
+        dedupeKey,
+        reason: `agent:${input.sessionId}`,
+      });
+      wake();
+      const item = jobItem(entry);
+      return {
+        summary: `Created a one-off ${item.title} (${item.id}) for ${formatInstant(due, timezone)}. ${reportText(report)}`,
+        items: [item],
+      };
+    }
+    const parsed = jobSchema.safeParse({ ...base, cron: input.cron });
+    if (!parsed.success) throw new JobRefused(`Invalid cron expression or timezone: "${input.cron}" in ${timezone}.`);
+    const entry = store.addJob(parsed.data, 'agent', at);
     wake();
-    const item = scheduleItem(entry);
+    const item = jobItem(entry);
     return {
       summary: `Created ${item.title} (${item.id}): cron ${parsed.data.cron} in ${timezone}. Next: ${item.next.join(', ')}. ${reportText(report)}`,
       items: [item],
     };
   }
 
-  function items(): ScheduleItem[] {
-    return [
-      ...store
-        .schedules()
-        .filter(s => s.source === 'agent')
-        .map(scheduleItem),
-      ...store.agentOneOffs().map(j => oneOffItem(j, hostTimezone())),
-    ];
+  function agentJobs(): JobEntry[] {
+    return store.jobs().filter(j => j.source === 'agent');
+  }
+  function items(): JobItem[] {
+    return agentJobs().map(jobItem);
   }
 
-  function scheduleItem(entry: ScheduleEntry): ScheduleItem {
+  function jobItem(entry: JobEntry): JobItem {
     const { spec } = entry;
     const last = store.lastRun(spec.id);
+    const next =
+      entry.state !== 'active'
+        ? []
+        : spec.at !== undefined
+          ? entry.nextAt === null
+            ? []
+            : [entry.nextAt]
+          : nextOccurrences(spec.cron!, spec.timezone, now(), 3);
     return {
       id: spec.id,
-      kind: 'schedule',
+      kind: spec.at !== undefined ? 'one-off' : 'recurring',
       task: spec.task.kind === 'shell' ? 'script' : 'agent',
       title: spec.title ?? titleOf(spec.task),
-      when: `cron ${spec.cron} (${spec.timezone})`,
-      enabled: entry.enabled,
-      next: entry.enabled ? nextOccurrences(spec.cron, spec.timezone, now(), 3).map(t => when(t, spec.timezone)) : [],
+      when:
+        spec.at !== undefined
+          ? `at ${formatInstant(Date.parse(spec.at), spec.timezone)} (${spec.timezone})`
+          : `cron ${spec.cron} (${spec.timezone})`,
+      state: entry.state,
+      next: next.map(t => formatInstant(t, spec.timezone)),
       lastRun: last
         ? {
             state: last.state,
@@ -232,27 +219,13 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       report: reportText(spec.report ?? null),
     };
   }
-
-  function oneOffItem(job: Job, timezone: string): ScheduleItem {
-    return {
-      id: job.id,
-      kind: 'one-off',
-      task: job.task.kind === 'shell' ? 'script' : 'agent',
-      title: titleOf(job.task),
-      when: new Date(job.scheduledFor).toISOString(),
-      enabled: job.state === 'queued',
-      next: [when(job.scheduledFor, timezone)],
-      lastRun: null,
-      report: reportText(job.report),
-    };
-  }
 }
 
 function parseDueOrRefuse(at: string, now: number): number {
   try {
     return parseDue(at, now);
   } catch (error) {
-    throw new ScheduleRefused(error instanceof Error ? error.message : String(error));
+    throw new JobRefused(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -260,11 +233,11 @@ function withRefusal<T>(fn: () => T): T {
   try {
     return fn();
   } catch (error) {
-    throw new ScheduleRefused(error instanceof Error ? error.message : String(error), 404);
+    throw new JobRefused(error instanceof Error ? error.message : String(error), 404);
   }
 }
 
-function titleOf(task: Schedule['task']): string {
+function titleOf(task: Job['task']): string {
   if (task.kind === 'opencode.prompt') {
     const line = task.prompt.split('\n').find(l => l.trim()) ?? task.prompt;
     return `"${line.length > 60 ? `${line.slice(0, 59)}…` : line}"`;
@@ -274,18 +247,18 @@ function titleOf(task: Schedule['task']): string {
 }
 
 function reportText(report: Report | null): string {
-  if (!report) return 'Results are not reported anywhere; `aivi jobs show` has them.';
+  if (!report) return 'Results are not reported anywhere; `aivi runs show` has them.';
   const when = report.on === 'failure' ? 'Only failures are' : 'Results are';
   if (report.to === SESSION_DESTINATION) return `${when} brought back into this conversation.`;
   return `${when} posted to ${report.module} ${report.channel}.`;
 }
 
-function describeList(items: ScheduleItem[]): string {
-  if (!items.length) return 'No agent-created schedules or one-offs exist.';
+function describeList(items: JobItem[]): string {
+  if (!items.length) return 'No agent-created jobs exist.';
   return items
     .map(
       i =>
-        `${i.id}: ${i.title}, ${i.when}${i.enabled ? '' : ' (paused)'}${i.next.length ? `, next ${i.next[0]}` : ''}${i.lastRun ? `, last run ${i.lastRun.state}` : ''}`,
+        `${i.id}: ${i.title}, ${i.when}${i.state === 'active' ? '' : ` (${i.state})`}${i.next.length ? `, next ${i.next[0]}` : ''}${i.lastRun ? `, last run ${i.lastRun.state}` : ''}`,
     )
     .join('\n');
 }

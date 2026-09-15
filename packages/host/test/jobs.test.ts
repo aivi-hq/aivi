@@ -3,8 +3,8 @@ import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import { Channels } from '../src/channel/router.ts';
+import { createJobHandler, JobRefused } from '../src/jobs.ts';
 import { connectOpenCode } from '../src/opencode.ts';
-import { createScheduleHandler, ScheduleRefused } from '../src/schedules.ts';
 import { Store } from '../src/store.ts';
 
 const NOW = Date.parse('2026-09-15T10:00:00Z');
@@ -69,7 +69,7 @@ function setup(store: Store, url: string, enabled = true) {
     channelOf: async id => (id === 'ses_discord_1' ? '42' : undefined),
     reenter: async () => {},
   });
-  const handler = createScheduleHandler({
+  const handler = createJobHandler({
     store,
     loaded: { path: '/aivi.json', config, projects: [], sources: [] },
     channels,
@@ -80,7 +80,7 @@ function setup(store: Store, url: string, enabled = true) {
 }
 
 const refused = (status: number, pattern: RegExp) => (error: unknown) =>
-  error instanceof ScheduleRefused && error.status === status && pattern.test(error.message);
+  error instanceof JobRefused && error.status === status && pattern.test(error.message);
 
 test('an agent creates a recurring agent job for its own agent and directory; results come back to its session', async t => {
   const store = new Store(':memory:');
@@ -112,8 +112,10 @@ test('an agent creates a recurring agent job for its own agent and directory; re
     /^Created Monday summary \(agent-[0-9a-f]{8}\): cron 0 9 \* \* 1 in Europe\/Amsterdam\. Next: Sep 21, 2026, 9:00 AM/,
   );
   assert.match(created.summary, /brought back into this conversation/);
-  const entry = store.schedule(item.id);
+  const entry = store.job(item.id);
   assert.equal(entry.source, 'agent');
+  assert.equal(item.kind, 'recurring');
+  assert.equal(item.state, 'active');
   assert.deepEqual(entry.spec.task, {
     kind: 'opencode.prompt',
     agent: 'librarian',
@@ -129,26 +131,26 @@ test('an agent creates a recurring agent job for its own agent and directory; re
   assert.equal(listed.items.length, 1);
   assert.match(listed.summary, /Monday summary/);
   const paused = await handler({ action: 'pause', sessionId: 'ses_discord_1', id: item.id });
-  assert.equal(paused.items[0]!.enabled, false);
+  assert.equal(paused.items[0]!.state, 'paused');
   assert.deepEqual(paused.items[0]!.next, []);
   const ran = await handler({ action: 'run', sessionId: 'ses_discord_1', id: item.id });
   assert.match(ran.summary, /Queued one run/);
   const manual = store.lastRun(item.id)!;
   assert.equal(manual.state, 'queued');
   await handler({ action: 'remove', sessionId: 'ses_discord_1', id: item.id });
-  assert.throws(() => store.schedule(item.id), /Unknown schedule/);
-  assert.equal(store.get(manual.id).state, 'cancelled', 'removing cancels the queued run');
+  assert.throws(() => store.job(item.id), /Unknown job/);
+  assert.equal(store.run(manual.id).state, 'cancelled', 'removing cancels the queued run');
 
   const posted = await handler({ ...base(), report: 'channel', channel: '42', at: '1h' });
   assert.deepEqual(
-    store.agentOneOffs().find(j => j.id === posted.items[0]!.id)!.report,
+    store.job(posted.items[0]!.id).spec.report,
     { to: 'channel', module: 'discord', channel: '42', on: 'always' },
     'a conversation defaults to its own platform',
   );
   assert.match(posted.summary, /posted to discord 42/);
   const here = await handler({ ...base(), report: 'channel', at: '1h' });
   assert.deepEqual(
-    store.agentOneOffs().find(j => j.id === here.items[0]!.id)!.report,
+    store.job(here.items[0]!.id).spec.report,
     { to: 'channel', module: 'discord', channel: '42', on: 'always' },
     '"post it to this channel": the channel the conversation lives in',
   );
@@ -166,13 +168,18 @@ test('one-offs, script jobs, overrides and the report checks', async t => {
   const base = { action: 'create', sessionId: 'ses_native', report: 'session', on: 'always' } as const;
 
   const script = await handler({ ...base, command: ['sh', 'clean.sh'], at: '2h', report: 'none' });
-  const job = store.agentOneOffs()[0]!;
-  assert.equal(job.id, script.items[0]!.id);
-  assert.equal(job.scheduledFor, NOW + 2 * 3_600_000);
-  assert.deepEqual(job.task, { kind: 'shell', command: ['sh', 'clean.sh'], cwd: '/home', timeoutMs: 600_000 });
-  assert.equal(job.report, null);
-  assert.equal(store.history(job.id)[0]!.reason, 'agent:ses_native');
+  const job = store.jobs()[0]!;
+  assert.equal(job.spec.id, script.items[0]!.id);
+  assert.equal(script.items[0]!.kind, 'one-off');
+  assert.equal(job.nextAt, NOW + 2 * 3_600_000);
+  assert.equal(job.spec.at, new Date(NOW + 2 * 3_600_000).toISOString());
+  assert.deepEqual(job.spec.task, { kind: 'shell', command: ['sh', 'clean.sh'], cwd: '/home', timeoutMs: 600_000 });
+  assert.equal(job.spec.report, undefined);
+  assert.equal(store.runs().length, 0, 'the run is created when the instant comes');
   assert.match(script.summary, /Created a one-off `sh clean.sh` .* for Sep 15, 2026, .*not reported anywhere/);
+  assert.equal(store.materializeDue(NOW + 2 * 3_600_000).created, 1);
+  const fired = store.runs()[0]!;
+  assert.equal(store.history(fired.id)[0]!.reason, `job:${fired.jobId}`);
 
   const other = await handler({
     ...base,
@@ -185,7 +192,7 @@ test('one-offs, script jobs, overrides and the report checks', async t => {
     channel: '42',
     on: 'failure',
   });
-  const overridden = store.agentOneOffs().find(j => j.id === other.items[0]!.id)!;
+  const overridden = store.job(other.items[0]!.id).spec;
   assert.equal(overridden.task.kind, 'opencode.prompt');
   assert.equal((overridden.task as { agent: string }).agent, 'coder');
   assert.deepEqual(overridden.report, { to: 'channel', module: 'discord', channel: '42', on: 'failure' });
@@ -223,12 +230,17 @@ test('one-offs, script jobs, overrides and the report checks', async t => {
     handler({ ...base, sessionId: 'ses_gone', prompt: 'x', at: '1h' }),
     refused(404, /Unknown session/),
   );
-  // The limit counts schedules and pending one-offs together.
+  // The limit counts recurring jobs and one-offs that have not fired together.
   await handler({ ...base, prompt: 'third', at: '3h' });
   await assert.rejects(handler({ ...base, prompt: 'fourth', at: '4h' }), refused(409, /limit of 3/));
-  const removed = await handler({ action: 'remove', sessionId: 'ses_native', id: job.id });
-  assert.match(removed.summary, /Removed the one-off/);
-  assert.equal(store.get(job.id).state, 'cancelled');
+  const removed = await handler({ action: 'remove', sessionId: 'ses_native', id: job.spec.id });
+  assert.match(removed.summary, /Removed `sh clean.sh`/);
+  assert.throws(() => store.job(job.spec.id), /Unknown job/);
+  assert.equal(store.runs()[0]!.state, 'cancelled', 'its queued run goes with it');
+  // A retried tool call (same message) is one job, not two.
+  const once = await handler({ ...base, prompt: 'once', at: '5h', messageId: 'msg_9' });
+  const twice = await handler({ ...base, prompt: 'once', at: '5h', messageId: 'msg_9' });
+  assert.equal(once.items[0]!.id, twice.items[0]!.id);
 });
 
 test('jobs do not create jobs, unless a conversation adopted the session; disabled config refuses everything', async t => {

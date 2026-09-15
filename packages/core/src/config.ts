@@ -17,6 +17,11 @@ export const taskSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('system.check') }),
   z.strictObject({ kind: z.literal('knowledge.index') }),
   z.strictObject({
+    kind: z.literal('runs.prune'),
+    /** Finished runs (and the finished one-off jobs they belonged to) older than this are deleted; blocked and active work never is. */
+    olderThanDays: z.number().int().min(1),
+  }),
+  z.strictObject({
     kind: z.literal('shell'),
     /** argv, never a shell string: no quoting or injection surprises. */
     command: z.array(z.string().min(1)).min(1),
@@ -95,31 +100,54 @@ export const reportSchema = z.discriminatedUnion('to', [
   z.strictObject({ to: z.literal('channel'), module: id, channel: z.string().min(1), on: reportOn }),
 ]);
 export type Report = z.infer<typeof reportSchema>;
-export const scheduleSchema = z
+/** An ISO 8601 instant; `Date.parse` alone accepts too much. */
+export const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+const misfireSchema = z.strictObject({
+  graceSeconds: z
+    .number()
+    .int()
+    .min(0)
+    .describe(
+      'An occurrence found later than this after downtime is recorded as a missed run, never executed. A large value means "run whenever".',
+    ),
+});
+/**
+ * A job: a task plus when. Recurring (`cron` + `timezone`) or one-off (`at`).
+ * The stored definition; its executions are runs.
+ */
+export const jobSchema = z
   .strictObject({
     id,
-    /** Short human label; agent-created schedules carry the one the person gave. */
+    /** Short human label; agent-created jobs carry the one the person gave. */
     title: z.string().min(1).max(80).optional(),
-    cron: z.string().min(1),
+    cron: z.string().min(1).optional(),
     timezone: z.string().default('UTC'),
+    /** One-off: fires once at this ISO 8601 instant. Exactly one of `cron` or `at`. */
+    at: z.string().regex(ISO_INSTANT).optional(),
     resource: id.default('local-model'),
     enabled: z.boolean().default(true),
     task: taskSchema,
     report: reportSchema.optional(),
-    /** An occurrence found more than `skipAfterMs` late (host was down) is recorded as skipped instead of run. */
-    misfire: z.strictObject({ skipAfterMs: z.number().int().min(1000) }).optional(),
+    /** Per-job override of `scheduler.misfire`. */
+    misfire: misfireSchema.optional(),
   })
   .superRefine((value, ctx) => {
+    if ((value.cron === undefined) === (value.at === undefined))
+      ctx.addIssue({ code: 'custom', message: 'Give exactly one of cron (recurring) or at (one-off)', path: ['cron'] });
+    if (value.at !== undefined && Number.isNaN(Date.parse(value.at)))
+      ctx.addIssue({ code: 'custom', message: 'Not an ISO 8601 instant', path: ['at'] });
     try {
-      // Croner is used only as a calendar calculator, never as our durable queue.
       new Intl.DateTimeFormat('en', { timeZone: value.timezone });
-      const cron = new Cron(value.cron, { timezone: value.timezone, paused: true });
-      cron.stop();
+      if (value.cron !== undefined) {
+        // Croner is used only as a calendar calculator, never as our durable queue.
+        const cron = new Cron(value.cron, { timezone: value.timezone, paused: true });
+        cron.stop();
+      }
     } catch {
       ctx.addIssue({ code: 'custom', message: 'Invalid cron expression or timezone', path: ['cron'] });
     }
   });
-export type Schedule = z.infer<typeof scheduleSchema>;
+export type Job = z.infer<typeof jobSchema>;
 export const projectSchema = z.strictObject({
   $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
   knowledge: z.array(source).default([]),
@@ -218,13 +246,37 @@ export const configSchema = z
                 .min(1)
                 .max(500)
                 .default(50)
-                .describe('How many agent-created schedules and pending one-offs may exist at once.'),
+                .describe('How many agent-created jobs (recurring, or one-offs not yet fired) may exist at once.'),
             }),
             z.literal(false),
           ])
           .default({ resource: 'local-model', max: 50 })
           .describe(
-            'OpenCode agents create jobs through the aivi_schedule tool; whoever may talk to an agent may schedule. `false` disables the tool.',
+            'OpenCode agents create jobs through the aivi_jobs tool; whoever may talk to an agent may schedule. `false` disables the tool.',
+          ),
+        misfire: z
+          .strictObject({ graceSeconds: misfireSchema.shape.graceSeconds.default(60) })
+          .default({ graceSeconds: 60 })
+          .describe(
+            'Default for every job: an occurrence found more than graceSeconds late (aivi was down) becomes one missed run per job, never executed.',
+          ),
+        retention: z
+          .union([
+            z.strictObject({
+              cron: z.string().min(1).default('0 4 * * *'),
+              timezone: z.string().optional().describe('IANA timezone; default the host’s.'),
+              olderThanDays: z.number().int().min(1).default(30),
+              resource: id
+                .optional()
+                .describe(
+                  'Pool the prune run takes a slot in; default local-model, or the first pool when that does not exist.',
+                ),
+            }),
+            z.literal(false),
+          ])
+          .default({ cron: '0 4 * * *', olderThanDays: 30 })
+          .describe(
+            'The system job `retention` (task runs.prune) that deletes finished runs and finished one-off jobs older than olderThanDays. `false` removes it.',
           ),
       })
       .default({
@@ -232,14 +284,16 @@ export const configSchema = z
         resources: { 'local-model': 1 },
         pollMs: 1000,
         agentSchedules: { resource: 'local-model', max: 50 },
+        misfire: { graceSeconds: 60 },
+        retention: { cron: '0 4 * * *', olderThanDays: 30 },
       }),
-    schedules: z.array(scheduleSchema).default([]),
+    jobs: z.array(jobSchema).default([]),
   })
   .superRefine((config, ctx) => {
     for (const [field, values] of [
       ['projects', config.projects],
       ['knowledge', config.knowledge],
-      ['schedules', config.schedules],
+      ['jobs', config.jobs],
     ] as const) {
       const seen = new Set<string>();
       for (const [i, value] of values.entries()) {
@@ -258,9 +312,15 @@ export const configSchema = z
         });
       agents.add(value.agent);
     }
-    for (const [i, schedule] of config.schedules.entries()) {
-      if (!(schedule.resource in config.scheduler.resources))
-        ctx.addIssue({ code: 'custom', path: ['schedules', i, 'resource'], message: 'Unknown resource pool' });
+    for (const [i, job] of config.jobs.entries()) {
+      if (!(job.resource in config.scheduler.resources))
+        ctx.addIssue({ code: 'custom', path: ['jobs', i, 'resource'], message: 'Unknown resource pool' });
+      if (job.id === RETENTION_JOB_ID && config.scheduler.retention)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['jobs', i, 'id'],
+          message: 'Reserved for the system retention job; choose another id or set scheduler.retention to false',
+        });
     }
     if (config.scheduler.agentSchedules && !(config.scheduler.agentSchedules.resource in config.scheduler.resources))
       ctx.addIssue({
@@ -268,8 +328,50 @@ export const configSchema = z
         path: ['scheduler', 'agentSchedules', 'resource'],
         message: 'Unknown resource pool; name one of scheduler.resources or set agentSchedules to false',
       });
+    const retention = config.scheduler.retention;
+    if (retention) {
+      if (retention.resource !== undefined && !(retention.resource in config.scheduler.resources))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['scheduler', 'retention', 'resource'],
+          message: 'Unknown resource pool; name one of scheduler.resources or set retention to false',
+        });
+      if (
+        !jobSchema.safeParse({
+          id: RETENTION_JOB_ID,
+          cron: retention.cron,
+          timezone: retention.timezone,
+          task: { kind: 'system.check' },
+        }).success
+      )
+        ctx.addIssue({
+          code: 'custom',
+          path: ['scheduler', 'retention', 'cron'],
+          message: 'Invalid cron expression or timezone',
+        });
+    }
   });
 export type Config = z.infer<typeof configSchema>;
+
+/** Id of the job the host seeds from `scheduler.retention`. */
+export const RETENTION_JOB_ID = 'retention';
+/** The system job `scheduler.retention` describes, or null when retention is off. */
+export function retentionJob(
+  config: Config,
+  hostTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): Job | null {
+  const retention = config.scheduler.retention;
+  if (!retention) return null;
+  const pools = Object.keys(config.scheduler.resources);
+  return jobSchema.parse({
+    id: RETENTION_JOB_ID,
+    title: 'Prune finished runs',
+    cron: retention.cron,
+    timezone: retention.timezone ?? hostTimezone,
+    resource: retention.resource ?? (pools.includes('local-model') ? 'local-model' : pools[0]),
+    task: { kind: 'runs.prune', olderThanDays: retention.olderThanDays },
+  });
+}
 
 /**
  * Who may talk to aivi through a communication channel (Discord, Slack, …).
@@ -402,8 +504,8 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
     }
     projects.push({ id: entry.id, directory, settings });
   }
-  for (const schedule of config.schedules) {
-    const task = schedule.task;
+  for (const job of config.jobs) {
+    const task = job.task;
     if (task.kind === 'opencode.prompt') task.directory = absolute(base, task.directory);
     if (task.kind === 'shell' && task.cwd) task.cwd = absolute(base, task.cwd);
     if (task.kind === 'dreaming') {
@@ -414,7 +516,7 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
       );
       if (!inside)
         throw new Error(
-          `Schedule ${schedule.id}: memoryDirectory must be inside a core knowledge source so memories are searchable`,
+          `Job ${job.id}: memoryDirectory must be inside a core knowledge source so memories are searchable`,
         );
     }
   }

@@ -171,11 +171,11 @@ export class ConversationStore {
     return row ? String(row.channel) : null;
   }
 
-  /** Bring a job's outcome into the conversation bound to `session` as a turn of kind `job`. */
-  enqueueJobResult(jobId: string, session: string, text: string, maxPending: number): boolean {
+  /** Bring a run's outcome into the conversation bound to `session` as a turn of kind `job`. */
+  enqueueJobResult(runId: string, session: string, text: string, maxPending: number): boolean {
     const channel = this.channelOf(session);
     if (!channel) throw new Error(`No ${this.platform.label} conversation is bound to session ${session}`);
-    return this.enqueue({ id: `job:${jobId}`, channel, user: 'aivi', name: 'aivi', text, kind: 'job' }, maxPending);
+    return this.enqueue({ id: `run:${runId}`, channel, user: 'aivi', name: 'aivi', text, kind: 'job' }, maxPending);
   }
 
   reset(channel: string): void {

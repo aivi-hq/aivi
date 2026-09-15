@@ -48,11 +48,18 @@ export function shellEnvironment(
 export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execute {
   const log = deps.log ?? silentLogger;
   const protectedEnv = [...(deps.protectedEnv ?? [])];
-  return async (job, context) => {
-    switch (job.task.kind) {
+  return async (run, context) => {
+    switch (run.task.kind) {
       case 'knowledge.index': {
         if (!deps.knowledge) throw new Error('Knowledge service is not available');
         return { state: 'succeeded', result: await deps.knowledge.index() };
+      }
+      case 'runs.prune': {
+        const cutoff = Date.now() - run.task.olderThanDays * 86_400_000;
+        return {
+          state: 'succeeded',
+          result: { olderThan: new Date(cutoff).toISOString(), ...deps.store.prune(cutoff) },
+        };
       }
       case 'system.check': {
         const sources = await Promise.all(
@@ -67,7 +74,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         return { state: 'succeeded', result: { sources, checkedAt: new Date().toISOString() } };
       }
       case 'shell': {
-        const task = job.task;
+        const task = run.task;
         const [file, ...args] = task.command;
         const cwd = task.cwd ?? loaded.config.stateDirectory;
         const { started, ...outcome } = await new Promise<{
@@ -119,14 +126,14 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         };
       }
       case 'dreaming': {
-        const task = job.task;
-        const { sessionId } = turnIdsFor(job.id);
+        const task = run.task;
+        const { sessionId } = turnIdsFor(run.id);
         const timeout = AbortSignal.timeout(task.timeoutMs);
         try {
           const client = await connectForTurn(deps.opencode);
           // Persist the intended ID BEFORE any request. A dropped response then has a known reconciliation target.
           context.attachSession(sessionId);
-          const outcome = await dream(task, job.id, {
+          const outcome = await dream(task, run.id, {
             store: deps.store,
             client,
             stateDirectory: loaded.config.stateDirectory,
@@ -149,10 +156,10 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         }
       }
       case 'opencode.prompt': {
-        const task = job.task;
-        const { sessionId, messageId } = turnIdsFor(job.id);
+        const task = run.task;
+        const { sessionId, messageId } = turnIdsFor(run.id);
         const timeout = AbortSignal.timeout(task.timeoutMs);
-        const metadata = { aivi: { origin: 'job', job: job.id } };
+        const metadata = { aivi: { origin: 'job', run: run.id } };
         try {
           const client = await connectForTurn(deps.opencode);
           // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
@@ -164,7 +171,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
               agent: task.agent,
               directory: task.directory,
               create: true,
-              title: `aivi ${job.id}`,
+              title: `aivi ${run.id}`,
               sessionMetadata: metadata,
               messageId,
               text: task.prompt,
@@ -184,8 +191,8 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
 
 /**
  * How a turn that produced no verified answer ends. Before the prompt was
- * accepted nothing ran, so the job fails and the next occurrence retries.
- * After it, the session may still be doing things: the job blocks and keeps
+ * accepted nothing ran, so the run fails and the next occurrence retries.
+ * After it, the session may still be doing things: the run blocks and keeps
  * its capacity until an operator has looked. The SDK wraps an aborted request
  * as a transport error, so the cause is read from the signals, not the error.
  */
@@ -206,7 +213,7 @@ function ended(
   return {
     state: 'blocked',
     result: { sessionId: turn.sessionId },
-    reason: `${reason}. Inspect session ${turn.sessionId} and resolve this job.`,
+    reason: `${reason}. Inspect session ${turn.sessionId} and resolve this run.`,
   };
 }
 

@@ -1,8 +1,8 @@
-import type { Job, JobState } from '@aivi/core';
+import type { Run, RunState } from '@aivi/core';
 
 export interface DeliveryContext {
-  job: Job;
-  state: JobState;
+  run: Run;
+  state: RunState;
 }
 
 /**

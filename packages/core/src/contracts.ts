@@ -4,37 +4,47 @@ import type { KnowledgeSource, Report, Task } from './config.ts';
 import { knowledgeKindSchema } from './config.ts';
 import type { KnowledgeKind } from './kinds.ts';
 
-export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled';
-export interface Job {
+/**
+ * One execution of a job. `missed` is terminal and never ran: the occurrence
+ * was found later than its misfire grace (aivi was not running).
+ */
+export type RunState = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'missed';
+export interface Run {
   id: string;
+  /** The definition this run belongs to; every run has one. */
+  jobId: string;
+  /** Snapshot of the job's task at materialization, so editing the definition never changes a queued run. */
   task: Task;
   resource: string;
-  state: JobState;
+  state: RunState;
   createdAt: number;
   scheduledFor: number;
   startedAt: number | null;
   finishedAt: number | null;
-  scheduleId: string | null;
   sessionId: string | null;
   owner: string | null;
   result: unknown;
   error: string | null;
   report: Report | null;
 }
+/** Who defined a job: `aivi.json`, an agent through `aivi_jobs`, the operator CLI, or the host itself (retention). */
+export type JobSource = 'config' | 'agent' | 'operator' | 'system';
+/** A definition's own state; `done` and `missed` only happen to one-offs. */
+export type JobState = 'active' | 'paused' | 'done' | 'missed';
 export interface Status {
   version: string;
-  counts: Record<JobState, number>;
+  counts: Record<RunState, number>;
   sources: number;
   leases: number;
   completion: 'verified-final-answer';
-  /** The next few schedule occurrences, soonest first. */
-  upcoming: { id: string; source: 'config' | 'agent'; kind: Task['kind']; nextAt: string }[];
-  /** Jobs that reached a final state in the last 24 hours, newest first. */
+  /** The next few job occurrences, soonest first. */
+  upcoming: { id: string; source: JobSource; kind: Task['kind']; title: string | null; nextAt: string }[];
+  /** Runs that reached a final state in the last 24 hours, newest first. */
   recent: {
     id: string;
-    scheduleId: string | null;
+    jobId: string;
     kind: Task['kind'];
-    state: JobState;
+    state: RunState;
     finishedAt: string;
     error: string | null;
   }[];
@@ -42,11 +52,11 @@ export interface Status {
 
 const identifier = z.string().min(1).max(200);
 /**
- * What an agent may ask of the scheduler through `aivi_schedule`. The calling
+ * What an agent may ask of the scheduler through `aivi_jobs`. The calling
  * session is the authority: the host reads its agent, directory and origin from
  * OpenCode and never trusts them from input.
  */
-export const scheduleRequestSchema = z.discriminatedUnion('action', [
+export const jobRequestSchema = z.discriminatedUnion('action', [
   z.strictObject({
     action: z.literal('create'),
     sessionId: identifier,
@@ -77,23 +87,23 @@ export const scheduleRequestSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('list'), sessionId: identifier }),
   z.strictObject({ action: z.enum(['pause', 'resume', 'remove', 'run']), sessionId: identifier, id: identifier }),
 ]);
-export type ScheduleRequest = z.infer<typeof scheduleRequestSchema>;
-export interface ScheduleItem {
+export type JobRequest = z.infer<typeof jobRequestSchema>;
+export interface JobItem {
   id: string;
-  kind: 'schedule' | 'one-off';
+  kind: 'recurring' | 'one-off';
   task: 'agent' | 'script';
   title: string;
-  /** Cron + timezone for a schedule; the due instant for a one-off. */
+  /** Cron + timezone for a recurring job; the due instant for a one-off. */
   when: string;
-  enabled: boolean;
+  state: JobState;
   next: string[];
-  lastRun: { state: JobState; at: string; error: string | null } | null;
+  lastRun: { state: RunState; at: string; error: string | null } | null;
   report: string;
 }
-export interface ScheduleResponse {
+export interface JobResponse {
   /** One or two sentences the agent can relay as-is. */
   summary: string;
-  items: ScheduleItem[];
+  items: JobItem[];
 }
 export interface SourceSelection {
   projects?: string[];
@@ -133,7 +143,7 @@ export interface HostClient {
   status(): Promise<Status>;
   sources(selection?: SourceSelection): Promise<KnowledgeSource[]>;
   search(request: SearchRequest): Promise<SearchHit[]>;
-  schedule(request: ScheduleRequest): Promise<ScheduleResponse>;
+  jobs(request: JobRequest): Promise<JobResponse>;
   /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */
   wake(): Promise<{ woken: boolean }>;
 }

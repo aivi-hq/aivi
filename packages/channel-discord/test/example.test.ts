@@ -13,7 +13,7 @@ test('the example home loads through the real loaders with every feature enabled
   assert.equal(loaded.config.stateDirectory, join(example, 'state'), 'state lives in the home');
   assert.ok(loaded.sources.length > 0);
   assert.ok(loaded.config.browser && loaded.config.search && loaded.config.modules.discord, 'everything is on');
-  assert.ok(loaded.config.schedules.some(s => s.task.kind === 'dreaming'));
+  assert.ok(loaded.config.jobs.some(s => s.task.kind === 'dreaming'));
   const discord = await loadDiscordConfig(loaded.config.modules.discord!.config);
   assert.ok(discord.resource in loaded.config.scheduler.resources, 'Discord pool exists');
   assert.equal(discord.directory, example, 'the home is the OpenCode location');

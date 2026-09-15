@@ -303,8 +303,8 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
             pending.length
               ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
               : 'Ready for your next message.',
-            upcoming ? `Next scheduled: ${upcoming}.` : 'No schedules are due.',
-            recent ? `Last 24 h: ${recent}.` : 'No jobs finished in the last 24 h.',
+            upcoming ? `Next jobs: ${upcoming}.` : 'No jobs are due.',
+            recent ? `Runs in the last 24 h: ${recent}.` : 'No runs finished in the last 24 h.',
           ].join('\n');
         }
         await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
@@ -354,7 +354,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         return channel?.isThread() ? (channel.parentId ?? undefined) : conversation;
       },
       async reenter(session, text, context) {
-        store.enqueueJobResult(context.job.id, session, text, config.maxPending);
+        store.enqueueJobResult(context.run.id, session, text, config.maxPending);
         engine?.tick();
       },
       async post(channelId, text, context) {
@@ -367,18 +367,23 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         let target = channel;
         if (!channel.isThread() && !channel.isDMBased() && 'threads' in channel && !channel.isThreadOnly()) {
           try {
-            const { job } = context;
-            const title = job.scheduleId ? services.store.schedule(job.scheduleId).spec.title : undefined;
+            const { run } = context;
+            let title: string | undefined;
+            try {
+              title = services.store.job(run.jobId).spec.title;
+            } catch {
+              // The job was removed after its run finished; the text names it.
+            }
             const thread = await opener.startThread({
               name: title ?? threadName(text),
               autoArchiveDuration: 1440,
-              reason: `aivi job ${job.id}`,
+              reason: `aivi run ${run.id}`,
             });
             target = thread;
             store.adopt(
               thread.id,
-              job.task.kind === 'opencode.prompt' && job.sessionId
-                ? { session: job.sessionId, agent: job.task.agent, directory: job.task.directory }
+              run.task.kind === 'opencode.prompt' && run.sessionId
+                ? { session: run.sessionId, agent: run.task.agent, directory: run.task.directory }
                 : { seed: text },
             );
           } catch (error) {

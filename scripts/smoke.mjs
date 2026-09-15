@@ -29,10 +29,23 @@ try {
   const env = { ...process.env, AIVI_HOME: directory };
   const run = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8', env }));
   assert.equal(run('config', 'check').valid, true);
-  const job = run('jobs', 'enqueue', task, '--key', 'smoke');
-  assert.equal(run('jobs', 'enqueue', task, '--key', 'smoke').id, job.id);
+  const added = run('jobs', 'add', task, '--key', 'smoke', '--title', 'Smoke check');
+  assert.equal(added.job.source, 'operator');
+  assert.equal(added.runs.length, 1, 'a one-off due now is materialized at once');
+  assert.equal(
+    run('jobs', 'add', task, '--key', 'smoke', '--title', 'Smoke check').job.spec.id,
+    added.job.spec.id,
+    'the key deduplicates',
+  );
   run('tick');
-  assert.equal(run('jobs', 'show', job.id).job.result.sources[0].available, true);
+  const shown = run('runs', 'show', added.runs[0].id);
+  assert.equal(shown.run.result.sources[0].available, true);
+  assert.equal(run('jobs', 'show', added.job.spec.id).job.state, 'done');
+  assert.ok(
+    run('jobs', 'list').some(j => j.id === 'retention' && j.source === 'system'),
+    'the retention job is seeded from scheduler.retention',
+  );
+  assert.equal(run('runs', 'list', '--state', 'succeeded').length, 1);
   assert.equal(run('status').counts.succeeded, 1);
 
   const token = randomBytes(32).toString('hex');
@@ -117,7 +130,7 @@ try {
   );
   daemon.kill('SIGTERM');
   assert.equal((await stopped)[0], 0);
-  console.log('CLI smoke passed: enqueue → execute → inspect → serve (token, none) → graceful shutdown → reopen');
+  console.log('CLI smoke passed: jobs add → tick → runs show → serve (token, none) → graceful shutdown → reopen');
 } finally {
   if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
     daemon.kill('SIGKILL');

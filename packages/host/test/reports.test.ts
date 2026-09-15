@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Job } from '@aivi/core';
-import { configSchema, scheduleSchema, taskSchema } from '@aivi/core';
+import type { Run } from '@aivi/core';
+import { configSchema, jobSchema, taskSchema } from '@aivi/core';
 import type { ChannelModule } from '../src/channel/contract.ts';
 import { Channels } from '../src/channel/router.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from '../src/reports.ts';
@@ -24,6 +24,7 @@ test('report policy selects which outcomes are delivered', () => {
   assert.equal(shouldReport({ ...discord, on: 'never' }, 'failed'), false);
   assert.equal(shouldReport({ ...discord, on: 'failure' }, 'succeeded'), false);
   assert.equal(shouldReport({ ...discord, on: 'failure' }, 'blocked'), true);
+  assert.equal(shouldReport({ ...discord, on: 'failure' }, 'missed'), true, 'a missed occurrence is a failure');
   assert.equal(shouldReport({ ...discord, on: 'always' }, 'succeeded'), true);
   assert.equal(shouldReport({ to: 'session', session: 'ses_1', on: 'failure' }, 'failed'), true);
 });
@@ -37,33 +38,37 @@ test('outcome text prefers the agent answer or shell output and stays bounded', 
     scheduledFor: 0,
     startedAt: null,
     finishedAt: null,
-    scheduleId: 'daily',
+    jobId: 'daily',
     sessionId: null,
     owner: null,
     result: null,
     error: null,
     report: null,
   } as const;
-  const prompt: Job = {
+  const prompt: Run = {
     ...base,
     task: taskSchema.parse({ kind: 'opencode.prompt', agent: 'a', directory: '/d', prompt: 'p' }),
   };
   assert.equal(
     describeOutcome(prompt, 'succeeded', { text: 'All good' }, 'completed'),
-    '✅ schedule daily (opencode.prompt) succeeded\nAll good',
+    '✅ daily (opencode.prompt) succeeded\nAll good',
   );
-  const shell: Job = { ...base, scheduleId: null, task: taskSchema.parse({ kind: 'shell', command: ['x'] }) };
+  const shell: Run = { ...base, jobId: 'job-abcdef12', task: taskSchema.parse({ kind: 'shell', command: ['x'] }) };
   assert.equal(
     describeOutcome(shell, 'failed', { exitCode: 2, stdout: '', stderr: 'boom' }, 'Command exited with 2'),
-    '❌ job abcdef12 (shell) failed\nCommand exited with 2\nexit 2\nboom',
+    '❌ job-abcdef12 (shell) failed\nCommand exited with 2\nexit 2\nboom',
+  );
+  assert.equal(
+    describeOutcome(shell, 'missed', null, 'missed: aivi was not running at Sep 15, 2026, 9:00 AM (UTC)'),
+    '⏭ job-abcdef12 (shell) missed\nmissed: aivi was not running at Sep 15, 2026, 9:00 AM (UTC)',
   );
   assert.ok(describeOutcome(prompt, 'succeeded', { text: 'x'.repeat(5000) }, 'completed').length <= 4000);
   assert.equal(
     describeOutcome({ ...prompt, sessionId: 'ses_aivi_1' }, 'succeeded', { text: 'All good' }, 'completed'),
-    '✅ schedule daily (opencode.prompt) succeeded\nAll good\nsession ses_aivi_1 in OpenCode',
+    '✅ daily (opencode.prompt) succeeded\nAll good\nsession ses_aivi_1 in OpenCode',
     'an agent job links its transcript',
   );
-  const dreaming: Job = {
+  const dreaming: Run = {
     ...base,
     task: taskSchema.parse({ kind: 'dreaming', directory: '/d', memoryDirectory: '/k/memory' }),
   };
@@ -73,10 +78,7 @@ test('outcome text prefers the agent answer or shell output and stays bounded', 
     { reviewed: 4, changed: ['facts.md'], sessions: ['ses_x'], transcript: '/secret/path.md', text: 'Added 1 fact.' },
     'completed',
   );
-  assert.equal(
-    text,
-    '✅ schedule daily (dreaming) succeeded\nReviewed 4 conversation(s); updated facts.md.\nAdded 1 fact.',
-  );
+  assert.equal(text, '✅ daily (dreaming) succeeded\nReviewed 4 conversation(s); updated facts.md.\nAdded 1 fact.');
   assert.ok(!text.includes('/secret') && !text.includes('ses_x'), 'no paths or session ids in chat');
   assert.match(
     describeOutcome(dreaming, 'succeeded', { reviewed: 0, changed: [] }, 'completed'),
@@ -88,13 +90,13 @@ test('scheduled outcomes are posted through the registered channel module and au
   const store = new Store(':memory:');
   t.after(() => store.close());
   const config = configSchema.parse({ version: 1 });
-  const schedule = scheduleSchema.parse({
+  const nightly = jobSchema.parse({
     id: 'nightly',
     cron: '* * * * *',
     task: { kind: 'system.check' },
     report: { to: 'channel', module: 'discord', channel: '42' },
   });
-  store.syncSchedules([schedule], 0);
+  store.syncJobs([nightly], [], 0);
   store.materializeDue(60_000);
   const delivered: [string, string][] = [];
   const channels = new Channels();
@@ -111,13 +113,13 @@ test('scheduled outcomes are posted through the registered channel module and au
       config.scheduler,
       async () => ({ state: 'succeeded', result: { ok: true } }),
       undefined,
-      async (job, state, result, reason) => {
-        if (!shouldReport(job.report, state)) return;
+      async (run, state, result, reason) => {
+        if (!shouldReport(run.report, state)) return;
         try {
-          await channels.deliver(job.report, describeOutcome(job, state, result, reason), { job, state });
-          store.note(job.id, 'reported', reportTarget(job.report));
+          await channels.deliver(run.report, describeOutcome(run, state, result, reason), { run, state });
+          store.note(run.id, 'reported', reportTarget(run.report));
         } catch (error) {
-          store.note(job.id, 'report-failed', (error as Error).message);
+          store.note(run.id, 'report-failed', (error as Error).message);
         }
       },
     );
@@ -125,9 +127,9 @@ test('scheduled outcomes are posted through the registered channel module and au
     await scheduler.drain();
   };
   await run(61_000);
-  const first = store.list()[0]!;
+  const first = store.runs()[0]!;
   assert.deepEqual(first.report, { to: 'channel', module: 'discord', channel: '42', on: 'always' });
-  assert.deepEqual(delivered, [['42', '✅ schedule nightly (system.check) succeeded\n{"ok":true}']]);
+  assert.deepEqual(delivered, [['42', '✅ nightly (system.check) succeeded\n{"ok":true}']]);
   assert.deepEqual(store.history(first.id).at(-1), {
     ...store.history(first.id).at(-1),
     action: 'reported',
@@ -137,8 +139,8 @@ test('scheduled outcomes are posted through the registered channel module and au
   unregister();
   store.materializeDue(120_000);
   await run(121_000);
-  const second = store.list()[1]!;
-  assert.equal(second.state, 'succeeded', 'a delivery failure never changes the job outcome');
+  const second = store.runs()[1]!;
+  assert.equal(second.state, 'succeeded', 'a delivery failure never changes the run outcome');
   assert.match(store.history(second.id).at(-1)!.reason, /No channel module "discord"/);
 });
 
@@ -157,8 +159,9 @@ test('a report to "session" goes to the module that owns the session, else into 
       },
     }),
   );
-  const job = {
-    id: 'j',
+  const run = {
+    id: 'r1',
+    jobId: 'j',
     task: taskSchema.parse({ kind: 'system.check' }),
     resource: 'r',
     state: 'succeeded',
@@ -166,14 +169,13 @@ test('a report to "session" goes to the module that owns the session, else into 
     scheduledFor: 0,
     startedAt: null,
     finishedAt: null,
-    scheduleId: null,
     sessionId: null,
     owner: null,
     result: null,
     error: null,
     report: null,
-  } satisfies Job;
-  const context = { job, state: 'succeeded' as const };
+  } satisfies Run;
+  const context = { run, state: 'succeeded' as const };
   await channels.deliver({ to: 'session', session: 'ses_discord_1', on: 'always' }, 'hi', context);
   await channels.deliver({ to: 'session', session: 'ses_native', on: 'always' }, 'yo', context);
   assert.deepEqual(reentered, ['ses_discord_1:hi']);

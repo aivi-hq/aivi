@@ -24,44 +24,51 @@ Modules are explicit packages with a small start/stop contract. See
 
 ## SQLite and Croner
 
-SQLite stores schedules, job payloads, ownership, results, and audit history.
-The host schema is versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 6)
+SQLite stores job definitions (`jobs`), their runs (`runs`: task snapshot,
+ownership, result, timing), leases and audit history. The host schema is
+versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 7, where definitions
+and executions were separated and every one-off got a definition of its own)
 and adapters version their own namespaced tables through `Store.migrate`.
 Channel modules store their inbox and session mappings in the same database
 that way (`<module>_turns`, `<module>_sessions`; [channels](channels.md));
 a turn claim and its lease are atomic.
 Croner is only a timezone-aware date calculator. The host loop sleeps until the
-next due instant (`Store.nextDue`: the earliest future schedule occurrence or
-one-off), and is woken early when the queue changes: the schedule tool, a job or
-Discord turn releasing capacity, or the CLI poking `POST /v1/wake` after it
-wrote to SQLite. `scheduler.pollMs` (30 s) is only a safety net for a missed
+next due instant (`Store.nextDue`: the earliest future occurrence of an active
+job, recurring or one-off), and is woken early when the queue changes: the
+jobs tool, a run or Discord turn releasing capacity, or the CLI poking
+`POST /v1/wake` after it wrote to SQLite. `scheduler.pollMs` (30 s) is only a safety net for a missed
 wake. No in-memory timer holds state, so a crash or restart has nothing to
 reconcile. A tick does not invoke a model unless a queued task requests one.
 
-`BEGIN IMMEDIATE` transactions serialize enqueueing, schedule materialization,
-and job claims. Unique keys deduplicate identical requests. A partial unique
-index allows only one outstanding occurrence per schedule. WAL enables readers
-while the daemon operates. Node's built-in SQLite avoids a separate native addon.
+`BEGIN IMMEDIATE` transactions serialize job creation, materialization of due
+occurrences into runs, and run claims. Unique keys on definitions deduplicate
+identical requests. A partial unique index allows only one outstanding run per
+job. WAL enables readers while the daemon operates. Node's built-in SQLite
+avoids a separate native addon.
 
 This is a single-machine design. A singleton owner and PID prevent competing
 daemons on one database. PID reuse is treated conservatively as an existing
 owner; an operator may need to investigate it. Do not share the database between
 machines or use a network filesystem as a coordination mechanism.
 
-The current misfire policy is coalesce: schedule downtime produces one pending
-occurrence, then advances to the next future time. Ticks arriving while that
-schedule already has outstanding work are skipped. This suits maintenance and
-dreaming; `misfire.skipAfterMs` lets a time-bound schedule (a 9:00 standup)
-record a too-late occurrence as skipped instead. A task requiring every
-occurrence needs an explicit new policy.
+Misfire is one rule: an occurrence either matched its time or it did not. A
+due occurrence found within `misfire.graceSeconds` (60 by default) becomes a
+queued run; one found later becomes a `missed` run, terminal, never executed,
+reported like a failure, and the job advances past now. Downtime therefore
+leaves one `missed` run per job for the whole gap, not one per skipped
+minute, and running late is never silent. A maintenance job that should run
+whenever aivi is back sets a large grace. Occurrences that arrive while a run
+of the same job is still outstanding are skipped without a record. A task
+requiring every occurrence needs an explicit new policy.
 Croner defines DST behavior; use UTC when repeated/skipped local wall times are
 undesirable. Store timestamps are UTC milliseconds.
 
 ## Ownership before execution
 
-Queue states are `queued`, `running`, `succeeded`, `failed`, `blocked`, and
-`cancelled`. Queued cancellation has no external effects. A running or blocked
-job occupies global capacity and its resource-pool slot.
+Run states are `queued`, `running`, `succeeded`, `failed`, `blocked`,
+`cancelled` and `missed`. Queued cancellation has no external effects. A
+running or blocked run occupies global capacity and its resource-pool slot.
+Job states are `active`, `paused` and, for one-offs, `done` or `missed`.
 
 An OpenCode submission saves an intended session ID before calling the server.
 The request carries stable session/message IDs and job metadata. If a response
@@ -72,10 +79,10 @@ One session driver (`runTurn`) serves jobs, dreaming and Discord: it verifies
 a final answer from the native context rather than trusting idleness.
 Unattended turns auto-reject permission prompts by default, so a read-only
 agent keeps going and the denial is recorded. A failure before the prompt is
-accepted (`TurnNotStarted`) means nothing ran: jobs end `failed`, Discord
+accepted (`TurnNotStarted`) means nothing ran: runs end `failed`, Discord
 turns are discarded and their capacity released. Anything after that which
 cannot be verified (timeout, failed turn, changed agent, host shutdown
-mid-turn) blocks; `jobs resolve` records the operator's decision and neither
+mid-turn) blocks; `runs resolve` records the operator's decision and neither
 stops OpenCode nor undoes side effects.
 
 ### Two queues, one capacity
@@ -115,9 +122,9 @@ knowledge, not per-human private memory.
 The API listens on `host.bind` (loopback by default; a tailnet or LAN address
 for a shared knowledge server) and exposes status, source discovery, scoped
 knowledge search, optional permission-gated browser operations, and one job
-mutation: `POST /v1/schedule`, the back end of the `aivi_schedule` tool.
+mutation: `POST /v1/jobs`, the back end of the `aivi_jobs` tool.
 `/health` is public; everything else requires the bearer token unless
-`host.auth.mode` is `none`. The schedule route is a deliberate revision of the
+`host.auth.mode` is `none`. The jobs route is a deliberate revision of the
 earlier "no job mutations over the API" rule (2026-09-15): it is limited to what
 an agent may do for a person who asked (its own agent and directory by default,
 a report the destination accepts, no other task kinds, refused from job

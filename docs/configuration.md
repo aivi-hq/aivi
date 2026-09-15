@@ -38,11 +38,13 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `modules.slack.config` | Optional path to Slack module settings ([slack](slack.md)) |
 | `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
-| `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
+| `scheduler.maxConcurrent` | `1`; counts running and blocked runs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.pollMs` | `30000`; safety-net interval. The host sleeps until the next due instant and is woken by changes; this only bounds a missed wake |
-| `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_schedule`, run in that pool, at most `max` schedules and pending one-offs at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
-| `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `title`, `report`, `enabled` (default `true`) and `misfire.skipAfterMs` (an occurrence found later than that after downtime is recorded as skipped, not run) |
+| `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
+| `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
+| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/aivi.json` writes the default out explicitly, in its `maintenance` pool |
+| `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). The id `retention` is reserved while `scheduler.retention` is on |
 
 ## Tasks
 
@@ -50,22 +52,64 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | --- | --- | --- |
 | `system.check` | – | Reports whether every knowledge source path exists |
 | `knowledge.index` | – | Refreshes the search index |
+| `runs.prune` | `olderThanDays` (≥ 1) | Deletes runs that ended `succeeded`, `failed`, `cancelled` or `missed` before that, with their audit rows, then the `done`/`missed` one-off jobs that have no runs left. Blocked and active runs and recurring jobs are never touched. The host seeds one such job from `scheduler.retention` |
 | `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
 | `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
 | `dreaming` | `memoryDirectory`, `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
 
+## Jobs, runs, tasks
+
+A **task** is what to do: `kind` plus parameters (the table above). A **job**
+is a definition: a task plus *when*, either recurring (`cron` + `timezone`) or
+one-off (`at`), with an `id`, optional `title`, a `resource` pool, an optional
+`report`, `misfire`, and `enabled`. A **run** is one execution of a job:
+`queued → running → succeeded | failed | blocked`, or `cancelled`, or
+`missed`; one row, one audit trail, and always a `jobId`. The run snapshots
+the job's task when it is created, so editing a definition never changes a
+queued run.
+
+Every job has a `source`: `config` (this file), `system` (seeded by the host
+from `scheduler.retention`), `agent` (created through `aivi_jobs`) or
+`operator` (created with `aivi jobs add`). Startup reconciles `config` and
+`system` jobs against the settings: unchanged definitions keep their next
+occurrence, changed ones cancel their queued run and start from the next
+future occurrence, a `config` job that disappeared is paused, a `system` job
+that disappeared is removed. Agent and operator jobs are never touched by
+that; they are paused, resumed and removed through the tool or the CLI.
+Config changes require a host restart.
+
+A job's own state is `active`, `paused`, or, for one-offs only, `done` (its
+run has finished, been cancelled, or been resolved) or `missed`. Recurring
+jobs have one outstanding run at a time: an occurrence that arrives while a
+run is still queued, running or blocked is skipped.
+
+**Misfire: it matched or it didn't.** When a due occurrence is materialized,
+`now - due` is compared with the job's `misfire.graceSeconds` (default
+`scheduler.misfire.graceSeconds`, 60). Within the grace the run is queued as
+usual. Beyond it a run is recorded in the terminal state `missed`, never
+executed, with the reason `missed: aivi was not running at <time>`; the job
+advances to its next future occurrence (a one-off becomes `missed`). Downtime
+therefore produces one `missed` run per job for the whole gap, not one per
+missed minute, and the job's report fires for it like a failure. A time-bound
+job (a 9:00 standup) needs nothing special; a job that should run whenever
+aivi is back (a nightly index) sets a large grace.
+
+A one-off created for "now" (`aivi jobs add` without `--at`, `knowledge
+index`) is materialized at creation and waits only for capacity.
+
 ## Reporting
 
-Any schedule, or a task file passed to `jobs enqueue` as `{ "task": …, "report": …, "resource"?: … }`,
-may carry a `report`. Delivery success or failure is recorded in the job's
-audit history and never changes the job's outcome. `on` is `"always"`
-(default), `"failure"` or `"never"`. Two shapes exist:
+Any job, including a task file passed to `jobs add` as
+`{ "task": …, "report": …, "resource"?: … }`, may carry a `report`.
+Delivery success or failure is recorded in the run's audit history and never
+changes the run's outcome. `on` is `"always"` (default), `"failure"` (failed,
+blocked and missed) or `"never"`. Two shapes exist:
 
 - **A channel**: `{ "to": "channel", "module": "discord", "channel": "<id>", "on": … }`.
   `module` names a running channel module ([channels](channels.md)), `channel`
   is that platform's own identifier. The module decides whether aivi may post
   there (`reportChannels` in its config) and how: Discord opens a thread that
-  continues the job's session, so replying to an outcome talks to the agent
+  continues the run's session, so replying to an outcome talks to the agent
   that produced it ([discord](discord.md#setup)). See `example/tasks/shell.json`.
 - **A session**: `{ "to": "session", "session": "<OpenCode session id>", "on": … }`.
   The outcome is not posted as text; it is submitted as a prompt into that
@@ -73,29 +117,24 @@ audit history and never changes the job's outcome. `on` is `"always"`
   channel module owns (a Discord thread) receives it as an ordinary turn, in
   order with the people talking there, replied to in the thread. Any other
   session gets it queued into its native inbox. This is the default for jobs an
-  agent creates from a conversation ([jobs](backlog/jobs.md)).
+  agent creates from a conversation.
 
-The text is the job outcome (`describeOutcome`, up to 4000 characters, split
-by the destination) and, for agent jobs, one trailing line naming the OpenCode
-session. A recurring job that has failed three times in a row says so in its
-failure report.
-
-Scheduling starts at the next future occurrence on initial registration. Restart
-preserves the next occurrence for unchanged definitions. Changes cancel stale
-queued occurrences and calculate a new next time. Existing active work remains
-owned. Config changes require a daemon restart; `schedules sync` also provides
-explicit reconciliation when the daemon is stopped.
+The text is the run outcome (`describeOutcome`, up to 4000 characters, split
+by the destination), headed by the job id, and, for agent jobs, one trailing
+line naming the OpenCode session. A job that has failed three times in a row
+says so in its failure report; missed runs do not count towards that.
 
 ## Agent-created jobs
 
-Every OpenCode agent that has the aivi plugin gets `aivi_schedule` (unless
+Every OpenCode agent that has the aivi plugin gets `aivi_jobs` (unless
 `scheduler.agentSchedules` is `false`): create, list, pause, resume, remove
 and run. A
 person asks in chat ("every Monday at 9, summarize last week"; "in two hours,
 remind me"; "clean the logs nightly with this script"), the agent translates the
 time into cron, ISO 8601 or a duration (`30m`, `2h`, `1d`) and calls the tool.
-The host answers with the parsed schedule and its next occurrences so the agent
-can confirm what it made.
+The host answers with the parsed job and its next occurrences so the agent
+can confirm what it made. `list` shows recurring and one-off jobs uniformly:
+`title`, `when`, `state`, `next`, `lastRun`.
 
 Two kinds of job: an **agent job** (`prompt`) runs a fresh session of the
 calling agent in the calling directory, both read from the calling session in
@@ -121,9 +160,8 @@ is `job` or `dreaming` is refused, unless a conversation module has adopted it.
 Before anything is created the host checks the session exists, the agent exists
 in that directory, the cron and timezone parse, the report can be delivered,
 and the `max` limit; a failing check is refused with the reason and nothing is
-spent. Agent-created schedules have ids `agent-…`, are stored with source
-`agent`, and are never touched by `schedules sync`; `aivi schedules list`
-shows them beside the configured ones.
+spent. Agent-created jobs have ids `agent-…` and source `agent`; `aivi jobs
+list` shows them beside the configured ones.
 
 ## Linear mapping (validation only)
 
@@ -153,26 +191,29 @@ application installation details belong to the future Linear adapter.
 
 ## Operator commands
 
-Run `npm run aivi -- --help` for commands.
-The `--key` on `jobs enqueue` deduplicates identical requests; changed payloads
-with the same key are rejected. `--at` makes a one-off that waits in the queue
-until an ISO 8601 instant or a relative duration (`30m`, `2h`, `1d`) has
-passed. Failed jobs do not retry automatically.
+Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
+`runs …` on executions.
 
-Use `jobs show ID` for the task, session ID, result, and transition history.
-`jobs cancel ID` only cancels queued work. `jobs abort ID` asks the scheduler
-to stop a running job (the command gets `SIGTERM`, an agent turn stops
-waiting); the job then ends `blocked` with "Aborted by operator" because aivi
-cannot know what the external side had already done, and keeps its capacity
-until `jobs resolve`. Resolving a blocked job is an explicit operator action
-described in [OpenCode setup](opencode.md).
+`jobs add FILE` adds a job from a task file (a bare task, or
+`{ task, report?, resource? }`): `--cron EXPR --timezone TZ` makes it
+recurring, `--at ISO|30m|2h|1d` a one-off for later, neither a one-off for
+now, whose run is queued at once. `--title` labels it, `--resource` picks the
+pool, `--key` deduplicates identical requests (a changed payload under the
+same key is rejected). Operator jobs (source `operator`, ids `job-…`) and
+agent jobs are paused, resumed and removed with `jobs pause|resume|remove ID`;
+configured and system ones are edited in `aivi.json`. `jobs run ID` queues one
+run now, refused while one is outstanding. `jobs list` shows every definition
+with its source, state, next occurrence and last run; `jobs show ID` adds its
+runs.
 
-`schedules list` shows configured and agent-created schedules with their next
-occurrence and last outcome. Agent-created schedules (source `agent`, see
-[jobs](backlog/jobs.md)) are paused, resumed and removed with
-`schedules pause|resume|remove ID`; configured ones are edited in `aivi.json`.
-`schedules run ID` enqueues one occurrence now, refused while one is
-outstanding.
+`runs list [--job ID --state S --limit N]` and `runs show ID` (task, session
+ID, result, transition history). `runs cancel ID` only cancels queued work.
+`runs abort ID` asks the scheduler to stop a running run (the command gets
+`SIGTERM`, an agent turn stops waiting); the run then ends `blocked` with
+"Aborted by operator" because aivi cannot know what the external side had
+already done, and keeps its capacity until `runs resolve`. Resolving a blocked
+run is an explicit operator action described in [OpenCode setup](opencode.md).
+Failed runs do not retry automatically.
 
 ## Secrets
 
@@ -199,7 +240,7 @@ environment minus the fixed names above and minus every key defined in
 passes through, and a task's own `env` map is merged on top.
 
 `aivi serve` logs one JSON object per line on stderr; `--log-level debug` shows
-schedule materialization. stdout is reserved for command output.
+job materialization. stdout is reserved for command output.
 
 JSON schemas are generated into `schemas/` by `npm run schema`; `npm run check`
 fails when they are stale. Point your editor at them for autocompletion and

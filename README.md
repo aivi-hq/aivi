@@ -35,6 +35,7 @@ no inference model. In another terminal:
 ```sh
 npm run aivi -- knowledge search "decisions" --project demo
 npm run aivi -- jobs list
+npm run aivi -- runs list
 ```
 
 To use the tools from OpenCode, open `example/` in OpenCode v2 with
@@ -60,7 +61,7 @@ create the app from the manifest in [Slack setup](docs/slack.md), fill in
 | `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
 | `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads |
 | `@aivi/channel-slack` | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads |
-| `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `aivi_schedule`, `aivi_browser` |
+| `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `aivi_jobs`, `aivi_browser` |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
 services over the authenticated host API. Linear will be another in-process
@@ -76,8 +77,10 @@ module with webhook routes on the same listener.
   (`npm run smoke:browser`); login takeover and extensions still to exercise.
 - Knowledge: core and per-project sources with kinds (`doc`, `decision`,
   `memory`, `conversation`); scope never widens on unknown IDs.
-- Jobs: SQLite + Croner schedules, `shell`/`opencode.prompt`/`dreaming`/
-  maintenance tasks, dedupe, pools and leases, restart recovery, reports.
+- Jobs: definitions (cron or one-off `at`) and their runs in SQLite, Croner
+  as the calendar, `shell`/`opencode.prompt`/`dreaming`/maintenance tasks,
+  dedupe, pools and leases, restart recovery, missed-run accounting,
+  retention, reports.
 - Dreaming: a scheduled agent maintains `facts.md` and proposals from
   conversations since its last run ([docs/dreaming.md](docs/dreaming.md)).
 

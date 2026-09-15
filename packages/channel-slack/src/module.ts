@@ -254,8 +254,8 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
           pending.length
             ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
             : 'Ready for your next message.',
-          upcoming ? `Next scheduled: ${upcoming}.` : 'No schedules are due.',
-          recent ? `Last 24 h: ${recent}.` : 'No jobs finished in the last 24 h.',
+          upcoming ? `Next jobs: ${upcoming}.` : 'No jobs are due.',
+          recent ? `Runs in the last 24 h: ${recent}.` : 'No runs finished in the last 24 h.',
         ].join('\n'),
       );
     };
@@ -286,7 +286,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         return conversation ? conversationParts(conversation).channel : undefined;
       },
       async reenter(session, text, context) {
-        store.enqueueJobResult(context.job.id, session, text, config.maxPending);
+        store.enqueueJobResult(context.run.id, session, text, config.maxPending);
         engine?.tick();
       },
       async post(channel, text, context) {
@@ -295,12 +295,12 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         const [first, ...rest] = splitReply(text, SLACK.replyLimit);
         const { ts } = await slack.post(channel, first!);
         const thread = `${channel}:${ts}`;
-        const { job } = context;
+        const { run } = context;
         try {
           store.adopt(
             thread,
-            job.task.kind === 'opencode.prompt' && job.sessionId
-              ? { session: job.sessionId, agent: job.task.agent, directory: job.task.directory }
+            run.task.kind === 'opencode.prompt' && run.sessionId
+              ? { session: run.sessionId, agent: run.task.agent, directory: run.task.directory }
               : { seed: text },
           );
         } catch (error) {

@@ -45,8 +45,9 @@ the host's. This page has what is Discord's.
   so anything OpenCode would *ask* about is refused.
 - `/new` starts fresh on the next message, preserving old native sessions. It
   refuses while that conversation has queued, running, or blocked turns.
-- `/status` shows that conversation's pending states, the next scheduled
-  occurrences, and how many jobs finished in the last 24 hours.
+- `/status` shows that conversation's pending states, the next job
+  occurrences, and how many runs finished in the last 24 hours (missed ones
+  included).
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
@@ -86,12 +87,12 @@ server process as well so its plugin can call the host. The host discovers the
 running `opencode service` on its own. Configure your provider/model in native
 OpenCode for the librarian location.
 
-`reportChannels` lists channel IDs where scheduled job outcomes may be posted
+`reportChannels` lists channel IDs where job outcomes may be posted
 (`report: { "to": "channel", "module": "discord", "channel": … }`); with an
 empty list aivi never posts on its own. A
-posted outcome opens a thread (named after the schedule's `title`, else the
+posted outcome opens a thread (named after the job's `title`, else the
 first line) and the thread is a conversation: for an agent job it continues
-the job's own OpenCode session, so a reply lands with the agent that did the
+the run's own OpenCode session, so a reply lands with the agent that did the
 work and it remembers everything; for a script job the thread gets a fresh
 session whose first turn carries the posted output as context, and no model
 call happens until someone replies. `/new` in such a thread returns it to the

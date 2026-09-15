@@ -3,13 +3,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { BrowserService, KnowledgeKind, KnowledgeService, LoadedConfig, Logger, Status } from '@aivi/core';
 import {
   browserEnvelopeSchema,
+  jobRequestSchema,
   knowledgeKindSchema,
-  scheduleRequestSchema,
   searchSchema,
   selectSources,
   silentLogger,
 } from '@aivi/core';
-import { type ScheduleHandler, ScheduleRefused } from './schedules.ts';
+import { type JobHandler, JobRefused } from './jobs.ts';
 import type { Store } from './store.ts';
 
 export type HostAuth = { mode: 'none' } | { mode: 'token'; token: string };
@@ -36,22 +36,23 @@ export function status(store: Store, loaded: LoadedConfig, now = Date.now()): St
     leases: store.leaseCount(),
     completion: 'verified-final-answer',
     upcoming: store
-      .schedules()
-      .filter(s => s.enabled)
+      .jobs()
+      .filter(j => j.state === 'active' && j.nextAt !== null)
       .slice(0, 3)
-      .map(s => ({
-        id: s.spec.id,
-        source: s.source,
-        kind: s.spec.task.kind,
-        nextAt: new Date(s.nextAt).toISOString(),
+      .map(j => ({
+        id: j.spec.id,
+        source: j.source,
+        kind: j.spec.task.kind,
+        title: j.spec.title ?? null,
+        nextAt: new Date(j.nextAt!).toISOString(),
       })),
-    recent: store.recent(now - 24 * 3_600_000, 20).map(j => ({
-      id: j.id,
-      scheduleId: j.scheduleId,
-      kind: j.task.kind,
-      state: j.state,
-      finishedAt: new Date(j.finishedAt ?? now).toISOString(),
-      error: j.error,
+    recent: store.recent(now - 24 * 3_600_000, 20).map(r => ({
+      id: r.id,
+      jobId: r.jobId,
+      kind: r.task.kind,
+      state: r.state,
+      finishedAt: new Date(r.finishedAt ?? now).toISOString(),
+      error: r.error,
     })),
   };
 }
@@ -62,15 +63,15 @@ export interface HostServerOptions {
   auth: HostAuth;
   knowledge?: KnowledgeService | undefined;
   browser?: BrowserService | undefined;
-  /** `POST /v1/schedule`; absent when the host runs without one (tests). */
-  schedule?: ScheduleHandler | undefined;
+  /** `POST /v1/jobs`; absent when the host runs without one (tests). */
+  jobs?: JobHandler | undefined;
   /** `POST /v1/wake`: the CLI changed the queue in SQLite; dispatch now. */
   wake?: (() => void) | undefined;
   log?: Logger | undefined;
 }
 
 const MAX_BROWSER_BODY = 32 * 1024;
-const MAX_SCHEDULE_BODY = 64 * 1024;
+const MAX_JOB_BODY = 64 * 1024;
 
 export function createHostServer({
   store,
@@ -78,7 +79,7 @@ export function createHostServer({
   auth,
   knowledge,
   browser,
-  schedule,
+  jobs,
   wake,
   log = silentLogger,
 }: HostServerOptions) {
@@ -112,8 +113,8 @@ export function createHostServer({
       handleBrowser(request, response, send);
       return;
     }
-    if (url.pathname === '/v1/schedule') {
-      handleSchedule(request, response, send);
+    if (url.pathname === '/v1/jobs') {
+      handleJobs(request, response, send);
       return;
     }
     if (url.pathname === '/v1/wake') {
@@ -258,43 +259,41 @@ export function createHostServer({
     });
   }
 
-  function handleSchedule(request: IncomingMessage, response: ServerResponse, send: Send) {
+  function handleJobs(request: IncomingMessage, response: ServerResponse, send: Send) {
     if (request.method !== 'POST') {
-      send(405, { error: 'Use POST for schedule operations' });
+      send(405, { error: 'Use POST for job operations' });
       return;
     }
-    if (!schedule) {
-      send(503, { error: 'Scheduling is not available' });
+    if (!jobs) {
+      send(503, { error: 'Job operations are not available' });
       return;
     }
     void (async () => {
-      const body = await readJson(request, MAX_SCHEDULE_BODY);
+      const body = await readJson(request, MAX_JOB_BODY);
       if (typeof body === 'string') {
-        send(body === 'too large' ? 413 : 415, {
-          error: body === 'too large' ? 'Schedule request is too large' : body,
-        });
+        send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Job request is too large' : body });
         return;
       }
-      const parsed = scheduleRequestSchema.safeParse(body);
+      const parsed = jobRequestSchema.safeParse(body);
       if (!parsed.success) {
         send(400, {
-          error: `Invalid schedule request: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+          error: `Invalid job request: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
         });
         return;
       }
       try {
-        send(200, await schedule(parsed.data));
+        send(200, await jobs(parsed.data));
       } catch (error) {
-        if (error instanceof ScheduleRefused) {
+        if (error instanceof JobRefused) {
           send(error.status, { error: error.message });
           return;
         }
-        log.warn('schedule.failed', { action: parsed.data.action, error });
-        send(500, { error: 'Scheduling failed on the host; check its log.' });
+        log.warn('jobs.failed', { action: parsed.data.action, error });
+        send(500, { error: 'The job operation failed on the host; check its log.' });
       }
     })().catch(error => {
-      log.warn('schedule.interrupted', { error });
-      if (!response.headersSent) send(400, { error: 'Schedule request interrupted' });
+      log.warn('jobs.interrupted', { error });
+      if (!response.headersSent) send(400, { error: 'Job request interrupted' });
     });
   }
 }

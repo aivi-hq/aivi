@@ -32,7 +32,7 @@ git-ignored, as is `.env`.
 
 | Path | Purpose |
 | --- | --- |
-| `aivi.json` | Installation config: sources, schedules, scheduler pools, browser, Discord, Slack |
+| `aivi.json` | Installation config: sources, jobs, scheduler pools and retention, browser, Discord, Slack |
 | `discord.json` | Discord access policy and IDs (placeholders) |
 | `slack.json` | Slack access policy, command prefix and IDs (placeholders) |
 | `.env.example` | The secrets `serve` reads from `.env` |
@@ -41,7 +41,7 @@ git-ignored, as is `.env`.
 | `knowledge/` | Company-wide documents (`doc`) |
 | `memory/` | Dreaming's `facts.md` and proposals (`memory`) |
 | `project/` | A registered project with its own `aivi.project.json` and ADRs (`decision`) |
-| `tasks/` | Task files for `aivi jobs enqueue` |
+| `tasks/` | Task files for `aivi jobs add` |
 | `state/` | Created on first run: SQLite, search index, dreaming transcripts, Chrome profile |
 
 Use the tools from OpenCode by opening this directory in OpenCode v2 while

@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import type { LoadedConfig } from '@aivi/core';
 import { configSchema } from '@aivi/core';
 import { createHostClient } from '../src/client.ts';
-import { ScheduleRefused } from '../src/schedules.ts';
+import { JobRefused } from '../src/jobs.ts';
 import { createHostServer } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 
-test('read API authenticates callers, scopes sources, and exposes no job submission route', async t => {
+test('read API authenticates callers, scopes sources, and refuses job operations without a handler', async t => {
   const store = new Store(':memory:');
   const loaded: LoadedConfig = {
     path: '/aivi.json',
@@ -59,7 +59,7 @@ test('read API authenticates callers, scopes sources, and exposes no job submiss
   await assert.rejects(client.sources({ projects: ['typo'] }), /HTTP 400: Unknown project: typo/);
   assert.equal(
     (await fetch(`${base}/v1/jobs`, { method: 'POST', headers: { authorization: `Bearer ${token}` } })).status,
-    405,
+    503,
   );
   assert.equal(
     (await fetch(`${base}/v1/sources?includeCore=no`, { headers: { authorization: `Bearer ${token}` } })).status,
@@ -146,18 +146,18 @@ test('auth mode none serves authenticated routes without a token and resolveHost
   assert.equal((await client.status()).sources, 0);
 });
 
-test('schedule API validates the body, maps refusals to their status, and status lists upcoming and recent work', async t => {
+test('jobs API validates the body, maps refusals to their status, and status lists upcoming and recent work', async t => {
   const store = new Store(':memory:');
   const loaded: LoadedConfig = {
     path: '/aivi.json',
     config: configSchema.parse({
       version: 1,
-      schedules: [{ id: 'nightly', cron: '0 3 * * *', task: { kind: 'system.check' } }],
+      jobs: [{ id: 'nightly', title: 'Nightly check', cron: '0 3 * * *', task: { kind: 'system.check' } }],
     }),
     projects: [],
     sources: [],
   };
-  store.syncSchedules(loaded.config.schedules, Date.now());
+  store.syncJobs(loaded.config.jobs, [], Date.now());
   const done = store.enqueue({ kind: 'system.check' }, 'local-model', 'done');
   const claimed = store.claim('host', 1, { 'local-model': 1 })!;
   store.finish(claimed.id, 'host', 'failed', null, 'boom');
@@ -167,9 +167,9 @@ test('schedule API validates the body, maps refusals to their status, and status
     store,
     loaded,
     auth: { mode: 'token', token },
-    schedule: async request => {
+    jobs: async request => {
       requests.push(request);
-      if (request.action === 'run') throw new ScheduleRefused('Jobs do not create jobs', 403);
+      if (request.action === 'run') throw new JobRefused('Jobs do not create jobs', 403);
       if (request.action === 'remove') throw new Error('sqlite exploded');
       return { summary: `ok ${request.action}`, items: [] };
     },
@@ -185,33 +185,30 @@ test('schedule API validates the body, maps refusals to their status, and status
   const client = createHostClient(base, { token });
   const status = await client.status();
   assert.deepEqual(
-    status.upcoming.map(u => [u.id, u.source, u.kind]),
-    [['nightly', 'config', 'system.check']],
+    status.upcoming.map(u => [u.id, u.source, u.kind, u.title]),
+    [['nightly', 'config', 'system.check', 'Nightly check']],
   );
   assert.deepEqual(
-    status.recent.map(r => [r.id, r.state, r.error]),
-    [[done.id, 'failed', 'boom']],
+    status.recent.map(r => [r.id, r.jobId, r.state, r.error]),
+    [[done.id, done.jobId, 'failed', 'boom']],
   );
 
-  assert.equal((await fetch(`${base}/v1/schedule`, { method: 'POST' })).status, 401);
+  assert.equal((await fetch(`${base}/v1/jobs`, { method: 'POST' })).status, 401);
   const post = (body: unknown, type = 'application/json') =>
-    fetch(`${base}/v1/schedule`, {
+    fetch(`${base}/v1/jobs`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': type },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     });
-  assert.equal((await fetch(`${base}/v1/schedule`, { headers: { authorization: `Bearer ${token}` } })).status, 405);
+  assert.equal((await fetch(`${base}/v1/jobs`, { headers: { authorization: `Bearer ${token}` } })).status, 405);
   assert.equal((await post('x', 'text/plain')).status, 415);
   assert.equal((await post({ action: 'create' })).status, 400, 'sessionId is required');
   assert.equal((await post({ action: 'create', sessionId: 's', prompt: 'p', at: '1h', bogus: 1 })).status, 400);
-  assert.deepEqual(await client.schedule({ action: 'list', sessionId: 's' }), { summary: 'ok list', items: [] });
+  assert.deepEqual(await client.jobs({ action: 'list', sessionId: 's' }), { summary: 'ok list', items: [] });
+  await assert.rejects(client.jobs({ action: 'run', sessionId: 's', id: 'x' }), /HTTP 403: Jobs do not create jobs/);
   await assert.rejects(
-    client.schedule({ action: 'run', sessionId: 's', id: 'x' }),
-    /HTTP 403: Jobs do not create jobs/,
-  );
-  await assert.rejects(
-    client.schedule({ action: 'remove', sessionId: 's', id: 'x' }),
-    /HTTP 500: Scheduling failed on the host/,
+    client.jobs({ action: 'remove', sessionId: 's', id: 'x' }),
+    /HTTP 500: The job operation failed on the host/,
   );
   assert.deepEqual(
     requests[0] as { action: string; sessionId: string },

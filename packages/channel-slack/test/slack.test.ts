@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
-import type { Job, KnowledgeService } from '@aivi/core';
+import type { KnowledgeService, Run } from '@aivi/core';
 import { configSchema, silentLogger } from '@aivi/core';
 import type { HostServices } from '@aivi/host';
 import { Channels, connectOpenCode, Store } from '@aivi/host';
@@ -252,8 +252,9 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.equal(inbox.list().length, 2);
 
   // A report opens a thread that adopts the job session; a reply there continues it with that job's agent.
-  const job: Job = {
-    id: 'job-1',
+  const run: Run = {
+    id: 'run-1',
+    jobId: 'job-1',
     task: {
       kind: 'opencode.prompt',
       agent: 'librarian',
@@ -268,7 +269,6 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     scheduledFor: 0,
     startedAt: null,
     finishedAt: null,
-    scheduleId: null,
     sessionId: 'ses_aivi_job1',
     owner: null,
     result: null,
@@ -280,7 +280,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     /does not allow/,
   );
   await channels.deliver({ to: 'channel', module: 'slack', channel: HOME, on: 'always' }, 'x'.repeat(4000), {
-    job,
+    run,
     state: 'succeeded',
   });
   const opener = slack.posts.at(-2)!;
@@ -293,20 +293,20 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.equal(inbox.list().at(-1)!.session, 'ses_aivi_job1');
   // A job result addressed to that session re-enters the thread as a job turn.
   await channels.deliver({ to: 'session', session: 'ses_aivi_job1', on: 'always' }, '✅ done', {
-    job,
+    run,
     state: 'succeeded',
   });
   await until(() => slack.posts.length === 7, 'the outcome is relayed in the thread');
   assert.equal(inbox.list().at(-1)!.kind, 'job');
   assert.match(opencode.prompts.at(-1)!.text, /^\[aivi delivers the outcome/);
-  assert.equal(opencode.prompts.at(-1)!.id, 'msg_slack_job_job_1');
+  assert.equal(opencode.prompts.at(-1)!.id, 'msg_slack_run_run_1');
   assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'Answer', threadTs: '1004.0' });
 
   // Slash commands: prefix-bound, ephemeral, and thread mode has nothing to reset.
   await slack.command({ command: '/other-status' });
   assert.equal(slack.ephemerals.length, 0);
   await slack.command({ command: '/spider-status' });
-  assert.match(slack.ephemerals.at(-1)!, /^Ready for your next message\.\nNo schedules are due\./);
+  assert.match(slack.ephemerals.at(-1)!, /^Ready for your next message\.\nNo jobs are due\./);
   await slack.command({ command: '/spider-new' });
   assert.match(slack.ephemerals.at(-1)!, /every thread is its own conversation/);
   await slack.command({ command: '/spider-new', channel_id: DM });

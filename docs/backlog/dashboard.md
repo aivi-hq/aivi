@@ -18,7 +18,7 @@ One place to see what aivi is doing without the CLI:
 ## Constraints
 
 - Read-only first. Mutations stay with the CLI and the future agent tool until
-  the authority rules in [jobs.md](jobs.md) are settled; `jobs resolve` in
+  the authority rules in [jobs.md](jobs.md) are settled; `runs resolve` in
   particular requires a human statement that external work stopped.
 - Served by the existing host listener under the existing auth
   (`host.auth`); no second server, no second credential.

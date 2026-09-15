@@ -37,9 +37,9 @@ export async function connectForTurn(opencode: () => Promise<OpenCodeClient>): P
   }
 }
 
-/** The native ids a job's turn uses, derived from the job id so a lost response has a known target. */
-export function turnIdsFor(jobId: string): { sessionId: string; messageId: string } {
-  const suffix = jobId.replaceAll('-', '');
+/** The native ids a run's turn uses, derived from the run id so a lost response has a known target. */
+export function turnIdsFor(runId: string): { sessionId: string; messageId: string } {
+  const suffix = runId.replaceAll('-', '');
   return { sessionId: `ses_aivi_${suffix}`, messageId: `msg_aivi_${suffix}` };
 }
 

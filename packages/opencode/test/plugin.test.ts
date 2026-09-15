@@ -46,7 +46,7 @@ test('plugin registers its tools with root object schemas and disposes its regis
   );
   assert.deepEqual(
     tools.map(tool => tool.name),
-    ['search', 'status', 'sources', 'schedule', 'browser'],
+    ['search', 'status', 'sources', 'jobs', 'browser'],
   );
   for (const tool of tools) assert.equal(tool.input.type, 'object', `${tool.name} must declare a root object schema`);
   assert.equal(typeof cleanup, 'function');
@@ -104,12 +104,12 @@ test('browser tool lives under aivi (not OpenCode’s browser namespace) and for
   if (typeof cleanup === 'function') await cleanup();
 });
 
-test('schedule tool forwards the calling session and message so the host can derive agent, directory and authority', async t => {
-  withToken(t, 'test-native-schedule-token');
+test('jobs tool forwards the calling session and message so the host can derive agent, directory and authority', async t => {
+  withToken(t, 'test-native-jobs-token');
   let received: unknown;
   const server = createServer(async (request, response) => {
     assert.equal(request.method, 'POST');
-    assert.equal(request.url, '/v1/schedule');
+    assert.equal(request.url, '/v1/jobs');
     let body = '';
     for await (const chunk of request) body += chunk;
     received = JSON.parse(body);
@@ -120,14 +120,14 @@ test('schedule tool forwards the calling session and message so the host can der
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  let schedule: RegisteredTool | undefined;
+  let jobs: RegisteredTool | undefined;
   const cleanup = await setupWith({ url: `http://127.0.0.1:${address.port}` }, tool => {
-    if (tool.name === 'schedule') schedule = tool;
+    if (tool.name === 'jobs') jobs = tool;
   });
-  assert.ok(schedule);
-  assert.equal(schedule.options.namespace, 'aivi');
+  assert.ok(jobs);
+  assert.equal(jobs.options.namespace, 'aivi');
   assert.deepEqual(
-    await schedule.execute(
+    await jobs.execute(
       { action: 'create', prompt: 'Summarize', cron: '0 9 * * 1', sessionId: 'spoofed' },
       { sessionID: 'ses_caller', messageID: 'msg_caller' },
     ),

@@ -117,7 +117,7 @@ Config shape (optional; the default is what most installations want):
 
 `concurrency` defaults to 1 and is the future knob for worktrees. It is not
 added to `scheduler.resources`; the pseudo-pool name `project:<id>` is reserved
-and rejected there. Blocked work keeps the project locked until `jobs resolve`,
+and rejected there. Blocked work keeps the project locked until `runs resolve`,
 exactly like a pool slot today.
 
 Should OpenCode's own interactive sessions count? Not for the lock. aivi cannot

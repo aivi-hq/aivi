@@ -12,7 +12,7 @@ import { Store } from '../src/store.ts';
 const T0 = Date.parse('2026-09-14T10:00:00Z');
 const sessions = [
   { id: 'ses_new', updated: T0 + 3000, metadata: { aivi: { origin: 'discord', channel: 'c1' } } },
-  { id: 'ses_job', updated: T0 + 2500, metadata: { aivi: { origin: 'job', job: 'x' } } },
+  { id: 'ses_job', updated: T0 + 2500, metadata: { aivi: { origin: 'job', run: 'x' } } },
   { id: 'ses_old_updated', updated: T0 + 2000, metadata: { aivi: { origin: 'discord', channel: 'c2' } } },
   { id: 'ses_human', updated: T0 + 1500 },
   { id: 'ses_ancient', updated: T0 - 1000, metadata: { aivi: { origin: 'discord', channel: 'c3' } } },
@@ -185,7 +185,7 @@ test('dream writes the transcript, adds only its two write targets, advances the
 
   const create = mock.requests.find(r => r.method === 'POST' && r.path === '/api/session')!;
   assert.equal(create.body.id, 'ses_aivi_job1');
-  assert.deepEqual(create.body.metadata, { aivi: { origin: 'dreaming', job: 'job-1' } });
+  assert.deepEqual(create.body.metadata, { aivi: { origin: 'dreaming', run: 'job-1' } });
   // Permission resources use canonical paths (tmpdir is a symlink on macOS), as OpenCode matches them.
   const canonical = await realpath(memory);
   const edits = create.body.permissions
@@ -223,16 +223,14 @@ test('dreaming config requires the memory directory to live inside a core knowle
       JSON.stringify({
         version: 1,
         knowledge: [{ id: 'k', path: 'knowledge' }],
-        schedules: [
-          { id: 'dreaming', cron: '0 3 * * *', task: { kind: 'dreaming', directory: 'lib', memoryDirectory } },
-        ],
+        jobs: [{ id: 'dreaming', cron: '0 3 * * *', task: { kind: 'dreaming', directory: 'lib', memoryDirectory } }],
       }),
     );
   await write('elsewhere/memory');
   await assert.rejects(loadConfig(join(root, 'aivi.json')), /inside a core knowledge source/);
   await write('knowledge/memory');
   const loaded = await loadConfig(join(root, 'aivi.json'));
-  const task = loaded.config.schedules[0]!.task;
+  const task = loaded.config.jobs[0]!.task;
   assert.equal(task.kind === 'dreaming' && task.memoryDirectory, join(root, 'knowledge/memory'));
   assert.ok(configSchema);
 });

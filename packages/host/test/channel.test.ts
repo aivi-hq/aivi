@@ -249,7 +249,7 @@ test('a job result re-enters the thread bound to its session as a turn of kind j
     turns.map(x => [x.id, x.kind, x.user]),
     [
       ['one', 'message', '10000000000000002'],
-      ['job:j1', 'job', 'aivi'],
+      ['run:j1', 'job', 'aivi'],
     ],
   );
   const first = store.claim(scheduler, limits.resource)!;

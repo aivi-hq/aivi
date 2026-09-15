@@ -1,8 +1,8 @@
 import type {
   BrowserResult,
   HostClient,
+  JobResponse,
   KnowledgeSource,
-  ScheduleResponse,
   SearchHit,
   SourceSelection,
   Status,
@@ -69,9 +69,9 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       return get<KnowledgeSource[]>(`/v1/sources?${params}`);
     },
     wake: () => request<{ woken: boolean }>('/v1/wake', { method: 'POST', timeoutMs: 3_000 }),
-    schedule(body) {
+    jobs(body) {
       // Creating a job checks the calling session and agent against OpenCode; a few seconds at most.
-      return request<ScheduleResponse>('/v1/schedule', {
+      return request<JobResponse>('/v1/jobs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),

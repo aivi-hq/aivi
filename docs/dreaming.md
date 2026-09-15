@@ -10,7 +10,7 @@ stays stable.
 
 ## How a run works
 
-1. The schedule fires (or `aivi jobs enqueue` with a `dreaming` task).
+1. The job fires (or `aivi jobs add` with a `dreaming` task).
 2. The host reads the cursor for the memory directory: the newest session
    update it has already reviewed.
 3. It lists OpenCode sessions newer than that whose `metadata.aivi.origin` is
@@ -26,7 +26,7 @@ stays stable.
    over the agent's `edit: deny` because session rules come last. Permission
    prompts are rejected. Paths are canonical (`realpath`), as OpenCode matches
    them. The job row carries the native session id before the first request, so
-   `aivi jobs show` points at the session to inspect if the run blocks.
+   `aivi runs show` points at the session to inspect if the run blocks.
 5. It records which memory files changed, advances the cursor to the newest
    reviewed session, refreshes the search index, and reports the agent's
    summary to the configured destination.

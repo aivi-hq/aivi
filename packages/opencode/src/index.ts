@@ -1,4 +1,4 @@
-import type { BrowserRequest, ScheduleRequest } from '@aivi/core';
+import type { BrowserRequest, JobRequest } from '@aivi/core';
 import type { KnowledgeKind } from '@aivi/core/kinds';
 import { knowledgeKindHelp, knowledgeKindNames } from '@aivi/core/kinds';
 import { createHostClient } from '@aivi/host/client';
@@ -31,13 +31,13 @@ const browserInput = {
   },
 } as const;
 
-const scheduleInput = {
+const jobsInput = {
   type: 'object',
   required: ['action'],
   additionalProperties: false,
   properties: {
     action: { type: 'string', enum: ['create', 'list', 'pause', 'resume', 'remove', 'run'] },
-    id: { type: 'string', description: 'Schedule or one-off id, for pause/resume/remove/run (from list or create).' },
+    id: { type: 'string', description: 'Job id, for pause/resume/remove/run (from list or create).' },
     title: { type: 'string', maxLength: 80, description: 'create: short label the person would recognise.' },
     prompt: {
       type: 'string',
@@ -159,18 +159,18 @@ export default Plugin.define({
           json(await client.sources(input as { projects?: string[]; includeCore?: boolean; kinds?: KnowledgeKind[] })),
       });
       editor.add({
-        name: 'schedule',
+        name: 'jobs',
         description:
           'Create, list, pause, resume, remove or run jobs: a one-off (`at`) or recurring (`cron`) agent job (`prompt`, runs your agent in a fresh session) or script job (`command`). Translate what the person said into cron/ISO/duration yourself; the reply names the next occurrences, relay them so the person can confirm. Results default to coming back into this conversation for you to relay. Only create when a person asked; never from inside a job. If the tool fails, relay its error message word for word: it says what to fix.',
-        input: scheduleInput,
+        input: jobsInput,
         options: { namespace: 'aivi', codemode: true },
         execute: async (input, context) =>
           json(
-            await client.schedule({
-              ...(input as Omit<ScheduleRequest, 'sessionId' | 'messageId'>),
+            await client.jobs({
+              ...(input as Omit<JobRequest, 'sessionId' | 'messageId'>),
               sessionId: context.sessionID,
               messageId: context.messageID,
-            } as ScheduleRequest),
+            } as JobRequest),
           ),
       });
       editor.add({

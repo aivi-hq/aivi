@@ -19,7 +19,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | Permission prompts | A tool that needs approval (for example `external_directory` when reading a knowledge source outside the project) parks the turn; `session.wait` blocks until a human replies. `permission.list({ sessionID })` exposes the pending request and `permission.reply` answers it. Any unattended driver must check this. |
 | Plugin loading | A directory entry in `plugins` resolves `<dir>/server.*` or `<dir>/index.*`, not `package.json#main`. `packages/opencode/server.js` re-exports the build for that reason. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
 | Plugin failure mode | An exception in `setup()` marks the plugin `failed` and registers no tools. The plugin therefore never throws for a missing token; the tool call reports the 401. |
-| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `aivi_schedule`, `aivi_browser`, `knowledge_search`; tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion, upcoming, recent }`. |
+| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `aivi_jobs`, `aivi_browser`, `knowledge_search`; tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion, upcoming, recent }`. |
 | Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the agent's, so an `edit` allow from dreaming wins over the dreamer's `edit: deny`; aivi never sends a broad allow, so OpenCode's default `.env` guard stays in force. |
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
 | Changes to a local plugin | The server caches module resolution; run `opencode service restart` after changing the plugin package layout **or after `npm install` rewrites `node_modules`** (the plugin otherwise fails with "Cannot find package"). The restart also reloads every client of that service, including an open TUI. |
@@ -37,7 +37,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
    restart it after every rebuild of the plugin or the host client: the
    long-running service keeps `@aivi/host/client` in its module cache, so a
    plugin that registers a new tool can still call a client without that
-   method ("client.schedule is not a function", seen 2026-09-15). The example
+   method ("client.jobs is not a function", seen 2026-09-15). The example
    home uses `discover`, so there `opencode service restart` stays manual.
 4. Open `example/` in OpenCode v2. Its `opencode.jsonc` loads the local plugin
    and selects the `librarian` agent from `.opencode/agents/`.
@@ -65,15 +65,15 @@ next unit of work; a running one is never restarted again while aivi runs.
 
 ```sh
 npm run aivi -- opencode check
-npm run aivi -- jobs enqueue example/tasks/librarian.json
-npm run aivi -- jobs list
+npm run aivi -- jobs add example/tasks/librarian.json
+npm run aivi -- runs list
 ```
 
-The running host dispatches queued jobs through the session driver
+The running host dispatches queued runs through the session driver
 (`packages/host/src/session.ts`): create the session with a client-chosen id,
 pin agent and directory, prompt, wait, answer permission prompts per policy, and
 verify the final answer (`assistant.finish === "stop"`, `idle.outcome ===
-"succeeded"`, no unfinished tools, text present). The job then succeeds with
+"succeeded"`, no unfinished tools, text present). The run then succeeds with
 `{ sessionId, text, rejectedPermissions }`. The agent file is the boundary for every caller: an `opencode.prompt` job
 sends no session rules; Discord adds `external_directory` allows for the
 configured sources; dreaming adds those plus `edit` allows for its two write
@@ -81,24 +81,25 @@ targets. aivi never sends a deny.
 
 Task options: `timeoutMs` (default 30 min) and `onPermission`: `reject`
 (default; deny and let the agent continue, recorded in the result) or `fail`
-(leave the prompt pending for a human and block the job). A failure before the
+(leave the prompt pending for a human and block the run). A failure before the
 prompt is accepted (OpenCode unreachable, session create/get rejected) ends the
-job `failed`; the next occurrence retries. A timeout, a failed turn, a changed
-agent/directory, or a host shutdown mid-turn block the job, because none of
-those prove the session stopped doing things. Blocked jobs keep
+run `failed`; the next occurrence retries. A timeout, a failed turn, a changed
+agent/directory, or a host shutdown mid-turn block the run, because none of
+those prove the session stopped doing things. Blocked runs keep
 their capacity until an operator has looked at the session:
 
 ```sh
-npm run aivi -- jobs resolve JOB_ID --outcome succeeded --reason "Inspected completed session" --confirm-stopped
+npm run aivi -- runs resolve RUN_ID --outcome succeeded --reason "Inspected completed session" --confirm-stopped
 ```
 
 Discord uses the same driver for each turn. Steering an active worker into
 cleanup (the Linear lifecycle) is not part of the driver yet.
 
-## Schedule tool
+## Jobs tool
 
-The plugin registers `aivi_schedule` (namespace `aivi`, permission action
-`aivi_schedule` like the other aivi tools). Its input is flat: `action`, and for
+The plugin registers `aivi_jobs` (namespace `aivi`, permission action
+`aivi_jobs` like the other aivi tools). Its input is flat: `action`
+(`create|list|pause|resume|remove|run`), `id` for the last four, and for
 `create` one of `prompt`/`command`, one of `at`/`cron` (+ `timezone`), optional
 `title`, `agent`, `directory`, `cwd`, `env`, `timeoutMs`, `report`
 (`session` default; `channel`, with `channel` and `module` defaulting to the
@@ -107,7 +108,7 @@ calling `sessionID` and `messageID` from the native tool context; the host
 reads the session's agent, directory and `metadata.aivi.origin` from OpenCode
 and refuses sessions with origin `job` or `dreaming` (a job's own session
 adopted by a Discord thread is a conversation and is allowed). The route is
-`POST /v1/schedule`, same bearer auth as every other route; `messageID` is the
+`POST /v1/jobs`, same bearer auth as every other route; `messageID` is the
 dedupe key of a one-off, so a retried tool call creates one job, not two. The
 host validates the agent with `agent.list` for that directory before creating
 anything (verified 2026-09-15: `agent.get` does not see agents defined under a

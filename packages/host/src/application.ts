@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { retentionJob, silentLogger } from '@aivi/core';
 import { Channels } from './channel/router.ts';
+import { createJobHandler } from './jobs.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
-import { createScheduleHandler } from './schedules.ts';
 import { createHostServer, type HostAuth } from './server.ts';
 import type { Store } from './store.ts';
 
@@ -121,7 +121,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       auth,
       knowledge,
       browser,
-      schedule: createScheduleHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
+      jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
       log,
     });
@@ -186,7 +186,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
           sessionID: sessionId,
           text: reentryPrompt(text),
           delivery: 'queue',
-          metadata: { aivi: { origin: 'job-result', job: context.job.id } },
+          metadata: { aivi: { origin: 'job-result', run: context.run.id } },
         },
         { signal: abort.signal },
       );
@@ -196,26 +196,28 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       loaded.config.scheduler,
       createExecutor(loaded, { store, knowledge, opencode, protectedEnv: options.protectedEnv, log }),
       log,
-      async (job, state, result, reason) => {
+      async (run, state, result, reason) => {
         // Capacity was released: queued work may be claimable now.
         wake.notify();
-        if (!shouldReport(job.report, state)) return;
-        let text = describeOutcome(job, state, result, reason);
-        if (state !== 'succeeded' && job.scheduleId) {
-          const streak = store.failureStreak(job.scheduleId);
+        if (!shouldReport(run.report, state)) return;
+        let text = describeOutcome(run, state, result, reason);
+        if (state === 'failed' || state === 'blocked') {
+          const streak = store.failureStreak(run.jobId);
           if (streak >= FAILURE_NUDGE_AT)
-            text += `\nThis schedule has failed ${streak} times in a row. Fix it, pause it, or remove it.`;
+            text += `\nThis job has failed ${streak} times in a row. Fix it, pause it, or remove it.`;
         }
         try {
-          await channels.deliver(job.report, text, { job, state });
-          store.note(job.id, 'reported', reportTarget(job.report));
+          await channels.deliver(run.report, text, { run, state });
+          store.note(run.id, 'reported', reportTarget(run.report));
         } catch (error) {
-          store.note(job.id, 'report-failed', error instanceof Error ? error.message : String(error));
+          store.note(run.id, 'report-failed', error instanceof Error ? error.message : String(error));
           throw error;
         }
       },
     );
-    store.syncSchedules(loaded.config.schedules);
+    // The retention job is the host's own definition: seeded here, listed and run like any other.
+    const retention = retentionJob(loaded.config);
+    store.syncJobs(loaded.config.jobs, retention ? [retention] : []);
     if (loaded.config.search?.indexOnStart) {
       const startedAt = Date.now();
       await knowledge.index();

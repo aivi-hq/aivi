@@ -1,26 +1,29 @@
 # Jobs: what is left
 
-Status: the design agreed 2026-09-15 is built (steps 1–6 of the original
-order, same day). The facts now live with their owners:
+Status: the design agreed 2026-09-15 is built, and the same day the model
+was split into definitions (`jobs`) and executions (`runs`), misfire became
+one grace rule with `missed` runs, and retention became the system job
+`retention`. The facts live with their owners:
 
 | Fact | Owner |
 | --- | --- |
-| Task kinds, `shell` environment, `report` shapes (`session`, channel, none), agent-created jobs, `aivi_schedule` behaviour, `misfire`, operator commands (`--at`, `jobs abort`, `schedules …`) | [configuration.md](../configuration.md) |
-| Abort semantics, failed vs blocked | [application.md](../application.md) |
-| `POST /v1/schedule`, tool input, session authority, `agent.list` validation | [opencode.md](../opencode.md#schedule-tool) |
-| Job outcomes re-entering a thread; report threads adopting the job session; `/status` lists | [discord.md](../discord.md) |
-| The API mutation revision, `job-result` origin | [architecture.md](../architecture.md) |
+| Task kinds, `report` shapes, jobs/runs/tasks vocabulary and states, the misfire grace, `scheduler.retention`, agent-created jobs, operator commands (`jobs …`, `runs …`) | [configuration.md](../configuration.md) |
+| Startup reconciliation and seeding, missed runs per tick, abort semantics, failed vs blocked, retention as a job | [application.md](../application.md) |
+| `POST /v1/jobs`, `aivi_jobs` input, session authority, `agent.list` validation | [opencode.md](../opencode.md#jobs-tool) |
+| Run outcomes re-entering a thread; report threads adopting the run's session; `/status` lists | [discord.md](../discord.md) |
+| Schema v7, "it matched or it didn't", the API mutation revision, `job-result` origin | [architecture.md](../architecture.md) |
 
-Verified live against OpenCode 2.0.3 on 2026-09-15: session lookup, agent
-validation, create/refuse paths. The Discord parts (re-entry turns, report
-threads, `/status`) still need their live gate.
+Verified live against OpenCode 2.0.3 on 2026-09-15 before the rename to
+`aivi_jobs`: session lookup, agent validation, create/refuse paths. The
+renamed tool and route, and the Discord parts (re-entry turns, report
+threads, `/status`), still need their live gates.
 
 ## Not built, deliberately
 
 Deferred until someone asks twice:
 
-- Standing sessions per schedule (memory across runs belongs in files; if ever
-  wanted: `session: "standing"`, a session id derived from the schedule id,
+- Standing sessions per job (memory across runs belongs in files; if ever
+  wanted: `session: "standing"`, a session id derived from the job id,
   OpenCode's inbox for ordering).
 - Retries after the model or the process was reached.
 - Digests and a "home channel".
@@ -29,11 +32,12 @@ Deferred until someone asks twice:
 - Natural-language time parsing in aivi (the model translates; the tool
   echoes the next occurrences).
 - Structured confirmation widgets in Discord ([discord-widgets](discord-widgets.md)).
-- Per-user ownership of agent-created schedules: today every agent-created
-  schedule is visible to and mutable by every caller the access policy admits;
-  the owner accepted "jobs are the admin's responsibility" for now.
-- A schedule's `title` on one-offs (jobs have no title column; the prompt's
-  first line is the label).
+- Per-user ownership of agent-created jobs: today every agent-created job is
+  visible to and mutable by every caller the access policy admits; the owner
+  accepted "jobs are the admin's responsibility" for now.
+- A per-occurrence record of every missed minute (one `missed` run per job
+  per gap was chosen so a week of downtime is one line).
+- Editing a definition in place (`update`); today it is remove and create.
 
 ## Research notes (2026-09-14/15, official docs only)
 
@@ -43,7 +47,7 @@ Deferred until someone asks twice:
   failure is a distinct status; scheduled agents cannot use `cronjob` unless
   opted in; scripts under `$HERMES_HOME/scripts/` with a sanitized environment
   (no provider secrets); `mirror_delivery` makes a delivery continuable by
-  seeding it into a thread's session (aivi binds the thread to the job's own
+  seeding it into a thread's session (aivi binds the thread to the run's own
   session instead); `blocked_config` preflight; failure streak nudge at 3;
   catch-up collapses to one run.
   <https://hermes-agent.nousresearch.com/docs/user-guide/features/cron>,
@@ -58,4 +62,4 @@ Deferred until someone asks twice:
 - **OpenCode v2**: no scheduler or timer concept; `session.prompt` with
   `delivery: queue` is a durable per-session inbox (aivi's `runTurn` and the
   native re-entry use it); events are live-only. OpenCode owns per-session
-  ordering; the host keeps schedules, the queue and leases.
+  ordering; the host keeps jobs, runs and leases.

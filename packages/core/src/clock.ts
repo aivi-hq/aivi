@@ -1,17 +1,18 @@
 import { Cron } from 'croner';
+import { ISO_INSTANT } from './config.ts';
 
 export function nextOccurrence(pattern: string, timezone: string, after: number): number {
   const cron = new Cron(pattern, { timezone, paused: true });
   try {
     const next = cron.nextRun(new Date(after));
-    if (!next) throw new Error(`Schedule has no future occurrence: ${pattern}`);
+    if (!next) throw new Error(`Job has no future occurrence: ${pattern}`);
     return next.getTime();
   } finally {
     cron.stop();
   }
 }
 
-/** The next `count` occurrences after `after`, for confirming a schedule in plain text. */
+/** The next `count` occurrences after `after`, for confirming a job in plain text. */
 export function nextOccurrences(pattern: string, timezone: string, after: number, count = 3): number[] {
   const cron = new Cron(pattern, { timezone, paused: true });
   try {
@@ -19,6 +20,11 @@ export function nextOccurrences(pattern: string, timezone: string, after: number
   } finally {
     cron.stop();
   }
+}
+
+/** `Sep 15, 2026, 9:00 AM` in the job's timezone, for people reading a list or a report. */
+export function formatInstant(at: number, timezone: string): string {
+  return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(at);
 }
 
 const DURATION = /^(\d+)\s*(s|m|h|d)$/i;
@@ -37,7 +43,7 @@ export function parseDue(at: string, now: number): number {
     return due;
   }
   // Date.parse accepts too much (e.g. "1"); insist on an ISO-looking value.
-  if (!/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(trimmed))
+  if (!ISO_INSTANT.test(trimmed))
     throw new Error(`Not a time: "${at}". Use ISO 8601 (2026-09-16T09:00:00+02:00) or a duration (30m, 2h, 1d)`);
   const due = Date.parse(trimmed);
   if (Number.isNaN(due)) throw new Error(`Not a time: "${at}"`);
