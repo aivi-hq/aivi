@@ -20,6 +20,8 @@ export interface ScheduleHandlerDeps {
   loaded: LoadedConfig;
   destinations: Destinations;
   opencode: () => Promise<OpenCodeClient>;
+  /** Called after the queue changed so the host loop dispatches without waiting. */
+  wake?: () => void;
   now?: () => number;
 }
 export type ScheduleHandler = (request: ScheduleRequest) => Promise<ScheduleResponse>;
@@ -36,6 +38,7 @@ const when = (at: number, timezone: string) =>
 export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandler {
   const { store, loaded, destinations } = deps;
   const now = deps.now ?? Date.now;
+  const wake = deps.wake ?? (() => {});
   const settings = loaded.config.scheduler.agentSchedules;
 
   return async request => {
@@ -53,6 +56,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       case 'resume': {
         const enabled = request.action === 'resume';
         const entry = withRefusal(() => store.setScheduleEnabled(request.id, enabled, now()));
+        wake();
         const item = scheduleItem(entry);
         return {
           summary: `${enabled ? 'Resumed' : 'Paused'} ${item.title} (${item.id}).${enabled ? ` Next: ${item.next[0]}.` : ''}`,
@@ -71,6 +75,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       }
       case 'run': {
         const job = withRefusal(() => store.runSchedule(request.id, now()));
+        wake();
         return {
           summary: `Queued one run of ${request.id} now (job ${job.id.slice(0, 8)}). Its outcome is reported like a scheduled one.`,
           items: [scheduleItem(store.schedule(request.id))],
@@ -161,6 +166,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
           reason: `agent:${input.sessionId}`,
         },
       );
+      wake();
       const item = oneOffItem(job, timezone);
       return {
         summary: `Created a one-off ${item.title} (${item.id}) for ${item.next[0]}. ${reportText(report)}`,
@@ -179,6 +185,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
     if (!parsed.success)
       throw new ScheduleRefused(`Invalid cron expression or timezone: "${input.cron}" in ${timezone}.`);
     const entry = store.addSchedule(parsed.data, at);
+    wake();
     const item = scheduleItem(entry);
     return {
       summary: `Created ${item.title} (${item.id}): cron ${parsed.data.cron} in ${timezone}. Next: ${item.next.join(', ')}. ${reportText(report)}`,

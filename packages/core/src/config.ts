@@ -147,18 +147,25 @@ export const hostSchema = z.strictObject({
 });
 /**
  * How to reach OpenCode v2. Without `url`, the host discovers the local
- * background service (`opencode service status`) and uses its credentials.
- * With `url`, supply `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` if that server
- * requires HTTP basic auth.
+ * background service (`opencode service status`) and uses its credentials;
+ * with `ensure` (default) it starts that service when none is running and
+ * hands it `AIVI_TOKEN`. With `url`, supply `OPENCODE_USERNAME`/`OPENCODE_PASSWORD`
+ * if that server requires HTTP basic auth; `ensure` is ignored.
  */
-export const opencodeSchema = z.strictObject({ url: z.url().optional() });
+export const opencodeSchema = z.strictObject({
+  url: z.url().optional(),
+  ensure: z
+    .boolean()
+    .default(true)
+    .describe('Start the local OpenCode service when none is running (SDK Service.ensure). Never stops it.'),
+});
 export const configSchema = z
   .strictObject({
     $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
     version: z.literal(1),
     stateDirectory: z.string().default('state'),
     host: hostSchema.default({ bind: '127.0.0.1', port: 4100, auth: { mode: 'token' } }),
-    opencode: opencodeSchema.default({}),
+    opencode: opencodeSchema.default({ ensure: true }),
     knowledge: z.array(source).default([]),
     projects: z.array(z.strictObject({ id, directory: z.string().min(1) })).default([]),
     modules: z.strictObject({ discord: z.strictObject({ config: z.string().min(1) }).optional() }).default({}),
@@ -180,7 +187,15 @@ export const configSchema = z
       .strictObject({
         maxConcurrent: z.number().int().min(1).max(64).default(1),
         resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
-        pollMs: z.number().int().min(100).max(60000).default(1000),
+        pollMs: z
+          .number()
+          .int()
+          .min(100)
+          .max(300_000)
+          .default(30_000)
+          .describe(
+            'Safety-net interval. The host sleeps until the next due instant and is woken by changes; this bounds how long a missed wake can delay dispatch.',
+          ),
         agentSchedules: z
           .union([
             z.strictObject({

@@ -32,7 +32,8 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 2. Start aivi, for example `npm run aivi -- serve`
    (with `AIVI_TOKEN` from fnox, or `host.auth.mode: "none"` on a trusted machine).
 3. With `mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode **server**
-   environment and `opencode service restart`. Restart the service after
+   environment and `opencode service restart` (not needed when aivi started the
+   service itself: it passes the token along). Restart the service after
    every rebuild of the plugin or the host client as well: the long-running
    service keeps `@aivi/host/client` in its module cache, so a plugin that
    registers a new tool can still call a client without that method
@@ -51,8 +52,12 @@ rules from aivi per session.
 
 Leave `opencode.url` unset and the host discovers the local service. Set it only
 for a server elsewhere, with `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` if that
-server requires basic auth. aivi never starts or stops the service;
-`opencode service start` does.
+server requires basic auth. When no service is running and `opencode.ensure`
+is on (default), the host starts one through the SDK's `Service.ensure`
+(`opencode serve --service`), passing `AIVI_TOKEN` along so the plugin can
+authenticate; on a server aivi is then the only thing that needs supervising.
+aivi never stops the service, and never restarts a running one: after a
+rebuild, `opencode service restart` is still yours.
 
 ```sh
 npm run aivi -- opencode check

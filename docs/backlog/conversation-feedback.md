@@ -23,6 +23,14 @@ shutdown.
 
 ## Wanted
 
+- **Progress while the agent works** (owner, 2026-09-15): the typing
+  indicator says "alive", not "what". Show the turn's tool calls in the thread
+  as they happen ("searching knowledge…", "reading handbook.md", "running
+  script"), configurable per channel (off / tool names / tool names with
+  arguments), and periodic "still working on X" updates for long turns.
+  OpenCode's event stream (`client.event.subscribe()`) carries tool state
+  changes live; a placeholder message edited in place (below) is the natural
+  surface, so both land together.
 - A placeholder message that is edited as the turn progresses or is retried,
   instead of a new message per state.
 - Shutdown and restart notices to every conversation with active or queued

@@ -30,6 +30,7 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `host.port` | `4100` |
 | `host.auth.mode` | `token` (default): callers send `AIVI_TOKEN` as a bearer token. `none`: trust the network (loopback, Tailscale, LAN you control) |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
+| `opencode.ensure` | `true`: when no local service is running, aivi starts one through the SDK (`opencode serve --service`) with `AIVI_TOKEN` in its environment, so the plugin inside it can authenticate. aivi never stops it. Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation` |
 | `projects` | Project registry, each `{id, directory}` |
 | `modules.discord.config` | Optional path to Discord module settings |
@@ -37,7 +38,7 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
-| `scheduler.pollMs` | `1000`; polling interval, no model call |
+| `scheduler.pollMs` | `30000`; safety-net interval. The host sleeps until the next due instant and is woken by changes; this only bounds a missed wake |
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_schedule`, run in that pool, at most `max` schedules and pending one-offs at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `title`, `report`, `enabled` (default `true`) and `misfire.skipAfterMs` (an occurrence found later than that after downtime is recorded as skipped, not run) |
 

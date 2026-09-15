@@ -131,4 +131,6 @@ export interface HostClient {
   sources(selection?: SourceSelection): Promise<KnowledgeSource[]>;
   search(request: SearchRequest): Promise<SearchHit[]>;
   schedule(request: ScheduleRequest): Promise<ScheduleResponse>;
+  /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */
+  wake(): Promise<{ woken: boolean }>;
 }

@@ -247,3 +247,47 @@ test('scheduled knowledge indexing uses the same injected service', async t => {
   assert.equal(indexed, 1);
   assert.equal(store.get(job.id).state, 'succeeded');
 });
+
+test('the host sleeps until the next due instant and a wake dispatches a job created meanwhile at once', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const knowledge = {
+    async index() {},
+    async search() {
+      return [];
+    },
+    async close() {},
+  };
+  const ran: number[] = [];
+  const abort = new AbortController();
+  let woke: (() => void) | undefined;
+  const module: HostModule = {
+    id: 'probe',
+    async start(services) {
+      woke = services.wake;
+      return { async stop() {} };
+    },
+  };
+  // A very long safety-net interval: if the loop only polled, nothing below would finish in time.
+  const config = configSchema.parse({ version: 1, host: { port: 0 }, scheduler: { pollMs: 300_000 } });
+  const host = runHost({
+    loaded: { path: '/config', config, sources: [], projects: [] },
+    store,
+    resources: async () => ({ knowledge }),
+    modules: [module],
+    auth,
+    signal: abort.signal,
+    onReady: () => {
+      // Created after the loop went to sleep: only a wake makes it run before the safety-net tick.
+      store.enqueue({ kind: 'system.check' }, 'local-model', 'while-asleep');
+      woke!();
+    },
+  });
+  const started = Date.now();
+  while (store.counts().succeeded < 1 && Date.now() - started < 5000) await new Promise(r => setTimeout(r, 20));
+  ran.push(Date.now() - started);
+  abort.abort();
+  await host;
+  assert.equal(store.counts().succeeded, 1, 'the job ran without waiting for the 300 s safety net');
+  assert.ok(ran[0]! < 4000, `ran after ${ran[0]}ms`);
+});

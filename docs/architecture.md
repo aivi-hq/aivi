@@ -25,12 +25,17 @@ Modules are explicit packages with a small start/stop contract. See
 ## SQLite and Croner
 
 SQLite stores schedules, job payloads, ownership, results, and audit history.
-The host schema is versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 4)
+The host schema is versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 5)
 and adapters version their own namespaced tables through `Store.migrate`.
 Discord stores its inbox and session mappings in the same database that way;
 its turn claim and lease are atomic.
-Croner is only a timezone-aware date calculator. A short polling loop checks due
-schedules; it does not invoke a model unless a queued task requests one.
+Croner is only a timezone-aware date calculator. The host loop sleeps until the
+next due instant (`Store.nextDue`: the earliest future schedule occurrence or
+one-off), and is woken early when the queue changes: the schedule tool, a job or
+Discord turn releasing capacity, or the CLI poking `POST /v1/wake` after it
+wrote to SQLite. `scheduler.pollMs` (30 s) is only a safety net for a missed
+wake. No in-memory timer holds state, so a crash or restart has nothing to
+reconcile. A tick does not invoke a model unless a queued task requests one.
 
 `BEGIN IMMEDIATE` transactions serialize enqueueing, schedule materialization,
 and job claims. Unique keys deduplicate identical requests. A partial unique
@@ -45,7 +50,9 @@ machines or use a network filesystem as a coordination mechanism.
 The current misfire policy is coalesce: schedule downtime produces one pending
 occurrence, then advances to the next future time. Ticks arriving while that
 schedule already has outstanding work are skipped. This suits maintenance and
-dreaming; a future task requiring every occurrence needs an explicit new policy.
+dreaming; `misfire.skipAfterMs` lets a time-bound schedule (a 9:00 standup)
+record a too-late occurrence as skipped instead. A task requiring every
+occurrence needs an explicit new policy.
 Croner defines DST behavior; use UTC when repeated/skipped local wall times are
 undesirable. Store timestamps are UTC milliseconds.
 

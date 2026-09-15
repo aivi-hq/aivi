@@ -81,6 +81,12 @@ async function main(): Promise<void> {
   const loaded = await loadConfig(configPath);
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  // The CLI writes to SQLite directly; a running host learns about it now instead of at its safety-net tick.
+  const poke = async () => {
+    await createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN })
+      .wake()
+      .catch(() => {});
+  };
 
   const discord = loaded.config.modules.discord ? await import('@aivi/discord') : undefined;
   const discordConfig = discord ? await discord.loadDiscordConfig(loaded.config.modules.discord!.config) : undefined;
@@ -153,6 +159,7 @@ async function main(): Promise<void> {
         case 'sync':
           store.syncSchedules(loaded.config.schedules);
           print({ schedules: loaded.config.schedules.length });
+          await poke();
           return;
         case 'list':
           print(
@@ -172,6 +179,7 @@ async function main(): Promise<void> {
         case 'resume':
           if (!argument) break;
           print(store.setScheduleEnabled(argument, subcommand === 'resume'));
+          await poke();
           return;
         case 'remove':
           if (!argument) break;
@@ -181,6 +189,7 @@ async function main(): Promise<void> {
         case 'run':
           if (!argument) break;
           print(store.runSchedule(argument));
+          await poke();
           return;
       }
     }
@@ -190,6 +199,7 @@ async function main(): Promise<void> {
       if (!(resource in loaded.config.scheduler.resources))
         throw new Error('Configure a maintenance resource pool or pass --resource');
       print(store.enqueue({ kind: 'knowledge.index' }, resource, `index:${randomUUID()}`));
+      await poke();
       return;
     }
     if (command === 'jobs') {
@@ -226,6 +236,7 @@ async function main(): Promise<void> {
               ...(values.at ? { due: parseDue(values.at, now) } : {}),
             }),
           );
+          await poke();
           return;
         }
         case 'cancel':
@@ -239,6 +250,7 @@ async function main(): Promise<void> {
           if (argument) {
             store.requestCancel(argument);
             print(store.get(argument));
+            await poke();
             return;
           }
           break;

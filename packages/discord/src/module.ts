@@ -159,6 +159,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         await channel.send({ content, ...safeSend });
       },
       services.log,
+      services.wake,
     );
 
     // Gateway errors are transient and discord.js reconnects on its own. An optional

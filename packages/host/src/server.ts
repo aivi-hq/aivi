@@ -64,6 +64,8 @@ export interface HostServerOptions {
   browser?: BrowserService | undefined;
   /** `POST /v1/schedule`; absent when the host runs without one (tests). */
   schedule?: ScheduleHandler | undefined;
+  /** `POST /v1/wake`: the CLI changed the queue in SQLite; dispatch now. */
+  wake?: (() => void) | undefined;
   log?: Logger | undefined;
 }
 
@@ -77,6 +79,7 @@ export function createHostServer({
   knowledge,
   browser,
   schedule,
+  wake,
   log = silentLogger,
 }: HostServerOptions) {
   const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
@@ -111,6 +114,14 @@ export function createHostServer({
     }
     if (url.pathname === '/v1/schedule') {
       handleSchedule(request, response, send);
+      return;
+    }
+    if (url.pathname === '/v1/wake') {
+      if (request.method !== 'POST') send(405, { error: 'Use POST to wake the scheduler' });
+      else {
+        wake?.();
+        send(200, { woken: wake !== undefined });
+      }
       return;
     }
     if (request.method !== 'GET') {

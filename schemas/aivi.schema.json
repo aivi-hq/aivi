@@ -72,12 +72,19 @@
       "additionalProperties": false
     },
     "opencode": {
-      "default": {},
+      "default": {
+        "ensure": true
+      },
       "type": "object",
       "properties": {
         "url": {
           "type": "string",
           "format": "uri"
+        },
+        "ensure": {
+          "description": "Start the local OpenCode service when none is running (SDK Service.ensure). Never stops it.",
+          "default": true,
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -359,10 +366,11 @@
           }
         },
         "pollMs": {
-          "default": 1000,
+          "description": "Safety-net interval. The host sleeps until the next due instant and is woken by changes; this bounds how long a missed wake can delay dispatch.",
+          "default": 30000,
           "type": "integer",
           "minimum": 100,
-          "maximum": 60000
+          "maximum": 300000
         },
         "agentSchedules": {
           "description": "OpenCode agents create jobs through the aivi_schedule tool; whoever may talk to an agent may schedule. `false` disables the tool.",

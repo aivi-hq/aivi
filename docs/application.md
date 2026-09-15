@@ -33,7 +33,10 @@ Startup validates the auth mode and token first (so a missing `AIVI_TOKEN`
 never launches QMD or Chrome), acquires installation ownership, initializes
 shared services, refreshes the search index when configured, opens the API on
 `host.bind:host.port`, then starts modules. Only after configured modules start
-does it announce readiness and dispatch scheduled work. Startup failure unwinds
+does it announce readiness and dispatch scheduled work. From then on the loop
+sleeps until the next due instant and wakes early when something changes the
+queue (`HostServices.wake`, `POST /v1/wake` from the CLI, a job or turn
+releasing capacity); `scheduler.pollMs` is a safety net, not the clock. Startup failure unwinds
 already-started modules. `aivi tick` runs the same lifecycle in one-shot mode:
 no API, no modules (and no token needed), one dispatch round, drain, exit.
 
@@ -56,8 +59,10 @@ started ends `blocked` when it cannot be verified.
 
 OpenCode runs as its own background service; aivi discovers it through the SDK's
 service registration at the start of each job or conversation turn (one file
-read), so an `opencode service restart` is picked up by the next turn. aivi never
-manages OpenCode's installation or startup. QMD uses its
+read), so an `opencode service restart` is picked up by the next turn. When no
+service is running, aivi starts one (`opencode.ensure`, default on) and hands it
+`AIVI_TOKEN`; it never stops or restarts a running one, and never manages
+OpenCode's installation. QMD uses its
 library API inside aivi, with no QMD server or separate launch command. Only the
 configured Discord module loads discord.js, and only enabled search loads QMD.
 

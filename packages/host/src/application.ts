@@ -13,6 +13,23 @@ import type { Store } from './store.ts';
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
 const FAILURE_NUDGE_AT = 3;
 
+/**
+ * Lets the host loop sleep until the next due instant and be woken early when
+ * the queue changes (a tool created a job, the CLI poked `/v1/wake`). A notify
+ * that arrives between two waits is not lost: the next wait returns at once.
+ */
+export class Wake {
+  private controller = new AbortController();
+  notify(): void {
+    this.controller.abort();
+  }
+  async wait(ms: number, signal: AbortSignal): Promise<void> {
+    const current = this.controller;
+    await setTimeout(ms, undefined, { signal: AbortSignal.any([signal, current.signal]) }).catch(() => {});
+    if (current.signal.aborted) this.controller = new AbortController();
+  }
+}
+
 export interface HostServices {
   loaded: LoadedConfig;
   store: Store;
@@ -24,6 +41,8 @@ export interface HostServices {
   log: Logger;
   /** Register a place job outcomes can be reported to (`report.to`). */
   destinations: Destinations;
+  /** Tell the scheduler the queue changed so it dispatches now instead of at its next safety-net tick. */
+  wake(): void;
   /** Abort the whole host. Only for failures the module cannot recover from. */
   fail(error: unknown): void;
 }
@@ -80,7 +99,11 @@ export async function runHost(options: RunHostOptions): Promise<void> {
 
   // Discovery is one file read, so it runs per unit of work: a restarted `opencode service`
   // (new port and password) is picked up by the next turn without restarting aivi.
-  const opencode = () => connectOpenCode(loaded.config.opencode);
+  const opencode = () =>
+    connectOpenCode(loaded.config.opencode, process.env, {
+      onStart: reason => log.info('opencode.started', { reason }),
+    });
+  const wake = new Wake();
 
   const serve = async (scheduler: Scheduler, destinations: Destinations, knowledge: KnowledgeService) => {
     const http = createHostServer({
@@ -89,7 +112,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       auth,
       knowledge,
       browser,
-      schedule: createScheduleHandler({ store, loaded, destinations, opencode }),
+      schedule: createScheduleHandler({ store, loaded, destinations, opencode, wake: () => wake.notify() }),
+      wake: () => wake.notify(),
       log,
     });
     server = http;
@@ -115,6 +139,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       signal: abort.signal,
       log,
       destinations,
+      wake: () => wake.notify(),
       fail,
     };
     for (const module of modules) {
@@ -124,14 +149,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     }
     options.onReady?.(http.address());
 
+    // Sleep until the next due instant, a wake, or the safety-net tick, whichever comes first.
+    // No in-memory timers hold state: the queue in SQLite is the only truth, and a crash costs nothing.
     while (!abort.signal.aborted) {
       scheduler.tick();
       if (scheduler.stopped) throw new Error('Scheduler stopped unexpectedly');
-      try {
-        await setTimeout(loaded.config.scheduler.pollMs, undefined, { signal: abort.signal });
-      } catch (error) {
-        if (!abort.signal.aborted) throw error;
-      }
+      const due = store.nextDue();
+      const ms = Math.min(loaded.config.scheduler.pollMs, due === null ? Infinity : Math.max(0, due - Date.now()));
+      await wake.wait(ms, abort.signal);
     }
     if (failure !== undefined) throw failure;
   };
@@ -163,6 +188,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       createExecutor(loaded, { store, knowledge, opencode, protectedEnv: options.protectedEnv, log }),
       log,
       async (job, state, result, reason) => {
+        // Capacity was released: queued work may be claimable now.
+        wake.notify();
         if (!shouldReport(job.report, state)) return;
         let text = describeOutcome(job, state, result, reason);
         if (state !== 'succeeded' && job.scheduleId) {

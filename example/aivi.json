@@ -26,8 +26,7 @@
     "resources": {
       "local-model": 1,
       "maintenance": 1
-    },
-    "pollMs": 1000
+    }
   },
   "schedules": [
     {

@@ -115,7 +115,7 @@ async function start(t: { after(fn: () => Promise<void>): void }, mock: ReturnTy
   t.after(() => new Promise<void>(resolve => mock.server.close(() => resolve())));
   const address = mock.server.address();
   assert.ok(address && typeof address !== 'string');
-  return connectOpenCode({ url: `http://127.0.0.1:${address.port}` }, {});
+  return connectOpenCode({ url: `http://127.0.0.1:${address.port}`, ensure: false }, {});
 }
 
 test('collectSessions picks aivi sessions by origin updated after the cursor, oldest first, with only new messages', async t => {

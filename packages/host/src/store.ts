@@ -422,6 +422,21 @@ export class Store {
       .map(r => String(r.resource));
   }
   /**
+   * The next future instant anything becomes due: a schedule occurrence or a waiting one-off.
+   * Work that is already due waits for capacity, and a finishing job wakes the loop for it.
+   */
+  nextDue(now = Date.now()): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT MIN(t) AS due FROM (
+          SELECT MIN(next_at) AS t FROM schedules WHERE enabled=1 AND next_at>?
+          UNION ALL SELECT MIN(scheduled_for) FROM jobs WHERE state='queued' AND scheduled_for>?
+        )`,
+      )
+      .get(now, now);
+    return row?.due === null || row?.due === undefined ? null : Number(row.due);
+  }
+  /**
    * Reserve capacity for non-job work (for example one Discord turn). The
    * caller's own state change runs inside the same transaction via `onAcquire`,
    * so it must use `store.db` directly: Store methods that open their own

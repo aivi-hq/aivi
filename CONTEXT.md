@@ -47,6 +47,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
   tools).
 - **OpenCode discovery per unit of work** (one file read per job or turn), no
   cached client, so `opencode service restart` is picked up by the next turn.
+  A missing service is started by aivi (`opencode.ensure`, with `AIVI_TOKEN`
+  passed along); a running one is never stopped or restarted by aivi.
+- **No timers hold state.** The loop sleeps until `Store.nextDue()` and is
+  woken by whatever changed the queue; `pollMs` (30 s) is only a safety net.
+  SQLite is the single truth, so restarts reconcile nothing.
 - **Shutdown aborts** running jobs; they end `blocked`. A grace period is a
   design choice not yet made ([shutdown-hooks](docs/backlog/shutdown-hooks.md)).
 - **The agent file is the boundary.** Discord, jobs and dreaming run the

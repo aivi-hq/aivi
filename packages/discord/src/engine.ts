@@ -34,6 +34,7 @@ export class DiscordEngine {
   private readonly scheduler: Config['scheduler'];
   private readonly ask: Ask;
   private readonly send: Send;
+  private readonly onRelease: () => void;
   constructor(
     store: DiscordStore,
     config: DiscordConfig,
@@ -41,6 +42,8 @@ export class DiscordEngine {
     ask: Ask,
     send: Send,
     log: Logger = silentLogger,
+    /** A turn released shared capacity; the host may have queued jobs waiting for it. */
+    onRelease: () => void = () => {},
   ) {
     this.store = store;
     this.config = config;
@@ -48,6 +51,7 @@ export class DiscordEngine {
     this.ask = ask;
     this.send = send;
     this.log = log.child({ component: 'discord' });
+    this.onRelease = onRelease;
   }
 
   tick(): void {
@@ -97,6 +101,7 @@ export class DiscordEngine {
       .finally(() => {
         this.active.delete(turn.id);
         this.tick(); // capacity was just released; do not wait for the next poll
+        this.onRelease();
       });
     this.active.set(turn.id, work);
   }
