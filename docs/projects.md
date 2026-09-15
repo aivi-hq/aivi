@@ -17,14 +17,20 @@ that project's memory in the home.
   memory/<id>/facts.md      that project's memory
 ```
 
-The checkout is always `<home>/projects/<id>`; the directory name is the id.
-aivi writes nothing inside a checkout: the home describes the project, so a
+The checkout is always `<home>/projects/<id>`; the directory name is the id
+(`^[a-z][a-z0-9_-]*$`; anything else must be renamed). **A clone is a
+registration**: aivi discovers projects as the directories of
+`<home>/projects` (symlinks to directories count, dotfiles and plain files do
+not) when it loads its config. aivi writes nothing inside a checkout: a
 repository needs no aivi file and works the same outside aivi. `<home>/memory`
 and `<home>/memory/<id>` are created when the knowledge service starts and are
 always registered as `memory` sources (core and per project, both with source
 id `memory`, which is reserved).
 
 ## Configuration
+
+Most projects need no configuration at all. `projects.<id>` in `aivi.json`
+only overrides:
 
 ```json
 {
@@ -35,18 +41,20 @@ id `memory`, which is reserved).
     ]
   },
   "projects": {
-    "acme": {},
-    "legacy": { "knowledge": [{ "id": "wiki", "path": "wiki" }] }
+    "legacy": { "knowledge": [{ "id": "wiki", "path": "wiki" }] },
+    "archived": { "enabled": false }
   }
 }
 ```
 
-- `projects` is an object keyed by id (`^[a-z][a-z0-9_-]*$`). A registered
-  project must be checked out; `config check` fails otherwise.
 - `projectDefaults.knowledge` is the company-wide convention for what a
   repository's `docs/` holds. What is shown above is the built-in default, so
   most homes never write it. A project with its own `knowledge` replaces the
   defaults; paths are relative to the checkout.
+- `enabled: false` keeps the checkout but hides the project from indexing,
+  memory and `projects list`.
+- An override for a project that is not checked out fails `config check`: it
+  is a typo or a missing clone, and both deserve a message.
 - A directory that a repository does not have (no `docs/adr`) is skipped with
   a `knowledge.missing` log line, not an error.
 - **A file belongs to the most specific source that contains it.** `docs/adr/*`
@@ -82,8 +90,19 @@ allows `facts.md` and `proposals/*` in each, and names them in the prompt
 with that project's scope and, like every project source, when no scope is
 given.
 
-## Adding a project
+## Adding, listing, renaming
 
-Today: `git clone <url> <home>/projects/<id>`, add `"<id>": {}` to `projects`,
-restart `aivi serve` (or run `aivi knowledge index`). A one-command
-`aivi projects add <git-url>` is planned.
+```sh
+aivi projects add https://github.com/acme/website.git   # clones into projects/website
+aivi projects add git@github.com:acme/api.git --id backend
+aivi projects list
+```
+
+`add` is `git clone` plus an id check (the id is the repository name,
+lower-cased, unless `--id` says otherwise); it prints the sources the project
+will have. The host reads the projects directory at startup, so restart
+`aivi serve` to index a new project. To rename a project, rename its directory
+(and `memory/<id>` if the memory should follow). Old collections in the search
+index are dropped by QMD at the next start and never searched, since queries
+name their collections; the index is a rebuildable derivative, so deleting
+`state/knowledge` reclaims the space.

@@ -35,7 +35,7 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, always with `AIVI_TOKEN` in its environment, so a new plugin build is live and the plugin can authenticate. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
-| `projects` | Object keyed by project id; each value `{knowledge?, linear?}`. The checkout must exist at `<home>/projects/<id>`; `<home>/memory/<id>` is its `memory` source |
+| `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a missing checkout fails. `<home>/memory/<id>` is each project's `memory` source |
 | `modules.discord.config` | Optional path to Discord module settings ([discord](discord.md)) |
 | `modules.slack.config` | Optional path to Slack module settings ([slack](slack.md)) |
 | `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
@@ -250,8 +250,8 @@ JSON schemas are generated into `schemas/` by `npm run schema`; `npm run check`
 fails when they are stale. Point your editor at them for autocompletion and
 field descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
 config file) in `aivi.json` and the Discord and Slack configs. Runtime validation additionally checks cron
-expressions, timezones, uniqueness, that every project is checked out, and
-Linear application references.
+expressions, timezones, uniqueness, that every project override has a
+checkout, and Linear application references.
 
 `aivi serve` is the single application command. See [application lifecycle](application.md)
 for ownership and [knowledge search](knowledge.md) for indexing and retrieval.

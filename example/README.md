@@ -40,7 +40,7 @@ git-ignored, as is `.env`.
 | `opencode.jsonc` | Loads the aivi plugin and selects `librarian` when you open this directory in OpenCode |
 | `knowledge/` | Company-wide documents (`doc`) |
 | `memory/` | Org memory: dreaming's `facts.md` and proposals; `memory/demo/` is the project's ([projects](../docs/projects.md)) |
-| `projects/demo/` | The registered project `demo`: a plain checkout whose `docs/adr` is indexed as `decision` by convention |
+| `projects/demo/` | The project `demo`, discovered from this directory: a plain checkout whose `docs/adr` is indexed as `decision` by convention |
 | `tasks/` | Task files for `aivi jobs add` |
 | `state/` | Created on first run: SQLite, search index, dreaming transcripts, Chrome profile |
 

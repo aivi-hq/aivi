@@ -153,6 +153,17 @@ test('a file belongs to its most specific source; missing directories are skippe
     (await service.search({ query: 'Pelican', kinds: ['memory'] })).length === 1,
     'memory dir was created and indexed',
   );
+  await service.close();
+
+  // A source that disappears from the config (renamed project, removed source) is dropped by QMD
+  // at the next start; its documents are never searched because queries name their collections.
+  const fewer = await createKnowledgeService(
+    { ...loaded, sources: loaded.sources.filter(s => s.id !== 'adr') },
+    async () => sdk,
+    silentLogger,
+  );
+  t.after(() => fewer.close());
+  assert.deepEqual((await fewer.search({ query: 'Pelican' })).map(h => h.sourceId).sort(), ['docs', 'memory']);
 });
 
 test('backend scope violations are rejected; a result that escapes its source is dropped, not served', async t => {

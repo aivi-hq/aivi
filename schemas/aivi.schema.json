@@ -195,7 +195,7 @@
       "additionalProperties": false
     },
     "projects": {
-      "description": "Projects by id; each is a git checkout at <home>/projects/<id> and gets <home>/memory/<id> as its memory source.",
+      "description": "Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.",
       "default": {},
       "type": "object",
       "propertyNames": {
@@ -205,6 +205,11 @@
       "additionalProperties": {
         "type": "object",
         "properties": {
+          "enabled": {
+            "description": "false: the checkout stays but aivi ignores it.",
+            "default": true,
+            "type": "boolean"
+          },
           "knowledge": {
             "description": "Replaces projectDefaults.knowledge for this project; paths relative to the checkout.",
             "type": "array",

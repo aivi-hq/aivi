@@ -79,8 +79,8 @@ facts relevant to locking and idleness are repeated here.
 ### Projects (superseded)
 
 Built as [projects.md](../projects.md): `projects` keyed by id, checkout at
-`<home>/projects/<id>`, no `aivi.project.json`. `aivi projects add <git-url>`
-(clone, register, index) is still to do. For the lock, "which project" is
+`<home>/projects/<id>` discovered from the directory, no `aivi.project.json`,
+`aivi projects add <git-url>` clones. For the lock, "which project" is
 derived from a task's `directory`/`cwd` being under `projects/<id>`, so no
 `projectsDirectory` knob is needed.
 

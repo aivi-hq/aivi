@@ -108,11 +108,14 @@ test('retention is a system job derived from config: default pool, host timezone
   );
 });
 
-test('projects are checkouts under <home>/projects, described from the home; selection never falls back on an unknown project', async t => {
+test('projects are the directories of <home>/projects; aivi.json only overrides; selection never falls back on an unknown project', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'projects/website'), { recursive: true });
   await mkdir(join(root, 'projects/wiki'), { recursive: true });
+  await mkdir(join(root, 'projects/paused'), { recursive: true });
+  await mkdir(join(root, 'projects/.hidden'), { recursive: true });
+  await writeFile(join(root, 'projects/README.md'), 'files are not projects');
   const write = (projects: Record<string, unknown>) =>
     writeFile(
       join(root, 'aivi.json'),
@@ -128,9 +131,15 @@ test('projects are checkouts under <home>/projects, described from the home; sel
       linear: { workspaceId: 'team', projectId: 'project', lanes: { Development: 'worker', Review: 'worker' } },
     },
     wiki: { knowledge: [{ id: 'pages', path: 'pages' }] },
+    paused: { enabled: false },
   });
   const loaded = await loadConfig(join(root, 'aivi.json'));
   assert.equal(loaded.config.stateDirectory, join(root, 'state'));
+  assert.deepEqual(
+    loaded.projects.map(p => p.id),
+    ['website', 'wiki'],
+    'discovered and sorted; disabled, hidden and plain files left out',
+  );
   assert.equal(loaded.projects[0]!.directory, join(root, 'projects/website'));
   assert.equal(loaded.projects[0]!.linear!.lanes.Review, 'worker');
   // The convention (docs as doc, docs/adr as decision) plus the project's memory, or the project's own list plus memory.
@@ -159,9 +168,14 @@ test('projects are checkouts under <home>/projects, described from the home; sel
   );
   assert.equal(selectSources(loaded, ['website'], false)[0]!.projectId, 'website');
   assert.throws(() => selectSources(loaded, ['typo']), /Unknown project/);
-  // A registered project must be checked out; the id `memory` is reserved for aivi's own sources.
+  // An override for a project that is not checked out is a mistake; a directory that is not a valid id must be renamed.
   await write({ missing: {} });
   await assert.rejects(loadConfig(join(root, 'aivi.json')), /Project missing: no checkout/);
+  await write({});
+  await mkdir(join(root, 'projects/Bad Name'));
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /must be named like/);
+  await rm(join(root, 'projects/Bad Name'), { recursive: true });
+  // The id `memory` is reserved for aivi's own sources.
   assert.equal(
     configSchema.safeParse({ version: 1, knowledge: [{ id: 'memory', path: 'memory', kind: 'memory' }] }).success,
     false,

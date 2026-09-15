@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import type { LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
 import {
+  addProject,
   createLogger,
   errorMessage,
   jobSchema,
@@ -28,6 +29,8 @@ const usage = `aivi <command>
   status                       Inspect durable queue counts
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
+  projects list                Projects: the directories of <home>/projects, with their sources
+  projects add URL [--id ID]   git clone into <home>/projects/<id>; that is the whole registration
   knowledge search QUERY       Search via the running host [--project ID --core-only --no-core --limit N]
   knowledge index              Queue a source refresh now [--resource maintenance]
   jobs list                    Job definitions: configured, system, agent- and operator-created
@@ -71,6 +74,7 @@ async function main(): Promise<void> {
       'core-only': { type: 'boolean' },
       'no-core': { type: 'boolean' },
       project: { type: 'string', multiple: true },
+      id: { type: 'string' },
       key: { type: 'string' },
       at: { type: 'string' },
       cron: { type: 'string' },
@@ -133,6 +137,22 @@ async function main(): Promise<void> {
     case 'sources':
       print(selectSources(loaded, values.project));
       return;
+    case 'projects list':
+      print(
+        loaded.projects.map(p => ({
+          id: p.id,
+          directory: p.directory,
+          sources: loaded.sources.filter(s => s.projectId === p.id).map(s => `${s.id} (${s.kind})`),
+        })),
+      );
+      return;
+    case 'projects add': {
+      if (!argument) throw new Error('Provide a git URL');
+      const added = await addProject(configPath, argument, values.id ? { id: values.id } : {});
+      print(added);
+      console.error('Restart `aivi serve` to index it; the host reads the projects directory at startup.');
+      return;
+    }
     case 'opencode check': {
       const client = await connectOpenCode(loaded.config.opencode);
       print(await client.health.get({ signal: AbortSignal.timeout(10000) }));

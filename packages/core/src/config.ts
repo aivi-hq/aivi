@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import { z } from 'zod';
@@ -6,7 +6,9 @@ import { browserConfigSchema } from './browser.ts';
 import type { KnowledgeKind } from './kinds.ts';
 import { knowledgeKindHelp, knowledgeKindNames } from './kinds.ts';
 
-const id = z.string().regex(/^[a-z][a-z0-9_-]*$/);
+/** Identifiers for sources, jobs, pools, projects; a project id is also its directory name. */
+export const PROJECT_ID = /^[a-z][a-z0-9_-]*$/;
+const id = z.string().regex(PROJECT_ID);
 export const knowledgeKindSchema = z.enum(knowledgeKindNames);
 const source = z.strictObject({
   id,
@@ -163,12 +165,14 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
   { id: 'adr', path: 'docs/adr', kind: 'decision' },
 ] as const satisfies readonly z.input<typeof source>[];
 /**
- * One project: a clean git checkout at `<home>/projects/<id>`, described from
- * the home so the repository carries nothing of aivi's. `knowledge` replaces
- * `projectDefaults.knowledge` for a repository laid out differently; paths are
- * relative to the checkout. `linear.lanes` is validated ahead of the module.
+ * One project: a clean git checkout at `<home>/projects/<id>`, discovered from
+ * that directory. An entry here is only needed to override: `knowledge`
+ * replaces `projectDefaults.knowledge` for a repository laid out differently
+ * (paths relative to the checkout), `enabled: false` hides a checkout from
+ * indexing and memory, `linear.lanes` is validated ahead of the module.
  */
 export const projectSchema = z.strictObject({
+  enabled: z.boolean().default(true).describe('false: the checkout stays but aivi ignores it.'),
   knowledge: z
     .array(source)
     .optional()
@@ -240,7 +244,7 @@ export const configSchema = z
       .record(id, projectSchema)
       .default({})
       .describe(
-        'Projects by id; each is a git checkout at <home>/projects/<id> and gets <home>/memory/<id> as its memory source.',
+        'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
       ),
     modules: z
       .strictObject({
@@ -510,6 +514,27 @@ export interface LoadedConfig {
 
 const absolute = (base: string, value: string): string => (isAbsolute(value) ? value : resolve(base, value));
 
+/**
+ * Projects are the directories of `<home>/projects` (symlinks to directories
+ * included), sorted; a clone is a registration. A name that is not a valid id
+ * must be renamed, and an override for a project that is not checked out is a
+ * mistake, so both fail loudly.
+ */
+async function discoverProjects(home: string, overrides: Record<string, unknown>): Promise<string[]> {
+  const root = resolve(home, 'projects');
+  const found: string[] = [];
+  for (const name of (await readdir(root).catch(() => [])).sort()) {
+    if (name.startsWith('.')) continue;
+    if (!(await stat(join(root, name))).isDirectory()) continue;
+    if (!PROJECT_ID.test(name))
+      throw new Error(`${join(root, name)}: a project directory must be named like ${PROJECT_ID}`);
+    found.push(name);
+  }
+  for (const id of Object.keys(overrides))
+    if (!found.includes(id)) throw new Error(`Project ${id}: no checkout at ${join(root, id)}`);
+  return found;
+}
+
 export async function loadConfig(path: string): Promise<LoadedConfig> {
   path = resolve(path);
   const config = configSchema.parse(JSON.parse(await readFile(path, 'utf8')));
@@ -528,10 +553,10 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
     { id: MEMORY_SOURCE_ID, path: memoryRoot, kind: 'memory', scope: 'core' },
   ];
   const projects: Project[] = [];
-  for (const [projectId, entry] of Object.entries(config.projects)) {
+  for (const projectId of await discoverProjects(base, config.projects)) {
+    const entry = config.projects[projectId] ?? projectSchema.parse({});
+    if (!entry.enabled) continue;
     const directory = resolve(base, 'projects', projectId);
-    const checkout = await stat(directory).catch(() => null);
-    if (!checkout?.isDirectory()) throw new Error(`Project ${projectId}: no checkout at ${directory}`);
     for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
       sources.push({ ...s, path: absolute(directory, s.path), scope: 'project', projectId });
     sources.push({
