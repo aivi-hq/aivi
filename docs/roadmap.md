@@ -27,8 +27,9 @@ Mock tests do not establish these; each has its own command.
 
 ## Next, in order of intent
 
-1. Jobs: agent-created schedules, one-off `--at`, results back to the asking
-   conversation, `[SILENT]`, per-job abort ([backlog/jobs.md](backlog/jobs.md)).
+1. Jobs: agent-created schedules and scripts, one-off `--at`, results
+   re-entering the asking conversation or a thread bound to the job's session,
+   sanitized script environment, per-job abort ([backlog/jobs.md](backlog/jobs.md)).
 2. Projects as pools and maintenance only when idle
    ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 3. Project-scoped memory and a per-project dreamer boundary
