@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Job, LoadedConfig, Report, Schedule, ScheduleItem, ScheduleRequest, ScheduleResponse } from '@aivi/core';
 import { nextOccurrences, parseDue, scheduleSchema, taskSchema } from '@aivi/core';
-import type { Destinations } from './destinations.ts';
-import { SESSION_DESTINATION } from './destinations.ts';
+import type { Channels } from './channel/router.ts';
 import type { OpenCodeClient } from './opencode.ts';
+import { SESSION_DESTINATION } from './reports.ts';
 import type { ScheduleEntry, Store } from './store.ts';
 
 /** A request the host will not carry out; the message is meant for the agent to relay. */
@@ -18,7 +18,7 @@ export class ScheduleRefused extends Error {
 export interface ScheduleHandlerDeps {
   store: Store;
   loaded: LoadedConfig;
-  destinations: Destinations;
+  channels: Channels;
   opencode: () => Promise<OpenCodeClient>;
   /** Called after the queue changed so the host loop dispatches without waiting. */
   wake?: () => void;
@@ -36,7 +36,7 @@ const when = (at: number, timezone: string) =>
  * at all (a job's own session may not, unless a conversation adopted it).
  */
 export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandler {
-  const { store, loaded, destinations } = deps;
+  const { store, loaded, channels } = deps;
   const now = deps.now ?? Date.now;
   const wake = deps.wake ?? (() => {});
   const settings = loaded.config.scheduler.agentSchedules;
@@ -103,7 +103,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       throw new ScheduleRefused(`Unknown session ${input.sessionId}.`, 404);
     });
     const origin = (session.metadata as { aivi?: { origin?: string } } | undefined)?.aivi?.origin;
-    if ((origin === 'job' || origin === 'dreaming') && !destinations.ownsSession(input.sessionId))
+    if ((origin === 'job' || origin === 'dreaming') && !channels.ownsSession(input.sessionId))
       throw new ScheduleRefused('Jobs do not create jobs. Ask a person in a conversation to schedule this.', 403);
 
     const directory = input.directory ?? session.location.directory;
@@ -136,13 +136,13 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
     let report: Report | null = null;
     if (input.report === 'channel') {
       // A conversation asking for a post defaults to its own platform; a native session must say which.
-      const module = input.module ?? destinations.ownerOf(input.sessionId);
+      const module = input.module ?? channels.ownerOf(input.sessionId);
       if (!module)
         throw new ScheduleRefused('report "channel" needs the module (for example "discord") from a native session.');
       report = { to: 'channel', module, channel: input.channel!, on: input.on };
     } else if (input.report === 'session') report = { to: SESSION_DESTINATION, session: input.sessionId, on: input.on };
     if (report) {
-      const refusal = destinations.refuse(report);
+      const refusal = channels.refuse(report);
       if (refusal) throw new ScheduleRefused(`${refusal}. Use report "none" or a channel aivi may post to.`);
     }
 

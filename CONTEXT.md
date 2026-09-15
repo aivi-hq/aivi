@@ -22,24 +22,26 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | task | what to do: `kind` + parameters (`system.check`, `knowledge.index`, `shell`, `opencode.prompt`, `dreaming`) |
 | schedule | cron + timezone + pool + task (+ report); one outstanding occurrence at a time; source `config` (aivi.json) or `agent` (created through `aivi_schedule`) |
 | job | one unit of queued/running/finished work; one row, one audit trail; a one-off is a job with a future due time |
-| turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a Discord turn is of kind `message` (a person) or `job` (an outcome re-entering) |
-| pool / lease | named capacity (`local-model`, `maintenance`); jobs and Discord turns take leases from the same pools |
+| turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a conversation turn is of kind `message` (a person) or `job` (an outcome re-entering) |
+| pool / lease | named capacity (`local-model`, `maintenance`); jobs and conversation turns take leases from the same pools |
 | blocked | ended without proof that the external side stopped; keeps its capacity until `jobs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
 | report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing |
+| channel module | a chat platform adapter (`discord`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
+| conversation | what a channel module binds to one OpenCode session: a thread, a DM, or a whole channel |
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation` |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: `discord`, `job`, `dreaming`; on messages also `job-result` |
 
 ## Decisions and why
 
-- **Two queues, one capacity.** Discord turns are not host jobs: they run in
-  order per thread, continue the thread's session, reply into it, and start in
+- **Two queues, one capacity.** Conversation turns are not host jobs: they run
+  in order per conversation, continue its session, reply into it, and start in
   seconds. Jobs are fresh sessions in any order. Both take leases from the
   same pools ([architecture](docs/architecture.md#two-queues-one-capacity)).
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
-  `blocked`, capacity kept, human resolves. Exception: a Discord turn
+  `blocked`, capacity kept, human resolves. Exception: a conversation turn
   interrupted by a *restart* is discarded and the person told, because its
   only external effect is the reply; jobs still block.
 - **Verified final answer**, never idleness: `finalAnswer` reads the native
@@ -67,6 +69,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
   app's browser; aivi's `aivi_browser` drives one persistent Chrome for
   unattended sessions and shared logins. The example agents deny the former
   so Discord and jobs are never offered a browser that cannot connect.
+- **A second chat platform is glue.** The host owns the inbox, the
+  claim-with-lease transaction, conversation↔session bindings with adoption and
+  seeds, restart recovery, the verified-turn driver and reply splitting; a
+  channel module registers one `ChannelModule` and keeps only its gateway,
+  routing, sending and commands ([channels](docs/channels.md)).
 - **Memory is files** inside a knowledge source, never system-prompt state.
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
   through `aivi_schedule` (`POST /v1/schedule`, the one job mutation on the
@@ -96,6 +103,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Tool ids, plugin loading, permission matching, session driver contract | [docs/opencode.md](docs/opencode.md) |
 | Knowledge scope, kinds, refresh | [docs/knowledge.md](docs/knowledge.md) |
 | Dreaming run, memory contract, dreamer boundary | [docs/dreaming.md](docs/dreaming.md) |
+| Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |
 | Discord behavior, setup, recovery | [docs/discord.md](docs/discord.md) |
 | Browser service | [docs/browser.md](docs/browser.md) |
 | Decisions | [docs/architecture.md](docs/architecture.md) |

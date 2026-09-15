@@ -9,8 +9,8 @@ The package table is in the [README](../README.md#packages).
 
 Modules receive a `HostServices` object containing the loaded installation
 config, store, knowledge service, optional browser service, an `opencode()`
-client factory, a structured logger, the shutdown signal, a `destinations`
-registry for `report.to`, and `fail()`. They
+client factory, a structured logger, the shutdown signal, the `channels`
+registry where chat modules register ([channels](channels.md)), and `fail()`. They
 return an asynchronous `stop` function. They call shared services directly,
 rather than calling the host over HTTP from inside the same application.
 

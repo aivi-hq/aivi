@@ -1,8 +1,8 @@
 import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
 import { accessEntry } from '@aivi/core';
-import type { HostModule, HostServices } from '@aivi/host';
-import { status } from '@aivi/host';
+import type { ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
+import { ChannelEngine, ConversationStore, createTurnRunner, splitReply, status } from '@aivi/host';
 import {
   ChannelType,
   Client,
@@ -19,19 +19,21 @@ import {
 } from 'discord.js';
 import type { DiscordConfig, Route } from './config.ts';
 import { authorized } from './config.ts';
-import { DiscordEngine, splitReply } from './engine.ts';
-import { createNativeChat } from './native.ts';
-import type { Turn } from './store.ts';
-import { DiscordStore } from './store.ts';
 
 const safeSend = {
   allowedMentions: { parse: [] as never[], repliedUser: false },
   flags: MessageFlags.SuppressEmbeds as const,
 };
 const COMMANDS = ['new', 'status', 'search'] as const;
+/** Discord's message limit is 2000 UTF-16 units; stay below it with room for formatting. */
+export const DISCORD: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 
 export function bindingFor(config: DiscordConfig): string {
   return JSON.stringify({ application: config.applicationId, agent: config.agent, directory: config.directory });
+}
+/** The Discord inbox in the host database; the CLI and the module open the same one. */
+export function openDiscordStore(store: Store, config: DiscordConfig): ConversationStore {
+  return new ConversationStore(store, DISCORD, bindingFor(config));
 }
 
 export async function registerDiscordCommands(config: DiscordConfig): Promise<void> {
@@ -72,7 +74,7 @@ function requireToken(): string {
 async function startDiscord(config: DiscordConfig, services: HostServices) {
   const log = services.log.child({ component: 'discord' });
   const token = requireToken();
-  const store = new DiscordStore(services.store, bindingFor(config));
+  const store = openDiscordStore(services.store, config);
   if (store.rebound)
     log.warn('binding.changed', { hint: 'Every conversation starts a fresh session on its next message.' });
   const interrupted = store.recover();
@@ -92,7 +94,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
   });
 
   const abort = new AbortController();
-  let engine: DiscordEngine | undefined;
+  let engine: ChannelEngine | undefined;
   const stop = () => {
     abort.abort();
     engine?.stop();
@@ -109,7 +111,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
   };
 
   try {
-    const ask = await createNativeChat(config, services.loaded, services.opencode, services.log);
+    const ask = await createTurnRunner(DISCORD, config, services.loaded, services.opencode, services.log);
     // Discord's typing indicator lasts ~10 s; keep it alive while the agent works so people know it is alive.
     const typing = async (channelId: string, signal: AbortSignal) => {
       const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -148,7 +150,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         done.abort();
       }
     };
-    engine = new DiscordEngine(
+    engine = new ChannelEngine(
       store,
       config,
       services.loaded.config.scheduler,
@@ -261,7 +263,10 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
               ...(project ? { projects: [project] } : {}),
             });
             const content = hits.length
-              ? splitReply(hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'))[0]!
+              ? splitReply(
+                  hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'),
+                  DISCORD.replyLimit,
+                )[0]!
               : 'No matching documents.';
             await interaction.editReply({
               content,
@@ -335,15 +340,22 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
 
     // Proactive posts only go where the operator said they may. A post opens a thread that is a
     // conversation: replying continues the job's own session (agent jobs) or a fresh one seeded with
-    // the output (script jobs), so "what is this about?" never happens.
-    const unregister = services.destinations.register('discord', {
+    // the output (script jobs), so "what is this about?" never happens. A job's outcome for a session
+    // this module owns comes back into its thread as a turn, in order with everything said there.
+    const unregister = services.channels.register({
+      id: DISCORD.id,
       accepts: channelId => config.reportChannels.includes(channelId),
-      async deliver(channelId, text, context) {
+      ownsSession: session => store.channelOf(session) !== null,
+      async reenter(session, text, context) {
+        store.enqueueJobResult(context.job.id, session, text, config.maxPending);
+        engine?.tick();
+      },
+      async post(channelId, text, context) {
         if (!config.reportChannels.includes(channelId))
           throw new Error(`Discord channel ${channelId} is not in reportChannels`);
         const channel = await client.channels.fetch(channelId);
         if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
-        const [first, ...rest] = splitReply(text);
+        const [first, ...rest] = splitReply(text, DISCORD.replyLimit);
         const opener = await channel.send({ content: first!, ...safeSend });
         let target = channel;
         if (!channel.isThread() && !channel.isDMBased() && 'threads' in channel && !channel.isThreadOnly()) {
@@ -369,16 +381,6 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         for (const chunk of rest) await target.send({ content: chunk, ...safeSend });
       },
     });
-    // A job's outcome comes back into the thread that asked for it as a turn: the librarian reads it
-    // and replies there, in order with everything else said in that thread.
-    const unregisterOwner = services.destinations.registerSessionOwner({
-      id: 'discord',
-      owns: session => store.channelOf(session) !== null,
-      async reenter(session, text, context) {
-        store.enqueueJobResult(context.job.id, session, text, config.maxPending);
-        engine?.tick();
-      },
-    });
 
     // Turns are picked up when they arrive and when capacity frees inside this module; the loop
     // only catches capacity released elsewhere (a job finishing) and so can be slow.
@@ -399,7 +401,6 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     return {
       async stop() {
         unregister();
-        unregisterOwner();
         try {
           await loop.catch(() => {}); // already reported through services.fail
         } finally {

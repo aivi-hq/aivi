@@ -2,10 +2,31 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import { discordConfigSchema } from '../src/config.ts';
-import { createNativeChat } from '../src/native.ts';
+import type { ChannelPlatform } from '../src/channel/contract.ts';
+import { createTurnRunner, messageIdFor } from '../src/channel/turns.ts';
+import { connectOpenCode } from '../src/opencode.ts';
+import { TurnNotStarted } from '../src/session.ts';
 
-test('native chat creates one fixed-agent session and reapplies only the source-directory allows before each prompt', async t => {
+const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
+const config = { agent: 'librarian', directory: '/librarian' };
+const turn = {
+  id: 'one',
+  channel: 'dm',
+  user: 'human',
+  name: 'Name',
+  text: 'Question',
+  session: 'ses_discord_test',
+  ready: false,
+  state: 'running' as const,
+  result: null,
+  error: null,
+  kind: 'message' as const,
+  agent: null,
+  directory: null,
+  seed: null,
+};
+
+test('a turn runner creates one fixed-agent session and reapplies only the source-directory allows before each prompt', async t => {
   const requests: { path: string; method: string; body: Record<string, any> }[] = [];
   let metadata: Record<string, unknown> = {};
   const server = createServer(async (req, res) => {
@@ -55,37 +76,14 @@ test('native chat creates one fixed-agent session and reapplies only the source-
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  const config = discordConfigSchema.parse({
-    version: 1,
-    applicationId: '10000000000000001',
-    directory: '/librarian',
-    access: { dm: { users: ['10000000000000002'] } },
-  });
   const loaded = {
     config: configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } }),
     path: '/config',
     projects: [],
     sources: [],
   };
-  const { connectOpenCode } = await import('@aivi/host');
-  const ask = await createNativeChat(config, loaded, () => connectOpenCode(loaded.config.opencode));
+  const ask = await createTurnRunner(platform, config, loaded, () => connectOpenCode(loaded.config.opencode));
   let ready = 0;
-  const turn = {
-    id: 'one',
-    channel: 'dm',
-    user: 'human',
-    name: 'Name',
-    text: 'Question',
-    session: 'ses_discord_test',
-    ready: false,
-    state: 'running' as const,
-    result: null,
-    error: null,
-    kind: 'message' as const,
-    agent: null,
-    directory: null,
-    seed: null,
-  };
   assert.equal(
     await ask(turn, AbortSignal.timeout(3000), () => {
       ready++;
@@ -108,8 +106,12 @@ test('native chat creates one fixed-agent session and reapplies only the source-
     'no deny-all and no tool allow-list; the agent file decides',
   );
   assert.deepEqual(requests.filter(r => r.path.endsWith('/prompt'))[1]!.body.metadata, {
-    aivi: { origin: 'discord', channel: 'dm', user: 'human', discordMessage: 'two', message: 'msg_discord_two' },
+    aivi: { origin: 'discord', channel: 'dm', user: 'human', sourceMessage: 'two', message: 'msg_discord_two' },
   });
+  const created = requests.find(r => r.path === '/api/session' && r.method === 'POST')!.body;
+  assert.equal(created.title, 'Discord dm');
+  assert.deepEqual(created.metadata, { aivi: { origin: 'discord', channel: 'dm' } });
+  assert.equal(created.id, 'ses_discord_test');
   assert.ok(
     requests.some(r => r.path.endsWith('/permission') && r.method === 'GET'),
     'pending permissions are checked',
@@ -146,36 +148,32 @@ test('native chat creates one fixed-agent session and reapplies only the source-
     ),
     /no longer runs agent coder in \/other/,
   );
+
+  // Another platform: its own origin, label and speaker line; ids are sanitized so Slack's `C1:1726.5` fits.
+  const slack: ChannelPlatform = {
+    id: 'slack',
+    label: 'Slack',
+    replyLimit: 3900,
+    describeSpeaker: t => `[Slack message from <@${t.user}>]`,
+  };
+  assert.equal(messageIdFor(slack, 'C1:1726000000.000100'), 'msg_slack_C1_1726000000_000100');
+  const slackAsk = await createTurnRunner(slack, config, loaded, () => connectOpenCode(loaded.config.opencode));
+  await slackAsk(
+    { ...turn, id: 'C1:1.5', ready: true, session: 'ses_slack_test' },
+    AbortSignal.timeout(3000),
+    () => {},
+  );
+  const slackPrompt = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
+  assert.equal(slackPrompt.id, 'msg_slack_C1_1_5');
+  assert.equal(slackPrompt.text, '[Slack message from <@human>]\nQuestion');
+  assert.equal(slackPrompt.metadata.aivi.origin, 'slack');
 });
 
 test('an unreachable OpenCode is a turn that never started, not a blocked one', async () => {
-  const { TurnNotStarted } = await import('@aivi/host');
-  const config = discordConfigSchema.parse({
-    version: 1,
-    applicationId: '10000000000000001',
-    directory: '/librarian',
-    access: { dm: { users: ['10000000000000002'] } },
-  });
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/config', projects: [], sources: [] };
-  const ask = await createNativeChat(config, loaded, async () => {
+  const ask = await createTurnRunner(platform, config, loaded, async () => {
     throw new Error('No running OpenCode v2 service found');
   });
-  const turn = {
-    id: 'one',
-    channel: 'dm',
-    user: 'human',
-    name: 'Name',
-    text: 'Question',
-    session: 'ses_discord_test',
-    ready: false,
-    state: 'running' as const,
-    result: null,
-    error: null,
-    kind: 'message' as const,
-    agent: null,
-    directory: null,
-    seed: null,
-  };
   await assert.rejects(
     ask(turn, AbortSignal.timeout(3000), () => {}),
     (error: unknown) => error instanceof TurnNotStarted && /No running OpenCode/.test(error.message),

@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
-import { Destinations, describeOutcome, reentryPrompt, reportTarget, shouldReport } from './destinations.ts';
+import { Channels } from './channel/router.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
+import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import { createScheduleHandler } from './schedules.ts';
@@ -39,8 +40,8 @@ export interface HostServices {
   opencode: () => Promise<OpenCodeClient>;
   signal: AbortSignal;
   log: Logger;
-  /** Register a place job outcomes can be reported to (`report.to`). */
-  destinations: Destinations;
+  /** Chat platform modules register here once; that makes them report destinations and session owners. */
+  channels: Channels;
   /** Tell the scheduler the queue changed so it dispatches now instead of at its next safety-net tick. */
   wake(): void;
   /** Abort the whole host. Only for failures the module cannot recover from. */
@@ -105,7 +106,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     });
   const wake = new Wake();
 
-  const serve = async (scheduler: Scheduler, destinations: Destinations, knowledge: KnowledgeService) => {
+  const serve = async (scheduler: Scheduler, channels: Channels, knowledge: KnowledgeService) => {
     // With lifecycle "own", a running service is replaced now, before any module or job needs it:
     // the fresh one has the current plugin build and aivi's token. Failure to do so is not fatal;
     // the next turn simply discovers whatever is running.
@@ -120,7 +121,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       auth,
       knowledge,
       browser,
-      schedule: createScheduleHandler({ store, loaded, destinations, opencode, wake: () => wake.notify() }),
+      schedule: createScheduleHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
       log,
     });
@@ -146,7 +147,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       opencode,
       signal: abort.signal,
       log,
-      destinations,
+      channels,
       wake: () => wake.notify(),
       fail,
     };
@@ -177,7 +178,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     ({ knowledge, browser } = await options.resources());
     // A result for a session no module owns goes straight into that native session's inbox;
     // OpenCode orders it behind whatever the person is doing. Nobody waits for the answer here.
-    const destinations = new Destinations(async (sessionId, text, context) => {
+    const channels = new Channels(async (sessionId, text, context) => {
       const client = await opencode();
       await client.session.get({ sessionID: sessionId }, { signal: abort.signal });
       await client.session.prompt(
@@ -206,7 +207,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
             text += `\nThis schedule has failed ${streak} times in a row. Fix it, pause it, or remove it.`;
         }
         try {
-          await destinations.deliver(job.report, text, { job, state });
+          await channels.deliver(job.report, text, { job, state });
           store.note(job.id, 'reported', reportTarget(job.report));
         } catch (error) {
           store.note(job.id, 'report-failed', error instanceof Error ? error.message : String(error));
@@ -226,7 +227,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       scheduler.tick();
       await scheduler.drain();
     } else {
-      await serve(scheduler, destinations, knowledge);
+      await serve(scheduler, channels, knowledge);
     }
   } catch (error) {
     errors.push(error);

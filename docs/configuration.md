@@ -60,7 +60,7 @@ audit history and never changes the job's outcome. `on` is `"always"`
 (default), `"failure"` or `"never"`. Two shapes exist:
 
 - **A channel**: `{ "to": "channel", "module": "discord", "channel": "<id>", "on": … }`.
-  `module` names a running channel module (`discord`), `channel`
+  `module` names a running channel module ([channels](channels.md)), `channel`
   is that platform's own identifier. The module decides whether aivi may post
   there (`reportChannels` in its config) and how: Discord opens a thread that
   continues the job's session, so replying to an outcome talks to the agent

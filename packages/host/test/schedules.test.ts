@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import { Destinations } from '../src/destinations.ts';
+import { Channels } from '../src/channel/router.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { createScheduleHandler, ScheduleRefused } from '../src/schedules.ts';
 import { Store } from '../src/store.ts';
@@ -60,21 +60,22 @@ function setup(store: Store, url: string, enabled = true) {
       agentSchedules: enabled ? { resource: 'agents', max: 3 } : false,
     },
   });
-  const destinations = new Destinations(async () => {});
-  destinations.register('discord', { accepts: c => c === '42', deliver: async () => {} });
-  destinations.registerSessionOwner({
+  const channels = new Channels(async () => {});
+  channels.register({
     id: 'discord',
-    owns: id => ['ses_discord_adopted', 'ses_discord_1'].includes(id),
+    accepts: c => c === '42',
+    post: async () => {},
+    ownsSession: id => ['ses_discord_adopted', 'ses_discord_1'].includes(id),
     reenter: async () => {},
   });
   const handler = createScheduleHandler({
     store,
     loaded: { path: '/aivi.json', config, projects: [], sources: [] },
-    destinations,
+    channels,
     opencode: () => connectOpenCode(config.opencode, {}),
     now: () => NOW,
   });
-  return { handler, destinations };
+  return { handler, channels };
 }
 
 const refused = (status: number, pattern: RegExp) => (error: unknown) =>

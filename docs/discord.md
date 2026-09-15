@@ -3,7 +3,10 @@
 `@aivi/discord` is an optional module inside the host application. It connects
 to Discord through discord.js and uses the host's OpenCode connection,
 knowledge service, database, and capacity limits. `aivi serve` starts and stops it;
-there is no separate Discord server or daemon command.
+there is no separate Discord server or daemon command. It implements the
+[channel module contract](channels.md) with the module id `discord`; the
+inbox, session bindings, engine, turn runner and recovery described there are
+the host's. This page has what is Discord's.
 
 ## Behavior
 
@@ -98,8 +101,9 @@ missing permission) the text is posted alone.
 A Discord gateway error is logged and left to discord.js's reconnect logic; it
 does not stop the host. Sessions created for Discord carry
 `metadata.aivi = { origin: "discord", channel }` and each prompt carries the
-Discord message id, user id, and channel, so conversations can later be selected
-by origin and speaker.
+Discord message id (`sourceMessage`), user id, and channel
+([identifiers](channels.md#identifiers-and-prefixes)), so conversations can
+later be selected by origin and speaker.
 
 ```sh
 npm run aivi -- config check
@@ -123,29 +127,13 @@ for DMs and bot mentions.
 
 ## Queue and recovery
 
-Incoming accepted messages enter a durable SQLite inbox before model dispatch.
-Discord message IDs deduplicate Host replays. Messages received while the
-adapter is completely offline are not backfilled from Discord history.
-
-Each active turn reserves the configured resource pool and global capacity in the
-same transaction as its inbox claim. Scheduled jobs honor these reservations,
-and chat respects running/blocked jobs. `maxConcurrent` adds a Discord-specific
-upper bound. `maxPending` bounds the inbox. One conversation runs only one turn
-at a time; excess messages queue in arrival order.
-
-The native session ID is persisted before creation. Each turn uses a stable
-native prompt ID and speaker metadata. The adapter waits for that exact turn's
-completed final answer, successful native idle outcome, and finished tools.
-It does not treat idle alone as proof of completion. The session's fixed agent
-and directory are checked before each prompt.
-
-Replies are saved before delivery. Once fully delivered, their payloads and input
-text are removed from the inbox; native OpenCode remains the transcript store.
-If generation, delivery, timeout, or shutdown is interrupted, the turn becomes
-blocked and retains its capacity. A partial Discord reply is not automatically
-resent. This avoids duplicating potentially delivered messages after a lost
-response. `/status` exposes the blocked state; operator status includes the native
-session ID and undelivered result for inspection.
+The shared machinery is described in [channels](channels.md#what-a-module-inherits);
+Discord's parameters: message ids are snowflakes and deduplicate gateway
+replays, replies are split at 1900 UTF-16 units, the binding that rotates
+sessions when it changes is `{ applicationId, agent, directory }`, and the
+turn timeout is `turnTimeoutMs`. `maxConcurrent` adds a Discord-specific upper
+bound on concurrent turns; `maxPending` bounds the inbox. The application lock
+prevents duplicate hosts; a module lock also protects the Discord inbox.
 
 ```sh
 npm run aivi -- discord status
@@ -156,31 +144,15 @@ Resolution discards that blocked turn and releases capacity. It does not stop th
 native session or resend a reply. Inspect/stop native work first. Queued messages
 can then continue in the same session.
 
-A restart needs no operator: a conversation turn's only external effect is its
-reply, so turns interrupted by a restart are discarded, their capacity released,
-and each affected conversation is told once ("please send it again", or "my
-last answer may be incomplete" when delivery had started). Prompts are never
-resubmitted. Jobs, whose effects can be anything, still block on restart. The application lock prevents duplicate hosts; a module lock also protects the Discord inbox.
-Changing the application, agent, or directory against existing state acts as
-`/new` for every conversation: old native sessions stay in OpenCode and each
-channel's next message starts fresh. It is refused while any turn is queued or
-blocked; finish or resolve those first.
-
 ### Job outcomes in a thread
 
 A job whose `report` points at a thread's session (`to: "session"`; the default
-for jobs the librarian creates from a thread) does not post text. The module
-enqueues a turn of kind `job` into that thread's inbox, ordered behind the
-messages already waiting, taking a lease like any turn. The prompt says that
-aivi delivered a job outcome and nobody typed it, and that the librarian must
-pass it on rather than act on it (live finding 2026-09-15: asked to relay a
-riddle, the librarian solved it). Outcomes addressed to the people are
-delivered as written; anything else is summarized, with the whole conversation
-in context.
-The turn's native message id is `msg_discord_job_<jobId>` and its metadata
-origin is `job-result`. One job outcome becomes at most one turn. If no thread
-is bound to the session, delivery fails and is audited on the job; the job
-outcome is unchanged.
+for jobs the librarian creates from a thread) does not post text: it re-enters
+the thread as a turn of kind `job` ([channels](channels.md#reports)). The
+prompt says that aivi delivered a job outcome and nobody typed it, and that the
+librarian must pass it on rather than act on it (live finding 2026-09-15: asked
+to relay a riddle, the librarian solved it). If no thread is bound to the
+session, delivery fails and is audited on the job; the job outcome is unchanged.
 
 ## Boundaries
 
@@ -191,10 +163,9 @@ automatic cleanup. Both jobs and Discord turns use the same verified-final-answe
 driver; only blocked work needs an operator. Use trusted native plugins in the
 librarian location: plugins remain executable OpenCode extensions.
 
-Tests cover routing, session isolation/reset, deduplication, queueing, shared
-capacity, restart recovery, failed delivery, Unicode splitting, and final-answer
-filtering, with the real OpenCode client against a mock server. Live status is
-in the [README](../README.md#status).
+Tests in this package cover Discord routing and the example config; the shared
+inbox, engine and turn runner are tested in the host with the real OpenCode
+client against a mock server. Live status is in the [README](../README.md#status).
 
 ## Later
 

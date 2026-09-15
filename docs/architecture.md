@@ -27,8 +27,9 @@ Modules are explicit packages with a small start/stop contract. See
 SQLite stores schedules, job payloads, ownership, results, and audit history.
 The host schema is versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 6)
 and adapters version their own namespaced tables through `Store.migrate`.
-Discord stores its inbox and session mappings in the same database that way;
-its turn claim and lease are atomic.
+Channel modules store their inbox and session mappings in the same database
+that way (`<module>_turns`, `<module>_sessions`; [channels](channels.md));
+a turn claim and its lease are atomic.
 Croner is only a timezone-aware date calculator. The host loop sleeps until the
 next due instant (`Store.nextDue`: the earliest future schedule occurrence or
 one-off), and is woken early when the queue changes: the schedule tool, a job or

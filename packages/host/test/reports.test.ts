@@ -2,9 +2,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Job } from '@aivi/core';
 import { configSchema, scheduleSchema, taskSchema } from '@aivi/core';
-import { Destinations, describeOutcome, reentryPrompt, reportTarget, shouldReport } from '../src/destinations.ts';
+import type { ChannelModule } from '../src/channel/contract.ts';
+import { Channels } from '../src/channel/router.ts';
+import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from '../src/reports.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
+
+const module = (id: string, overrides: Partial<ChannelModule> = {}): ChannelModule => ({
+  id,
+  accepts: () => true,
+  ownsSession: () => false,
+  reenter: async () => {},
+  post: async () => {},
+  ...overrides,
+});
 
 test('report policy selects which outcomes are delivered', () => {
   assert.equal(shouldReport(null, 'succeeded'), false);
@@ -72,7 +83,7 @@ test('outcome text prefers the agent answer or shell output and stays bounded', 
   );
 });
 
-test('scheduled outcomes are delivered to the registered destination and audited; failures are audited too', async t => {
+test('scheduled outcomes are posted through the registered channel module and audited; failures are audited too', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
   const config = configSchema.parse({ version: 1 });
@@ -85,12 +96,14 @@ test('scheduled outcomes are delivered to the registered destination and audited
   store.syncSchedules([schedule], 0);
   store.materializeDue(60_000);
   const delivered: [string, string][] = [];
-  const destinations = new Destinations();
-  const unregister = destinations.register('discord', {
-    async deliver(channel, text) {
-      delivered.push([channel, text]);
-    },
-  });
+  const channels = new Channels();
+  const unregister = channels.register(
+    module('discord', {
+      async post(channel, text) {
+        delivered.push([channel, text]);
+      },
+    }),
+  );
   const run = async (now: number) => {
     const scheduler = new Scheduler(
       store,
@@ -100,7 +113,7 @@ test('scheduled outcomes are delivered to the registered destination and audited
       async (job, state, result, reason) => {
         if (!shouldReport(job.report, state)) return;
         try {
-          await destinations.deliver(job.report, describeOutcome(job, state, result, reason), { job, state });
+          await channels.deliver(job.report, describeOutcome(job, state, result, reason), { job, state });
           store.note(job.id, 'reported', reportTarget(job.report));
         } catch (error) {
           store.note(job.id, 'report-failed', (error as Error).message);
@@ -130,17 +143,19 @@ test('scheduled outcomes are delivered to the registered destination and audited
 
 test('a report to "session" goes to the module that owns the session, else into the native session', async () => {
   const native: string[] = [];
-  const destinations = new Destinations(async (sessionId, text) => {
+  const channels = new Channels(async (sessionId, text) => {
     native.push(`${sessionId}:${text}`);
   });
   const reentered: string[] = [];
-  const unregister = destinations.registerSessionOwner({
-    id: 'discord',
-    owns: id => id.startsWith('ses_discord_'),
-    async reenter(id, text) {
-      reentered.push(`${id}:${text}`);
-    },
-  });
+  const unregister = channels.register(
+    module('discord', {
+      accepts: c => c === '42',
+      ownsSession: id => id.startsWith('ses_discord_'),
+      async reenter(id, text) {
+        reentered.push(`${id}:${text}`);
+      },
+    }),
+  );
   const job = {
     id: 'j',
     task: taskSchema.parse({ kind: 'system.check' }),
@@ -158,22 +173,23 @@ test('a report to "session" goes to the module that owns the session, else into 
     report: null,
   } satisfies Job;
   const context = { job, state: 'succeeded' as const };
-  await destinations.deliver({ to: 'session', session: 'ses_discord_1', on: 'always' }, 'hi', context);
-  await destinations.deliver({ to: 'session', session: 'ses_native', on: 'always' }, 'yo', context);
+  await channels.deliver({ to: 'session', session: 'ses_discord_1', on: 'always' }, 'hi', context);
+  await channels.deliver({ to: 'session', session: 'ses_native', on: 'always' }, 'yo', context);
   assert.deepEqual(reentered, ['ses_discord_1:hi']);
   assert.deepEqual(native, ['ses_native:yo']);
-  assert.equal(destinations.ownsSession('ses_discord_1'), true);
-  assert.equal(destinations.ownerOf('ses_discord_1'), 'discord');
-  assert.equal(destinations.ownsSession('ses_native'), false);
-  assert.equal(destinations.refuse({ to: 'session', session: 'x', on: 'always' }), undefined);
+  assert.equal(channels.ownsSession('ses_discord_1'), true);
+  assert.equal(channels.ownerOf('ses_discord_1'), 'discord');
+  assert.equal(channels.ownsSession('ses_native'), false);
+  assert.equal(channels.refuse({ to: 'session', session: 'x', on: 'always' }), undefined);
   const discord = { to: 'channel', module: 'discord', on: 'always' } as const;
-  assert.match(destinations.refuse({ ...discord, channel: '1' }) ?? '', /No channel module "discord"/);
-  destinations.register('discord', { accepts: c => c === '42', deliver: async () => {} });
-  assert.match(destinations.refuse({ ...discord, channel: '1' }) ?? '', /does not allow posting to 1/);
-  assert.equal(destinations.refuse({ ...discord, channel: '42' }), undefined);
-  assert.throws(() => destinations.register('session', { deliver: async () => {} }), /reserved/);
+  assert.match(channels.refuse({ ...discord, channel: '1' }) ?? '', /does not allow posting to 1/);
+  assert.equal(channels.refuse({ ...discord, channel: '42' }), undefined);
+  assert.match(channels.refuse({ ...discord, module: 'slack', channel: '42' }) ?? '', /No channel module "slack"/);
+  assert.throws(() => channels.register(module('session')), /not a module id/);
+  assert.throws(() => channels.register(module('discord')), /already registered/);
   unregister();
-  await destinations.deliver({ to: 'session', session: 'ses_discord_1', on: 'always' }, 'later', context);
+  assert.match(channels.refuse({ ...discord, channel: '42' }) ?? '', /No channel module "discord"/);
+  await channels.deliver({ to: 'session', session: 'ses_discord_1', on: 'always' }, 'later', context);
   assert.deepEqual(native.at(-1), 'ses_discord_1:later', 'without an owner the native path is used');
   assert.match(reentryPrompt('body'), /^\[aivi delivers the outcome[^\]]*\]\nbody$/);
 });

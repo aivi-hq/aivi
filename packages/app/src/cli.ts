@@ -136,7 +136,7 @@ async function main(): Promise<void> {
         print({ registered: true });
         return;
       }
-      const inbox = new discord.DiscordStore(store, discord.bindingFor(discordConfig));
+      const inbox = discord.openDiscordStore(store, discordConfig);
       if (subcommand === 'status') {
         print({ turns: inbox.list(), leases: store.leases() });
         return;
