@@ -9,7 +9,7 @@ export { collectSessions, dream, readCursor, renderTranscript, writeCursor } fro
 export type { OpenCodeClient } from './opencode.ts';
 export { connectOpenCode } from './opencode.ts';
 export type { ExecutorDeps } from './runtime.ts';
-export { createExecutor } from './runtime.ts';
+export { createExecutor, SECRET_ENV, shellEnvironment } from './runtime.ts';
 export type { Execute, ExecutionContext, ExecutionResult, OnFinished } from './scheduler.ts';
 export { Scheduler } from './scheduler.ts';
 export type { HostAuth, HostServerOptions } from './server.ts';

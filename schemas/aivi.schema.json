@@ -437,6 +437,16 @@
                     "type": "string",
                     "minLength": 1
                   },
+                  "env": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
                   "timeoutMs": {
                     "default": 600000,
                     "type": "integer",

@@ -13,11 +13,39 @@ export interface ExecutorDeps {
   knowledge?: KnowledgeService | undefined;
   /** Resolved lazily: system checks and indexing never need the model server. */
   opencode: () => Promise<OpenCodeClient>;
+  /** Environment variable names scripts must not inherit, in addition to `SECRET_ENV` (for example the keys of `<home>/.env`). */
+  protectedEnv?: Iterable<string> | undefined;
   log?: Logger | undefined;
+}
+
+/** Secrets aivi reads from its own environment; a shell task never sees them unless its `env` sets them on purpose. */
+export const SECRET_ENV = [
+  'AIVI_TOKEN',
+  'DISCORD_BOT_TOKEN',
+  'DISCORD_TOKEN',
+  'OPENCODE_USERNAME',
+  'OPENCODE_PASSWORD',
+];
+
+/**
+ * A script's environment: the host's, minus aivi's secrets, plus the task's
+ * own `env`. Scripts keep PATH, HOME and whatever the operator's shell set,
+ * so nothing that works from a terminal breaks under aivi.
+ */
+export function shellEnvironment(
+  base: NodeJS.ProcessEnv,
+  protectedNames: Iterable<string>,
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  const hidden = new Set([...SECRET_ENV, ...protectedNames]);
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(base)) if (value !== undefined && !hidden.has(name)) env[name] = value;
+  return { ...env, ...extra };
 }
 
 export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execute {
   const log = deps.log ?? silentLogger;
+  const protectedEnv = [...(deps.protectedEnv ?? [])];
   return async (job, context) => {
     switch (job.task.kind) {
       case 'knowledge.index': {
@@ -50,7 +78,14 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
           const child = execFile(
             file!,
             args,
-            { cwd, timeout: task.timeoutMs, maxBuffer: 1024 * 1024, signal: context.signal, windowsHide: true },
+            {
+              cwd,
+              env: shellEnvironment(process.env, protectedEnv, task.env),
+              timeout: task.timeoutMs,
+              maxBuffer: 1024 * 1024,
+              signal: context.signal,
+              windowsHide: true,
+            },
             (error, stdout, stderr) => {
               // Node reports a non-zero exit as a numeric `code`, a kill (timeout, abort, maxBuffer) with
               // `signal` or a string code, and a spawn failure (ENOENT, EACCES) with a string code and no pid.

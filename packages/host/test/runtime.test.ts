@@ -285,6 +285,58 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   assert.equal((failed.result as { exitCode: number }).exitCode, 3);
 });
 
+test('shell tasks inherit the host environment minus aivi secrets and .env keys; task env is merged on top', async t => {
+  const store = new Store(':memory:');
+  const previous = { AIVI_TOKEN: process.env.AIVI_TOKEN, FROM_DOTENV: process.env.FROM_DOTENV };
+  process.env.AIVI_TOKEN = 'host-secret-token-that-is-long';
+  process.env.FROM_DOTENV = 'dotenv-secret';
+  t.after(() => {
+    store.close();
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const config = configSchema.parse({ version: 1, stateDirectory: '/tmp' });
+  const job = store.enqueue(
+    taskSchema.parse({
+      kind: 'shell',
+      command: [
+        process.execPath,
+        '-e',
+        'const e=process.env; console.log(JSON.stringify({token:e.AIVI_TOKEN??null,dotenv:e.FROM_DOTENV??null,path:typeof e.PATH,extra:e.EXTRA}))',
+      ],
+      env: { EXTRA: 'from-task' },
+    }),
+    'local-model',
+    'env',
+  );
+  const scheduler = new Scheduler(
+    store,
+    config.scheduler,
+    createExecutor(
+      { path: '/aivi.json', config, projects: [], sources: [] },
+      {
+        store,
+        protectedEnv: ['FROM_DOTENV'],
+        opencode: async () => {
+          throw new Error('x');
+        },
+      },
+    ),
+  );
+  scheduler.tick();
+  await scheduler.drain();
+  const done = store.get(job.id);
+  assert.equal(done.state, 'succeeded');
+  assert.deepEqual(JSON.parse((done.result as { stdout: string }).stdout), {
+    token: null,
+    dotenv: null,
+    path: 'string',
+    extra: 'from-task',
+  });
+});
+
 test('a command that cannot start fails instead of blocking capacity', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());

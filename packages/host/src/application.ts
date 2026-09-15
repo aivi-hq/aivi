@@ -42,6 +42,8 @@ export interface RunHostOptions {
   modules?: HostModule[];
   signal: AbortSignal;
   auth: HostAuth;
+  /** Environment variable names shell tasks must not inherit (the keys of `<home>/.env`); aivi's fixed secrets are always hidden. */
+  protectedEnv?: Iterable<string>;
   log?: Logger;
   /** Materialize schedules, dispatch what is due, wait, and return. No API, no modules. */
   once?: boolean;
@@ -132,7 +134,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
-      createExecutor(loaded, { store, knowledge, opencode, log }),
+      createExecutor(loaded, { store, knowledge, opencode, protectedEnv: options.protectedEnv, log }),
       log,
       async (job, state, result, reason) => {
         if (!shouldReport(job.report, state)) return;

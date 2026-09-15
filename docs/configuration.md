@@ -46,7 +46,7 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | --- | --- | --- |
 | `system.check` | – | Reports whether every knowledge source path exists |
 | `knowledge.index` | – | Refreshes the search index |
-| `shell` | `command` (argv array, never a shell string), `cwd`, `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept |
+| `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
 | `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
 | `dreaming` | `memoryDirectory`, `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
 
@@ -118,6 +118,11 @@ for reading host secrets.
 The host discovers OpenCode through the SDK's service registration
 (`~/.local/state/opencode/service.json`), so the random service port and its
 basic-auth password never appear in aivi configuration.
+
+Shell tasks never inherit these secrets: the child process gets the host
+environment minus the fixed names above and minus every key defined in
+`<home>/.env`. Everything else (PATH, HOME, the operator's shell variables)
+passes through, and a task's own `env` map is merged on top.
 
 `aivi serve` logs one JSON object per line on stderr; `--log-level debug` shows
 schedule materialization. stdout is reserved for command output.

@@ -21,6 +21,8 @@ export const taskSchema = z.discriminatedUnion('kind', [
     /** argv, never a shell string: no quoting or injection surprises. */
     command: z.array(z.string().min(1)).min(1),
     cwd: z.string().min(1).optional(),
+    /** Merged over the inherited host environment (minus aivi's own secrets). */
+    env: z.record(z.string().min(1), z.string()).optional(),
     timeoutMs: z
       .number()
       .int()

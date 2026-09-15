@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { parseArgs } from 'node:util';
+import { parseArgs, parseEnv } from 'node:util';
 import type { LoadedConfig, Logger, LogLevel } from '@aivi/core';
 import { createLogger, errorMessage, loadConfig, reportSchema, selectSources, taskSchema } from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   const configPath = ['aivi.local.json', 'aivi.json'].map(name => resolve(home, name)).find(path => existsSync(path));
   if (!configPath)
     throw new Error(`No aivi.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
-  loadEnvFile(resolve(home, '.env'), log);
+  const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
   const loaded = await loadConfig(configPath);
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
@@ -221,6 +221,7 @@ async function main(): Promise<void> {
           store,
           modules,
           auth,
+          protectedEnv,
           log,
           once,
           signal: abort.signal,
@@ -243,11 +244,15 @@ async function main(): Promise<void> {
   }
 }
 
-/** dotenv-style file; existing environment always wins, so `fnox exec` and CI overrides behave. */
-function loadEnvFile(path: string, log: { debug(event: string, fields?: Record<string, unknown>): void }): void {
-  if (!existsSync(path)) return;
+/**
+ * dotenv-style file; existing environment always wins, so `fnox exec` and CI overrides behave.
+ * Returns the variable names the file defines: everything in it is treated as a secret.
+ */
+function loadEnvFile(path: string, log: { debug(event: string, fields?: Record<string, unknown>): void }): string[] {
+  if (!existsSync(path)) return [];
   process.loadEnvFile(path);
   log.debug('env.loaded', { path });
+  return Object.keys(parseEnv(readFileSync(path, 'utf8')));
 }
 
 const jobFileSchema = z.strictObject({
