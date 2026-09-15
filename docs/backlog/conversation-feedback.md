@@ -19,6 +19,11 @@ shutdown.
 
 ## Wanted
 
+- OpenCode unreachable: today the message is discarded with "please send that
+  again". People expect it to be queued (observed 2026-09-15). Better: keep it
+  queued, say "my agent runtime is unreachable; I will answer when it is
+  back", and let the next tick retry. Per-turn discovery makes the retry
+  free; the open question is only how long to wait before giving up.
 - Queued behind other work: a short acknowledgement or reaction so a wait is
   distinguishable from silence (needs the Add Reactions permission; see
   [chat-commands](chat-commands.md)).
