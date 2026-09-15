@@ -76,12 +76,11 @@ id `memory`, which is reserved).
 One dreaming run reviews every conversation since the last run; there is one
 bag of conversations, not one per project, because channels carry no project.
 The dreamer decides where a fact belongs: the org (`memory/facts.md`) or a
-project (`memory/<id>/facts.md`). Today the host allows writes to the org
-memory only ([dreaming](dreaming.md)); widening the boundary to every project's
-memory home and naming the projects in the prompt is the next step
-([project-memory](backlog/project-memory.md)). Project memory is a project
-source, so it is found with that project's scope and, like every project
-source, when no scope is given.
+project (`memory/<id>/facts.md`). The host makes every memory home exist,
+allows `facts.md` and `proposals/*` in each, and names them in the prompt
+([dreaming](dreaming.md)). Project memory is a project source, so it is found
+with that project's scope and, like every project source, when no scope is
+given.
 
 ## Adding a project
 

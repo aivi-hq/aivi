@@ -2,11 +2,12 @@
 
 Dreaming is aivi's memory consolidation: a scheduled agent turn that reads the
 conversations people had with aivi since the last run and distils what should be
-remembered into plain markdown files. Those files sit inside a core knowledge
-source, so they are indexed and searchable like any other document, and the
-librarian retrieves them through `knowledge_search` when relevant. Memory never
-goes into a system prompt, so prompt caches stay warm and the librarian's soul
-stays stable.
+remembered into plain markdown files. Those files sit in `<home>/memory` (the
+org) and `<home>/memory/<project>` (one per project), which are always `memory`
+knowledge sources, so they are indexed and searchable like any other document,
+and the librarian retrieves them through `knowledge_search` when relevant.
+Memory never goes into a system prompt, so prompt caches stay warm and the
+librarian's soul stays stable.
 
 ## How a run works
 
@@ -21,13 +22,16 @@ stays stable.
 4. It writes one transcript file under `<stateDirectory>/dreaming/` and runs
    the dreamer agent through the session driver. The agent file is the
    boundary (the example dreamer denies edit, shell and subagents); the job
-   adds only `external_directory` allows for the memory and transcript
-   directories and `edit` allows for `facts.md` and `proposals/*`, which win
-   over the agent's `edit: deny` because session rules come last. Permission
+   adds only `external_directory` allows for the transcript and every memory
+   home, and `edit` allows for `facts.md` and `proposals/*` in each of them,
+   which win over the agent's `edit: deny` because session rules come last.
+   The prompt names the org memory and each project's; the dreamer decides
+   where a fact belongs. Permission
    prompts are rejected. Paths are canonical (`realpath`), as OpenCode matches
    them. The job row carries the native session id before the first request, so
    `aivi runs show` points at the session to inspect if the run blocks.
-5. It records which memory files changed, advances the cursor to the newest
+5. It records which memory files changed (`facts.md`, `demo/facts.md`, …),
+   advances the cursor to the newest
    reviewed session, refreshes the search index, and reports the agent's
    summary to the configured destination.
 
@@ -44,8 +48,8 @@ enforces the boundary. Files:
 
 | File | Written by | Purpose |
 | --- | --- | --- |
-| `facts.md` | dreaming | Dated, attributed bullets grouped by topic. Superseded facts are struck through, never deleted. |
-| `proposals/rules.md` | dreaming | Red lines and conventions people stated, quoted with date and speaker. Not in force until a human moves them. |
+| `facts.md` | dreaming | Dated, attributed bullets grouped by topic. Superseded facts are struck through, never deleted. The org's in `memory/`, each project's in `memory/<id>/` |
+| `proposals/rules.md` | dreaming | Red lines and conventions people stated, quoted with date and speaker. Not in force until a human moves them. Per memory home, like `facts.md` |
 | `proposals/skills.md` | dreaming | Repeatable tasks worth turning into skills. |
 | `rules.md`, agent files, skills | humans | The soul. Dreaming cannot write here. |
 
@@ -83,9 +87,6 @@ example home schedules it next to Discord, which is where its default
 
 ## Later
 
-Project-scoped memory: the dreamer writing to `<home>/memory/<project>/` when a
-fact belongs to a project ([projects](projects.md#memory),
-[project-memory](backlog/project-memory.md)), per-person
-memory once identities are linked, memory decay, and a queue-aware schedule that
-waits for quiet hours instead of a fixed cron
+Per-person memory once identities are linked, memory decay, and a queue-aware
+schedule that waits for quiet hours instead of a fixed cron
 ([projects-and-capacity](backlog/projects-and-capacity.md)).

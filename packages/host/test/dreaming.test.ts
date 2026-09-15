@@ -141,25 +141,28 @@ test('collectSessions picks aivi sessions by origin updated after the cursor, ol
   assert.match(transcript, /## ses_new \(discord, channel c1\)/);
 });
 
-test('dream writes the transcript, adds only its two write targets, advances the cursor, and reports changes', async t => {
+test('dream writes the transcript, allows the same two write targets in the org and every project memory, advances the cursor, and reports changes', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-dream-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const memory = join(root, 'knowledge', 'memory');
+  const demo = join(memory, 'demo');
   const mock = mockOpenCode();
   const client = await start(t, mock);
   const store = new Store(':memory:');
   t.after(async () => store.close());
   const task = taskSchema.parse({ kind: 'dreaming', directory: '/lib', memoryDirectory: memory });
   assert.equal(task.kind, 'dreaming');
-  // Simulate the agent writing a fact during its turn.
+  // Simulate the agent writing an org fact and a project fact during its turn.
   const originalPrompt = mock.server.listeners('request')[0] as (...args: unknown[]) => unknown;
   mock.server.removeAllListeners('request');
   mock.server.on('request', async (req, res) => {
-    if (req.url!.endsWith('/prompt'))
+    if (req.url!.endsWith('/prompt')) {
       await writeFile(
         join(memory, 'facts.md'),
         '# Facts\n\n## Deployment\n- 2026-09-14 (discord, Bob): deploys on Tuesdays.\n',
       );
+      await writeFile(join(demo, 'facts.md'), '# Facts: demo\n\n- 2026-09-14 (discord, Bob): demo uses pnpm.\n');
+    }
     return originalPrompt(req, res);
   });
   const deps = {
@@ -167,6 +170,7 @@ test('dream writes the transcript, adds only its two write targets, advances the
     client,
     events: { watch: () => () => {} },
     stateDirectory: join(root, 'state'),
+    projects: [{ id: 'demo', memory: demo }],
     signal: AbortSignal.timeout(10000),
     now: () => T0 + 10_000,
   };
@@ -179,7 +183,7 @@ test('dream writes the transcript, adds only its two write targets, advances the
   assert.equal(outcome.state, 'succeeded');
   assert.equal(outcome.result.reviewed, 2);
   assert.deepEqual(outcome.result.sessions, ['ses_old_updated', 'ses_new']);
-  assert.deepEqual(outcome.result.changed, ['facts.md']);
+  assert.deepEqual(outcome.result.changed, ['demo/facts.md', 'facts.md']);
   assert.equal(outcome.result.text, 'Added 1 fact.');
   assert.equal(readCursor(store, memory), T0 + 3000, 'cursor advances to the newest reviewed session, not to now');
   assert.match(await readFile(outcome.result.transcript!, 'utf8'), /We deploy on Tuesdays/);
@@ -192,13 +196,20 @@ test('dream writes the transcript, adds only its two write targets, advances the
   const edits = create.body.permissions
     .filter((p: { action: string }) => p.action === 'edit')
     .map((p: { resource: string }) => p.resource);
-  assert.deepEqual(edits, [`${canonical}/facts.md`, `${canonical}/proposals/*`]);
-  assert.ok(
-    create.body.permissions.some(
-      (p: { action: string; resource: string }) =>
-        p.action === 'external_directory' && p.resource === `${canonical}/**`,
-    ),
-  );
+  assert.deepEqual(edits, [
+    `${canonical}/facts.md`,
+    `${canonical}/proposals/*`,
+    `${canonical}/demo/facts.md`,
+    `${canonical}/demo/proposals/*`,
+  ]);
+  for (const dir of [canonical, `${canonical}/demo`])
+    assert.ok(
+      create.body.permissions.some(
+        (p: { action: string; resource: string }) => p.action === 'external_directory' && p.resource === `${dir}/**`,
+      ),
+    );
+  const prompt = mock.requests.find(r => r.path.endsWith('/prompt'))!;
+  assert.match(JSON.stringify(prompt.body), /demo: .*\/demo \(facts about the demo project go here\)/);
   // The agent file is the boundary; the job only adds where memory is and what may be written.
   assert.ok(
     create.body.permissions.every((p: { action: string }) => ['external_directory', 'edit'].includes(p.action)),

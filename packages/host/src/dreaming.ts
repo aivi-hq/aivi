@@ -15,6 +15,8 @@ export interface DreamingDeps {
   client: OpenCodeClient;
   events: SessionEvents;
   stateDirectory: string;
+  /** Each project's memory home (`<home>/memory/<id>`); the dreamer may write there too. */
+  projects?: { id: string; memory: string }[];
   signal: AbortSignal;
   log?: Logger | undefined;
   now?: () => number;
@@ -175,33 +177,55 @@ export async function dream(
   const until = Math.max(...sessions.map(s => s.updated));
 
   await mkdir(join(deps.stateDirectory, 'dreaming'), { recursive: true, mode: 0o700 });
-  await mkdir(join(task.memoryDirectory, 'proposals'), { recursive: true });
   // OpenCode matches permission resources against canonical paths; symlinked directories (macOS /tmp, /var) would otherwise be denied.
   const runDir = await realpath(join(deps.stateDirectory, 'dreaming'));
-  const memory = await realpath(task.memoryDirectory);
-  const factsPath = join(memory, 'facts.md');
-  await stat(factsPath).catch(() =>
-    writeFile(
-      factsPath,
-      '# Facts\n\nDurable facts and decisions, dated and attributed. Maintained by dreaming; humans may edit.\n',
-    ),
-  );
+  const posix = (path: string) => path.replaceAll('\\', '/');
+  // One memory home for the org and one per project. The dreamer decides where a fact
+  // belongs; the host only makes each home exist and writable in the same two places.
+  const homes: { id: string | null; memory: string }[] = [];
+  const permissions: { action: string; resource: string; effect: 'allow' }[] = [
+    { action: 'external_directory', resource: `${posix(runDir)}/**`, effect: 'allow' },
+  ];
+  for (const home of [{ id: null, memory: task.memoryDirectory }, ...(deps.projects ?? [])]) {
+    await mkdir(join(home.memory, 'proposals'), { recursive: true });
+    const memory = await realpath(home.memory);
+    const factsPath = join(memory, 'facts.md');
+    await stat(factsPath).catch(() =>
+      writeFile(
+        factsPath,
+        `# Facts${home.id ? `: ${home.id}` : ''}\n\nDurable facts and decisions${home.id ? ` about the ${home.id} project` : ''}, dated and attributed. Maintained by dreaming; humans may edit.\n`,
+      ),
+    );
+    homes.push({ id: home.id, memory });
+    // The agent file is the boundary; aivi adds only what it knows: where memory and the transcript
+    // are, and that facts.md and proposals/* may be written (appended last, so they win over an
+    // `edit: deny` in the agent file). Everything else stays as the agent defines it.
+    permissions.push(
+      { action: 'external_directory', resource: `${posix(memory)}/**`, effect: 'allow' },
+      { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
+      { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
+    );
+  }
+  const org = homes[0]!;
   const transcript = join(runDir, `${runId}.md`);
   await writeFile(transcript, renderTranscript(sessions, since), { mode: 0o600 });
 
-  const before = await snapshot(memory);
-  const posix = (path: string) => path.replaceAll('\\', '/');
-  // The agent file is the boundary; aivi adds only what it knows: where memory and the transcript
-  // are, and that facts.md and proposals/* may be written (appended last, so they win over an
-  // `edit: deny` in the agent file). Everything else stays as the agent defines it.
-  const permissions: { action: string; resource: string; effect: 'allow' }[] = [
-    { action: 'external_directory', resource: `${posix(memory)}/**`, effect: 'allow' },
-    { action: 'external_directory', resource: `${posix(runDir)}/**`, effect: 'allow' },
-    { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
-    { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
-  ];
+  // Changed files are labelled relative to the org memory; a project home outside it (a custom
+  // `memoryDirectory`) is labelled `<id>/…`, which is what the default layout yields anyway.
+  const snapshotAll = async (): Promise<Map<string, string>> => {
+    const files = new Map<string, string>();
+    for (const home of homes) {
+      if (home.id && home.memory.startsWith(`${org.memory}/`)) continue;
+      for (const [file, hash] of await snapshot(home.memory)) files.set(home.id ? `${home.id}/${file}` : file, hash);
+    }
+    return files;
+  };
+  const before = await snapshotAll();
   const { sessionId, messageId } = turnIdsFor(runId);
   const metadata = { aivi: { origin: 'dreaming', run: runId } };
+  const projectLines = homes
+    .filter(h => h.id)
+    .map(h => `  - ${h.id}: ${h.memory} (facts about the ${h.id} project go here)`);
   const turn = await runTurn(
     client,
     {
@@ -216,16 +240,18 @@ export async function dream(
       messageMetadata: metadata,
       text: [
         `Dreaming run. Review the conversations in ${transcript} (${sessions.length} session(s), ${since ? `since ${new Date(since).toISOString()}` : 'all history'}).`,
-        `Memory directory: ${memory}`,
-        `- Read ${factsPath} first and reconcile: update or date-supersede existing entries instead of duplicating them.`,
-        `- You may edit only facts.md and files under proposals/. Do not touch anything else.`,
+        `Org memory directory: ${org.memory}`,
+        ...(projectLines.length ? ['Project memory directories:', ...projectLines] : []),
+        `- Read each facts.md you are about to change first and reconcile: update or date-supersede existing entries instead of duplicating them.`,
+        `- A fact about one project belongs in that project's facts.md; everything else in the org's. When unsure, the org's.`,
+        `- You may edit only facts.md and files under proposals/ in these directories. Do not touch anything else.`,
         `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
       ].join('\n'),
     },
     { signal: deps.signal, onPermission: 'reject', events: deps.events, log },
   );
 
-  const after = await snapshot(memory);
+  const after = await snapshotAll();
   const changed = [...new Set([...before.keys(), ...after.keys()])]
     .filter(file => before.get(file) !== after.get(file))
     .sort();

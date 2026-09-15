@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { errorMessage, silentLogger } from '@aivi/core';
+import { errorMessage, MEMORY_SOURCE_ID, silentLogger } from '@aivi/core';
 import { dream } from './dreaming.ts';
 import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
@@ -141,6 +141,9 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
             events: deps.events,
             client,
             stateDirectory: loaded.config.stateDirectory,
+            projects: loaded.sources
+              .filter(s => s.scope === 'project' && s.id === MEMORY_SOURCE_ID)
+              .map(s => ({ id: s.projectId!, memory: s.path })),
             signal: AbortSignal.any([context.signal, timeout]),
             log,
           });
