@@ -11,11 +11,9 @@ union and its defaults).
 1. Live-gate Discord again after the lift (its behaviour is meant to be
    unchanged; the message metadata key `discordMessage` became
    `sourceMessage`).
-2. Rename the package to `@aivi/channel-discord` (`packages/channel-discord`);
-   config key `modules.discord` and the CLI subcommand stay.
-3. `@aivi/channel-slack`: Socket Mode, threads as conversations
+2. `@aivi/channel-slack`: Socket Mode, threads as conversations
    (`channel:thread_ts`), the same `/new`, `/status`, `/search` as predefined
    slash commands, reports opening a thread that adopts the job session.
-4. Signal and Telegram (no threads, DM-first) will test whether the binding
+3. Signal and Telegram (no threads, DM-first) will test whether the binding
    model generalizes; expect a "conversation without threads" case, as Hermes
    has for WhatsApp/Signal.

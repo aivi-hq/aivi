@@ -15,7 +15,7 @@
       "path": "../host"
     },
     {
-      "path": "../discord"
+      "path": "../channel-discord"
     },
     {
       "path": "../knowledge"

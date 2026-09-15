@@ -88,7 +88,7 @@ async function main(): Promise<void> {
       .catch(() => {});
   };
 
-  const discord = loaded.config.modules.discord ? await import('@aivi/discord') : undefined;
+  const discord = loaded.config.modules.discord ? await import('@aivi/channel-discord') : undefined;
   const discordConfig = discord ? await discord.loadDiscordConfig(loaded.config.modules.discord!.config) : undefined;
   if (discordConfig && !(discordConfig.resource in loaded.config.scheduler.resources))
     throw new Error('Unknown Discord resource pool');

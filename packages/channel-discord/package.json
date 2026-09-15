@@ -1,5 +1,5 @@
 {
-  "name": "@aivi/discord",
+  "name": "@aivi/channel-discord",
   "version": "0.1.0",
   "private": true,
   "type": "module",

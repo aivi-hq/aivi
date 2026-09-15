@@ -11,7 +11,7 @@
       "path": "packages/opencode"
     },
     {
-      "path": "packages/discord"
+      "path": "packages/channel-discord"
     },
     {
       "path": "packages/knowledge"

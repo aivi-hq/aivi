@@ -22,7 +22,7 @@ whether DMs + shared channels map cleanly onto `access`.
 ## Research
 
 Done 2026-09-14 against official docs. Baseline for effort estimates is the
-Discord module (`packages/discord`): gateway websocket via discord.js, the
+Discord module (`packages/channel-discord`): gateway websocket via discord.js, the
 shared `accessPolicySchema` (`dm.users`, `channels[{id, users, trigger,
 sessions}]`), thread-per-conversation, durable inbox, typing keep-alive,
 `splitReply`, three slash commands, and a `Destinations` entry for job reports.
@@ -160,12 +160,10 @@ https://starlight.astro.build/getting-started/.
 Signal (neither clears the 90 % bar and both add operational burden that is
 not aivi's). Treat email as a later, separate "mailbox" adapter whose main job
 is ingesting mail into knowledge, not chatting; it needs identity linking and
-a sender-authentication rule first. Before writing the Slack module, move the
-channel-agnostic parts out of `@aivi/discord` (inbox store, turn lifecycle,
-`splitReply`, typing keep-alive, `createNativeChat` permissions) into a shared
-package so an adapter is only: platform events → `AccessRoute` + enqueue, and
-deliver(text). Two adapters justify that extraction; a plugin framework does
-not. Extend `accessPolicySchema` only where a platform forces it (Telegram
+a sender-authentication rule first. The channel-agnostic parts now live in the
+host ([channels](../channels.md)), so an adapter is only: platform events →
+`AccessRoute` + enqueue, and send(text). A plugin framework is still not
+wanted. Extend `accessPolicySchema` only where a platform forces it (Telegram
 forum topics are already covered by `sessions`; Slack needs nothing).
 
 **Docs site.** Use VitePress 1.x, pinned as a devDependency, with

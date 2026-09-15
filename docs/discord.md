@@ -1,6 +1,6 @@
 # Discord adapter
 
-`@aivi/discord` is an optional module inside the host application. It connects
+`@aivi/channel-discord` is an optional module inside the host application. It connects
 to Discord through discord.js and uses the host's OpenCode connection,
 knowledge service, database, and capacity limits. `aivi serve` starts and stops it;
 there is no separate Discord server or daemon command. It implements the

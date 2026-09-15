@@ -55,7 +55,7 @@ and run `serve` as above. See [Discord setup](docs/discord.md).
 | `@aivi/host` | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection, session driver, dreaming, the channel module contract with the shared inbox, engine and turn runner, report routing |
 | `@aivi/knowledge` | QMD-backed document indexing and scoped keyword search |
 | `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
-| `@aivi/discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads |
+| `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads |
 | `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `aivi_schedule`, `aivi_browser` |
 
 Modules and jobs call shared services in-process. The plugin reaches the same

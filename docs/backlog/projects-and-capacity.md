@@ -44,10 +44,10 @@ facts relevant to locking and idleness are repeated here.
   queued jobs in due order and skips any whose pool is full; `acquireLease()`
   reserves a pool slot for non-job work inside one `BEGIN IMMEDIATE`
   transaction, letting the caller flip its own state in `onAcquire`.
-- Discord turns are that non-job work: `DiscordStore.claim` takes lease
-  `discord:<turnId>` in `config.resource` (default `local-model`) and releases it
-  in `sent()`; a failed turn blocks the lease instead
-  (`packages/discord/src/store.ts:124-176`). Blocked leases survive restarts
+- Conversation turns are that non-job work: `ConversationStore.claim` takes
+  lease `<module>:<turnId>` in `config.resource` (default `local-model`) and
+  releases it in `sent()`; a failed turn blocks the lease instead
+  (`packages/host/src/channel/store.ts`). Blocked leases survive restarts
   (`blockLeasesOwnedBy`).
 - A job or lease has exactly one `resource`. Nothing records *which project*
   a job touches; `opencode.prompt` and `dreaming` carry a `directory`, `shell`

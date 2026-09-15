@@ -2,8 +2,8 @@
 // `--check` fails when the checked-in files are stale (run by `npm run check`).
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { discordConfigSchema } from '@aivi/channel-discord';
 import { configSchema, projectSchema } from '@aivi/core';
-import { discordConfigSchema } from '@aivi/discord';
 import { z } from 'zod';
 
 const targets = [
