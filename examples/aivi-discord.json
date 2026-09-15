@@ -1,0 +1,62 @@
+{
+  "$schema": "../schemas/aivi.schema.json",
+  "version": 1,
+  "stateDirectory": "../.aivi",
+  "host": {
+    "port": 4100
+  },
+  "knowledge": [
+    {
+      "id": "company",
+      "path": "knowledge"
+    },
+    {
+      "id": "memory",
+      "path": "memory",
+      "kind": "memory"
+    }
+  ],
+  "projects": [
+    {
+      "id": "demo",
+      "directory": "project"
+    }
+  ],
+  "scheduler": {
+    "maxConcurrent": 1,
+    "resources": {
+      "local-model": 1,
+      "maintenance": 1
+    },
+    "pollMs": 1000
+  },
+  "schedules": [
+    {
+      "id": "check-sources",
+      "cron": "*/5 * * * *",
+      "timezone": "UTC",
+      "resource": "maintenance",
+      "task": {
+        "kind": "system.check"
+      }
+    },
+    {
+      "id": "refresh-knowledge",
+      "cron": "0 * * * *",
+      "timezone": "UTC",
+      "resource": "maintenance",
+      "task": {
+        "kind": "knowledge.index"
+      }
+    }
+  ],
+  "search": {
+    "provider": "qmd",
+    "indexOnStart": true
+  },
+  "modules": {
+    "discord": {
+      "config": "discord.json"
+    }
+  }
+}

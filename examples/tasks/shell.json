@@ -1,0 +1,5 @@
+{
+  "task": { "kind": "shell", "command": ["node", "--version"], "timeoutMs": 30000 },
+  "resource": "maintenance",
+  "report": { "to": "discord", "channel": "10000000000000005", "on": "failure" }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@aivi/opencode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./server": "./server.js"
+  },
+  "dependencies": {
+    "@aivi/host": "0.1.0",
+    "@aivi/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "2.0.3"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.3"
+  },
+  "main": "./dist/index.js"
+}

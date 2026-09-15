@@ -1,0 +1,243 @@
+import { setTimeout } from 'node:timers/promises';
+import { once } from 'node:events';
+import {
+  Client, Events, GatewayIntentBits, Partials, ChannelType, REST, Routes,
+  SlashCommandBuilder, InteractionContextType, MessageFlags, Options,
+} from 'discord.js';
+import type { HostServices, HostModule } from '@aivi/host';
+import { authorized } from './config.ts';
+import { accessEntry } from '@aivi/core';
+import type { DiscordConfig, Route } from './config.ts';
+import { DiscordStore } from './store.ts';
+import { DiscordEngine, splitReply } from './engine.ts';
+import { createNativeChat } from './native.ts';
+
+const safeSend = { allowedMentions: { parse: [] as never[], repliedUser: false }, flags: MessageFlags.SuppressEmbeds as const };
+const COMMANDS = ['new', 'status', 'search'] as const;
+
+export function bindingFor(config: DiscordConfig): string {
+  return JSON.stringify({ application: config.applicationId, agent: config.agent, directory: config.directory });
+}
+
+export async function registerDiscordCommands(config: DiscordConfig): Promise<void> {
+  const token = requireToken();
+  const rest = new REST({ version: '10', timeout: 15000, retries: 0 }).setToken(token);
+  const commands = [
+    new SlashCommandBuilder().setName('new').setDescription('Start a fresh conversation'),
+    new SlashCommandBuilder().setName('status').setDescription('Show this conversation status'),
+    new SlashCommandBuilder().setName('search').setDescription('Search team knowledge')
+      .addStringOption(o => o.setName('query').setDescription('Search terms').setRequired(true))
+      .addStringOption(o => o.setName('project').setDescription('Optional project ID; includes core knowledge')),
+  ];
+  for (const command of commands) {
+    await rest.post(Routes.applicationCommands(config.applicationId), {
+      body: command.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).toJSON(),
+    });
+  }
+}
+
+export function createDiscordModule(config: DiscordConfig): HostModule {
+  return { id: 'discord', start: services => startDiscord(config, services) };
+}
+
+/** Discord thread names are capped at 100 characters; use the opening words of the message. */
+function threadName(text: string): string {
+  const line = text.split('\n').find(l => l.trim()) ?? 'aivi';
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+}
+
+function requireToken(): string {
+  const token = process.env.DISCORD_BOT_TOKEN ?? process.env.DISCORD_TOKEN;
+  if (!token) throw new Error('DISCORD_BOT_TOKEN is required (a .env next to aivi.json is loaded automatically)');
+  return token;
+}
+
+async function startDiscord(config: DiscordConfig, services: HostServices) {
+  const log = services.log.child({ component: 'discord' });
+  const token = requireToken();
+  const store = new DiscordStore(services.store, bindingFor(config));
+  const recovered = store.recover();
+  if (recovered) log.warn('turns.recovered', { blocked: recovered });
+
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages,
+      ...(config.messageContent ? [GatewayIntentBits.MessageContent] : []),
+    ],
+    partials: [Partials.Channel],
+    allowedMentions: safeSend.allowedMentions,
+    makeCache: Options.cacheWithLimits({ MessageManager: 0 }),
+    rest: { timeout: 15000, retries: 0 },
+  });
+
+  const abort = new AbortController();
+  let engine: DiscordEngine | undefined;
+  const stop = () => { abort.abort(); engine?.stop(); };
+  services.signal.addEventListener('abort', stop, { once: true });
+  const teardown = async () => {
+    stop();
+    try { await engine?.drain(); }
+    finally { client.destroy(); services.signal.removeEventListener('abort', stop); }
+  };
+
+  try {
+    const ask = await createNativeChat(config, services.loaded, services.opencode, services.log);
+    // Discord's typing indicator lasts ~10 s; keep it alive while the agent works so people know it is alive.
+    const typing = async (channelId: string, signal: AbortSignal) => {
+      const channel = await client.channels.fetch(channelId).catch(() => null);
+      if (!channel?.isSendable()) return;
+      while (!signal.aborted) {
+        await channel.sendTyping().catch(() => {});
+        await setTimeout(8000, undefined, { signal }).catch(() => {});
+      }
+    };
+    const askWithTyping: typeof ask = async (turn, signal, ready) => {
+      const done = new AbortController();
+      void typing(turn.channel, AbortSignal.any([signal, done.signal]));
+      try { return await ask(turn, signal, ready); } finally { done.abort(); }
+    };
+    engine = new DiscordEngine(store, config, services.loaded.config.scheduler, askWithTyping, async (channelId, content) => {
+      const channel = await client.channels.fetch(channelId);
+      if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
+      await channel.send({ content, ...safeSend });
+    }, services.log);
+
+    // Gateway errors are transient and discord.js reconnects on its own. An optional
+    // adapter must never take the knowledge server and scheduler down with it.
+    client.on(Events.Error, error => log.warn('gateway.error', { error }));
+    client.on(Events.Warn, message => log.warn('gateway.warn', { message }));
+    client.on(Events.ShardDisconnect, () => log.warn('gateway.disconnected'));
+    client.on(Events.ShardResume, () => log.info('gateway.resumed'));
+
+    client.on(Events.MessageCreate, message => {
+      void (async () => {
+        if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
+        if (message.author.bot || message.webhookId || message.system) return;
+        const route: Route = {
+          channelId: message.channelId, userId: message.author.id, guildId: message.guildId,
+          parentId: message.channel.isThread() ? message.channel.parentId : null,
+          isDM: message.channel.type === ChannelType.DM,
+          mentioned: message.mentions.users.has(client.user!.id),
+          knownConversation: store.has(message.channelId),
+        };
+        if (!authorized(config, route)) return;
+        if (message.attachments.size || !message.content.trim()) {
+          await message.reply({ content: 'Text messages only for now; paste the relevant text.', ...safeSend });
+          return;
+        }
+        const text = message.content.replaceAll(`<@${client.user!.id}>`, '').trim() || message.content;
+        // In thread mode a top-level message opens the thread that becomes the conversation.
+        let conversation = message.channelId;
+        if (!route.isDM && !message.channel.isThread() && accessEntry(config.access, route)?.sessions === 'threads') {
+          if (!message.channel.isThreadOnly() && 'threads' in message.channel) {
+            try {
+              const thread = await message.startThread({ name: threadName(text), autoArchiveDuration: 1440, reason: 'aivi conversation' });
+              conversation = thread.id;
+            } catch (error) {
+              log.warn('thread.create.failed', { channel: message.channelId, error });
+              await message.reply({ content: 'I need permission to create threads in this channel.', ...safeSend });
+              return;
+            }
+          }
+        }
+        try {
+          store.enqueue({
+            id: message.id, channel: conversation, user: message.author.id,
+            name: message.member?.displayName ?? message.author.displayName, text,
+          }, config.maxPending);
+        } catch (error) {
+          log.warn('enqueue.rejected', { channel: message.channelId, error });
+          await message.reply({ content: 'I could not queue this message. The queue may be full; check /status.', ...safeSend });
+        }
+      })().catch(error => log.error('message.failed', { error }));
+    });
+
+    client.on(Events.InteractionCreate, interaction => {
+      void (async () => {
+        if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
+        if (!interaction.isChatInputCommand() || !(COMMANDS as readonly string[]).includes(interaction.commandName)) return;
+        const channel = interaction.channel;
+        const route: Route = {
+          channelId: interaction.channelId, userId: interaction.user.id, guildId: interaction.guildId,
+          parentId: channel?.isThread() ? channel.parentId : null, isDM: interaction.guildId === null,
+          mentioned: true, // a slash command is an explicit address
+          knownConversation: store.has(interaction.channelId),
+        };
+        if (!authorized(config, route)) {
+          await interaction.reply({ content: 'This user or conversation is not enabled for aivi.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        if (interaction.commandName === 'search') {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          try {
+            const project = interaction.options.getString('project');
+            const hits = await services.knowledge.search({
+              query: interaction.options.getString('query', true), limit: 3, ...(project ? { projects: [project] } : {}),
+            });
+            const content = hits.length
+              ? splitReply(hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'))[0]!
+              : 'No matching documents.';
+            await interaction.editReply({ content, allowedMentions: safeSend.allowedMentions, flags: MessageFlags.SuppressEmbeds });
+          } catch (error) {
+            log.warn('search.failed', { error });
+            await interaction.editReply('Search is unavailable or the project is unknown.');
+          }
+          return;
+        }
+        let content: string;
+        if (interaction.commandName === 'new') {
+          try {
+            store.reset(interaction.channelId);
+            content = 'The next message starts a fresh session. Previous sessions remain in OpenCode.';
+          } catch {
+            content = 'This conversation has queued or unresolved work. Finish or resolve it before starting fresh.';
+          }
+        } else {
+          const pending = store.list(interaction.channelId).filter(t => !['sent', 'discarded'].includes(t.state));
+          content = pending.length
+            ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
+            : 'Ready for your next message.';
+        }
+        await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
+      })().catch(error => log.error('command.failed', { error }));
+    });
+
+    await Promise.all([
+      once(client, Events.ClientReady, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]) }),
+      client.login(token),
+    ]);
+    if (client.application?.id !== config.applicationId) throw new Error('Discord token does not match configured application');
+    log.info('ready', { application: config.applicationId, agent: config.agent, reportChannels: config.reportChannels.length });
+
+    // Proactive posts only go where the operator said they may.
+    const unregister = services.destinations.register('discord', {
+      async deliver(channelId, text) {
+        if (!config.reportChannels.includes(channelId)) throw new Error(`Discord channel ${channelId} is not in reportChannels`);
+        const channel = await client.channels.fetch(channelId);
+        if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
+        for (const chunk of splitReply(text)) await channel.send({ content: chunk, ...safeSend });
+      },
+    });
+
+    const loop = (async () => {
+      while (!abort.signal.aborted && !engine!.stopped) {
+        if (client.isReady()) engine!.tick();
+        try { await setTimeout(500, undefined, { signal: abort.signal }); }
+        catch (error) { if (!abort.signal.aborted) throw error; }
+      }
+      if (!abort.signal.aborted) throw new Error('Discord engine stopped unexpectedly');
+    })();
+    // The engine only stops itself when the store is unreliable; that is host-fatal.
+    void loop.catch(services.fail);
+
+    return {
+      async stop() {
+        unregister();
+        try { await loop; } finally { await teardown(); }
+      },
+    };
+  } catch (error) {
+    await teardown();
+    throw error;
+  }
+}

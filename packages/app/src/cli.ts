@@ -1,0 +1,206 @@
+#!/usr/bin/env node
+import { parseArgs } from 'node:util';
+import { dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { createLogger, errorMessage, loadConfig, reportSchema, selectSources, taskSchema } from '@aivi/core';
+import { z } from 'zod';
+import type { LoadedConfig, LogLevel } from '@aivi/core';
+import { Store, connectOpenCode, status, runHost, createHostClient, resolveHostAuth } from '@aivi/host';
+import type { HostModule, HostResources } from '@aivi/host';
+import { createKnowledgeService } from '@aivi/knowledge';
+
+const usage = `aivi --config aivi.json <command>
+
+  serve                        Start the host: API, scheduler, knowledge, configured modules
+  tick                         Materialize schedules and dispatch due jobs once, then exit
+  status                       Inspect durable queue counts
+  config check                 Validate core and per-project configuration
+  sources [--project ID]       List configured knowledge sources
+  knowledge search QUERY       Search via the running host [--project ID --core-only --no-core --limit N]
+  knowledge index              Queue a source refresh [--resource maintenance]
+  jobs list                    List jobs (operator output, including prompts)
+  jobs show ID                 Inspect one job and its audit history
+  jobs enqueue FILE            Enqueue a task file: a task, or {task, report?, resource?} [--key ID --resource POOL]
+  jobs cancel ID               Cancel a queued job only
+  jobs resolve ID              Release a blocked job after inspection/repair
+                               --outcome succeeded|failed --reason TEXT --confirm-stopped
+  schedules sync               Reconcile configured schedules
+  discord register             Register slash commands for the configured application
+  discord status               Inspect Discord turns and leases
+  discord resolve ID           Release a blocked turn --reason TEXT --confirm-stopped
+  opencode check               Probe the OpenCode v2 service the host would use
+
+Options: --config FILE (or AIVI_CONFIG), --log-level debug|info|warn|error
+Secrets come from the environment: AIVI_TOKEN (host.auth.mode "token"),
+DISCORD_BOT_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD (only with opencode.url).
+Loaded without overriding existing variables: AIVI_ENV_FILE, else .env next to
+the config, then ~/.aivi/.env. fnox exec works too. No secrets in config files.
+`;
+
+async function main(): Promise<void> {
+  const { values, positionals } = parseArgs({
+    allowPositionals: true,
+    options: {
+      config: { type: 'string' }, 'log-level': { type: 'string' }, help: { type: 'boolean', short: 'h' },
+      limit: { type: 'string' }, 'core-only': { type: 'boolean' }, 'no-core': { type: 'boolean' }, project: { type: 'string', multiple: true },
+      key: { type: 'string' }, resource: { type: 'string' }, outcome: { type: 'string' },
+      reason: { type: 'string' }, 'confirm-stopped': { type: 'boolean' },
+    },
+  });
+  if (values.help || !positionals.length) { console.log(usage); return; }
+  const log = createLogger({ level: (values['log-level'] as LogLevel | undefined) ?? 'info' });
+  const configPath = resolve(values.config ?? process.env.AIVI_CONFIG ?? 'aivi.json');
+  // Secrets: an explicit file, else .env beside the config, else the per-user ~/.aivi/.env.
+  for (const path of process.env.AIVI_ENV_FILE ? [process.env.AIVI_ENV_FILE] : [resolve(dirname(configPath), '.env'), resolve(homedir(), '.aivi', '.env')]) {
+    loadEnvFile(path, log);
+  }
+  const loaded = await loadConfig(configPath);
+  const [command = '', subcommand, argument] = positionals;
+  const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+
+  const discord = loaded.config.modules.discord ? await import('@aivi/discord') : undefined;
+  const discordConfig = discord ? await discord.loadDiscordConfig(loaded.config.modules.discord!.config) : undefined;
+  if (discordConfig && !(discordConfig.resource in loaded.config.scheduler.resources)) throw new Error('Unknown Discord resource pool');
+
+  // Commands that need no database.
+  switch (`${command} ${subcommand ?? ''}`.trim()) {
+    case 'config check':
+      print({ valid: true, projects: loaded.projects.length, sources: loaded.sources.length, host: loaded.config.host });
+      return;
+    case 'sources':
+      print(selectSources(loaded, values.project));
+      return;
+    case 'opencode check': {
+      const client = await connectOpenCode(loaded.config.opencode);
+      print(await client.health.get({ signal: AbortSignal.timeout(10000) }));
+      return;
+    }
+    case 'knowledge search': {
+      if (!argument) throw new Error('Provide a search query');
+      if (values['core-only'] && values.project?.length) throw new Error('Choose --core-only or --project');
+      const client = createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN });
+      print(await client.search({
+        query: argument,
+        ...(values.limit ? { limit: Number(values.limit) } : {}),
+        ...(values['core-only'] ? { projects: [] } : values.project ? { projects: values.project } : {}),
+        ...(values['no-core'] ? { includeCore: false } : {}),
+      }));
+      return;
+    }
+  }
+
+  const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
+  try {
+    if (command === 'discord') {
+      if (!discord || !discordConfig) throw new Error('Discord module is not configured in aivi.json');
+      if (subcommand === 'register') { await discord.registerDiscordCommands(discordConfig); print({ registered: true }); return; }
+      const inbox = new discord.DiscordStore(store, discord.bindingFor(discordConfig));
+      if (subcommand === 'status') { print({ turns: inbox.list(), leases: store.leases() }); return; }
+      if (subcommand === 'resolve') {
+        if (!argument || !values.reason || !values['confirm-stopped']) throw new Error('discord resolve ID --reason TEXT --confirm-stopped');
+        inbox.resolve(argument, values.reason);
+        print({ resolved: true });
+        return;
+      }
+      throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
+    }
+    if (command === 'status') { print(status(store, loaded)); return; }
+    if (command === 'schedules' && subcommand === 'sync') {
+      store.syncSchedules(loaded.config.schedules);
+      print({ schedules: loaded.config.schedules.length });
+      return;
+    }
+    if (command === 'knowledge' && subcommand === 'index') {
+      if (!loaded.config.search) throw new Error('Knowledge search is not configured');
+      const resource = values.resource ?? 'maintenance';
+      if (!(resource in loaded.config.scheduler.resources)) throw new Error('Configure a maintenance resource pool or pass --resource');
+      print(store.enqueue({ kind: 'knowledge.index' }, resource, `index:${randomUUID()}`));
+      return;
+    }
+    if (command === 'jobs') {
+      switch (subcommand) {
+        case 'list': print(store.list()); return;
+        case 'show': if (argument) { print({ job: store.get(argument), history: store.history(argument) }); return; } break;
+        case 'enqueue': {
+          if (!argument) break;
+          // A task file is either a bare task or { task, report?, resource? }.
+          const raw: unknown = JSON.parse(await readFile(resolve(argument), 'utf8'));
+          const wrapped = jobFileSchema.safeParse(raw);
+          const { task, report, resource: fileResource } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
+          if (task.kind === 'opencode.prompt') task.directory = resolve(task.directory);
+          if (task.kind === 'shell' && task.cwd) task.cwd = resolve(task.cwd);
+          const resource = values.resource ?? fileResource ?? 'local-model';
+          if (!(resource in loaded.config.scheduler.resources)) throw new Error(`Unknown resource pool: ${resource}`);
+          print(store.enqueue(task, resource, `manual:${values.key ?? randomUUID()}`, Date.now(), report ?? null));
+          return;
+        }
+        case 'cancel': if (argument) { store.cancelQueued(argument); print(store.get(argument)); return; } break;
+        case 'resolve': {
+          if (!argument) break;
+          if (!values['confirm-stopped'] || !values.reason || !['succeeded', 'failed'].includes(values.outcome ?? '')) {
+            throw new Error('Resolution requires --confirm-stopped, --outcome succeeded|failed and --reason');
+          }
+          store.resolveBlocked(argument, values.outcome as 'succeeded' | 'failed', values.reason);
+          print(store.get(argument));
+          return;
+        }
+      }
+    }
+    if (command === 'tick' || command === 'serve') {
+      const once = command === 'tick';
+      // Fail on a missing token before touching the daemon lock, QMD, or Chrome.
+      const auth = once ? { mode: 'none' as const } : resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
+      const modules: HostModule[] = [];
+      if (!once && discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
+      const abort = new AbortController();
+      const stop = () => abort.abort();
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+      try {
+        await runHost({
+          loaded, store, modules, auth, log, once, signal: abort.signal,
+          resources: () => createResources(loaded, once),
+          onReady: address => console.log(JSON.stringify({ listening: address, modules: modules.map(m => m.id), sources: loaded.sources.length })),
+        });
+        if (once) print(status(store, loaded));
+      } finally {
+        process.removeListener('SIGINT', stop);
+        process.removeListener('SIGTERM', stop);
+      }
+      return;
+    }
+    throw new Error(`Unknown command.\n${usage}`);
+  } finally {
+    store.close();
+  }
+}
+
+/** dotenv-style file; existing environment always wins, so `fnox exec` and CI overrides behave. */
+function loadEnvFile(path: string, log: { debug(event: string, fields?: Record<string, unknown>): void }): void {
+  if (!existsSync(path)) return;
+  process.loadEnvFile(path);
+  log.debug('env.loaded', { path });
+}
+
+const jobFileSchema = z.strictObject({ task: taskSchema, report: reportSchema.optional(), resource: z.string().min(1).optional() });
+
+async function createResources(loaded: LoadedConfig, once: boolean): Promise<HostResources> {
+  const knowledge = await createKnowledgeService(loaded);
+  // Browser construction is lazy; no Chrome launch occurs until a tool call. A one-shot tick never needs it.
+  const browser = !once && loaded.config.browser ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser) : undefined;
+  return { knowledge, ...(browser ? { browser } : {}) };
+}
+
+function hostUrl(loaded: LoadedConfig): string {
+  const { bind, port } = loaded.config.host;
+  const host = ['0.0.0.0', '::', '[::]'].includes(bind) ? '127.0.0.1' : bind;
+  return `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${port}`;
+}
+
+main().catch(error => {
+  console.error(errorMessage(error));
+  process.exitCode = 1;
+});

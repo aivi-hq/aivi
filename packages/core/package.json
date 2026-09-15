@@ -1,0 +1,14 @@
+{
+  "name": "@aivi/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./kinds": "./dist/kinds.js"
+  },
+  "dependencies": {
+    "croner": "10.0.1",
+    "zod": "4.1.13"
+  }
+}

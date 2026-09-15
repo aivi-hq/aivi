@@ -1,0 +1,77 @@
+import type { HostClient, KnowledgeSource, SourceSelection, Status, SearchHit, BrowserResult } from '@aivi/core';
+
+export interface HostClientOptions {
+  /** Bearer token for hosts running with `host.auth.mode: "token"`. Omit for `mode: "none"`. */
+  token?: string | undefined;
+}
+
+/**
+ * Fetch-only client for the aivi host API. Used by the OpenCode plugin, so it
+ * must stay free of SQLite, QMD, and other host-side dependencies.
+ */
+export function createHostClient(baseUrl: string, options: HostClientOptions = {}): HostClient {
+  const base = new URL(baseUrl);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
+    throw new Error('Expected an HTTP host URL without embedded credentials');
+  }
+  const headers: Record<string, string> = options.token ? { authorization: `Bearer ${options.token}` } : {};
+
+  async function request<T>(path: string, init: RequestInit & { timeoutMs: number }): Promise<T> {
+    const { timeoutMs, ...rest } = init;
+    const response = await fetch(new URL(path, base), {
+      ...rest,
+      headers: { ...headers, ...(rest.headers as Record<string, string> | undefined) },
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: 'error',
+    });
+    if (!response.ok) throw new Error(await describeFailure(response));
+    return (await response.json()) as T;
+  }
+
+  const get = <T>(path: string) => request<T>(path, { timeoutMs: 10_000 });
+
+  return {
+    browser(sessionId, body) {
+      // An accepted operation can wait behind other browser actions. A timeout is an
+      // uncertain outcome, never an invitation to retry a click automatically.
+      return request<BrowserResult>('/v1/browser', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, request: body }),
+        timeoutMs: 300_000,
+      });
+    },
+    search(query) {
+      const params = new URLSearchParams({ q: query.query });
+      if (query.limit !== undefined) params.set('limit', String(query.limit));
+      appendSelection(params, query);
+      return get<SearchHit[]>(`/v1/knowledge/search?${params}`);
+    },
+    status: () => get<Status>('/v1/status'),
+    sources(selection: SourceSelection = {}) {
+      const params = new URLSearchParams();
+      appendSelection(params, selection);
+      return get<KnowledgeSource[]>(`/v1/sources?${params}`);
+    },
+  };
+}
+
+function appendSelection(params: URLSearchParams, selection: SourceSelection): void {
+  for (const project of selection.projects ?? []) params.append('project', project);
+  // An explicit empty selection means core only.
+  if (selection.projects?.length === 0) params.set('coreOnly', 'true');
+  if (selection.includeCore === false) params.set('includeCore', 'false');
+  for (const kind of selection.kinds ?? []) params.append('kind', kind);
+}
+
+async function describeFailure(response: Response): Promise<string> {
+  let detail = '';
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body?.error === 'string') detail = `: ${body.error}`;
+  } catch {
+    // Non-JSON error body; the status is enough.
+  }
+  if (response.status === 401) return `aivi host rejected the request (401)${detail}. Set AIVI_TOKEN in the OpenCode server environment or run the host with auth mode "none".`;
+  return `aivi host returned HTTP ${response.status}${detail}`;
+}

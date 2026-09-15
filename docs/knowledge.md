@@ -1,0 +1,98 @@
+# Knowledge search
+
+The host owns one QMD 2.8.3 SDK store. Authoritative documents remain in their
+configured core/project paths; the derived index lives in `.aivi/knowledge/`.
+Each source maps to a separate collection. Directories index Markdown recursively;
+a source pointing to one file indexes only that file.
+
+```json
+{ "search": { "provider": "qmd", "indexOnStart": true, "maxPending": 32 } }
+```
+
+QMD is a pinned optional dependency. Normal `npm ci` installs it; if optional
+dependencies were omitted or native installation failed, enabling search produces
+an explicit startup error. Disabling search leaves the rest of aivi usable.
+This release calls QMD's `searchLex` API: keyword/BM25 retrieval, with no embedding,
+reranking, or query-expansion model loaded. The public SDK is the boundary; aivi
+does not query QMD's private database tables.
+
+## Kinds
+
+Every source declares what it contains, from a registry in
+`packages/core/src/kinds.ts`:
+
+| kind | meaning |
+| --- | --- |
+| `doc` (default) | Reference material: handbooks, guides, research notes |
+| `decision` | Recorded decisions (ADRs); authoritative on why |
+| `memory` | Facts and proposals distilled by [dreaming](dreaming.md); dated, attributed, softer |
+| `conversation` | Indexed transcripts; useful for details, never authoritative (reserved) |
+
+Hits carry `kind`, `scope`, and `projectId`, so an answer can say what kind of
+material it rests on. `knowledge_search`, `/v1/knowledge/search?kind=…`, and
+`aivi sources` accept a kind filter. The librarian's agent file explains the
+kinds to the model; adding a kind means one entry in the registry.
+
+## Use it
+
+With `AIVI_TOKEN` supplied by fnox:
+
+```sh
+npm run aivi -- --config examples/aivi.json serve
+```
+
+From another terminal:
+
+```sh
+npm run aivi -- --config examples/aivi.json knowledge search "decisions"
+npm run aivi -- --config examples/aivi.json knowledge search "decisions" --project demo
+npm run aivi -- --config examples/aivi.json knowledge search "decisions" --project demo --no-core
+npm run aivi -- --config examples/aivi.json knowledge search "agreements" --core-only
+```
+
+The CLI sends searches to the running host. It does not open another index.
+In OpenCode, the plugin exposes `knowledge.search` with `query`, optional
+`projects`, `includeCore`, and `limit`. Discord's `/search query [project]` calls
+the service directly without starting a model turn. The librarian can also use
+the native tool while answering normal conversations.
+
+| Selection | Meaning |
+| --- | --- |
+| Omit `projects` | All configured project and core sources |
+| `projects: []` | Core sources only |
+| `projects: ["demo"]` | That project plus core |
+| `projects: ["demo"], includeCore: false` | That project only |
+| Multiple project IDs | Those projects, plus core unless disabled |
+
+Unknown IDs fail. An empty source selection returns nothing rather than an
+unscoped query. Filters are passed to QMD before retrieval; returned collections
+and file paths are also checked. Results contain source ID, scope, project ID
+where applicable, original file path, title, excerpt, line, and score. Scope is
+retrieval selection, not a multi-tenant access boundary.
+
+## Refresh and scheduling
+
+The default refresh happens on startup. Examples also schedule an hourly
+`knowledge.index` task in the `maintenance` resource pool. Request a refresh now:
+
+```sh
+npm run aivi -- --config examples/aivi.json knowledge index
+```
+
+That queues a job; the host executes it against the same service. Search and
+indexing serialize through a bounded queue. Keyword search does not acquire
+another inference slot, so a librarian holding a model slot can search without
+deadlocking itself. Semantic search will need explicit model-resource accounting.
+
+Updates/deletions appear after refresh. Excerpts represent the indexed version,
+so edits since refresh can leave stale excerpts. Already-deleted paths are omitted.
+The rebuildable index is separate from durable job/session metadata.
+
+## Follow-up work
+
+Conversation export, embeddings, reranking, model configuration, and dreaming
+extend this service later. They will not require one memory server per integration.
+
+Tests use the real SDK to index temporary core/project documents, retrieve scoped
+hits, preserve filenames, and refresh changes/deletions, without model downloads.
+See the upstream [QMD repository](https://github.com/tobi/qmd).

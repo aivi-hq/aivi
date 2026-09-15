@@ -1,0 +1,579 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Editor hint; ignored at runtime.",
+      "type": "string"
+    },
+    "version": {
+      "type": "number",
+      "const": 1
+    },
+    "stateDirectory": {
+      "default": ".aivi",
+      "type": "string"
+    },
+    "host": {
+      "default": {
+        "bind": "127.0.0.1",
+        "port": 4100,
+        "auth": {
+          "mode": "token"
+        }
+      },
+      "type": "object",
+      "properties": {
+        "bind": {
+          "default": "127.0.0.1",
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "default": 4100,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "auth": {
+          "default": {
+            "mode": "token"
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "const": "token"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "const": "none"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "opencode": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "additionalProperties": false
+    },
+    "knowledge": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "description": "doc: Reference material: handbooks, guides, research notes. Relevant whenever the topic matches. decision: Recorded decisions (ADRs). Authoritative for why something is the way it is; cite them over inference. memory: Facts and proposals distilled from conversations by dreaming. Dated and attributed; softer than docs and decisions. conversation: Indexed conversation transcripts. Useful for recovering details; never authoritative.",
+            "default": "doc",
+            "type": "string",
+            "enum": [
+              "doc",
+              "decision",
+              "memory",
+              "conversation"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "projects": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "directory": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "directory"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "modules": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "discord": {
+          "type": "object",
+          "properties": {
+            "config": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "config"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "connection": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "const": "launch"
+                },
+                "userDataDir": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "executablePath": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "headless": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "mode",
+                "userDataDir"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "const": "existing"
+                },
+                "userDataDir": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "mode",
+                "userDataDir"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "const": "attach"
+                },
+                "browserUrl": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              },
+              "required": [
+                "mode",
+                "browserUrl"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "maxTabsPerSession": {
+          "default": 5,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "maxTabs": {
+          "default": 20,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "maxPending": {
+          "default": 16,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "timeoutMs": {
+          "default": 30000,
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 60000
+        }
+      },
+      "required": [
+        "connection"
+      ],
+      "additionalProperties": false
+    },
+    "search": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "qmd"
+        },
+        "indexOnStart": {
+          "default": true,
+          "type": "boolean"
+        },
+        "maxPending": {
+          "default": 32,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "additionalProperties": false
+    },
+    "linear": {
+      "type": "object",
+      "properties": {
+        "applications": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "agent": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "agent"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "applications"
+      ],
+      "additionalProperties": false
+    },
+    "scheduler": {
+      "default": {
+        "maxConcurrent": 1,
+        "resources": {
+          "local-model": 1
+        },
+        "pollMs": 1000
+      },
+      "type": "object",
+      "properties": {
+        "maxConcurrent": {
+          "default": 1,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "resources": {
+          "default": {
+            "local-model": 1
+          },
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "pollMs": {
+          "default": 1000,
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        }
+      },
+      "additionalProperties": false
+    },
+    "schedules": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "cron": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timezone": {
+            "default": "UTC",
+            "type": "string"
+          },
+          "resource": {
+            "default": "local-model",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "task": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "system.check"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "knowledge.index"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "shell"
+                  },
+                  "command": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "timeoutMs": {
+                    "default": 600000,
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 86400000
+                  }
+                },
+                "required": [
+                  "kind",
+                  "command"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "dreaming"
+                  },
+                  "agent": {
+                    "description": "OpenCode agent that reviews conversations and maintains memory.",
+                    "default": "dreamer",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "directory": {
+                    "description": "OpenCode location where that agent is defined.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "memoryDirectory": {
+                    "description": "Where facts.md and proposals/ live. Must be inside a core knowledge source so memory is searchable.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "origins": {
+                    "description": "Which aivi session origins to review (metadata.aivi.origin).",
+                    "default": [
+                      "discord"
+                    ],
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "maxSessions": {
+                    "description": "Oldest-first batch size per run; the rest waits for the next run.",
+                    "default": 50,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200
+                  },
+                  "timeoutMs": {
+                    "default": 1800000,
+                    "type": "integer",
+                    "minimum": 10000,
+                    "maximum": 86400000
+                  }
+                },
+                "required": [
+                  "kind",
+                  "directory",
+                  "memoryDirectory"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "opencode.prompt"
+                  },
+                  "agent": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "directory": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "timeoutMs": {
+                    "default": 1800000,
+                    "type": "integer",
+                    "minimum": 10000,
+                    "maximum": 86400000
+                  },
+                  "onPermission": {
+                    "default": "reject",
+                    "type": "string",
+                    "enum": [
+                      "reject",
+                      "fail"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "agent",
+                  "directory",
+                  "prompt"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "report": {
+            "type": "object",
+            "properties": {
+              "to": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]*$"
+              },
+              "channel": {
+                "type": "string",
+                "minLength": 1
+              },
+              "on": {
+                "default": "always",
+                "type": "string",
+                "enum": [
+                  "always",
+                  "failure",
+                  "never"
+                ]
+              }
+            },
+            "required": [
+              "to",
+              "channel"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "cron",
+          "task"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false
+}

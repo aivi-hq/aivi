@@ -1,0 +1,256 @@
+import { readFile } from 'node:fs/promises';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { z } from 'zod';
+import { browserConfigSchema } from './browser.ts';
+import { Cron } from 'croner';
+import { knowledgeKindHelp, knowledgeKindNames } from './kinds.ts';
+import type { KnowledgeKind } from './kinds.ts';
+
+const id = z.string().regex(/^[a-z][a-z0-9_-]*$/);
+export const knowledgeKindSchema = z.enum(knowledgeKindNames);
+const source = z.strictObject({
+  id,
+  path: z.string().min(1),
+  kind: knowledgeKindSchema.default('doc').describe(knowledgeKindHelp),
+});
+export const taskSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('system.check') }),
+  z.strictObject({ kind: z.literal('knowledge.index') }),
+  z.strictObject({
+    kind: z.literal('shell'),
+    /** argv, never a shell string: no quoting or injection surprises. */
+    command: z.array(z.string().min(1)).min(1),
+    cwd: z.string().min(1).optional(),
+    timeoutMs: z.number().int().min(1000).max(24 * 3_600_000).default(600_000),
+  }),
+  z.strictObject({
+    kind: z.literal('dreaming'),
+    agent: z.string().min(1).default('dreamer').describe('OpenCode agent that reviews conversations and maintains memory.'),
+    directory: z.string().min(1).describe('OpenCode location where that agent is defined.'),
+    memoryDirectory: z.string().min(1).describe('Where facts.md and proposals/ live. Must be inside a core knowledge source so memory is searchable.'),
+    origins: z.array(z.string().min(1)).min(1).default(['discord']).describe('Which aivi session origins to review (metadata.aivi.origin).'),
+    maxSessions: z.number().int().min(1).max(200).default(50).describe('Oldest-first batch size per run; the rest waits for the next run.'),
+    timeoutMs: z.number().int().min(10_000).max(24 * 3_600_000).default(1_800_000),
+  }),
+  z.strictObject({
+    kind: z.literal('opencode.prompt'),
+    agent: z.string().min(1),
+    directory: z.string().min(1),
+    prompt: z.string().min(1),
+    /** Wall-clock limit for the whole turn; an expired turn blocks the job for inspection. */
+    timeoutMs: z.number().int().min(10_000).max(24 * 3_600_000).default(1_800_000),
+    /** Unattended default: deny permission prompts and let the agent continue. `fail` blocks the job with the prompt pending. */
+    onPermission: z.enum(['reject', 'fail']).default('reject'),
+  }),
+]);
+export type Task = z.infer<typeof taskSchema>;
+/**
+ * Where a job's outcome goes. `to` names a destination registered by a module
+ * (for example `discord`); `channel` is that destination's own identifier. The
+ * destination decides whether aivi may post there at delivery time.
+ */
+export const reportSchema = z.strictObject({
+  to: id,
+  channel: z.string().min(1),
+  on: z.enum(['always', 'failure', 'never']).default('always'),
+});
+export type Report = z.infer<typeof reportSchema>;
+export const scheduleSchema = z.strictObject({
+  id, cron: z.string().min(1), timezone: z.string().default('UTC'),
+  resource: id.default('local-model'), enabled: z.boolean().default(true),
+  task: taskSchema,
+  report: reportSchema.optional(),
+}).superRefine((value, ctx) => {
+  try {
+    // Croner is used only as a calendar calculator, never as our durable queue.
+    new Intl.DateTimeFormat('en', { timeZone: value.timezone });
+    const cron = new Cron(value.cron, { timezone: value.timezone, paused: true });
+    cron.stop();
+  } catch {
+    ctx.addIssue({ code: 'custom', message: 'Invalid cron expression or timezone', path: ['cron'] });
+  }
+});
+export type Schedule = z.infer<typeof scheduleSchema>;
+export const projectSchema = z.strictObject({
+  $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
+  knowledge: z.array(source).default([]),
+  linear: z.strictObject({
+    workspaceId: z.string().min(1), projectId: z.string().min(1),
+    lanes: z.record(z.string().min(1), id),
+  }).optional(),
+});
+/**
+ * Where the host API listens and how callers authenticate.
+ * `bind` defaults to loopback; use a LAN/tailnet address or `0.0.0.0` to let
+ * remote OpenCode installs reach the knowledge server. Auth `none` trusts the
+ * network; `token` requires `AIVI_TOKEN` (>= 24 chars) as a bearer token.
+ */
+export const hostSchema = z.strictObject({
+  bind: z.string().min(1).default('127.0.0.1'),
+  port: z.number().int().min(0).max(65535).default(4100),
+  auth: z.discriminatedUnion('mode', [
+    z.strictObject({ mode: z.literal('token') }),
+    z.strictObject({ mode: z.literal('none') }),
+  ]).default({ mode: 'token' }),
+});
+/**
+ * How to reach OpenCode v2. Without `url`, the host discovers the local
+ * background service (`opencode service status`) and uses its credentials.
+ * With `url`, supply `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` if that server
+ * requires HTTP basic auth.
+ */
+export const opencodeSchema = z.strictObject({ url: z.url().optional() });
+export const configSchema = z.strictObject({
+  $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
+  version: z.literal(1),
+  stateDirectory: z.string().default('.aivi'),
+  host: hostSchema.default({ bind: '127.0.0.1', port: 4100, auth: { mode: 'token' } }),
+  opencode: opencodeSchema.default({}),
+  knowledge: z.array(source).default([]),
+  projects: z.array(z.strictObject({ id, directory: z.string().min(1) })).default([]),
+  modules: z.strictObject({ discord: z.strictObject({ config: z.string().min(1) }).optional() }).default({}),
+  browser: browserConfigSchema.optional(),
+  search: z.strictObject({
+    provider: z.literal('qmd'), indexOnStart: z.boolean().default(true),
+    maxPending: z.number().int().min(1).max(100).default(32),
+  }).optional(),
+  linear: z.strictObject({ applications: z.record(id, z.strictObject({ agent: z.string().min(1) })) }).optional(),
+  scheduler: z.strictObject({
+    maxConcurrent: z.number().int().min(1).max(64).default(1),
+    resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
+    pollMs: z.number().int().min(100).max(60000).default(1000),
+  }).default({ maxConcurrent: 1, resources: { 'local-model': 1 }, pollMs: 1000 }),
+  schedules: z.array(scheduleSchema).default([]),
+}).superRefine((config, ctx) => {
+  for (const [field, values] of [['projects', config.projects], ['knowledge', config.knowledge], ['schedules', config.schedules]] as const) {
+    const seen = new Set<string>();
+    for (const [i, value] of values.entries()) {
+      if (seen.has(value.id)) ctx.addIssue({ code: 'custom', path: [field, i, 'id'], message: 'Duplicate identifier' });
+      seen.add(value.id);
+    }
+  }
+  const agents = new Set<string>();
+  for (const [app, value] of Object.entries(config.linear?.applications ?? {})) {
+    if (agents.has(value.agent)) ctx.addIssue({ code: 'custom', path: ['linear', 'applications', app], message: 'An OpenCode agent can be mapped to only one Linear application' });
+    agents.add(value.agent);
+  }
+  for (const [i, schedule] of config.schedules.entries()) {
+    if (!(schedule.resource in config.scheduler.resources)) ctx.addIssue({ code: 'custom', path: ['schedules', i, 'resource'], message: 'Unknown resource pool' });
+  }
+});
+export type Config = z.infer<typeof configSchema>;
+
+/**
+ * Who may talk to aivi through a communication channel (Discord, Slack, …).
+ * Every adapter maps its own identifiers into this one shape:
+ * - `dm.users`: people allowed to talk in private; no `dm` means nobody.
+ * - `channels[]`: shared places (a channel and its threads). `users` restricts
+ *   who is heard there; `trigger` says whether a mention is required.
+ * Anyone not matched is ignored before anything reaches the model.
+ */
+export const accessPolicySchema = z.strictObject({
+  dm: z.strictObject({
+    users: z.array(z.string().min(1)).min(1).describe('User IDs allowed to talk to aivi in private messages.'),
+  }).optional().describe('Private messages. Omit to refuse all DMs.'),
+  channels: z.array(z.strictObject({
+    id: z.string().min(1).describe('Channel ID as the platform reports it.'),
+    users: z.union([z.literal('anyone'), z.array(z.string().min(1)).min(1)]).default('anyone')
+      .describe('"anyone", or the user IDs aivi listens to here.'),
+    trigger: z.enum(['mention', 'mention-to-start', 'any']).default('mention-to-start').describe(
+      '"mention": every message must address aivi. '
+      + '"mention-to-start": a mention opens a conversation; inside a thread aivi already takes part in, every message counts. '
+      + '"any": every message counts (needs message content access).',
+    ),
+    sessions: z.enum(['threads', 'channel']).default('threads').describe(
+      '"threads": a top-level message addressing aivi opens a thread; each thread is its own conversation and the channel itself never is. '
+      + '"channel": the channel is one shared conversation and its threads are ignored.',
+    ),
+  })).default([]).describe('Shared places aivi listens in, each with its own rules.'),
+}).describe('Who may talk to aivi through this channel. Unmatched messages are ignored before anything is stored or sent to a model.');
+export type AccessPolicy = z.infer<typeof accessPolicySchema>;
+export type AccessChannel = AccessPolicy['channels'][number];
+export interface AccessRoute {
+  channelId: string;
+  parentId: string | null;
+  userId: string;
+  isDM: boolean;
+  mentioned: boolean;
+  /** aivi already takes part in this conversation (a session exists for it). */
+  knownConversation: boolean;
+}
+
+/** The channel entry governing a route, or undefined when the place is not configured. */
+export function accessEntry(policy: AccessPolicy, route: AccessRoute): AccessChannel | undefined {
+  const inThread = route.parentId !== null;
+  const entry = policy.channels.find(c => c.id === (inThread ? route.parentId : route.channelId));
+  if (entry && inThread && entry.sessions === 'channel') return undefined;
+  return entry;
+}
+
+export function accessAllows(policy: AccessPolicy, route: AccessRoute): boolean {
+  if (route.isDM) return policy.dm?.users.includes(route.userId) ?? false;
+  const entry = accessEntry(policy, route);
+  if (!entry) return false;
+  if (entry.users !== 'anyone' && !entry.users.includes(route.userId)) return false;
+  if (entry.trigger === 'any' || route.mentioned) return true;
+  return entry.trigger === 'mention-to-start' && route.parentId !== null && route.knownConversation;
+}
+export interface KnowledgeSource { id: string; path: string; kind: KnowledgeKind; scope: 'core' | 'project'; projectId?: string }
+export interface Project { id: string; directory: string; settings: z.infer<typeof projectSchema> }
+export interface LoadedConfig { config: Config; path: string; projects: Project[]; sources: KnowledgeSource[] }
+
+const absolute = (base: string, value: string): string => isAbsolute(value) ? value : resolve(base, value);
+
+export async function loadConfig(path: string): Promise<LoadedConfig> {
+  path = resolve(path);
+  const config = configSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+  const base = dirname(path);
+  config.stateDirectory = absolute(base, config.stateDirectory);
+  if (config.modules.discord) config.modules.discord.config = absolute(base, config.modules.discord.config);
+  const browser = config.browser?.connection;
+  if (browser && browser.mode !== 'attach') {
+    browser.userDataDir = absolute(base, browser.userDataDir);
+    if (browser.mode === 'launch' && browser.executablePath) browser.executablePath = absolute(base, browser.executablePath);
+  }
+  const sources: KnowledgeSource[] = config.knowledge.map(s => ({ ...s, path: absolute(base, s.path), scope: 'core' }));
+  const projects: Project[] = [];
+  for (const entry of config.projects) {
+    const directory = absolute(base, entry.directory);
+    let raw: unknown = {};
+    try { raw = JSON.parse(await readFile(resolve(directory, 'aivi.project.json'), 'utf8')); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    const settings = projectSchema.parse(raw);
+    const seen = new Set<string>();
+    for (const s of settings.knowledge) {
+      if (seen.has(s.id)) throw new Error(`Duplicate source ${s.id} in project ${entry.id}`);
+      seen.add(s.id);
+      sources.push({ ...s, path: absolute(directory, s.path), scope: 'project', projectId: entry.id });
+    }
+    for (const app of Object.values(settings.linear?.lanes ?? {})) {
+      if (!config.linear?.applications[app]) throw new Error(`Project ${entry.id} refers to unknown Linear application ${app}`);
+    }
+    projects.push({ id: entry.id, directory, settings });
+  }
+  for (const schedule of config.schedules) {
+    const task = schedule.task;
+    if (task.kind === 'opencode.prompt') task.directory = absolute(base, task.directory);
+    if (task.kind === 'shell' && task.cwd) task.cwd = absolute(base, task.cwd);
+    if (task.kind === 'dreaming') {
+      task.directory = absolute(base, task.directory);
+      task.memoryDirectory = absolute(base, task.memoryDirectory);
+      const inside = sources.some(s => s.scope === 'core' && (task.memoryDirectory === s.path || task.memoryDirectory.startsWith(`${s.path}/`)));
+      if (!inside) throw new Error(`Schedule ${schedule.id}: memoryDirectory must be inside a core knowledge source so memories are searchable`);
+    }
+  }
+  return { config, path, sources, projects };
+}
+
+export function selectSources(loaded: LoadedConfig, projectIds?: string[], includeCore = true, kinds?: KnowledgeKind[]): KnowledgeSource[] {
+  if (projectIds) {
+    const known = new Set(loaded.projects.map(p => p.id));
+    for (const id of projectIds) if (!known.has(id)) throw new Error(`Unknown project: ${id}`);
+  }
+  return loaded.sources
+    .filter(s => s.scope === 'core' ? includeCore : projectIds === undefined || projectIds.includes(s.projectId!))
+    .filter(s => !kinds || kinds.includes(s.kind));
+}

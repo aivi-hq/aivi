@@ -1,0 +1,10 @@
+{
+  "$schema": "../../schemas/aivi.project.schema.json",
+  "knowledge": [
+    {
+      "id": "decisions",
+      "path": "docs/adr",
+      "kind": "decision"
+    }
+  ]
+}

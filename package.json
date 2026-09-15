@@ -1,0 +1,28 @@
+{
+  "name": "aivi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=26.0.0 <27"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build && npm run typecheck:test && node --test packages/*/test/*.test.ts",
+    "check": "npm test && npm run schema:check && npm run smoke",
+    "aivi": "node packages/app/dist/cli.js",
+    "schema": "node scripts/schema.mjs --write",
+    "schema:check": "node scripts/schema.mjs --check",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:browser": "npm run build && node scripts/browser-smoke.mjs",
+    "live:opencode": "node scripts/live-opencode.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.1",
+    "typescript": "5.9.3"
+  }
+}

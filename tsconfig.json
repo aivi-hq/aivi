@@ -1,0 +1,26 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/host"
+    },
+    {
+      "path": "packages/opencode"
+    },
+    {
+      "path": "packages/discord"
+    },
+    {
+      "path": "packages/knowledge"
+    },
+    {
+      "path": "packages/app"
+    },
+    {
+      "path": "packages/browser"
+    }
+  ]
+}

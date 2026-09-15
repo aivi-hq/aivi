@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "librarian",
+  "plugins": [{ "package": "../../packages/opencode", "options": { "url": "http://127.0.0.1:4100" } }],
+  "agents": {
+    "librarian": {
+      "mode": "primary",
+      "description": "Answers team questions using existing documents",
+      "system": "You are the shared team librarian. Read relevant knowledge sources before answering and cite their paths. Distinguish recorded facts from inference. Address the speaker identified in each Discord message. Answer questions and ask for clarification in plain text. Do not perform project work, change files, or launch workers.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "*", "effect": "deny" }
+      ]
+    }
+  }
+}

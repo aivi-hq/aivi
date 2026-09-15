@@ -1,0 +1,6 @@
+{
+  "kind": "opencode.prompt",
+  "agent": "librarian",
+  "directory": "examples/librarian",
+  "prompt": "List the configured aivi knowledge sources and read the company handbook. Summarize its working agreements. Do not change any files."
+}

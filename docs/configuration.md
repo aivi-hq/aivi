@@ -1,0 +1,115 @@
+# Configuration
+
+`aivi.json` is installation configuration. `aivi.project.json` lives inside each
+registered project. OpenCode's own files stay in their native locations.
+Unknown fields and invalid combinations fail validation; nothing silently falls
+back to another project or resource pool.
+
+Paths in installation config resolve relative to that config file. Project source
+paths resolve relative to the project directory. A manually enqueued task's
+`directory` resolves relative to the caller's working directory. Scheduled task
+directories resolve relative to `aivi.json`.
+
+## Fields
+
+| Field | Default / purpose |
+| --- | --- |
+| `version` | Required; `1` |
+| `stateDirectory` | `.aivi` relative to config |
+| `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
+| `host.port` | `4100` |
+| `host.auth.mode` | `token` (default): callers send `AIVI_TOKEN` as a bearer token. `none`: trust the network (loopback, Tailscale, LAN you control) |
+| `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
+| `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation` |
+| `projects` | Project registry, each `{id, directory}` |
+| `modules.discord.config` | Optional path to Discord module settings |
+| `browser` | Optional Chrome MCP connection and tab/queue limits; see [browser setup](browser.md) |
+| `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
+| `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
+| `scheduler.resources` | `{"local-model": 1}`; named pool limits |
+| `scheduler.pollMs` | `1000`; polling interval, no model call |
+| `schedules` | Empty; named cron/timezone/resource/task entries, each with an optional `report` |
+
+## Tasks
+
+| Kind | Fields | Outcome |
+| --- | --- | --- |
+| `system.check` | – | Reports whether every knowledge source path exists |
+| `knowledge.index` | – | Refreshes the search index |
+| `shell` | `command` (argv array, never a shell string), `cwd`, `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept |
+| `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
+| `dreaming` | `directory`, `memoryDirectory`, `agent` (`dreamer`), `origins` (`["discord"]`), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
+
+## Reporting
+
+Any schedule, or a task file passed to `jobs enqueue` as `{ "task": …, "report": …, "resource"?: … }`,
+may carry `"report": { "to": "discord", "channel": "<id>", "on": "always" | "failure" | "never" }`.
+`to` names a destination a running module registered; the module decides whether
+aivi may post there (Discord: `reportChannels` in its config). Delivery success
+or failure is recorded in the job's audit history and never changes the job's
+outcome. See `examples/tasks/shell.json`.
+
+Scheduling starts at the next future occurrence on initial registration. Restart
+preserves the next occurrence for unchanged definitions. Changes cancel stale
+queued occurrences and calculate a new next time. Existing active work remains
+owned. Config changes require a daemon restart; `schedules sync` also provides
+explicit reconciliation when the daemon is stopped.
+
+## Linear mapping (validation only)
+
+Installation config maps each application key to one unique OpenCode agent:
+
+```json
+{ "linear": { "applications": { "dev-app": { "agent": "dev" } } } }
+```
+
+The project config selects applications by lane:
+
+```json
+{
+  "knowledge": [{ "id": "adrs", "path": "docs/adr" }],
+  "linear": {
+    "workspaceId": "linear-workspace-id",
+    "projectId": "linear-project-id",
+    "lanes": { "Development": "dev-app", "Review": "dev-app" }
+  }
+}
+```
+
+Multiple lanes can reuse `dev-app`. Another application cannot also map to `dev`.
+Global/project OpenCode configuration still resolves the agent named `dev`.
+These application keys are configuration references; OAuth credentials and native
+application installation details belong to the future Linear adapter.
+
+## Operator commands
+
+Run `npm run aivi -- --help` for commands. `AIVI_CONFIG` can supply the config path.
+The `--key` on `jobs enqueue` deduplicates identical requests; changed payloads
+with the same key are rejected. Failed jobs do not retry automatically.
+
+Use `jobs show ID` for the task, session ID, result, and transition history.
+`jobs cancel ID` only cancels queued work. Resolving a blocked job is an explicit
+operator action described in [OpenCode setup](opencode.md).
+
+With `host.auth.mode: "token"`, `AIVI_TOKEN` (at least 24 characters) must be
+present in the host environment and in the OpenCode server's environment for the
+plugin. With `mode: "none"` no token is needed anywhere; the host logs a warning
+when it binds beyond loopback without auth. Per-device tokens and SSO (via a
+reverse proxy) are planned as further modes. Keep secret values in fnox, not
+these JSON files. The plugin never receives an API for reading host secrets.
+
+The host discovers OpenCode through the SDK's service registration
+(`~/.local/state/opencode/service.json`), so the random service port and its
+basic-auth password never appear in aivi configuration.
+
+`aivi serve` logs one JSON object per line on stderr; `--log-level debug` shows
+schedule materialization. stdout is reserved for command output.
+
+JSON schemas are generated into `schemas/` by `npm run schema`; `npm run check`
+fails when they are stale. Point your editor at them for autocompletion and
+field descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
+config file) in `aivi.json`, `aivi.project.json`, and the Discord config. Runtime validation additionally checks cron
+expressions, timezones, uniqueness, and references across project files.
+
+`aivi serve` is the single application command. See [application lifecycle](application.md)
+for ownership and [knowledge search](knowledge.md) for indexing and retrieval.
