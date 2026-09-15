@@ -127,7 +127,22 @@ test('deduplicated turns retain channel sessions; reset cannot evade pending wor
   store.enqueue(message('four'), 10);
   assert.notEqual(store.list().at(-1)!.session, first.session);
   assert.equal(store.list()[0]!.text, ''); // delivered payload is not another transcript archive
-  assert.throws(() => new DiscordStore(core, 'different-agent'), /binding changed/);
+  // A rebind is refused while work is pending, and otherwise rotates every conversation's session.
+  assert.throws(() => new DiscordStore(core, 'different-agent'), /binding changed while 2 turn\(s\) are pending/);
+  for (const pending of store.list().filter(t => t.state === 'queued')) {
+    store.claim(scheduler, config.resource);
+    store.sent(pending.id);
+  }
+  const before = new Map(store.list().map(t => [t.channel, t.session]));
+  const rebound = new DiscordStore(core, 'different-agent');
+  assert.equal(rebound.rebound, true);
+  rebound.enqueue(message('five', 'dm-a'), 10);
+  rebound.enqueue(message('six', 'thread-b'), 10);
+  for (const turn of rebound.list().filter(t => ['five', 'six'].includes(t.id))) {
+    assert.notEqual(turn.session, before.get(turn.channel), `${turn.channel} starts a fresh session`);
+    assert.equal(turn.ready, false);
+  }
+  assert.equal(new DiscordStore(core, 'different-agent').rebound, false, 'same binding again is not a rebind');
 });
 
 test('Discord leases and scheduler claims enforce the same global capacity', t => {

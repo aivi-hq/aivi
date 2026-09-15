@@ -141,8 +141,10 @@ Resolution discards that blocked turn and releases capacity. It does not stop th
 native session or resend a reply. Inspect/stop native work first. Queued messages
 can then continue in the same session. Restarted adapters block interrupted turns
 instead of resubmitting prompts. The application lock prevents duplicate hosts; a module lock also protects the Discord inbox.
-Changing application, agent, or directory against existing state is rejected;
-deliberate rebinding/migration is future work.
+Changing the application, agent, or directory against existing state acts as
+`/new` for every conversation: old native sessions stay in OpenCode and each
+channel's next message starts fresh. It is refused while any turn is queued or
+blocked; finish or resolve those first.
 
 ## Boundaries
 

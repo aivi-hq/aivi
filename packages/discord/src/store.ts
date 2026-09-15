@@ -55,13 +55,28 @@ export class DiscordStore {
     core.transaction(() => {
       const previous = core.db.prepare('SELECT value FROM discord_binding WHERE id=1').get();
       if (previous && previous.value !== binding) {
-        throw new Error(
-          'Discord application/agent/directory binding changed; use a separate installation state directory',
-        );
+        // A deliberate rebind (new agent or directory) is a /new for every conversation: old sessions
+        // stay in OpenCode, the next message in each channel starts fresh. Pending work must be finished first.
+        const pending = core.db
+          .prepare("SELECT count(*) AS n FROM discord_turns WHERE state IN ('queued','running','replying','blocked')")
+          .get()!.n;
+        if (Number(pending))
+          throw new Error(
+            `Discord application/agent/directory binding changed while ${pending} turn(s) are pending; resolve or finish them first`,
+          );
+        for (const row of core.db.prepare('SELECT channel FROM discord_sessions').all())
+          core.db
+            .prepare('UPDATE discord_sessions SET session=?,ready=0 WHERE channel=?')
+            .run(newSession(), String(row.channel));
+        core.db.prepare('UPDATE discord_binding SET value=? WHERE id=1').run(binding);
+        this.rebound = true;
+        return;
       }
       core.db.prepare('INSERT OR IGNORE INTO discord_binding VALUES(1,?)').run(binding);
     });
   }
+  /** True when this start replaced a previous binding and rotated every conversation's session. */
+  rebound = false;
 
   /** Restart recovery: work that was in flight is unverified and stays reserved until an operator looks. */
   recover(): number {

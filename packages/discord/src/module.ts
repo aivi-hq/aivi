@@ -70,6 +70,8 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
   const log = services.log.child({ component: 'discord' });
   const token = requireToken();
   const store = new DiscordStore(services.store, bindingFor(config));
+  if (store.rebound)
+    log.warn('binding.changed', { hint: 'Every conversation starts a fresh session on its next message.' });
   const recovered = store.recover();
   if (recovered) log.warn('turns.recovered', { blocked: recovered });
 
