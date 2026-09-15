@@ -17,7 +17,9 @@ session driver; the Discord module is the template.
 
 For each channel: official bot API maturity, self-hosting requirements
 (Signal and WhatsApp need bridges or business APIs), thread/reply model, and
-whether DMs + shared channels map cleanly onto `access`.
+whether DMs + shared channels map cleanly onto `access`. A paste-ready brief
+for an outside model is in [research-channels.md](research-channels.md)
+(2026-09-15); results land in `docs/research/`.
 
 ## Research
 
