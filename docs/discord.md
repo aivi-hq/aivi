@@ -171,8 +171,11 @@ A job whose `report` points at a thread's session (`to: "session"`; the default
 for jobs the librarian creates from a thread) does not post text. The module
 enqueues a turn of kind `job` into that thread's inbox, ordered behind the
 messages already waiting, taking a lease like any turn. The prompt says that
-aivi delivered a job outcome and nobody typed it; the librarian reads it and
-replies in the thread in its own words, with the whole conversation in context.
+aivi delivered a job outcome and nobody typed it, and that the librarian must
+pass it on rather than act on it (live finding 2026-09-15: asked to relay a
+riddle, the librarian solved it). Outcomes addressed to the people are
+delivered as written; anything else is summarized, with the whole conversation
+in context.
 The turn's native message id is `msg_discord_job_<jobId>` and its metadata
 origin is `job-result`. One job outcome becomes at most one turn. If no thread
 is bound to the session, delivery fails and is audited on the job; the job

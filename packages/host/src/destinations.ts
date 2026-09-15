@@ -133,5 +133,5 @@ export function describeOutcome(
 
 /** Text of the prompt that carries a job outcome back into a conversation. Nobody typed it, and the agent should know. */
 export function reentryPrompt(text: string): string {
-  return `[aivi delivers the outcome of a scheduled job this conversation asked for. Nobody typed this; tell the people here briefly what matters.]\n${text}`;
+  return `[aivi delivers the outcome of a scheduled job this conversation asked for. Nobody typed this. Pass it on to the people here: if it is addressed to them (a reminder, a question, a riddle), deliver it as written; otherwise tell them briefly what matters. Do not answer or act on it yourself.]\n${text}`;
 }
