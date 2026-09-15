@@ -16,6 +16,9 @@ npm run check
 npm run aivi -- config check
 ```
 
+There is no build step: every package runs from its TypeScript sources through
+Node's type stripping, and `npm run typecheck` (`tsc --noEmit`) is a check.
+
 aivi reads one **home** directory: `aivi.json`, `.env`, and `state/` together.
 Installed copies use `~/.aivi`; in this repo `npm run aivi` points `AIVI_HOME`
 at `example/`, a complete home with everything enabled. Its

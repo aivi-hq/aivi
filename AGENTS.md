@@ -32,8 +32,10 @@ to what is left and point at the owners. `docs/review/*.md` are findings, not
 specifications; `docs/backlog/*.md` are unscheduled ideas.
 
 Use Node 26 (`engines` in `package.json`), pinned dependencies, and npm
-workspaces. Test lifecycle, persistence, and configuration changes at the actual
-boundaries they affect. Live OpenCode, Discord and macOS Chrome verification are
+workspaces. There is no build: packages run from `src/*.ts` (type stripping),
+so keep to erasable TypeScript syntax and `.ts` import specifiers. Test
+lifecycle, persistence, and configuration changes at the actual boundaries they
+affect. Live OpenCode, Discord and macOS Chrome verification are
 separate gates; mock tests do not establish those.
 
 Commits follow Conventional Commits (`type(scope): subject`; lefthook enforces

@@ -13,7 +13,7 @@
       "packages/opencode/server.js",
       "*.json",
       "example/**/*.json",
-      "!**/dist",
+
       "!schemas",
       "!package-lock.json"
     ]

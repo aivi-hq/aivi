@@ -1,29 +1,17 @@
 {
-  "files": [],
-  "references": [
-    {
-      "path": "packages/core"
-    },
-    {
-      "path": "packages/host"
-    },
-    {
-      "path": "packages/opencode"
-    },
-    {
-      "path": "packages/channel-discord"
-    },
-    {
-      "path": "packages/channel-slack"
-    },
-    {
-      "path": "packages/knowledge"
-    },
-    {
-      "path": "packages/app"
-    },
-    {
-      "path": "packages/browser"
-    }
-  ]
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"]
 }

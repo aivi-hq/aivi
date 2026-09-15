@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./dist/index.js",
-    "./client": "./dist/client.js"
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
   },
   "dependencies": {
     "@aivi/core": "0.1.0",

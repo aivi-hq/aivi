@@ -1,6 +1,16 @@
 {
-  "name":"@aivi/knowledge", "version":"0.1.0", "private":true, "type":"module",
-  "exports":{".":"./dist/index.js"},
-  "dependencies":{"@aivi/core":"0.1.0","zod":"4.1.13"},
-  "optionalDependencies":{"@tobilu/qmd":"2.8.3"}
+  "name": "@aivi/knowledge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aivi/core": "0.1.0",
+    "zod": "4.1.13"
+  },
+  "optionalDependencies": {
+    "@tobilu/qmd": "2.8.3"
+  }
 }

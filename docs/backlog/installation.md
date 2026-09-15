@@ -21,6 +21,29 @@ Owner's requirements (2026-09-14):
   them (knowledge sources, later Linear mapping); plugins must not need their
   own copies of that config. Agents work inside those checkouts.
 
+## Decision (2026-09-15): the installation is a git checkout
+
+Superseding the npm recommendation below (kept for its research):
+
+- `~/.aivi/app` is a **git clone** of this repository at a release tag (or a
+  branch for `main`-channel installs). `aivi update` is `git fetch` + checkout
+  of the target tag + `npm ci --omit=dev` for third-party dependencies, with
+  the same snapshot/verify/rollback steps as below, minus the version
+  directories: rollback is checking out the previous tag.
+- **No build step, anywhere.** The packages run from their TypeScript sources
+  through Node's type stripping (`exports` point at `src/*.ts`; `tsc --noEmit`
+  is a check, not a build). This rules out `npm install -g aivi`: Node refuses
+  to strip types under `node_modules`, and that is fine, we are not publishing
+  to npm. The workspace layout (packages symlinked from `node_modules` to
+  their real paths) keeps stripping working in the checkout.
+- The CLI is reached through a **symlink in `~/.local/bin/aivi`** (the mise
+  convention) pointing at `~/.aivi/app/packages/app/src/cli.ts`; the install
+  script creates it and adds `~/.local/bin` to PATH only if needed.
+- Plugins (channel adapters, later others) are chosen at install time by the
+  script or later through the CLI/dashboard; whenever aivi installs or updates
+  something the OpenCode service loads, aivi restarts that service
+  (`opencode.lifecycle: own`), so a stale module cache never reaches a person.
+
 ## What the install must produce
 
 1. OpenCode v2 installed and its background service running (`opencode service`).
@@ -208,7 +231,7 @@ do not inherit the shell PATH), `RunAtLoad`, `KeepAlive`, `WorkingDirectory`,
 bootstrap gui/$UID <plist>`, `bootout`, `kickstart -k`, `print`. OpenClaw and Hermes use
 this shape on macOS and a systemd user unit on Linux.
 
-## Recommendation
+## Recommendation (superseded by the decision above; research kept)
 
 Publish to npm, install with a script into `~/.aivi/`, update by installing the next
 version beside the current one and swapping a symlink. This is the OpenClaw shape

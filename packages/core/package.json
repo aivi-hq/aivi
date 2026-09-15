@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./dist/index.js",
-    "./kinds": "./dist/kinds.js"
+    ".": "./src/index.ts",
+    "./kinds": "./src/kinds.ts"
   },
   "dependencies": {
     "croner": "10.0.1",

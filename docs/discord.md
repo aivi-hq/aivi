@@ -62,7 +62,7 @@ the host's. This page has what is Discord's.
 
 ## Setup
 
-Build the monorepo with `npm ci` and `npm run build`. Create a Discord application
+Run `npm ci` (no build step). Create a Discord application
 and bot, then invite it to your server with `bot` and `applications.commands`.
 Give it access to the selected channels and permission to send messages, add
 reactions, create public threads, and send messages in threads. Private threads also require bot

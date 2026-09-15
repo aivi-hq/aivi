@@ -28,7 +28,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 
 ## Librarian in native chat
 
-1. Build with `npm ci && npm run build`.
+1. `npm ci` (there is no build step; the packages run from their TypeScript sources).
 2. Start aivi, for example `npm run aivi -- serve`
    (with `AIVI_TOKEN` from fnox, or `host.auth.mode: "none"` on a trusted machine).
 3. With `mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode **server**

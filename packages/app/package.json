@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "aivi": "./dist/cli.js"
+    "aivi": "./src/cli.ts"
   },
   "dependencies": {
     "@aivi/browser": "0.1.0",
