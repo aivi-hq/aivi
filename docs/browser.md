@@ -67,7 +67,7 @@ tab forward for a manual login that then persists.
 
 ## Tools and ownership
 
-`browser_control` provides `tabs`, `open`, `navigate`, `snapshot`, `click`, `fill`,
+`aivi_browser` provides `tabs`, `open`, `navigate`, `snapshot`, `click`, `fill`,
 `press`, `dialog`, `focus`, and `close`. Snapshot returns the accessibility tree
 with an `id` per node; pass that value as `uid` to click/fill. Read a new snapshot after navigation or significant page changes.
 The initial interface does not expose arbitrary JavaScript, network headers,
