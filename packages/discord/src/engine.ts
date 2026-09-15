@@ -1,5 +1,6 @@
 import type { Config, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
+import { TurnNotStarted } from '@aivi/host';
 import type { DiscordConfig } from './config.ts';
 import type { DiscordStore, Turn } from './store.ts';
 
@@ -61,6 +62,7 @@ export class DiscordEngine {
     const log = this.log.child({ turn: turn.id, channel: turn.channel });
     const startedAt = Date.now();
     log.info('turn.started', { newSession: !turn.ready });
+    const tell = (text: string) => this.send(turn.channel, text).catch(error => log.warn('notify.failed', { error }));
     const work = Promise.resolve()
       .then(async () => {
         try {
@@ -72,9 +74,19 @@ export class DiscordEngine {
           this.store.sent(turn.id);
           log.info('turn.sent', { answeredMs, totalMs: Date.now() - startedAt, chars: text.length });
         } catch (error) {
+          if (error instanceof TurnNotStarted) {
+            // Nothing reached the agent: release capacity and let the person try again.
+            log.warn('turn.not_started', { error });
+            this.store.fail(turn.id);
+            await tell('I could not reach my agent runtime just now. Please send that again in a moment.');
+            return;
+          }
           // No automatic resend: delivery may already have succeeded before a response was lost.
           log.warn('turn.blocked', { error });
           this.store.block(turn.id);
+          await tell(
+            'I could not finish that. An operator has been notified; this conversation waits until it is resolved.',
+          );
         }
       })
       .catch(error => {
@@ -82,7 +94,10 @@ export class DiscordEngine {
         this.failure = error;
         this.stop();
       })
-      .finally(() => this.active.delete(turn.id));
+      .finally(() => {
+        this.active.delete(turn.id);
+        this.tick(); // capacity was just released; do not wait for the next poll
+      });
     this.active.set(turn.id, work);
   }
 

@@ -5,7 +5,7 @@ import { errorMessage, silentLogger } from '@aivi/core';
 import { dream } from './dreaming.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import type { Execute, ExecutionResult } from './scheduler.ts';
-import { PermissionRequired, runTurn, turnIdsFor } from './session.ts';
+import { PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
 
 export interface ExecutorDeps {
@@ -83,16 +83,15 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       }
       case 'dreaming': {
         const task = job.task;
-        const client = await connect(deps.opencode);
-        if (!client.ok) return client.outcome;
         const { sessionId } = turnIdsFor(job.id);
         const timeout = AbortSignal.timeout(task.timeoutMs);
-        // Persist the intended ID BEFORE any request. A dropped response then has a known reconciliation target.
-        context.attachSession(sessionId);
         try {
+          const client = await connect(deps.opencode);
+          // Persist the intended ID BEFORE any request. A dropped response then has a known reconciliation target.
+          context.attachSession(sessionId);
           const outcome = await dream(task, job.id, {
             store: deps.store,
-            client: client.value,
+            client,
             stateDirectory: loaded.config.stateDirectory,
             signal: AbortSignal.any([context.signal, timeout]),
             log,
@@ -103,7 +102,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         } catch (error) {
           // The cursor did not advance, so the next run reviews the same conversations again.
           log.warn('dreaming.failed', { error });
-          return blocked(error, {
+          return ended(error, {
             sessionId,
             work: 'Dreaming',
             host: context.signal,
@@ -114,16 +113,15 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       }
       case 'opencode.prompt': {
         const task = job.task;
-        const client = await connect(deps.opencode);
-        if (!client.ok) return client.outcome;
         const { sessionId, messageId } = turnIdsFor(job.id);
         const timeout = AbortSignal.timeout(task.timeoutMs);
-        // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
-        context.attachSession(sessionId);
         const metadata = { aivi: { origin: 'job', job: job.id } };
         try {
+          const client = await connect(deps.opencode);
+          // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
+          context.attachSession(sessionId);
           const turn = await runTurn(
-            client.value,
+            client,
             {
               sessionId,
               agent: task.agent,
@@ -139,38 +137,36 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
           );
           return { state: 'succeeded', result: { sessionId, text: turn.text, rejectedPermissions: turn.rejected } };
         } catch (error) {
-          // The session may still be doing things; keep its capacity until an operator has looked.
           log.warn('turn.failed', { error });
-          return blocked(error, { sessionId, work: 'Turn', host: context.signal, timeout, timeoutMs: task.timeoutMs });
+          return ended(error, { sessionId, work: 'Turn', host: context.signal, timeout, timeoutMs: task.timeoutMs });
         }
       }
     }
   };
 }
 
-/** Discovery failure has no external effect: fail the job so the next occurrence simply tries again. */
-async function connect(
-  opencode: () => Promise<OpenCodeClient>,
-): Promise<{ ok: true; value: OpenCodeClient } | { ok: false; outcome: ExecutionResult }> {
+/** Discovery failure is a turn that never started. */
+async function connect(opencode: () => Promise<OpenCodeClient>): Promise<OpenCodeClient> {
   try {
-    return { ok: true, value: await opencode() };
+    return await opencode();
   } catch (error) {
-    return {
-      ok: false,
-      outcome: { state: 'failed', result: null, reason: `OpenCode unreachable: ${errorMessage(error)}` },
-    };
+    throw new TurnNotStarted(error);
   }
 }
 
 /**
- * A turn that ended without a verified answer blocks its job. The SDK wraps an
- * aborted request as a transport error, so the cause is read from the signals,
- * not from the error.
+ * How a turn that produced no verified answer ends. Before the prompt was
+ * accepted nothing ran, so the job fails and the next occurrence retries.
+ * After it, the session may still be doing things: the job blocks and keeps
+ * its capacity until an operator has looked. The SDK wraps an aborted request
+ * as a transport error, so the cause is read from the signals, not the error.
  */
-function blocked(
+function ended(
   error: unknown,
   turn: { sessionId: string; work: 'Turn' | 'Dreaming'; host: AbortSignal; timeout: AbortSignal; timeoutMs: number },
 ): ExecutionResult {
+  if (error instanceof TurnNotStarted)
+    return { state: 'failed', result: null, reason: `${turn.work} not started: ${error.message}` };
   const reason =
     error instanceof PermissionRequired
       ? error.message

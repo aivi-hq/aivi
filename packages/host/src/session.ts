@@ -1,6 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import type { Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { errorMessage, silentLogger } from '@aivi/core';
 import type { OpenCodeClient } from './opencode.ts';
 
 type NativeMessages = Awaited<ReturnType<OpenCodeClient['session']['context']>>;
@@ -10,6 +10,15 @@ export type Metadata = Record<string, Json>;
 
 /** Thrown while a turn is still running; callers keep waiting. */
 export class PendingAnswer extends Error {}
+/**
+ * The turn failed before its prompt was accepted (discovery, create, get, rules).
+ * Nothing runs on the agent's side, so callers may fail cleanly and release capacity.
+ */
+export class TurnNotStarted extends Error {
+  constructor(cause: unknown) {
+    super(errorMessage(cause), { cause });
+  }
+}
 /** The agent asked for a permission and the policy was `fail`. The session stays inspectable. */
 export class PermissionRequired extends Error {
   readonly requests: { action: string; resources: string[] }[];
@@ -82,31 +91,34 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
   const sessionID = input.sessionId;
   const request = { signal };
 
-  if (input.create) {
-    await client.session.create(
-      {
-        id: sessionID,
-        agent: input.agent,
-        location: { directory: input.directory },
-        ...(input.title ? { title: input.title } : {}),
-        ...(input.sessionMetadata ? { metadata: input.sessionMetadata } : {}),
-        ...(input.permissions ? { permissions: input.permissions } : {}),
-      },
-      request,
-    );
-    options.onCreated?.();
-  }
-  const session = await client.session.get({ sessionID }, request);
-  if (session.agent !== input.agent || session.location.directory !== input.directory) {
-    throw new Error(`Session ${sessionID} no longer runs agent ${input.agent} in ${input.directory}`);
-  }
-  if (input.permissions) await client.permission.rules({ sessionID, permissions: input.permissions }, request);
-
   const aivi = input.messageMetadata?.aivi;
   const messageMetadata: Metadata = {
     ...input.messageMetadata,
     aivi: { ...(aivi && typeof aivi === 'object' && !Array.isArray(aivi) ? aivi : {}), message: input.messageId },
   };
+  try {
+    if (input.create) {
+      await client.session.create(
+        {
+          id: sessionID,
+          agent: input.agent,
+          location: { directory: input.directory },
+          ...(input.title ? { title: input.title } : {}),
+          ...(input.sessionMetadata ? { metadata: input.sessionMetadata } : {}),
+          ...(input.permissions ? { permissions: input.permissions } : {}),
+        },
+        request,
+      );
+      options.onCreated?.();
+    }
+    const session = await client.session.get({ sessionID }, request);
+    if (session.agent !== input.agent || session.location.directory !== input.directory) {
+      throw new Error(`Session ${sessionID} no longer runs agent ${input.agent} in ${input.directory}`);
+    }
+    if (input.permissions) await client.permission.rules({ sessionID, permissions: input.permissions }, request);
+  } catch (error) {
+    throw new TurnNotStarted(error);
+  }
   await client.session.prompt(
     {
       sessionID,

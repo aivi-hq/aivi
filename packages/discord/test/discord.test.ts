@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import { Store } from '@aivi/host';
+import { Store, TurnNotStarted } from '@aivi/host';
 import { authorized, discordConfigSchema } from '../src/config.ts';
 import { DiscordEngine, splitReply } from '../src/engine.ts';
 import { DiscordStore } from '../src/store.ts';
@@ -189,7 +189,7 @@ test('turns queue behind a slow answer; delivery failures retain results and nev
     release = resolve;
   });
   let asks = 0;
-  let sends = 0;
+  const sends: string[] = [];
   const engine = new DiscordEngine(
     store,
     config,
@@ -199,8 +199,8 @@ test('turns queue behind a slow answer; delivery failures retain results and nev
       await pending;
       return 'Answer';
     },
-    async () => {
-      sends++;
+    async (_channel, text) => {
+      sends.push(text);
       throw new Error('Ambiguous Discord response');
     },
   );
@@ -212,11 +212,45 @@ test('turns queue behind a slow answer; delivery failures retain results and nev
   await engine.drain();
   engine.tick();
   await engine.drain();
-  assert.equal(sends, 1);
+  assert.equal(sends.filter(s => s === 'Answer').length, 1, 'the answer is delivered once and never resent');
+  assert.match(sends[1]!, /operator has been notified/, 'the person is told, even if that send fails too');
   assert.equal(store.list()[0]!.result, 'Answer');
   assert.equal(store.list()[0]!.state, 'blocked');
   assert.equal(store.list()[1]!.state, 'queued');
   assert.equal(core.leases().length, 1);
+});
+
+test('a turn that never reached the agent is discarded with its capacity released; a blocked one keeps it; both tell the user', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new DiscordStore(core, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-b'), 10);
+  const sent: string[] = [];
+  const engine = new DiscordEngine(
+    store,
+    { ...config, maxConcurrent: 2 },
+    { ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
+    async turn => {
+      if (turn.id === 'one') throw new TurnNotStarted(new Error('No running OpenCode v2 service found'));
+      throw new Error('lost after prompt');
+    },
+    async (_channel, text) => void sent.push(text),
+  );
+  engine.tick();
+  await engine.drain();
+  const [one, two] = store.list();
+  assert.equal(one!.state, 'discarded');
+  assert.match(one!.error ?? '', /^Not started/);
+  assert.equal(two!.state, 'blocked');
+  assert.deepEqual(
+    core.leases().map(l => l.id),
+    ['discord:two'],
+    'only the blocked turn still holds capacity',
+  );
+  assert.equal(sent.length, 2);
+  assert.match(sent[0]!, /send that again/);
+  assert.match(sent[1]!, /operator has been notified/);
 });
 
 test('reply splitting preserves Unicode and respects Discord UTF-16 message limits', () => {

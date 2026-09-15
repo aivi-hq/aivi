@@ -127,7 +127,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   const result = store.get(job.id);
   assert.equal(result.state, 'failed');
   assert.equal(result.sessionId, null, 'no session id is attached when no request was made');
-  assert.match(result.error ?? '', /OpenCode unreachable: No running OpenCode/);
+  assert.match(result.error ?? '', /not started: No running OpenCode/);
   assert.equal(scheduler.stopped, false);
 });
 
@@ -167,6 +167,41 @@ test('a turn that times out while session.wait is pending reports the timeout, n
   );
   assert.equal(outcome.state, 'blocked');
   assert.match(outcome.reason ?? '', /^Turn exceeded 300ms\. Inspect session ses_aivi_/);
+});
+
+test('a prompt job whose session cannot be created fails; nothing was submitted to an agent', async t => {
+  const store = new Store(':memory:');
+  const job = store.enqueue(
+    taskSchema.parse({ kind: 'opencode.prompt', agent: 'librarian', directory: '/team', prompt: 'hi' }),
+    'local-model',
+    'no-session',
+  );
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) void _;
+    res.writeHead(500);
+    res.end('{}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const config = configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } });
+  const scheduler = new Scheduler(
+    store,
+    config.scheduler,
+    createExecutor(
+      { path: '/aivi.json', config, projects: [], sources: [] },
+      { store, opencode: () => connectOpenCode(config.opencode, {}) },
+    ),
+  );
+  scheduler.tick();
+  await scheduler.drain();
+  const result = store.get(job.id);
+  assert.equal(result.state, 'failed');
+  assert.match(result.error ?? '', /^Turn not started: /);
 });
 
 test('a dreaming job persists its session id before the first request and blocks if that request fails', async t => {

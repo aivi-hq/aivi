@@ -140,6 +140,8 @@ export class DiscordStore {
         },
       );
       if (acquired) return turn({ ...row, state: 'running' });
+      // Every turn uses the same pool, so a refusal is a capacity refusal for all of them.
+      break;
     }
     return null;
   }
@@ -172,6 +174,18 @@ export class DiscordStore {
         )
         .run(id);
       this.core.blockLease(leaseID(id), LEASE_OWNER, 'Turn or delivery interrupted');
+    });
+  }
+
+  /** The turn never reached the agent: nothing to inspect, so capacity is released at once. */
+  fail(id: string): void {
+    this.core.transaction(() => {
+      this.core.db
+        .prepare(
+          "UPDATE discord_turns SET state='discarded',text='',error='Not started: agent runtime unreachable or session setup failed' WHERE id=? AND state='running'",
+        )
+        .run(id);
+      this.core.releaseLease(leaseID(id), LEASE_OWNER);
     });
   }
 

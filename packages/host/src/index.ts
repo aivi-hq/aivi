@@ -15,6 +15,6 @@ export { Scheduler } from './scheduler.ts';
 export type { HostAuth, HostServerOptions } from './server.ts';
 export { createHostServer, MIN_TOKEN_LENGTH, resolveHostAuth, status } from './server.ts';
 export type { TurnInput, TurnOptions, TurnResult } from './session.ts';
-export { finalAnswer, PendingAnswer, PermissionRequired, runTurn, turnIdsFor } from './session.ts';
+export { finalAnswer, PendingAnswer, PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
 export type { AuditEntry, Lease } from './store.ts';
 export { Store } from './store.ts';
