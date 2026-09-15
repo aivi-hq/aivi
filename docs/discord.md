@@ -44,9 +44,11 @@ there is no separate Discord server or daemon command.
   refuses while that conversation has queued, running, or blocked turns.
 - `/status` shows only that conversation's pending states.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
-- People always get a signal: a typing indicator while the agent works, a
-  short message when a turn could not start (please resend) or could not be
-  finished (an operator has been notified). See
+- People always get a signal: a ⏳ reaction while a message waits behind other
+  work (a short reply instead where the bot may not react; the invite should
+  grant Add Reactions), a typing indicator while the agent works, a short
+  message when a turn could not start (please resend) or could not be finished
+  (an operator has been notified). See
   [conversation feedback](backlog/conversation-feedback.md) for what is still wanted.
 - Input is text-only. A message with attachments or without text gets a
   "text only" reply.
@@ -57,8 +59,8 @@ there is no separate Discord server or daemon command.
 
 Build the monorepo with `npm ci` and `npm run build`. Create a Discord application
 and bot, then invite it to your server with `bot` and `applications.commands`.
-Give it access to the selected channels and permission to send messages, create
-public threads, and send messages in threads. Private threads also require bot
+Give it access to the selected channels and permission to send messages, add
+reactions, create public threads, and send messages in threads. Private threads also require bot
 membership/access.
 
 The example home enables Discord. Edit the IDs in `example/discord.json`;

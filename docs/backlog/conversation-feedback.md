@@ -16,17 +16,11 @@ shutdown.
 - A turn that could not be finished: "an operator has been notified"; the
   conversation waits until the turn is resolved.
 - A message with attachments or no text: "text only" reply.
+- Queued behind other work: a ⏳ reaction (a one-line reply where the bot may
+  not react), removed when the turn starts.
 
 ## Wanted
 
-- OpenCode unreachable: today the message is discarded with "please send that
-  again". People expect it to be queued (observed 2026-09-15). Better: keep it
-  queued, say "my agent runtime is unreachable; I will answer when it is
-  back", and let the next tick retry. Per-turn discovery makes the retry
-  free; the open question is only how long to wait before giving up.
-- Queued behind other work: a short acknowledgement or reaction so a wait is
-  distinguishable from silence (needs the Add Reactions permission; see
-  [chat-commands](chat-commands.md)).
 - A placeholder message that is edited as the turn progresses or is retried,
   instead of a new message per state.
 - Shutdown and restart notices to every conversation with active or queued
@@ -34,6 +28,12 @@ shutdown.
   after restart recovery.
 - The same signals for job reports: a blocked job's report should say what
   the operator has to do.
+
+## Decided against
+
+- Queuing a message while OpenCode is down. Considered 2026-09-15; the owner
+  prefers the current "please send that again in a moment": simpler, honest,
+  no retry policy to explain.
 
 ## Constraints
 

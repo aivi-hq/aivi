@@ -8,6 +8,7 @@ import {
   Events,
   GatewayIntentBits,
   InteractionContextType,
+  type Message,
   MessageFlags,
   Options,
   Partials,
@@ -19,6 +20,7 @@ import type { DiscordConfig, Route } from './config.ts';
 import { authorized } from './config.ts';
 import { DiscordEngine, splitReply } from './engine.ts';
 import { createNativeChat } from './native.ts';
+import type { Turn } from './store.ts';
 import { DiscordStore } from './store.ts';
 
 const safeSend = {
@@ -116,7 +118,26 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         await setTimeout(8000, undefined, { signal }).catch(() => {});
       }
     };
+    // A message that has to wait gets a ⏳ so the wait is not silence; a reply where the bot may not react.
+    const WAITING = '⏳';
+    const acknowledgeQueued = async (message: Message) => {
+      try {
+        await message.react(WAITING);
+      } catch {
+        await message.reply({ content: 'Queued; I will answer in turn.', ...safeSend }).catch(() => {});
+      }
+    };
+    const clearQueued = async (turn: Turn) => {
+      const channel = await client.channels.fetch(turn.channel).catch(() => null);
+      if (!channel?.isTextBased()) return;
+      const message = await channel.messages.fetch(turn.id).catch(() => null);
+      await message?.reactions
+        .resolve(WAITING)
+        ?.users.remove(client.user!.id)
+        .catch(() => {});
+    };
     const askWithTyping: typeof ask = async (turn, signal, ready) => {
+      void clearQueued(turn);
       const done = new AbortController();
       void typing(turn.channel, AbortSignal.any([signal, done.signal]));
       try {
@@ -194,6 +215,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
             config.maxPending,
           );
           engine?.tick(); // pick it up now; the poll loop is only the fallback
+          if (store.state(message.id) === 'queued') await acknowledgeQueued(message);
         } catch (error) {
           log.warn('enqueue.rejected', { channel: message.channelId, error });
           await message.reply({

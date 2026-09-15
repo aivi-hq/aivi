@@ -161,6 +161,10 @@ export class DiscordStore {
     return null;
   }
 
+  state(id: string): TurnState | undefined {
+    const row = this.core.db.prepare('SELECT state FROM discord_turns WHERE id=?').get(id);
+    return row ? (row.state as TurnState) : undefined;
+  }
   /** aivi already takes part in this conversation. */
   has(channel: string): boolean {
     return Boolean(this.core.db.prepare('SELECT 1 FROM discord_sessions WHERE channel=?').get(channel));
