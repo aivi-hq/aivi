@@ -9,6 +9,8 @@ export interface ToolCall {
   name: string;
   detail?: string;
   state: ToolState;
+  /** A codemode `execute` whose code has not arrived yet: the real tool name is unknown, so it stays out of the status line. */
+  pending?: true;
 }
 export interface Progress {
   phase: 'thinking' | 'tool' | 'writing';
@@ -105,9 +107,32 @@ export function reduceProgress(state: Progress, event: SessionEvent, now: number
   const running = () => next.tools.some(t => t.state === 'running');
   switch (event.type) {
     case 'session.tool.input.started': {
-      if (id && !next.tools.some(t => t.id === id))
-        next.tools.push({ id, name: string(d.name) ?? 'tool', state: 'running' });
+      if (id && !next.tools.some(t => t.id === id)) {
+        const name = string(d.name) ?? 'tool';
+        // `execute` is Code Mode's wrapper; the aivi tool it calls is only known once the code arrives.
+        next.tools.push(
+          name === 'execute' ? { id, name, state: 'running', pending: true } : { id, name, state: 'running' },
+        );
+      }
       next.phase = 'tool';
+      break;
+    }
+    case 'session.tool.progress': {
+      // OpenCode names the aivi tools a codemode `execute` runs, with their status: authoritative, no parsing.
+      const metadata = d.metadata && typeof d.metadata === 'object' ? (d.metadata as Record<string, unknown>) : {};
+      const calls = Array.isArray(metadata.toolCalls)
+        ? (metadata.toolCalls as { tool?: unknown; status?: unknown }[]).filter(c => typeof c.tool === 'string')
+        : [];
+      if (!id || !calls.length) break;
+      const at = next.tools.findIndex(t => t.id === id);
+      const named = calls.map(c => {
+        const existing = next.tools.find(t => t.id === id && t.name === c.tool);
+        const state: ToolState = c.status === 'completed' ? 'done' : c.status === 'failed' ? 'failed' : 'running';
+        return { id, name: c.tool as string, ...(existing?.detail ? { detail: existing.detail } : {}), state };
+      });
+      const others = next.tools.filter(t => t.id !== id);
+      next.tools = at >= 0 ? [...others.slice(0, at), ...named, ...others.slice(at)] : [...others, ...named];
+      next.phase = running() ? 'tool' : next.phase;
       break;
     }
     case 'session.tool.called': {
@@ -129,7 +154,11 @@ export function reduceProgress(state: Progress, event: SessionEvent, now: number
       const at = id ? next.tools.findIndex(t => t.id === id && t.name === 'execute') : -1;
       if (id && input && at >= 0)
         next.tools.splice(at, 1, ...describeToolCall('execute', input).map(c => ({ id, ...c, state })));
-      next.tools = next.tools.map(t => (t.id === id ? { ...t, state } : t));
+      next.tools = next.tools.map(t => {
+        if (t.id !== id) return t;
+        const { pending: _pending, ...rest } = t;
+        return { ...rest, state };
+      });
       next.phase = running() ? 'tool' : 'thinking';
       break;
     }
@@ -191,7 +220,7 @@ export function renderProgress(
   if (now - state.lastActivityAt >= clock.idleMs) {
     head = `⏳ still working (${formatDuration(elapsed)})…`;
   } else {
-    const current = state.tools.findLast(t => t.state === 'running');
+    const current = state.tools.findLast(t => t.state === 'running' && !t.pending);
     head =
       state.phase === 'writing'
         ? '✍️ writing the answer'
@@ -204,7 +233,10 @@ export function renderProgress(
     }
   }
   if (mode === 'status') return head;
-  const lines = state.tools.slice(-SHOWN_TOOLS).map(t => `${MARKS[t.state]} ${withDetail(t.name, t)}`);
+  const lines = state.tools
+    .filter(t => !t.pending)
+    .slice(-SHOWN_TOOLS)
+    .map(t => `${MARKS[t.state]} ${withDetail(t.name, t)}`);
   return [head, ...lines].join('\n');
 }
 

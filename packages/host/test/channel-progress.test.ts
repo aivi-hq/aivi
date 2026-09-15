@@ -28,6 +28,43 @@ const ev = (type: string, data: Record<string, unknown> = {}): SessionEvent => (
 const fold = (events: SessionEvent[], from = startProgress(0), at = 1) =>
   events.reduce((state, event) => reduceProgress(state, event, at), from);
 
+test('session.tool.progress names the aivi tools a codemode execute runs and tracks their status; no code parsing needed', () => {
+  let state = startProgress(0);
+  state = fold([ev('session.tool.input.started', { id: 'c1', name: 'execute' })], state, 100);
+  state = fold(
+    [ev('session.tool.progress', { id: 'c1', metadata: { toolCalls: [{ tool: 'aivi.context', status: 'running' }] } })],
+    state,
+    200,
+  );
+  assert.deepEqual(state.tools, [{ id: 'c1', name: 'aivi.context', state: 'running' }]);
+  assert.equal(renderProgress(state, 'status', 200), '🔧 reading the context');
+  state = fold(
+    [
+      ev('session.tool.progress', {
+        id: 'c1',
+        metadata: {
+          toolCalls: [
+            { tool: 'aivi.context', status: 'completed' },
+            { tool: 'knowledge.search', status: 'running' },
+          ],
+        },
+      }),
+    ],
+    state,
+    300,
+  );
+  assert.equal(renderProgress(state, 'status', 300), '🔧 searching knowledge');
+  state = fold([ev('session.tool.success', { id: 'c1' })], state, 400);
+  assert.deepEqual(
+    state.tools.map(t => [t.name, t.state]),
+    [
+      ['aivi.context', 'done'],
+      ['knowledge.search', 'done'],
+    ],
+  );
+  assert.equal(state.phase, 'thinking');
+});
+
 test('tool names: codemode execute shows the aivi tools its code calls; native tools carry a short detail', () => {
   assert.deepEqual(
     describeToolCall('execute', {
@@ -72,7 +109,12 @@ test('the reducer follows a turn through thinking, tools and writing; the render
   state = fold([ev('session.execution.started'), ev('session.step.started')], state);
   assert.equal(state.phase, 'thinking');
   state = fold([ev('session.tool.input.started', { id: 't1', name: 'execute' })], state, 2000);
-  assert.equal(renderProgress(state, 'status', 2000), '🔧 execute');
+  assert.equal(
+    renderProgress(state, 'status', 2000),
+    '⏳ thinking…',
+    'a codemode execute has no name of its own yet; showing "execute" would be the only thing seen before the throttle',
+  );
+  assert.equal(renderProgress(state, 'tools', 2000), '⏳ thinking…');
   state = fold(
     [
       ev('session.tool.called', {

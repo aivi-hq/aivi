@@ -95,9 +95,15 @@ with the answer only.
   | failed }`), start and last-activity times, folded from
   `session.tool.input.started` / `session.tool.called` /
   `session.tool.success` / `session.tool.failed`, `session.text.*`,
-  `session.step.started`. Under codemode the visible tool is `execute`; the
-  model shows the aivi tools its code calls (`tools.knowledge.search({ query
-  })` → `knowledge.search "…"`, `tools.aivi.status()` → `aivi.status`).
+  `session.step.started`, `session.tool.progress`. Under codemode the native
+  tool is `execute`, which only gets its name once the code arrives, so it
+  stays out of the status line until then (seen live 2026-09-15: showing
+  `execute` at `input.started` was the only tool phase anyone saw, the real
+  name arriving inside the edit throttle). The aivi tools it runs are named
+  from `session.tool.progress` → `metadata.toolCalls[].tool` with their status
+  (authoritative), and from the code at `session.tool.called` as a fallback
+  (`tools.knowledge.search({ query })` → `knowledge.search "…"`, bracket and
+  destructured spellings included).
   Native tools show their name and a short detail: `read` the file's
   basename, `grep`/`glob` the pattern, `webfetch` the hostname, `bash` the
   first 40 characters of the command.
