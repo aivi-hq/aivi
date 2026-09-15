@@ -228,7 +228,7 @@ test('progress: a placeholder is posted, edited at most once per window, and rep
   assert.equal(log.length, 1, 'no edit inside the window');
   await sleep(150);
   assert.equal(log.length, 2, 'one trailing edit carries the whole burst');
-  assert.equal(log[1], 'edit:m1:🔧 aivi.status\n✓ read handbook.md\n… aivi.status');
+  assert.equal(log[1], 'edit:m1:🔧 checking status\n✓ read handbook.md\n… aivi.status');
   // … and once the window has passed, the next event is shown at once (leading edge).
   await sleep(120);
   e('session.tool.success', { id: 't2' });
