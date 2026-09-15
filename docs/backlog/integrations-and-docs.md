@@ -4,9 +4,20 @@ Status: collecting. Rule: only features 90% of installations will want.
 
 ## Communication channels (adapters)
 
-Candidates named by the owner: Slack, Telegram, Signal, WhatsApp, email (with
-aivi getting its own mailbox). Each maps onto the shared access policy and the
-session driver; the Discord module is the template.
+Discord and Slack exist on one contract ([channels.md](../channels.md)). Next
+candidates named by the owner: Telegram, Signal, WhatsApp, email (with aivi
+getting its own mailbox); research brief in
+[research-channels.md](research-channels.md). Open points carried over from
+the channel work (2026-09-15):
+
+- Signal and Telegram (no threads, DM-first) will test whether the
+  thread-per-conversation model generalizes; expect a "conversation without
+  threads" case. Slack's `sessions: "channel"` mode is the closest thing today.
+- Dreaming's default `origins` is `["discord"]`; a Slack-only installation must
+  list `slack` itself. A default of "every registered channel module" needs the
+  task to see the module list.
+- Module health (`/v1/status` `modules[]`) is not yet shown in the channels'
+  own `/status` replies or in any health report.
 
 ## Documentation
 

@@ -159,16 +159,11 @@ the tests load it.
 
 ## Open threads
 
-- Live gates: OpenCode passed 2026-09-15 with the schedule handler (session
-  lookup, `agent.list` validation, create/refuse); the tool has since been
-  renamed to `aivi_jobs` and the route to `/v1/jobs`, so that gate needs a
-  re-run after `opencode service restart`. Discord still to re-check after
-  today's changes (the lift into the host, the report union, `{ run }` in the
-  delivery context): librarian directory, feedback messages, job outcomes
-  re-entering threads, report threads adopting run sessions, `/status` lists.
-  Slack passed live on 2026-09-15 after the jobs/runs split: DM, mention →
-  thread, `/spider-status`, reactions, outcomes re-entering a thread, report
-  threads adopting the run's session, `aivi_jobs` through the plugin.
+- Live gates (2026-09-15): OpenCode, Discord and Slack all passed after the
+  jobs/runs split and the channel lift: DMs, mention → thread, `/status`,
+  reactions, `aivi_jobs` through the plugin, outcomes re-entering a thread,
+  report threads adopting the run's session. Not yet seen live: the progress
+  placeholder (edited message while a turn runs) in either channel.
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
   deferred until the projects work settles.

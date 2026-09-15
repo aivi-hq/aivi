@@ -18,7 +18,7 @@ One place to see what aivi is doing without the CLI:
 ## Constraints
 
 - Read-only first. Mutations stay with the CLI and the future agent tool until
-  the authority rules in [jobs.md](jobs.md) are settled; `runs resolve` in
+  the authority rules in [architecture.md](../architecture.md#jobs-and-runs) are settled; `runs resolve` in
   particular requires a human statement that external work stopped.
 - Served by the existing host listener under the existing auth
   (`host.auth`); no second server, no second credential.
@@ -32,6 +32,6 @@ One place to see what aivi is doing without the CLI:
 ## Prerequisites
 
 - `Store.schedules()` reader and an outcomes-of-the-last-24h query
-  (also wanted for `/status`, see [jobs.md](jobs.md) item 9).
+  (also wanted for `/status`, see [architecture.md](../architecture.md#jobs-and-runs) item 9).
 - A dreaming run table or a stable way to list runs from the job history plus
   the transcript directory (retention policy for transcripts is open).

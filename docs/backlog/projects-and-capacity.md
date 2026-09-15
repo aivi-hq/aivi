@@ -32,7 +32,7 @@ Status: idea from the owner (2026-09-14); pre-research wanted.
 
 ## Research
 
-Researched 2026-09-14. Companion to the research in [jobs.md](jobs.md); only the
+Researched 2026-09-14. Companion to the research in [architecture.md](../architecture.md#jobs-and-runs); only the
 facts relevant to locking and idleness are repeated here.
 
 ### What the code already has

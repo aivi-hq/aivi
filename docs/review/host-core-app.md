@@ -18,7 +18,7 @@ module); S7 (the `PendingAnswer` contract is documented and tested; churn
 without a bug).
 
 Deferred: B9 / Q9 (the base for task paths is variable per project; part of
-`backlog/jobs.md` and `backlog/projects-and-capacity.md`); B13 / Q5 (verify at
+`architecture.md#jobs-and-runs` and `backlog/projects-and-capacity.md`); B13 / Q5 (verify at
 the live boundary; noted in `dreaming.md`); Q1 (blocked jobs holding global
 capacity is intended until per-project pools exist); Q6 transcript retention,
 L-items not listed above, and the remaining test gaps.

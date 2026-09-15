@@ -1,6 +1,6 @@
 # Discord widgets as an agent capability
 
-Status: idea, parked 2026-09-15 while jobs are built ([jobs.md](jobs.md)).
+Status: idea, parked 2026-09-15 while jobs are built ([architecture.md](../architecture.md#jobs-and-runs)).
 
 ## Idea
 

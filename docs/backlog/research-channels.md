@@ -2,7 +2,7 @@
 
 Paste everything below the line into a capable model without codebase access.
 Results go into `docs/research/channels-<date>.md`; decisions into
-[channel-adapters.md](channel-adapters.md).
+[integrations-and-docs.md](integrations-and-docs.md).
 
 ---
 

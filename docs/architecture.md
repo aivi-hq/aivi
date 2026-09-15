@@ -147,6 +147,32 @@ select sessions by origin (`discord`, `job`, `dreaming`, later `linear`)
 without inspecting content. Messages aivi submits carry the same shape; a job
 outcome brought back into a conversation is a message with origin `job-result`.
 
+## Jobs and runs
+
+Definitions (`jobs`, recurring or one-off) and executions (`runs`) are separate
+tables; one grace rule decides matched or missed; retention is a system job.
+The facts live in [configuration.md](configuration.md) and
+[application.md](application.md); the research that informed them in
+[research/jobs-2026-09-14.md](research/jobs-2026-09-14.md). Deliberately not
+built until someone asks twice:
+
+- Standing sessions per job (memory across runs belongs in files; if ever
+  wanted: `session: "standing"`, a session id derived from the job id,
+  OpenCode's inbox for ordering).
+- Retries after the model or the process was reached.
+- Digests and a "home channel".
+- Executable allow-lists for scripts; `[SILENT]`-style markers (the librarian
+  reading a re-entered result *is* the silence mechanism).
+- Natural-language time parsing in aivi (the model translates; the tool
+  echoes the next occurrences).
+- Structured confirmation widgets in Discord ([discord-widgets](backlog/discord-widgets.md)).
+- Per-user ownership of agent-created jobs: today every agent-created job is
+  visible to and mutable by every caller the access policy admits; the owner
+  accepted "jobs are the admin's responsibility" for now.
+- A per-occurrence record of every missed minute (one `missed` run per job
+  per gap was chosen so a week of downtime is one line).
+- Editing a definition in place (`update`); today it is remove and create.
+
 ## Open work
 
 Status and order live in [roadmap.md](roadmap.md); unscheduled ideas in

@@ -11,22 +11,9 @@ shutdown.
 
 ## Built
 
-- Typing indicator while the agent works (Discord).
-- A turn that never reached the agent: "please send that again" and capacity
-  released.
-- A turn that could not be finished: "an operator has been notified"; the
-  conversation waits until the turn is resolved.
-- A message with attachments or no text: "text only" reply.
-- Queued behind other work: a ⏳ reaction (a one-line reply where the bot may
-  not react), removed when the turn starts.
-- Restart during a turn: the turn is discarded, capacity released, and the
-  conversation told once (resend, or "my last answer may be incomplete").
-- Progress while the agent works (2026-09-15): one placeholder message per
-  turn, edited in place from OpenCode's event stream with the phase and the
-  tool calls, `progress: silent | status | tools` per channel, "still
-  working" after 30 s of silence, replaced by the answer or turned into the
-  failure notice. Owner: [channels](../channels.md#progress-while-a-turn-runs);
-  the field: [discord](../discord.md#behavior), [slack](../slack.md#behavior).
+Everything a person waits on has a signal today; the list is owned by
+[channels.md](../channels.md#feedback-and-recovery-shared) (queue, working,
+progress placeholder, failure, restart notices).
 
 ## Wanted
 

@@ -10,7 +10,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 0. OpenCode boundary | **Done, live-verified** on OpenCode 2.0.3 ([opencode.md](opencode.md)). Repeat with `npm run live:opencode`. |
 | 1. Native librarian and minimal core | **Done.** Plugin tools, CLI, schema-validated config, fnox/`.env` secrets. |
 | 2. Scoped knowledge search | **Done** for documents: QMD keyword search, kinds, scope never widens on unknown IDs. Conversation export and semantic retrieval not started. |
-| 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_jobs`), one-offs, outcomes re-entering conversations, per-run abort added 2026-09-15; definitions vs runs, the misfire grace and retention as a system job the same day; Discord parts await their live gate ([backlog/jobs.md](backlog/jobs.md)). |
+| 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_jobs`), one-offs, outcomes re-entering conversations, per-run abort, definitions vs runs, misfire grace and retention as a system job added 2026-09-15 and live-verified on Discord and Slack ([architecture.md#jobs-and-runs](architecture.md#jobs-and-runs)). |
 | 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. Lifted onto the channel contract 2026-09-15; live re-check pending. |
 | 5b. Slack adapter | **Done, live-verified** on the owner's workspace 2026-09-15: DMs, mention → thread, `/spider-status`, ⏳/👀 reactions, job outcomes re-entering a thread, report threads adopting the job session ([slack.md](slack.md)). |
@@ -39,20 +39,19 @@ Mock tests do not establish these; each has its own command.
 
 ## Next, in order of intent
 
-1. Live Discord gate for the jobs work and the channel lift (re-entry turns,
-   report threads, `/status`); Discord's API was down (HTTP 500) during the
-   first attempt on 2026-09-15.
-2. Channel startup resilience and the plugin/type-stripping build changes
-   ([backlog/channel-adapters.md](backlog/channel-adapters.md),
-   [backlog/installation.md](backlog/installation.md)); then Signal and
-   Telegram against the same contract.
-3. Projects as pools and maintenance only when idle
-   ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
-4. Project-scoped memory and a per-project dreamer boundary
-   ([backlog/project-memory.md](backlog/project-memory.md)).
-5. Installation and updates for other machines
+1. Projects as pools and maintenance only when idle
+   ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)),
+   together with project-scoped memory and a per-project dreamer boundary
+   ([backlog/project-memory.md](backlog/project-memory.md)). Design
+   conversation first; both pages say "design wanted".
+2. Live gate of the progress placeholder in Discord and Slack (a normal turn,
+   a job re-entry).
+3. Next channels once the research lands
+   ([backlog/research-channels.md](backlog/research-channels.md)); Signal and
+   Telegram will test the "conversation without threads" case.
+4. Installation and updates for other machines, last
    ([backlog/installation.md](backlog/installation.md)).
-6. Remote access hardening (per-device tokens, SSO via reverse proxy), then
+5. Remote access hardening (per-device tokens, SSO via reverse proxy), then
    milestone 6 and 7.
 
 ## Decisions to make early, and decisions to defer
