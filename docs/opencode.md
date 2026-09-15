@@ -32,12 +32,13 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 2. Start aivi, for example `npm run aivi -- serve`
    (with `AIVI_TOKEN` from fnox, or `host.auth.mode: "none"` on a trusted machine).
 3. With `mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode **server**
-   environment and `opencode service restart` (not needed when aivi started the
-   service itself: it passes the token along). Restart the service after
-   every rebuild of the plugin or the host client as well: the long-running
-   service keeps `@aivi/host/client` in its module cache, so a plugin that
-   registers a new tool can still call a client without that method
-   ("client.schedule is not a function", seen 2026-09-15).
+   environment and `opencode service restart`; with `opencode.lifecycle: "own"`
+   (the default) `aivi serve` does both for you. Whatever started the service,
+   restart it after every rebuild of the plugin or the host client: the
+   long-running service keeps `@aivi/host/client` in its module cache, so a
+   plugin that registers a new tool can still call a client without that
+   method ("client.schedule is not a function", seen 2026-09-15). The example
+   home uses `discover`, so there `opencode service restart` stays manual.
 4. Open `example/` in OpenCode v2. Its `opencode.jsonc` loads the local plugin
    and selects the `librarian` agent from `.opencode/agents/`.
 5. Ask it to list aivi sources and read the company handbook.
@@ -52,12 +53,15 @@ rules from aivi per session.
 
 Leave `opencode.url` unset and the host discovers the local service. Set it only
 for a server elsewhere, with `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` if that
-server requires basic auth. When no service is running and `opencode.ensure`
-is on (default), the host starts one through the SDK's `Service.ensure`
-(`opencode serve --service`), passing `AIVI_TOKEN` along so the plugin can
-authenticate; on a server aivi is then the only thing that needs supervising.
-aivi never stops the service, and never restarts a running one: after a
-rebuild, `opencode service restart` is still yours.
+server requires basic auth. `opencode.lifecycle` decides the rest. `own`
+(default): when `aivi serve` starts it replaces a running service through the
+SDK (`Service.stop` with `pty: "handoff"`, then `Service.ensure`), so the
+service carries the current plugin build and aivi's `AIVI_TOKEN`; aivi is then
+the one process to supervise. This happens once, before any module or job, when
+aivi has no work of its own; a turn in flight in the old service at that instant
+is cut short, its session is not. Later, a missing service is started on the
+next unit of work; a running one is never restarted again while aivi runs.
+`ensure` only starts a missing service; `discover` never starts or stops.
 
 ```sh
 npm run aivi -- opencode check

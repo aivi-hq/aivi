@@ -59,10 +59,11 @@ started ends `blocked` when it cannot be verified.
 
 OpenCode runs as its own background service; aivi discovers it through the SDK's
 service registration at the start of each job or conversation turn (one file
-read), so an `opencode service restart` is picked up by the next turn. When no
-service is running, aivi starts one (`opencode.ensure`, default on) and hands it
-`AIVI_TOKEN`; it never stops or restarts a running one, and never manages
-OpenCode's installation. QMD uses its
+read), so an `opencode service restart` is picked up by the next turn. With
+`opencode.lifecycle: "own"` (default) `aivi serve` restarts a running service
+once at startup and starts a missing one whenever needed, handing it
+`AIVI_TOKEN`; `ensure` only starts, `discover` never touches it. aivi never
+manages OpenCode's installation. QMD uses its
 library API inside aivi, with no QMD server or separate launch command. Only the
 configured Discord module loads discord.js, and only enabled search loads QMD.
 

@@ -73,7 +73,7 @@
     },
     "opencode": {
       "default": {
-        "ensure": true
+        "lifecycle": "own"
       },
       "type": "object",
       "properties": {
@@ -81,10 +81,15 @@
           "type": "string",
           "format": "uri"
         },
-        "ensure": {
-          "description": "Start the local OpenCode service when none is running (SDK Service.ensure). Never stops it.",
-          "default": true,
-          "type": "boolean"
+        "lifecycle": {
+          "description": "discover: never start or stop the local service. ensure: start one when none runs. own (default): also restart a running one at `aivi serve` startup (persistent terminals are handed off), so aivi is the one thing to supervise.",
+          "default": "own",
+          "type": "string",
+          "enum": [
+            "discover",
+            "ensure",
+            "own"
+          ]
         }
       },
       "additionalProperties": false

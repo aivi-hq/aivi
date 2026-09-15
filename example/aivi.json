@@ -4,6 +4,9 @@
   "host": {
     "port": 4100
   },
+  "opencode": {
+    "lifecycle": "discover"
+  },
   "knowledge": [
     {
       "id": "company",

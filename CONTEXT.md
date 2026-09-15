@@ -47,8 +47,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
   tools).
 - **OpenCode discovery per unit of work** (one file read per job or turn), no
   cached client, so `opencode service restart` is picked up by the next turn.
-  A missing service is started by aivi (`opencode.ensure`, with `AIVI_TOKEN`
-  passed along); a running one is never stopped or restarted by aivi.
+  aivi owns the local service's lifecycle by default (`opencode.lifecycle:
+  own`): one restart at `aivi serve` startup so the current plugin build and
+  `AIVI_TOKEN` are in, a start whenever it is missing, never a stop later.
+  `ensure` and `discover` are the smaller degrees; the example home uses
+  `discover` so tests never touch a developer's OpenCode.
 - **No timers hold state.** The loop sleeps until `Store.nextDue()` and is
   woken by whatever changed the queue; `pollMs` (30 s) is only a safety net.
   SQLite is the single truth, so restarts reconcile nothing.

@@ -13,7 +13,16 @@ const config = join(directory, 'aivi.json');
 let daemon;
 let stopped;
 try {
-  await writeFile(config, JSON.stringify({ version: 1, host: { port: 0 }, knowledge: [{ id: 'demo', path: '.' }] }));
+  // "discover": a smoke check must never restart the developer's own OpenCode service.
+  await writeFile(
+    config,
+    JSON.stringify({
+      version: 1,
+      host: { port: 0 },
+      opencode: { lifecycle: 'discover' },
+      knowledge: [{ id: 'demo', path: '.' }],
+    }),
+  );
   const task = join(directory, 'check.json');
   await writeFile(task, JSON.stringify({ kind: 'system.check' }));
   // The temp directory is the aivi home: aivi.json, .env and state/ live there.
@@ -75,7 +84,12 @@ try {
   // Auth mode "none" serves without a token, for trusted networks.
   await writeFile(
     config,
-    JSON.stringify({ version: 1, host: { port: 0, auth: { mode: 'none' } }, knowledge: [{ id: 'demo', path: '.' }] }),
+    JSON.stringify({
+      version: 1,
+      host: { port: 0, auth: { mode: 'none' } },
+      opencode: { lifecycle: 'discover' },
+      knowledge: [{ id: 'demo', path: '.' }],
+    }),
   );
   daemon = spawn(process.execPath, [cli, 'serve'], {
     env: { ...env, AIVI_TOKEN: '' },

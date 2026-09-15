@@ -30,7 +30,7 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `host.port` | `4100` |
 | `host.auth.mode` | `token` (default): callers send `AIVI_TOKEN` as a bearer token. `none`: trust the network (loopback, Tailscale, LAN you control) |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
-| `opencode.ensure` | `true`: when no local service is running, aivi starts one through the SDK (`opencode serve --service`) with `AIVI_TOKEN` in its environment, so the plugin inside it can authenticate. aivi never stops it. Ignored with `opencode.url` |
+| `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, always with `AIVI_TOKEN` in its environment, so a new plugin build is live and the plugin can authenticate. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation` |
 | `projects` | Project registry, each `{id, directory}` |
 | `modules.discord.config` | Optional path to Discord module settings |

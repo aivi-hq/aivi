@@ -147,17 +147,22 @@ export const hostSchema = z.strictObject({
 });
 /**
  * How to reach OpenCode v2. Without `url`, the host discovers the local
- * background service (`opencode service status`) and uses its credentials;
- * with `ensure` (default) it starts that service when none is running and
- * hands it `AIVI_TOKEN`. With `url`, supply `OPENCODE_USERNAME`/`OPENCODE_PASSWORD`
- * if that server requires HTTP basic auth; `ensure` is ignored.
+ * background service (`opencode service status`) and uses its credentials.
+ * `lifecycle` says how much of that service aivi owns: `discover` never starts
+ * or stops it; `ensure` starts one when none is running; `own` (default) also
+ * restarts a running one when `aivi serve` starts, so a new plugin build is
+ * picked up and the service carries aivi's `AIVI_TOKEN`. With `url`, supply
+ * `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` if that server requires HTTP basic
+ * auth; `lifecycle` is ignored.
  */
 export const opencodeSchema = z.strictObject({
   url: z.url().optional(),
-  ensure: z
-    .boolean()
-    .default(true)
-    .describe('Start the local OpenCode service when none is running (SDK Service.ensure). Never stops it.'),
+  lifecycle: z
+    .enum(['discover', 'ensure', 'own'])
+    .default('own')
+    .describe(
+      'discover: never start or stop the local service. ensure: start one when none runs. own (default): also restart a running one at `aivi serve` startup (persistent terminals are handed off), so aivi is the one thing to supervise.',
+    ),
 });
 export const configSchema = z
   .strictObject({
@@ -165,7 +170,7 @@ export const configSchema = z
     version: z.literal(1),
     stateDirectory: z.string().default('state'),
     host: hostSchema.default({ bind: '127.0.0.1', port: 4100, auth: { mode: 'token' } }),
-    opencode: opencodeSchema.default({ ensure: true }),
+    opencode: opencodeSchema.default({ lifecycle: 'own' }),
     knowledge: z.array(source).default([]),
     projects: z.array(z.strictObject({ id, directory: z.string().min(1) })).default([]),
     modules: z.strictObject({ discord: z.strictObject({ config: z.string().min(1) }).optional() }).default({}),

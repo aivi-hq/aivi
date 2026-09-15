@@ -40,4 +40,7 @@ git-ignored, as is `.env`.
 | `state/` | Created on first run: SQLite, search index, dreaming transcripts, Chrome profile |
 
 Use the tools from OpenCode by opening this directory in OpenCode v2 while
-`serve` runs; see [docs/opencode.md](../docs/opencode.md).
+`serve` runs; see [docs/opencode.md](../docs/opencode.md). This home sets
+`opencode.lifecycle` to `discover` because the tests and the smoke check load
+it: a checked-in example must never restart the developer's own OpenCode. The
+default for a real installation is `own`; put that in your `aivi.local.json`.

@@ -3,7 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
 import { Destinations, describeOutcome, reentryPrompt, shouldReport } from './destinations.ts';
-import { connectOpenCode, type OpenCodeClient } from './opencode.ts';
+import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import { createScheduleHandler } from './schedules.ts';
@@ -106,6 +106,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   const wake = new Wake();
 
   const serve = async (scheduler: Scheduler, destinations: Destinations, knowledge: KnowledgeService) => {
+    // With lifecycle "own", a running service is replaced now, before any module or job needs it:
+    // the fresh one has the current plugin build and aivi's token. Failure to do so is not fatal;
+    // the next turn simply discovers whatever is running.
+    try {
+      if (await restartOpenCode(loaded.config.opencode, process.env)) log.info('opencode.restarted');
+    } catch (error) {
+      log.warn('opencode.restart.failed', { error });
+    }
     const http = createHostServer({
       store,
       loaded,

@@ -9,7 +9,13 @@ import { Store } from '../src/store.ts';
 
 const loaded = () => ({
   path: '/config',
-  config: configSchema.parse({ version: 1, host: { port: 0 }, search: { provider: 'qmd' } }),
+  // "discover": these tests must never touch the developer's real OpenCode service.
+  config: configSchema.parse({
+    version: 1,
+    host: { port: 0 },
+    opencode: { lifecycle: 'discover' },
+    search: { provider: 'qmd' },
+  }),
   sources: [],
   projects: [],
 });
@@ -269,7 +275,12 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
     },
   };
   // A very long safety-net interval: if the loop only polled, nothing below would finish in time.
-  const config = configSchema.parse({ version: 1, host: { port: 0 }, scheduler: { pollMs: 300_000 } });
+  const config = configSchema.parse({
+    version: 1,
+    host: { port: 0 },
+    opencode: { lifecycle: 'discover' },
+    scheduler: { pollMs: 300_000 },
+  });
   const host = runHost({
     loaded: { path: '/config', config, sources: [], projects: [] },
     store,
