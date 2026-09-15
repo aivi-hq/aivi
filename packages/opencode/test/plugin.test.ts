@@ -46,7 +46,7 @@ test('plugin registers its tools with root object schemas and disposes its regis
   );
   assert.deepEqual(
     tools.map(tool => tool.name),
-    ['search', 'status', 'sources', 'control'],
+    ['search', 'status', 'sources', 'browser'],
   );
   for (const tool of tools) assert.equal(tool.input.type, 'object', `${tool.name} must declare a root object schema`);
   assert.equal(typeof cleanup, 'function');
@@ -73,7 +73,7 @@ test('plugin loads without AIVI_TOKEN and reports a clear error when the host re
   await assert.rejects(status.execute({}, { sessionID: 's' }), /401.*AIVI_TOKEN/);
 });
 
-test('browser tool declares native permission and forwards the runtime session ID to the host', async t => {
+test('browser tool lives under aivi (not OpenCode’s browser namespace) and forwards the runtime session ID', async t => {
   withToken(t, 'test-native-browser-token');
   let received: unknown;
   const server = createServer(async (request, response) => {
@@ -92,10 +92,11 @@ test('browser tool declares native permission and forwards the runtime session I
   assert.ok(address && typeof address !== 'string');
   let browser: RegisteredTool | undefined;
   const cleanup = await setupWith({ url: `http://127.0.0.1:${address.port}` }, tool => {
-    if (tool.name === 'control') browser = tool;
+    if (tool.name === 'browser') browser = tool;
   });
   assert.ok(browser);
-  assert.equal(browser.options.permission, 'browser');
+  assert.equal(browser.options.namespace, 'aivi');
+  assert.equal(browser.options.permission, undefined, 'permission action is the tool id, aivi_browser');
   assert.deepEqual(await browser.execute({ action: 'tabs' }, { sessionID: 'native-owner' }), {
     content: '{"tabs":[]}',
   });

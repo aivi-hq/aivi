@@ -60,7 +60,6 @@ export default Plugin.define({
     const registration = await ctx.tool.transform(editor => {
       editor.namespace({ name: 'aivi', description: 'aivi installation status and configured knowledge sources' });
       editor.namespace({ name: 'knowledge', description: 'Search authoritative company and project documents' });
-      editor.namespace({ name: 'browser', description: 'Session-owned Chrome tabs through the aivi host' });
 
       editor.add({
         name: 'search',
@@ -106,11 +105,13 @@ export default Plugin.define({
           json(await client.sources(input as { projects?: string[]; includeCore?: boolean; kinds?: KnowledgeKind[] })),
       });
       editor.add({
-        name: 'control',
+        // Under `aivi`, not `browser`: OpenCode 2.0.3 has its own `browser.*` desktop tools and the model
+        // conflated the two. The permission action is the tool id, `aivi_browser`, like the other aivi tools.
+        name: 'browser',
         description:
-          'Control this session’s Chrome tabs. Start with open or tabs; snapshot returns nodes whose `id` is the uid for click/fill. Refresh snapshot after navigation. The shared profile retains logins; use focus for manual login. Never put passwords or secrets in fill. No automatic retries after uncertain actions.',
+          'Control this session’s tabs in aivi’s own Chrome (not the OpenCode desktop browser). Start with open or tabs; snapshot returns nodes whose `id` is the uid for click/fill. Refresh snapshot after navigation. The shared profile retains logins; use focus for manual login. Never put passwords or secrets in fill. No automatic retries after uncertain actions.',
         input: browserInput,
-        options: { namespace: 'browser', permission: 'browser', codemode: true },
+        options: { namespace: 'aivi', codemode: true },
         execute: async (input, context) => json(await client.browser(context.sessionID, input as BrowserRequest)),
       });
     });

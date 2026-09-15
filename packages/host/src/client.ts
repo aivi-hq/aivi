@@ -18,12 +18,19 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
 
   async function request<T>(path: string, init: RequestInit & { timeoutMs: number }): Promise<T> {
     const { timeoutMs, ...rest } = init;
-    const response = await fetch(new URL(path, base), {
-      ...rest,
-      headers: { ...headers, ...(rest.headers as Record<string, string> | undefined) },
-      signal: AbortSignal.timeout(timeoutMs),
-      redirect: 'error',
-    });
+    let response: Response;
+    try {
+      response = await fetch(new URL(path, base), {
+        ...rest,
+        headers: { ...headers, ...(rest.headers as Record<string, string> | undefined) },
+        signal: AbortSignal.timeout(timeoutMs),
+        redirect: 'error',
+      });
+    } catch (error) {
+      // Every aivi tool goes through the host; the usual cause is simply that `aivi serve` is not running.
+      if (error instanceof Error && error.name === 'TimeoutError') throw error;
+      throw new Error(`aivi is not reachable at ${base.origin}. Is \`aivi serve\` running?`, { cause: error });
+    }
     if (!response.ok) throw new Error(await describeFailure(response));
     return (await response.json()) as T;
   }
