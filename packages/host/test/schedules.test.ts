@@ -37,14 +37,9 @@ async function fakeOpenCode(
         }),
       );
     }
-    const agent = /^\/api\/agent\/([^/]+)$/.exec(url.pathname);
-    if (agent) {
+    if (url.pathname === '/api/agent') {
       const directory = url.searchParams.get('location[directory]') ?? '';
-      if (!agents[directory]?.includes(decodeURIComponent(agent[1]!))) {
-        res.writeHead(404);
-        return void res.end('{"error":"no"}');
-      }
-      return void res.end(JSON.stringify({ data: { id: agent[1] } }));
+      return void res.end(JSON.stringify({ data: (agents[directory] ?? []).map(id => ({ id, name: id })) }));
     }
     res.writeHead(404);
     res.end('{}');

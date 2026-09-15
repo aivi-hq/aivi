@@ -106,9 +106,11 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
     let task: Schedule['task'];
     if (input.prompt !== undefined) {
       if (!agent) throw new ScheduleRefused('This session has no agent; pass agent explicitly.');
-      await client.agent.get({ agentID: agent, location: { directory } }).catch(() => {
+      // Verified against OpenCode 2.0.3: `agent.list` with a location sees agents defined under that
+      // directory's .opencode/, where `agent.get` does not.
+      const agents = await client.agent.list({ location: { directory } }).catch(() => ({ data: [] }));
+      if (!agents.data.some(a => a.id === agent))
         throw new ScheduleRefused(`No agent "${agent}" exists in ${directory}.`);
-      });
       task = taskSchema.parse({
         kind: 'opencode.prompt',
         agent,

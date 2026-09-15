@@ -20,15 +20,16 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Word | Meaning |
 | --- | --- |
 | task | what to do: `kind` + parameters (`system.check`, `knowledge.index`, `shell`, `opencode.prompt`, `dreaming`) |
-| schedule | cron + timezone + pool + task (+ report); one outstanding occurrence at a time |
-| job | one unit of queued/running/finished work; one row, one audit trail |
-| turn | one prompt to a verified final answer in one OpenCode session (`runTurn`) |
+| schedule | cron + timezone + pool + task (+ report); one outstanding occurrence at a time; source `config` (aivi.json) or `agent` (created through `aivi_schedule`) |
+| job | one unit of queued/running/finished work; one row, one audit trail; a one-off is a job with a future due time |
+| turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a Discord turn is of kind `message` (a person) or `job` (an outcome re-entering) |
 | pool / lease | named capacity (`local-model`, `maintenance`); jobs and Discord turns take leases from the same pools |
 | blocked | ended without proof that the external side stopped; keeps its capacity until `jobs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
+| report | where an outcome goes: `session` (back into the asking session as a prompt), a channel (`discord`), or nothing |
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation` |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
-| origin | `metadata.aivi.origin` on every session aivi creates: `discord`, `job`, `dreaming` |
+| origin | `metadata.aivi.origin` on every session aivi creates: `discord`, `job`, `dreaming`; on messages also `job-result` |
 
 ## Decisions and why
 
@@ -59,6 +60,20 @@ runs in one process; adapters are optional modules with a start/stop contract.
   unattended sessions and shared logins. The example agents deny the former
   so Discord and jobs are never offered a browser that cannot connect.
 - **Memory is files** inside a knowledge source, never system-prompt state.
+- **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
+  through `aivi_schedule` (`POST /v1/schedule`, the one job mutation on the
+  API, switched on by `scheduler.agentSchedules`); the host derives agent and
+  directory from the calling session and refuses sessions with origin `job` or
+  `dreaming`, unless a Discord thread adopted that session. Whoever may talk
+  to the agent is the authority; jobs are the admin's responsibility
+  ([configuration](docs/configuration.md#agent-created-jobs)).
+- **Outcomes are conversations, not posts.** The default report of an
+  agent-created job is `session`: the outcome re-enters the asking thread as
+  a turn and the librarian says what matters. A channel report opens a thread
+  that continues the job's own session, so replying never meets an agent that
+  does not know what it did ([discord](docs/discord.md)).
+- **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
+  fixed token names); an allow-list would break what works from a terminal.
 - **Blocked jobs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
 - **Linear config exists ahead of the module** to record the lane → app →
@@ -94,8 +109,11 @@ the tests load it.
 
 ## Open threads
 
-- Live gates: OpenCode and browser passed 2026-09-15; Discord still to
-  re-check after today's changes (librarian directory, feedback messages).
+- Live gates: OpenCode passed 2026-09-15 including the schedule handler
+  (session lookup, `agent.list` validation, create/refuse). Discord still to
+  re-check after today's changes: librarian directory, feedback messages, job
+  outcomes re-entering threads, report threads adopting job sessions,
+  `/status` lists.
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
-  deferred until the jobs/projects work settles.
+  deferred until the projects work settles.

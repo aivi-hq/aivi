@@ -10,7 +10,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 0. OpenCode boundary | **Done, live-verified** on OpenCode 2.0.3 ([opencode.md](opencode.md)). Repeat with `npm run live:opencode`. |
 | 1. Native librarian and minimal core | **Done.** Plugin tools, CLI, schema-validated config, fnox/`.env` secrets. |
 | 2. Scoped knowledge search | **Done** for documents: QMD keyword search, kinds, scope never widens on unknown IDs. Conversation export and semantic retrieval not started. |
-| 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. |
+| 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_schedule`), one-offs, outcomes re-entering conversations, per-job abort added 2026-09-15; Discord parts await their live gate ([backlog/jobs.md](backlog/jobs.md)). |
 | 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. |
 | 6. Worker lifecycle without Linear | Not started. |
@@ -27,9 +27,8 @@ Mock tests do not establish these; each has its own command.
 
 ## Next, in order of intent
 
-1. Jobs: agent-created schedules and scripts, one-off `--at`, results
-   re-entering the asking conversation or a thread bound to the job's session,
-   sanitized script environment, per-job abort ([backlog/jobs.md](backlog/jobs.md)).
+1. Live Discord gate for the jobs work (re-entry turns, report threads,
+   `/status`), then enable `scheduler.agentSchedules` in the private home.
 2. Projects as pools and maintenance only when idle
    ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 3. Project-scoped memory and a per-project dreamer boundary

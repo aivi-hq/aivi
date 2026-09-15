@@ -56,7 +56,7 @@ and run `serve` as above. See [Discord setup](docs/discord.md).
 | `@aivi/knowledge` | QMD-backed document indexing and scoped keyword search |
 | `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
 | `@aivi/discord` | Discord module: DM/thread routing, durable inbox, librarian chat, slash commands, report destination |
-| `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `browser_control` |
+| `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `aivi_schedule`, `aivi_browser` |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
 services over the authenticated host API. Linear will be another in-process

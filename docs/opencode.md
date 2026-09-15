@@ -19,7 +19,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | Permission prompts | A tool that needs approval (for example `external_directory` when reading a knowledge source outside the project) parks the turn; `session.wait` blocks until a human replies. `permission.list({ sessionID })` exposes the pending request and `permission.reply` answers it. Any unattended driver must check this. |
 | Plugin loading | A directory entry in `plugins` resolves `<dir>/server.*` or `<dir>/index.*`, not `package.json#main`. `packages/opencode/server.js` re-exports the build for that reason. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
 | Plugin failure mode | An exception in `setup()` marks the plugin `failed` and registers no tools. The plugin therefore never throws for a missing token; the tool call reports the 401. |
-| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `knowledge_search`, `browser_control`; tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion }`. |
+| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `aivi_schedule`, `aivi_browser`, `knowledge_search`; tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion, upcoming, recent }`. |
 | Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the agent's, so an `edit` allow from dreaming wins over the dreamer's `edit: deny`; aivi never sends a broad allow, so OpenCode's default `.env` guard stays in force. |
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
 | Changes to a local plugin | The server caches module resolution; run `opencode service restart` after changing the plugin package layout **or after `npm install` rewrites `node_modules`** (the plugin otherwise fails with "Cannot find package"). The restart also reloads every client of that service, including an open TUI. |
@@ -95,12 +95,13 @@ and refuses sessions with origin `job` or `dreaming` (a job's own session
 adopted by a Discord thread is a conversation and is allowed). The route is
 `POST /v1/schedule`, same bearer auth as every other route; `messageID` is the
 dedupe key of a one-off, so a retried tool call creates one job, not two. The
-host validates the agent with `agent.get` for that directory before creating
-anything. Behaviour and the configuration switch are in
+host validates the agent with `agent.list` for that directory before creating
+anything (verified 2026-09-15: `agent.get` does not see agents defined under a
+directory's `.opencode/`, `agent.list` with a location does). Behaviour and
+the configuration switch are in
 [configuration](configuration.md#agent-created-jobs).
 
 ## Browser tool
 
-The plugin also registers `browser_control` with native permission action
-`browser`. Ownership comes from the native tool context, not tool arguments.
+The plugin also registers `aivi_browser` (permission action `aivi_browser`). Ownership comes from the native tool context, not tool arguments.
 Configure the host browser service before using it; see [browser setup](browser.md).
