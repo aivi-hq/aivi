@@ -65,7 +65,7 @@ should be rules" is the intended workflow.
     "origins": ["discord"],
     "maxSessions": 50
   },
-  "report": { "to": "discord", "channel": "<channel id>", "on": "always" }
+  "report": { "to": "channel", "module": "discord", "channel": "<channel id>", "on": "always" }
 }
 ```
 

@@ -82,16 +82,18 @@ export const taskSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 export type Task = z.infer<typeof taskSchema>;
+const reportOn = z.enum(['always', 'failure', 'never']).default('always');
 /**
- * Where a job's outcome goes. `to` names a destination registered by a module
- * (for example `discord`); `channel` is that destination's own identifier. The
- * destination decides whether aivi may post there at delivery time.
+ * Where a job's outcome goes. `session`: back into an OpenCode session as a
+ * prompt; whichever channel module owns that session delivers it as a turn,
+ * otherwise the host queues it natively. `channel`: posted by the channel
+ * module `module` (for example `discord`) to `channel`, that platform's own
+ * identifier; the module decides whether aivi may post there.
  */
-export const reportSchema = z.strictObject({
-  to: id,
-  channel: z.string().min(1),
-  on: z.enum(['always', 'failure', 'never']).default('always'),
-});
+export const reportSchema = z.discriminatedUnion('to', [
+  z.strictObject({ to: z.literal('session'), session: z.string().min(1), on: reportOn }),
+  z.strictObject({ to: z.literal('channel'), module: id, channel: z.string().min(1), on: reportOn }),
+]);
 export type Report = z.infer<typeof reportSchema>;
 export const scheduleSchema = z
   .strictObject({

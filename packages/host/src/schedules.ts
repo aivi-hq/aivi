@@ -90,8 +90,8 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       throw new ScheduleRefused('Give exactly one of prompt (an agent job) or command (a script job).');
     if ((input.at === undefined) === (input.cron === undefined))
       throw new ScheduleRefused('Give exactly one of at (one-off) or cron (recurring).');
-    if (input.report === 'discord' && !input.channel)
-      throw new ScheduleRefused('report "discord" needs the channel id.');
+    if (input.report === 'channel' && !input.channel)
+      throw new ScheduleRefused('report "channel" needs the channel id.');
 
     const client = await deps.opencode().catch(error => {
       throw new ScheduleRefused(
@@ -133,12 +133,14 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       });
     }
 
-    const report: Report | null =
-      input.report === 'none'
-        ? null
-        : input.report === 'discord'
-          ? { to: 'discord', channel: input.channel!, on: input.on }
-          : { to: SESSION_DESTINATION, channel: input.sessionId, on: input.on };
+    let report: Report | null = null;
+    if (input.report === 'channel') {
+      // A conversation asking for a post defaults to its own platform; a native session must say which.
+      const module = input.module ?? destinations.ownerOf(input.sessionId);
+      if (!module)
+        throw new ScheduleRefused('report "channel" needs the module (for example "discord") from a native session.');
+      report = { to: 'channel', module, channel: input.channel!, on: input.on };
+    } else if (input.report === 'session') report = { to: SESSION_DESTINATION, session: input.sessionId, on: input.on };
     if (report) {
       const refusal = destinations.refuse(report);
       if (refusal) throw new ScheduleRefused(`${refusal}. Use report "none" or a channel aivi may post to.`);
@@ -269,7 +271,7 @@ function reportText(report: Report | null): string {
   if (!report) return 'Results are not reported anywhere; `aivi jobs show` has them.';
   const when = report.on === 'failure' ? 'Only failures are' : 'Results are';
   if (report.to === SESSION_DESTINATION) return `${when} brought back into this conversation.`;
-  return `${when} posted to ${report.to} ${report.channel}.`;
+  return `${when} posted to ${report.module} ${report.channel}.`;
 }
 
 function describeList(items: ScheduleItem[]): string {

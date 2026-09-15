@@ -23,12 +23,54 @@ test('schema v1 upgrades in place without losing existing jobs', async t => {
   const upgraded = new Store(path);
   t.after(() => upgraded.close());
   assert.equal(upgraded.get(job.id).state, 'queued');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 5);
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 6);
   assert.equal(upgraded.get(job.id).report, null);
   assert.equal(upgraded.acquireLease('discord:one', 'discord', 'local-model', 1, { 'local-model': 1 }), true);
   assert.equal(upgraded.claim('host', 1, { 'local-model': 1 }), null);
   assert.equal(upgraded.leaseCount(), 1);
   assert.equal(upgraded.leases()[0]!.state, 'running');
+});
+
+test('schema v6 rewrites pre-union reports on jobs and schedule specs, keeping unchanged schedules anchored', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-report-migration-'));
+  const path = join(root, 'queue.sqlite');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const old = new Store(path);
+  const spec = scheduleSchema.parse({
+    id: 'nightly',
+    cron: '0 3 * * *',
+    task: check,
+    report: { to: 'channel', module: 'discord', channel: '42', on: 'always' },
+  });
+  old.syncSchedules([spec], start);
+  const { nextAt } = old.schedule('nightly');
+  const legacy = { ...spec, report: { to: 'discord', channel: '42', on: 'always' } };
+  old.db.prepare('UPDATE schedules SET spec=? WHERE id=?').run(JSON.stringify(legacy), 'nightly');
+  const posted = old.enqueue(check, 'local-model', 'posted', start, {
+    to: 'channel',
+    module: 'discord',
+    channel: '42',
+    on: 'always',
+  });
+  const asked = old.enqueue(check, 'local-model', 'asked', start, { to: 'session', session: 'ses_1', on: 'failure' });
+  old.db.prepare('UPDATE jobs SET report=? WHERE id=?').run('{"to":"discord","channel":"42","on":"always"}', posted.id);
+  old.db
+    .prepare('UPDATE jobs SET report=? WHERE id=?')
+    .run('{"to":"session","channel":"ses_1","on":"failure"}', asked.id);
+  old.db.exec('PRAGMA user_version=5');
+  old.close();
+  const upgraded = new Store(path);
+  t.after(() => upgraded.close());
+  assert.deepEqual(upgraded.get(posted.id).report, { to: 'channel', module: 'discord', channel: '42', on: 'always' });
+  assert.deepEqual(upgraded.get(asked.id).report, { to: 'session', session: 'ses_1', on: 'failure' });
+  assert.deepEqual(upgraded.schedule('nightly').spec.report, {
+    to: 'channel',
+    module: 'discord',
+    channel: '42',
+    on: 'always',
+  });
+  upgraded.syncSchedules([spec], start + 60_000);
+  assert.equal(upgraded.schedule('nightly').nextAt, nextAt, 'the same definition in the new shape is not a change');
 });
 
 test('adapters get versioned namespaced migrations and cannot downgrade', t => {

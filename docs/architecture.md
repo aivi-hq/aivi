@@ -25,7 +25,7 @@ Modules are explicit packages with a small start/stop contract. See
 ## SQLite and Croner
 
 SQLite stores schedules, job payloads, ownership, results, and audit history.
-The host schema is versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 5)
+The host schema is versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 6)
 and adapters version their own namespaced tables through `Store.migrate`.
 Discord stores its inbox and session mappings in the same database that way;
 its turn claim and lease are atomic.

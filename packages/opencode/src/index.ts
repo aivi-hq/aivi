@@ -64,11 +64,16 @@ const scheduleInput = {
     timezone: { type: 'string', description: 'IANA timezone for cron; default the host’s.' },
     report: {
       type: 'string',
-      enum: ['session', 'discord', 'none'],
+      enum: ['session', 'channel', 'none'],
       description:
-        'Where results go. session (default): back into this conversation, you will read and relay them. discord: a channel id in `channel`. none: nowhere.',
+        'Where results go. session (default): back into this conversation, you will read and relay them. channel: posted to the chat channel named in `channel`. none: nowhere.',
     },
-    channel: { type: 'string', description: 'Discord channel id when report is discord.' },
+    module: {
+      type: 'string',
+      description:
+        'Chat platform for report channel (discord, slack). Default: the platform this conversation is on; required from a native session.',
+    },
+    channel: { type: 'string', description: 'Platform channel id when report is channel.' },
     on: {
       type: 'string',
       enum: ['always', 'failure'],

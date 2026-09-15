@@ -16,7 +16,7 @@ export const discordConfigSchema = z
     resource: z.string().default('local-model'),
     /** Who may talk to the bot: DM allow-list and shared channels (with their threads). */
     access: accessPolicySchema,
-    /** Channels aivi may post scheduled job outcomes to (`report.to: "discord"`). Empty: never post proactively. */
+    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "discord" }`). Empty: never post proactively. */
     reportChannels: z.array(snowflake).default([]),
     /** Requires the Message Content intent in the developer portal; needed for any trigger other than "mention". */
     messageContent: z.boolean().default(false),

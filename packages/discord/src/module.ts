@@ -372,6 +372,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     // A job's outcome comes back into the thread that asked for it as a turn: the librarian reads it
     // and replies there, in order with everything else said in that thread.
     const unregisterOwner = services.destinations.registerSessionOwner({
+      id: 'discord',
       owns: session => store.channelOf(session) !== null,
       async reenter(session, text, context) {
         store.enqueueJobResult(context.job.id, session, text, config.maxPending);

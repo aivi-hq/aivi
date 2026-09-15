@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
-import { Destinations, describeOutcome, reentryPrompt, shouldReport } from './destinations.ts';
+import { Destinations, describeOutcome, reentryPrompt, reportTarget, shouldReport } from './destinations.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
@@ -207,7 +207,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         }
         try {
           await destinations.deliver(job.report, text, { job, state });
-          store.note(job.id, 'reported', `${job.report.to}:${job.report.channel}`);
+          store.note(job.id, 'reported', reportTarget(job.report));
         } catch (error) {
           store.note(job.id, 'report-failed', error instanceof Error ? error.message : String(error));
           throw error;

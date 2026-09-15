@@ -3,7 +3,14 @@ export { runHost } from './application.ts';
 export type { HostClientOptions } from './client.ts';
 export { createHostClient } from './client.ts';
 export type { DeliveryContext, Destination, NativeReentry, SessionOwner } from './destinations.ts';
-export { Destinations, describeOutcome, reentryPrompt, SESSION_DESTINATION, shouldReport } from './destinations.ts';
+export {
+  Destinations,
+  describeOutcome,
+  reentryPrompt,
+  reportTarget,
+  SESSION_DESTINATION,
+  shouldReport,
+} from './destinations.ts';
 export type { DreamingResult } from './dreaming.ts';
 export { collectSessions, dream, readCursor, renderTranscript, writeCursor } from './dreaming.ts';
 export type { OpenCodeClient } from './opencode.ts';

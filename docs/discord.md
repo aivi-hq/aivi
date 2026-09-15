@@ -84,7 +84,8 @@ running `opencode service` on its own. Configure your provider/model in native
 OpenCode for the librarian location.
 
 `reportChannels` lists channel IDs where scheduled job outcomes may be posted
-(`report.to: "discord"`); with an empty list aivi never posts on its own. A
+(`report: { "to": "channel", "module": "discord", "channel": … }`); with an
+empty list aivi never posts on its own. A
 posted outcome opens a thread (named after the schedule's `title`, else the
 first line) and the thread is a conversation: for an agent job it continues
 the job's own OpenCode session, so a reply lands with the agent that did the

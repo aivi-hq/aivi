@@ -55,21 +55,21 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 ## Reporting
 
 Any schedule, or a task file passed to `jobs enqueue` as `{ "task": …, "report": …, "resource"?: … }`,
-may carry `"report": { "to": …, "channel": …, "on": "always" | "failure" | "never" }`.
-Delivery success or failure is recorded in the job's audit history and never
-changes the job's outcome. Two kinds of destination exist:
+may carry a `report`. Delivery success or failure is recorded in the job's
+audit history and never changes the job's outcome. `on` is `"always"`
+(default), `"failure"` or `"never"`. Two shapes exist:
 
-- **A channel**: `to` names a destination a running module registered
-  (`"discord"`), `channel` is that destination's own identifier. The module
-  decides whether aivi may post there (Discord: `reportChannels` in its config)
-  and how: Discord opens a thread that continues the job's session, so replying
-  to an outcome talks to the agent that produced it ([discord](discord.md#setup)).
-  See `example/tasks/shell.json`.
-- **A session**: `to: "session"`, `channel` is an OpenCode session id. The
-  outcome is not posted as text; it is submitted as a prompt into that session
-  so the agent there reads it and answers in its own words. A session a
-  conversation module owns (a Discord thread) receives it as an ordinary turn,
-  in order with the people talking there, replied to in the thread. Any other
+- **A channel**: `{ "to": "channel", "module": "discord", "channel": "<id>", "on": … }`.
+  `module` names a running channel module (`discord`), `channel`
+  is that platform's own identifier. The module decides whether aivi may post
+  there (`reportChannels` in its config) and how: Discord opens a thread that
+  continues the job's session, so replying to an outcome talks to the agent
+  that produced it ([discord](discord.md#setup)). See `example/tasks/shell.json`.
+- **A session**: `{ "to": "session", "session": "<OpenCode session id>", "on": … }`.
+  The outcome is not posted as text; it is submitted as a prompt into that
+  session so the agent there reads it and answers in its own words. A session a
+  channel module owns (a Discord thread) receives it as an ordinary turn, in
+  order with the people talking there, replied to in the thread. Any other
   session gets it queued into its native inbox. This is the default for jobs an
   agent creates from a conversation ([jobs](backlog/jobs.md)).
 
@@ -105,8 +105,10 @@ default the host's).
 
 Results default to `report: "session"`: the outcome comes back into the asking
 session as a turn (see Reporting), so the agent tells the person in the thread.
-`discord` posts to a channel in `reportChannels`; `none` keeps quiet. Only
-failures with `on: "failure"`.
+`channel` posts to `channel` on the platform `module`, which defaults to the
+platform the asking conversation is on and must be named from a native
+session; the channel must be in that module's `reportChannels`. `none` keeps
+quiet. Only failures with `on: "failure"`.
 
 Authority is whoever may talk to the agent (Discord's access policy, or the
 operator in a native session). Jobs do not create jobs: a session whose origin

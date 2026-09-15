@@ -615,31 +615,67 @@
             ]
           },
           "report": {
-            "type": "object",
-            "properties": {
-              "to": {
-                "type": "string",
-                "pattern": "^[a-z][a-z0-9_-]*$"
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "const": "session"
+                  },
+                  "session": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "on": {
+                    "default": "always",
+                    "type": "string",
+                    "enum": [
+                      "always",
+                      "failure",
+                      "never"
+                    ]
+                  }
+                },
+                "required": [
+                  "to",
+                  "session"
+                ],
+                "additionalProperties": false
               },
-              "channel": {
-                "type": "string",
-                "minLength": 1
-              },
-              "on": {
-                "default": "always",
-                "type": "string",
-                "enum": [
-                  "always",
-                  "failure",
-                  "never"
-                ]
+              {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "const": "channel"
+                  },
+                  "module": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]*$"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "on": {
+                    "default": "always",
+                    "type": "string",
+                    "enum": [
+                      "always",
+                      "failure",
+                      "never"
+                    ]
+                  }
+                },
+                "required": [
+                  "to",
+                  "module",
+                  "channel"
+                ],
+                "additionalProperties": false
               }
-            },
-            "required": [
-              "to",
-              "channel"
-            ],
-            "additionalProperties": false
+            ]
           },
           "misfire": {
             "type": "object",

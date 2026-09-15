@@ -17,12 +17,14 @@ export interface Destination {
  * host prompts them directly.
  */
 export interface SessionOwner {
+  /** The module id; the default `module` of a channel report created from a session it owns. */
+  id: string;
   owns(sessionId: string): boolean;
   reenter(sessionId: string, text: string, context: DeliveryContext): Promise<void>;
 }
 export type NativeReentry = (sessionId: string, text: string, context: DeliveryContext) => Promise<void>;
 
-/** The destination name for "back into the session that asked"; `channel` holds the session id. */
+/** `report.to` for "back into the session that asked". */
 export const SESSION_DESTINATION = 'session';
 
 /**
@@ -55,28 +57,37 @@ export class Destinations {
   }
   /** A conversation module has adopted this session; it is a conversation, whatever its origin says. */
   ownsSession(sessionId: string): boolean {
-    return [...this.owners].some(o => o.owns(sessionId));
+    return this.ownerOf(sessionId) !== undefined;
+  }
+  /** The id of the module whose conversation this session is, if any. */
+  ownerOf(sessionId: string): string | undefined {
+    return [...this.owners].find(o => o.owns(sessionId))?.id;
   }
   /** Validate a report before a job is created. Returns a reason when it could never be delivered. */
   refuse(report: Report): string | undefined {
     if (report.to === SESSION_DESTINATION) return this.has(report.to) ? undefined : 'No session delivery is available';
-    const destination = this.entries.get(report.to);
-    if (!destination) return `No destination "${report.to}" is running`;
+    const destination = this.entries.get(report.module);
+    if (!destination) return `No channel module "${report.module}" is running`;
     if (destination.accepts && !destination.accepts(report.channel))
-      return `Destination "${report.to}" does not allow posting to ${report.channel}`;
+      return `Module "${report.module}" does not allow posting to ${report.channel}`;
     return undefined;
   }
   async deliver(report: Report, text: string, context: DeliveryContext): Promise<void> {
     if (report.to === SESSION_DESTINATION) {
-      const owner = [...this.owners].find(o => o.owns(report.channel));
-      if (owner) return owner.reenter(report.channel, text, context);
+      const owner = [...this.owners].find(o => o.owns(report.session));
+      if (owner) return owner.reenter(report.session, text, context);
       if (!this.native) throw new Error('No session delivery is available');
-      return this.native(report.channel, text, context);
+      return this.native(report.session, text, context);
     }
-    const destination = this.entries.get(report.to);
-    if (!destination) throw new Error(`No destination "${report.to}" is running`);
+    const destination = this.entries.get(report.module);
+    if (!destination) throw new Error(`No channel module "${report.module}" is running`);
     await destination.deliver(report.channel, text, context);
   }
+}
+
+/** Audit label of a report's target. */
+export function reportTarget(report: Report): string {
+  return report.to === SESSION_DESTINATION ? `session:${report.session}` : `${report.module}:${report.channel}`;
 }
 
 export function shouldReport(report: Report | null, state: JobState): report is Report {

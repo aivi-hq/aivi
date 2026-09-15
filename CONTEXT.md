@@ -26,7 +26,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | pool / lease | named capacity (`local-model`, `maintenance`); jobs and Discord turns take leases from the same pools |
 | blocked | ended without proof that the external side stopped; keeps its capacity until `jobs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
-| report | where an outcome goes: `session` (back into the asking session as a prompt), a channel (`discord`), or nothing |
+| report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing |
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation` |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: `discord`, `job`, `dreaming`; on messages also `job-result` |

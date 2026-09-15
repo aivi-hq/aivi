@@ -67,7 +67,9 @@ export const scheduleRequestSchema = z.discriminatedUnion('action', [
     at: z.string().trim().min(1).optional(),
     cron: z.string().trim().min(1).optional(),
     timezone: z.string().min(1).optional(),
-    report: z.enum(['session', 'discord', 'none']).default('session'),
+    report: z.enum(['session', 'channel', 'none']).default('session'),
+    /** Channel module for `report: "channel"`; defaults to the module that owns the calling session. */
+    module: z.string().min(1).optional(),
     channel: z.string().min(1).optional(),
     on: z.enum(['always', 'failure']).default('always'),
   }),

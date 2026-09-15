@@ -62,7 +62,11 @@ function setup(store: Store, url: string, enabled = true) {
   });
   const destinations = new Destinations(async () => {});
   destinations.register('discord', { accepts: c => c === '42', deliver: async () => {} });
-  destinations.registerSessionOwner({ owns: id => id === 'ses_discord_adopted', reenter: async () => {} });
+  destinations.registerSessionOwner({
+    id: 'discord',
+    owns: id => ['ses_discord_adopted', 'ses_discord_1'].includes(id),
+    reenter: async () => {},
+  });
   const handler = createScheduleHandler({
     store,
     loaded: { path: '/aivi.json', config, projects: [], sources: [] },
@@ -85,16 +89,15 @@ test('an agent creates a recurring agent job for its own agent and directory; re
     { '/team': ['librarian'] },
   );
   const { handler } = setup(store, url);
+  const base = () =>
+    ({ action: 'create', sessionId: 'ses_discord_1', prompt: 'Summarize last week', on: 'always' }) as const;
   const created = await handler({
-    action: 'create',
-    sessionId: 'ses_discord_1',
+    ...base(),
     messageId: 'msg_1',
     title: 'Monday summary',
-    prompt: 'Summarize last week',
     cron: '0 9 * * 1',
     timezone: 'Europe/Amsterdam',
     report: 'session',
-    on: 'always',
   });
   assert.equal(created.items.length, 1);
   const item = created.items[0]!;
@@ -117,7 +120,7 @@ test('an agent creates a recurring agent job for its own agent and directory; re
     timeoutMs: 1_800_000,
     onPermission: 'reject',
   });
-  assert.deepEqual(entry.spec.report, { to: 'session', channel: 'ses_discord_1', on: 'always' });
+  assert.deepEqual(entry.spec.report, { to: 'session', session: 'ses_discord_1', on: 'always' });
   assert.equal(entry.spec.resource, 'agents');
 
   const listed = await handler({ action: 'list', sessionId: 'ses_discord_1' });
@@ -133,6 +136,14 @@ test('an agent creates a recurring agent job for its own agent and directory; re
   await handler({ action: 'remove', sessionId: 'ses_discord_1', id: item.id });
   assert.throws(() => store.schedule(item.id), /Unknown schedule/);
   assert.equal(store.get(manual.id).state, 'cancelled', 'removing cancels the queued run');
+
+  const posted = await handler({ ...base(), report: 'channel', channel: '42', at: '1h' });
+  assert.deepEqual(
+    store.agentOneOffs().find(j => j.id === posted.items[0]!.id)!.report,
+    { to: 'channel', module: 'discord', channel: '42', on: 'always' },
+    'a conversation defaults to its own platform',
+  );
+  assert.match(posted.summary, /posted to discord 42/);
 });
 
 test('one-offs, script jobs, overrides and the report checks', async t => {
@@ -161,14 +172,15 @@ test('one-offs, script jobs, overrides and the report checks', async t => {
     agent: 'coder',
     directory: '/other',
     at: '2026-09-16T09:00:00Z',
-    report: 'discord',
+    report: 'channel',
+    module: 'discord',
     channel: '42',
     on: 'failure',
   });
   const overridden = store.agentOneOffs().find(j => j.id === other.items[0]!.id)!;
   assert.equal(overridden.task.kind, 'opencode.prompt');
   assert.equal((overridden.task as { agent: string }).agent, 'coder');
-  assert.deepEqual(overridden.report, { to: 'discord', channel: '42', on: 'failure' });
+  assert.deepEqual(overridden.report, { to: 'channel', module: 'discord', channel: '42', on: 'failure' });
   assert.match(other.summary, /Only failures are posted to discord 42/);
 
   await assert.rejects(
@@ -183,12 +195,21 @@ test('one-offs, script jobs, overrides and the report checks', async t => {
   await assert.rejects(handler({ ...base, prompt: 'x', cron: 'every monday' }), refused(400, /Invalid cron/));
   await assert.rejects(handler({ ...base, prompt: 'x', at: '1h', agent: 'nobody' }), refused(400, /No agent "nobody"/));
   await assert.rejects(
-    handler({ ...base, prompt: 'x', at: '1h', report: 'discord' }),
+    handler({ ...base, prompt: 'x', at: '1h', report: 'channel', channel: '42' }),
+    refused(400, /needs the module/),
+    'a native session names the platform',
+  );
+  await assert.rejects(
+    handler({ ...base, prompt: 'x', at: '1h', report: 'channel', module: 'discord' }),
     refused(400, /needs the channel/),
   );
   await assert.rejects(
-    handler({ ...base, prompt: 'x', at: '1h', report: 'discord', channel: '7' }),
+    handler({ ...base, prompt: 'x', at: '1h', report: 'channel', module: 'discord', channel: '7' }),
     refused(400, /does not allow posting to 7/),
+  );
+  await assert.rejects(
+    handler({ ...base, prompt: 'x', at: '1h', report: 'channel', module: 'slack', channel: '7' }),
+    refused(400, /No channel module "slack"/),
   );
   await assert.rejects(
     handler({ ...base, sessionId: 'ses_gone', prompt: 'x', at: '1h' }),

@@ -61,7 +61,8 @@
         "origins": ["discord"]
       },
       "report": {
-        "to": "discord",
+        "to": "channel",
+        "module": "discord",
         "channel": "10000000000000005",
         "on": "always"
       }

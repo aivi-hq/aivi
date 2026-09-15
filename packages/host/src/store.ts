@@ -55,7 +55,17 @@ const job = (r: Row): Job => ({
   report: r.report === null || r.report === undefined ? null : (JSON.parse(String(r.report)) as Report),
 });
 
-const HOST_SCHEMA_VERSION = 5;
+const HOST_SCHEMA_VERSION = 6;
+
+/** Pre-v6 reports overloaded `channel`: a session id for `to: "session"`, a platform channel id for a module name. */
+function migrateReport(raw: unknown): Report | null {
+  const old = raw as { to?: string; channel?: string; on?: Report['on'] } | null;
+  if (!old || typeof old !== 'object' || !old.to) return null;
+  if ('session' in old || 'module' in old) return raw as Report;
+  if (!old.channel) return null;
+  if (old.to === 'session') return { to: 'session', session: old.channel, on: old.on ?? 'always' };
+  return { to: 'channel', module: old.to, channel: old.channel, on: old.on ?? 'always' };
+}
 
 export type ScheduleSource = 'config' | 'agent';
 export interface ScheduleEntry {
@@ -133,6 +143,26 @@ export class Store {
         ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;
         PRAGMA user_version=5;
       `);
+      if (version < 6) {
+        for (const row of this.db.prepare('SELECT id,report FROM jobs WHERE report IS NOT NULL').all()) {
+          const report = migrateReport(JSON.parse(String(row.report)));
+          this.db
+            .prepare('UPDATE jobs SET report=? WHERE id=?')
+            .run(report ? JSON.stringify(report) : null, String(row.id));
+        }
+        // The fingerprint follows the spec so an unchanged schedule keeps its next occurrence on the next sync.
+        for (const row of this.db.prepare('SELECT id,spec FROM schedules').all()) {
+          const spec = JSON.parse(String(row.spec)) as Schedule;
+          if (!spec.report) continue;
+          const report = migrateReport(spec.report);
+          if (report) spec.report = report;
+          else delete spec.report;
+          this.db
+            .prepare('UPDATE schedules SET spec=?,fingerprint=? WHERE id=?')
+            .run(JSON.stringify(spec), hash(spec), String(row.id));
+        }
+        this.db.exec('PRAGMA user_version=6');
+      }
     });
   }
   close(): void {
