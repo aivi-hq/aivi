@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { LoadedConfig, Logger, LogLevel } from '@aivi/core';
 import { createLogger, errorMessage, loadConfig, reportSchema, selectSources, taskSchema } from '@aivi/core';
@@ -12,7 +12,7 @@ import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, sta
 import { createKnowledgeService } from '@aivi/knowledge';
 import { z } from 'zod';
 
-const usage = `aivi --config aivi.json <command>
+const usage = `aivi <command>
 
   serve                        Start the host: API, scheduler, knowledge, configured modules
   tick                         Materialize schedules and dispatch due jobs once, then exit
@@ -33,18 +33,19 @@ const usage = `aivi --config aivi.json <command>
   discord resolve ID           Release a blocked turn --reason TEXT --confirm-stopped
   opencode check               Probe the OpenCode v2 service the host would use
 
-Options: --config FILE (or AIVI_CONFIG), --log-level debug|info|warn|error
+Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/;
+an aivi.local.json there takes precedence over aivi.json.
+Options: --log-level debug|info|warn|error
 Secrets come from the environment: AIVI_TOKEN (host.auth.mode "token"),
 DISCORD_BOT_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD (only with opencode.url).
-Loaded without overriding existing variables: AIVI_ENV_FILE, else .env next to
-the config, then ~/.aivi/.env. fnox exec works too. No secrets in config files.
+<home>/.env is loaded without overriding existing variables; fnox exec works too.
+No secrets in config files.
 `;
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      config: { type: 'string' },
       'log-level': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       limit: { type: 'string' },
@@ -63,13 +64,13 @@ async function main(): Promise<void> {
     return;
   }
   const log = createLogger({ level: (values['log-level'] as LogLevel | undefined) ?? 'info' });
-  const configPath = resolve(values.config ?? process.env.AIVI_CONFIG ?? 'aivi.json');
-  // Secrets: an explicit file, else .env beside the config, else the per-user ~/.aivi/.env.
-  for (const path of process.env.AIVI_ENV_FILE
-    ? [process.env.AIVI_ENV_FILE]
-    : [resolve(dirname(configPath), '.env'), resolve(homedir(), '.aivi', '.env')]) {
-    loadEnvFile(path, log);
-  }
+  // One home holds everything: aivi.json, .env, state/. Paths in the config resolve against it.
+  // A git-ignored aivi.local.json wins, so a checked-in example home can carry a private setup.
+  const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
+  const configPath = ['aivi.local.json', 'aivi.json'].map(name => resolve(home, name)).find(path => existsSync(path));
+  if (!configPath)
+    throw new Error(`No aivi.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
+  loadEnvFile(resolve(home, '.env'), log);
   const loaded = await loadConfig(configPath);
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));

@@ -8,7 +8,7 @@ OpenCode or read its private storage.
 
 Milestone 0 of the roadmap, run against a real `opencode service` with
 `github-copilot/gemini-3.8-flash`. Repeat it any time with
-`npm run live:opencode -- --plugin "$PWD/examples/librarian"`.
+`npm run live:opencode -- --plugin "$PWD/example/librarian"`.
 
 | Question | Finding |
 | --- | --- |
@@ -29,11 +29,11 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 ## Librarian in native chat
 
 1. Build with `npm ci && npm run build`.
-2. Start aivi, for example `npm run aivi -- --config examples/aivi.json serve`
+2. Start aivi, for example `npm run aivi -- serve`
    (with `AIVI_TOKEN` from fnox, or `host.auth.mode: "none"` on a trusted machine).
 3. With `mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode **server**
    environment and `opencode service restart`.
-4. Open `examples/librarian` in OpenCode v2. Its config loads the local plugin
+4. Open `example/librarian` in OpenCode v2. Its config loads the local plugin
    and selects the `librarian` agent.
 5. Ask it to list aivi sources and read the company handbook.
 
@@ -50,9 +50,9 @@ server requires basic auth. aivi never starts or stops the service;
 `opencode service start` does.
 
 ```sh
-npm run aivi -- --config examples/aivi.json opencode check
-npm run aivi -- --config examples/aivi.json jobs enqueue examples/tasks/librarian.json
-npm run aivi -- --config examples/aivi.json jobs list
+npm run aivi -- opencode check
+npm run aivi -- jobs enqueue example/tasks/librarian.json
+npm run aivi -- jobs list
 ```
 
 The running host dispatches queued jobs through the session driver
@@ -74,7 +74,7 @@ those prove the session stopped doing things. Blocked jobs keep
 their capacity until an operator has looked at the session:
 
 ```sh
-npm run aivi -- --config examples/aivi.json jobs resolve JOB_ID --outcome succeeded --reason "Inspected completed session" --confirm-stopped
+npm run aivi -- jobs resolve JOB_ID --outcome succeeded --reason "Inspected completed session" --confirm-stopped
 ```
 
 Discord uses the same driver for each turn. Steering an active worker into

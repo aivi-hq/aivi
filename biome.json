@@ -12,7 +12,7 @@
       "scripts/**",
       "packages/opencode/server.js",
       "*.json",
-      "examples/**/*.json",
+      "example/**/*.json",
       "!**/dist",
       "!schemas",
       "!package-lock.json"

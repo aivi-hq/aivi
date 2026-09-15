@@ -13,33 +13,40 @@ Use Node 26 and npm. From the monorepo root:
 ```sh
 npm ci
 npm run check
-npm run aivi -- --config examples/aivi.json config check
+npm run aivi -- config check
 ```
+
+aivi reads one **home** directory: `aivi.json`, `.env`, and `state/` together.
+Installed copies use `~/.aivi`; in this repo `npm run aivi` points `AIVI_HOME`
+at `example/`, a complete home with everything enabled (knowledge, dreaming,
+browser, Discord). Copy `example/.env.example` to `example/.env` and fill in
+the tokens, or delete the `modules.discord` block to run without Discord. An
+`aivi.local.json` in the home takes precedence over `aivi.json` and is
+git-ignored, so a private setup can live next to the public example.
 
 Start the host. Either have fnox inject an `AIVI_TOKEN` of at least 24
 characters, or set `host.auth.mode` to `"none"` for a trusted machine:
 
 ```sh
-npm run aivi -- --config examples/aivi.json serve
+npm run aivi -- serve
 ```
 
 The example indexes bundled documents and runs scheduled maintenance. It needs
 no inference model. In another terminal:
 
 ```sh
-npm run aivi -- --config examples/aivi.json knowledge search "decisions" --project demo
-npm run aivi -- --config examples/aivi.json jobs list
+npm run aivi -- knowledge search "decisions" --project demo
+npm run aivi -- jobs list
 ```
 
-To use the tools from OpenCode, open `examples/librarian` in OpenCode v2 with
+To use the tools from OpenCode, open `example/librarian` in OpenCode v2 with
 `opencode service` running; see [OpenCode integration](docs/opencode.md). With a
-running service, `npm run live:opencode -- --plugin "$PWD/examples/librarian"`
+running service, `npm run live:opencode -- --plugin "$PWD/example/librarian"`
 verifies the real boundary.
 
-For Discord, fill in `examples/discord.json`, put `DISCORD_BOT_TOKEN` in a
-`.env` beside the config (see [secrets](docs/configuration.md#secrets)), use
-`examples/aivi-discord.json`, register commands once with `aivi ... discord register`,
-and run the same `serve` command. See [Discord setup](docs/discord.md).
+For Discord, fill in the IDs in `example/discord.json`, put `DISCORD_BOT_TOKEN`
+in `example/.env`, register commands once with `npm run aivi -- discord register`,
+and run `serve` as above. See [Discord setup](docs/discord.md).
 
 ## Packages
 

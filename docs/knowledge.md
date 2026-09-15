@@ -38,16 +38,16 @@ kinds to the model; adding a kind means one entry in the registry.
 With `AIVI_TOKEN` set (or `host.auth.mode: "none"`):
 
 ```sh
-npm run aivi -- --config examples/aivi.json serve
+npm run aivi -- serve
 ```
 
 From another terminal:
 
 ```sh
-npm run aivi -- --config examples/aivi.json knowledge search "decisions"
-npm run aivi -- --config examples/aivi.json knowledge search "decisions" --project demo
-npm run aivi -- --config examples/aivi.json knowledge search "decisions" --project demo --no-core
-npm run aivi -- --config examples/aivi.json knowledge search "agreements" --core-only
+npm run aivi -- knowledge search "decisions"
+npm run aivi -- knowledge search "decisions" --project demo
+npm run aivi -- knowledge search "decisions" --project demo --no-core
+npm run aivi -- knowledge search "agreements" --core-only
 ```
 
 The CLI sends searches to the running host. It does not open another index.
@@ -76,7 +76,7 @@ The default refresh happens on startup. Examples also schedule an hourly
 `knowledge.index` task in the `maintenance` resource pool. Request a refresh now:
 
 ```sh
-npm run aivi -- --config examples/aivi.json knowledge index
+npm run aivi -- knowledge index
 ```
 
 That queues a job; the host executes it against the same service. Search and

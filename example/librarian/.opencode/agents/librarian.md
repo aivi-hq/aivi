@@ -19,13 +19,13 @@ permissions:
   # is not checked out as `aivi`. Through Discord and jobs the host pins a
   # stricter session policy on top of these rules.
   - action: external_directory
-    resource: "**/aivi/examples/knowledge/**"
+    resource: "**/aivi/example/knowledge/**"
     effect: allow
   - action: external_directory
-    resource: "**/aivi/examples/project/**"
+    resource: "**/aivi/example/project/**"
     effect: allow
   - action: external_directory
-    resource: "**/aivi/examples/memory/**"
+    resource: "**/aivi/example/memory/**"
     effect: allow
 ---
 

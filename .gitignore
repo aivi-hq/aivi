@@ -9,3 +9,5 @@ dist/
 *.tgz
 .DS_Store
 *.local.json
+
+example/state/

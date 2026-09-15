@@ -146,7 +146,7 @@ export const configSchema = z
   .strictObject({
     $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
     version: z.literal(1),
-    stateDirectory: z.string().default('.aivi'),
+    stateDirectory: z.string().default('state'),
     host: hostSchema.default({ bind: '127.0.0.1', port: 4100, auth: { mode: 'token' } }),
     opencode: opencodeSchema.default({}),
     knowledge: z.array(source).default([]),

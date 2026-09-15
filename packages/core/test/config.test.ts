@@ -71,7 +71,7 @@ test('project files own lane mappings and paths; source selection never falls ba
     }),
   );
   const loaded = await loadConfig(join(root, 'aivi.json'));
-  assert.equal(loaded.config.stateDirectory, join(root, '.aivi'));
+  assert.equal(loaded.config.stateDirectory, join(root, 'state'));
   assert.equal(loaded.projects[0]!.settings.linear!.lanes.Review, 'worker');
   assert.deepEqual(
     selectSources(loaded, ['website']).map(s => s.path),

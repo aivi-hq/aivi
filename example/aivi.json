@@ -1,7 +1,6 @@
 {
   "$schema": "../schemas/aivi.schema.json",
   "version": 1,
-  "stateDirectory": "../.aivi",
   "host": {
     "port": 4100
   },
@@ -22,6 +21,12 @@
       "directory": "project"
     }
   ],
+  "browser": {
+    "connection": {
+      "mode": "launch",
+      "userDataDir": "state/chrome"
+    }
+  },
   "scheduler": {
     "maxConcurrent": 1,
     "resources": {
@@ -59,11 +64,21 @@
         "directory": "librarian",
         "memoryDirectory": "memory",
         "origins": ["discord"]
+      },
+      "report": {
+        "to": "discord",
+        "channel": "10000000000000005",
+        "on": "always"
       }
     }
   ],
   "search": {
     "provider": "qmd",
     "indexOnStart": true
+  },
+  "modules": {
+    "discord": {
+      "config": "discord.json"
+    }
   }
 }

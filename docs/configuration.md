@@ -1,11 +1,22 @@
 # Configuration
 
+## Home
+
+aivi reads one directory, the **home**: `~/.aivi` by default, or `AIVI_HOME`.
+It holds `aivi.json`, `.env`, and `state/` (SQLite, the search index, dreaming
+transcripts). There is no config-path option. If `aivi.local.json` exists in
+the home it is used instead of `aivi.json`; `*.local.json` is git-ignored, so a
+checked-in home such as `example/` can carry a private setup beside the public
+one. In this repository `npm run aivi` sets `AIVI_HOME=example`; that home has
+every feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` in `example/.env`
+unless the `modules.discord` block is removed.
+
 `aivi.json` is installation configuration. `aivi.project.json` lives inside each
 registered project. OpenCode's own files stay in their native locations.
 Unknown fields and invalid combinations fail validation; nothing silently falls
 back to another project or resource pool.
 
-Paths in installation config resolve relative to that config file. Project source
+Paths in installation config resolve relative to the home. Project source
 paths resolve relative to the project directory. A manually enqueued task's
 `directory` resolves relative to the caller's working directory. Scheduled task
 directories resolve relative to `aivi.json`.
@@ -15,7 +26,7 @@ directories resolve relative to `aivi.json`.
 | Field | Default / purpose |
 | --- | --- |
 | `version` | Required; `1` |
-| `stateDirectory` | `.aivi` relative to config |
+| `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
 | `host.auth.mode` | `token` (default): callers send `AIVI_TOKEN` as a bearer token. `none`: trust the network (loopback, Tailscale, LAN you control) |
@@ -47,7 +58,7 @@ may carry `"report": { "to": "discord", "channel": "<id>", "on": "always" | "fai
 `to` names a destination a running module registered; the module decides whether
 aivi may post there (Discord: `reportChannels` in its config). Delivery success
 or failure is recorded in the job's audit history and never changes the job's
-outcome. See `examples/tasks/shell.json`.
+outcome. See `example/tasks/shell.json`.
 
 Scheduling starts at the next future occurrence on initial registration. Restart
 preserves the next occurrence for unchanged definitions. Changes cancel stale
@@ -83,7 +94,7 @@ application installation details belong to the future Linear adapter.
 
 ## Operator commands
 
-Run `npm run aivi -- --help` for commands. `AIVI_CONFIG` can supply the config path.
+Run `npm run aivi -- --help` for commands.
 The `--key` on `jobs enqueue` deduplicates identical requests; changed payloads
 with the same key are rejected. Failed jobs do not retry automatically.
 
@@ -95,8 +106,7 @@ operator action described in [OpenCode setup](opencode.md).
 
 Secrets never live in JSON files. They come from the process environment, and
 the CLI loads dotenv-style files without overriding variables that are already
-set: `AIVI_ENV_FILE` if set, else `.env` beside the config, then `~/.aivi/.env`.
-`fnox exec` works the same way. Variables: `AIVI_TOKEN`, `DISCORD_BOT_TOKEN`,
+set: `<home>/.env`. `fnox exec` works the same way. Variables: `AIVI_TOKEN`, `DISCORD_BOT_TOKEN`,
 `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`).
 
 With `host.auth.mode: "token"`, `AIVI_TOKEN` (at least 24 characters) must be

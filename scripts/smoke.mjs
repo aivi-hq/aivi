@@ -16,8 +16,9 @@ try {
   await writeFile(config, JSON.stringify({ version: 1, host: { port: 0 }, knowledge: [{ id: 'demo', path: '.' }] }));
   const task = join(directory, 'check.json');
   await writeFile(task, JSON.stringify({ kind: 'system.check' }));
-  const run = (...args) =>
-    JSON.parse(execFileSync(process.execPath, [cli, '--config', config, ...args], { encoding: 'utf8' }));
+  // The temp directory is the aivi home: aivi.json, .env and state/ live there.
+  const env = { ...process.env, AIVI_HOME: directory };
+  const run = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8', env }));
   assert.equal(run('config', 'check').valid, true);
   const job = run('jobs', 'enqueue', task, '--key', 'smoke');
   assert.equal(run('jobs', 'enqueue', task, '--key', 'smoke').id, job.id);
@@ -26,8 +27,8 @@ try {
   assert.equal(run('status').counts.succeeded, 1);
 
   const token = randomBytes(32).toString('hex');
-  daemon = spawn(process.execPath, [cli, '--config', config, 'serve'], {
-    env: { ...process.env, AIVI_TOKEN: token },
+  daemon = spawn(process.execPath, [cli, 'serve'], {
+    env: { ...env, AIVI_TOKEN: token },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   stopped = once(daemon, 'exit');
@@ -76,8 +77,8 @@ try {
     config,
     JSON.stringify({ version: 1, host: { port: 0, auth: { mode: 'none' } }, knowledge: [{ id: 'demo', path: '.' }] }),
   );
-  daemon = spawn(process.execPath, [cli, '--config', config, 'serve'], {
-    env: { ...process.env, AIVI_TOKEN: '' },
+  daemon = spawn(process.execPath, [cli, 'serve'], {
+    env: { ...env, AIVI_TOKEN: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   stopped = once(daemon, 'exit');

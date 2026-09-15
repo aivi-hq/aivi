@@ -38,7 +38,7 @@ agent reconciles against the current file before writing.
 
 ## Memory contract
 
-The dreamer's soul (`examples/librarian/.opencode/agents/dreamer.md`) carries
+The dreamer's soul (`example/librarian/.opencode/agents/dreamer.md`) carries
 the judgement: what to keep, how to write it, what to leave out. The host only
 enforces the boundary. Files:
 
@@ -78,9 +78,9 @@ frontmatter.
 
 The dreamer is meant to run through this job: the job appends the session rules
 that allow its two write targets. Opened interactively, the example agent can
-read but not write (`examples/librarian/.opencode/agents/dreamer.md`). The
-example configs schedule it next to Discord (`examples/aivi-discord.json`),
-which is where its default `origins` come from.
+read but not write (`example/librarian/.opencode/agents/dreamer.md`). The
+example home schedules it next to Discord, which is where its default
+`origins` come from.
 
 ## Later
 

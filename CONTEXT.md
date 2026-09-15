@@ -78,9 +78,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
 `packages/{core,host,knowledge,browser,discord,opencode,app}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `scripts/` holds the smoke, schema, and live
-checks; `schemas/` is generated; `examples/` is what the README walks through
-and what the tests load. The state directory (default `.aivi/`) holds
-`aivi.sqlite`, the QMD index, and dreaming transcripts.
+checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
+`AIVI_HOME`): `aivi.json` (or a git-ignored `aivi.local.json`), `.env`, and
+`state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
+`example/` is a home with everything enabled (`npm run aivi` points there);
+the tests load it.
 
 ## Open threads
 

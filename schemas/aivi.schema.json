@@ -11,7 +11,7 @@
       "const": 1
     },
     "stateDirectory": {
-      "default": ".aivi",
+      "default": "state",
       "type": "string"
     },
     "host": {

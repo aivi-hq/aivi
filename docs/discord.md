@@ -59,20 +59,20 @@ Give it access to the selected channels and permission to send messages, create
 public threads, and send messages in threads. Private threads also require bot
 membership/access.
 
-Edit the IDs in `examples/discord.json`, and use `examples/aivi-discord.json` as
-the installation config. It enables the module with:
+The example home enables Discord. Edit the IDs in `example/discord.json`;
+`example/aivi.json` enables the module with:
 
 ```json
 { "modules": { "discord": { "config": "discord.json" } } }
 ```
 
-That path resolves relative to `aivi.json`; the librarian directory resolves
-relative to the Discord config. The example points at `examples/librarian`,
+That path resolves relative to the home; the librarian directory resolves
+relative to the Discord config. The example points at `example/librarian`,
 the same agent used in native chat; its config loads the aivi plugin.
 
-`DISCORD_BOT_TOKEN` comes from the environment (see
-[secrets](configuration.md#secrets); a `.env` beside `aivi.json` is the usual
-place) and, with `host.auth.mode: "token"`, so does `AIVI_TOKEN` (host API). Make `AIVI_TOKEN` available to the native OpenCode
+`DISCORD_BOT_TOKEN` comes from the environment (`<home>/.env`, see
+[secrets](configuration.md#secrets)) and, with `host.auth.mode: "token"`, so
+does `AIVI_TOKEN` (host API). Make `AIVI_TOKEN` available to the native OpenCode
 server process as well so its plugin can call the host. The host discovers the
 running `opencode service` on its own. Configure your provider/model in native
 OpenCode for the librarian location.
@@ -87,9 +87,9 @@ Discord message id, user id, and channel, so conversations can later be selected
 by origin and speaker.
 
 ```sh
-npm run aivi -- --config examples/aivi-discord.json config check
-npm run aivi -- --config examples/aivi-discord.json discord register
-npm run aivi -- --config examples/aivi-discord.json serve
+npm run aivi -- config check
+npm run aivi -- discord register
+npm run aivi -- serve
 ```
 
 `discord register` upserts `/new`, `/status`, and `/search`. Startup does not change
@@ -133,8 +133,8 @@ response. `/status` exposes the blocked state; operator status includes the nati
 session ID and undelivered result for inspection.
 
 ```sh
-npm run aivi -- --config examples/aivi-discord.json discord status
-npm run aivi -- --config examples/aivi-discord.json discord resolve TURN_ID --confirm-stopped --reason "Inspected native session and Discord delivery; no owned work remains"
+npm run aivi -- discord status
+npm run aivi -- discord resolve TURN_ID --confirm-stopped --reason "Inspected native session and Discord delivery; no owned work remains"
 ```
 
 Resolution discards that blocked turn and releases capacity. It does not stop the

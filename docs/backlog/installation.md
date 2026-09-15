@@ -53,10 +53,11 @@ default branch). Optionally also publish to npm from the same workflow.
 - How much of OpenCode installation does aivi do? "Express install" could run
   OpenCode's installer and `opencode service start`; the default should only
   verify and print instructions.
-- Where config and state live for an installed copy: decided, `~/.aivi/`
-  (`aivi.json`, `.env`, `state/`), the Hermes/OpenClaw convention. The CLI
-  already loads `~/.aivi/.env`. `aivi init` should write a starter config and
-  a librarian agent directory there.
+- Where config and state live for an installed copy: done (2026-09-15).
+  The CLI reads one home, `~/.aivi/` or `AIVI_HOME` (`aivi.json` or
+  `aivi.local.json`, `.env`, `state/`); there is no config-path option.
+  `aivi init` should write a starter config and a librarian agent directory
+  there.
 - Service management is optional: `aivi serve` is a plain foreground process.
   `aivi service install|start|stop|status|logs` wrapping launchd/systemd is a
   convenience for unattended machines, mirroring OpenCode's `service` command.
@@ -246,7 +247,7 @@ work; npm downloads the N-API prebuilds.
 5. `aivi doctor`: Node version, OpenCode major 2 + `opencode service status`, plugin present
    (`opencode plugin list`), native modules load, `~/.aivi` permissions, service unit state.
 6. `aivi service install|start|stop|status|logs` (macOS first): plist
-   `~/Library/LaunchAgents/ai.aivi.host.plist` running `~/.aivi/bin/aivi --config
+   `~/Library/LaunchAgents/ai.aivi.host.plist` running `~/.aivi/bin/aivi
    ~/.aivi/aivi.json serve` with `KeepAlive`, `RunAtLoad`, logs in `~/.aivi/logs/`, explicit
    `PATH` containing `~/.opencode/bin` and `~/.aivi/node/bin`. Linux: systemd user unit
    plus a `loginctl enable-linger` hint.
