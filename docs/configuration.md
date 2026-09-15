@@ -8,8 +8,9 @@ transcripts). There is no config-path option. If `aivi.local.json` exists in
 the home it is used instead of `aivi.json`; `*.local.json` is git-ignored, so a
 checked-in home such as `example/` can carry a private setup beside the public
 one. In this repository `npm run aivi` sets `AIVI_HOME=example`; that home has
-every feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` in `example/.env`
-unless the `modules.discord` block is removed.
+every feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` and the two Slack
+tokens in `example/.env` unless the `modules.discord` and `modules.slack`
+blocks are removed.
 
 `aivi.json` is installation configuration. `aivi.project.json` lives inside each
 registered project. OpenCode's own files stay in their native locations.
@@ -33,7 +34,8 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, always with `AIVI_TOKEN` in its environment, so a new plugin build is live and the plugin can authenticate. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation` |
 | `projects` | Project registry, each `{id, directory}` |
-| `modules.discord.config` | Optional path to Discord module settings |
+| `modules.discord.config` | Optional path to Discord module settings ([discord](discord.md)) |
+| `modules.slack.config` | Optional path to Slack module settings ([slack](slack.md)) |
 | `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
@@ -48,9 +50,9 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | --- | --- | --- |
 | `system.check` | – | Reports whether every knowledge source path exists |
 | `knowledge.index` | – | Refreshes the search index |
-| `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
+| `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
 | `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
-| `dreaming` | `memoryDirectory`, `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
+| `dreaming` | `memoryDirectory`, `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
 
 ## Reporting
 
@@ -174,6 +176,7 @@ outstanding.
 Secrets never live in JSON files. They come from the process environment, and
 the CLI loads dotenv-style files without overriding variables that are already
 set: `<home>/.env`. `fnox exec` works the same way. Variables: `AIVI_TOKEN`, `DISCORD_BOT_TOKEN`,
+`SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` (Slack's bot and app-level tokens),
 `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`).
 
 With `host.auth.mode: "token"`, `AIVI_TOKEN` (at least 24 characters) must be
@@ -198,7 +201,7 @@ schedule materialization. stdout is reserved for command output.
 JSON schemas are generated into `schemas/` by `npm run schema`; `npm run check`
 fails when they are stale. Point your editor at them for autocompletion and
 field descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
-config file) in `aivi.json`, `aivi.project.json`, and the Discord config. Runtime validation additionally checks cron
+config file) in `aivi.json`, `aivi.project.json`, and the Discord and Slack configs. Runtime validation additionally checks cron
 expressions, timezones, uniqueness, and references across project files.
 
 `aivi serve` is the single application command. See [application lifecycle](application.md)

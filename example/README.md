@@ -2,7 +2,7 @@
 
 This directory is a complete aivi **home**: `aivi.json`, `.env`, and `state/`
 together, with every feature enabled (knowledge search, dreaming, browser
-control, Discord). `npm run aivi` from the repository root uses it.
+control, Discord, Slack). `npm run aivi` from the repository root uses it.
 
 ## Quickstart
 
@@ -12,12 +12,16 @@ npm run aivi -- config check
 npm run aivi -- serve
 ```
 
-`serve` needs `DISCORD_BOT_TOKEN` because Discord is enabled here. Either:
+`serve` needs `DISCORD_BOT_TOKEN` and `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`
+because Discord and Slack are enabled here. Either:
 
 - **provide Discord**: put your application and channel IDs in `discord.json`
   and the bot token in `.env`, then register the slash commands once with
-  `npm run aivi -- discord register`; or
-- **disable it**: remove the `modules` block from `aivi.json`.
+  `npm run aivi -- discord register`;
+- **provide Slack**: create the app from the manifest in
+  [docs/slack.md](../docs/slack.md), put your user and channel IDs in
+  `slack.json` and both tokens in `.env`; or
+- **disable them**: remove the `modules` block (or one of its keys) from `aivi.json`.
 
 To keep private values out of git, copy `aivi.json` to `aivi.local.json` (and
 `discord.json` to `discord.local.json`, pointing `modules.discord.config` at
@@ -28,8 +32,9 @@ git-ignored, as is `.env`.
 
 | Path | Purpose |
 | --- | --- |
-| `aivi.json` | Installation config: sources, schedules, scheduler pools, browser, Discord |
+| `aivi.json` | Installation config: sources, schedules, scheduler pools, browser, Discord, Slack |
 | `discord.json` | Discord access policy and IDs (placeholders) |
+| `slack.json` | Slack access policy, command prefix and IDs (placeholders) |
 | `.env.example` | The secrets `serve` reads from `.env` |
 | `.opencode/agents/` | The `librarian` and `dreamer` agents; the home is the OpenCode location |
 | `opencode.jsonc` | Loads the aivi plugin and selects `librarian` when you open this directory in OpenCode |

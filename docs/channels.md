@@ -1,10 +1,11 @@
 # Channel modules
 
-A channel module connects one chat platform (Discord today) to aivi. The host
+A channel module connects one chat platform (Discord, Slack) to aivi. The host
 owns everything a chat channel needs that is not platform-specific; a module
 implements one contract and keeps only the glue: its gateway client, mapping
 platform messages to an `AccessRoute`, sending, thread creation, slash
-commands. Platform specifics live in [discord.md](discord.md). This page owns the contract, the shared machinery, the
+commands. Platform specifics live in [discord.md](discord.md) and
+[slack.md](slack.md). This page owns the contract, the shared machinery, the
 identifiers and the `report` shape.
 
 ## The contract
@@ -14,7 +15,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 
 | Member | Meaning |
 | --- | --- |
-| `id` | The module id (`discord`): `report.module`, table prefix, lease owner, `metadata.aivi.origin` |
+| `id` | The module id (`discord`, `slack`): `report.module`, table prefix, lease owner, `metadata.aivi.origin` |
 | `ownsSession(sessionId)` | This OpenCode session is one of the module's conversations (bound or adopted) |
 | `reenter(sessionId, text, context)` | Bring a job outcome into the conversation bound to that session as a turn of kind `job` |
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
@@ -38,7 +39,8 @@ describeSpeaker? }`.
   bindings in the host database, tables `<id>_turns`, `<id>_sessions`,
   `<id>_binding`, versioned through `Store.migrate(id, …)`. Turns are of kind
   `message` (a person) or `job` (an outcome re-entering). A conversation is a
-  string the module chooses (a Discord thread id, a DM channel); each has one session at a time, `ready` once created. It
+  string the module chooses (a Discord thread id, a Slack `channel:thread_ts`,
+  a DM channel); each has one session at a time, `ready` once created. It
   provides: `enqueue` (dedupe by turn id, `maxPending`), `claim` (one turn per
   conversation, a lease on the module's pool in the same transaction),
   `ready`, `result`/`sent`, `block`, `fail`, `resolve`, `recover` (restart:
@@ -77,8 +79,8 @@ or one OpenCode:
 | Message metadata | `{ origin: <id>, channel, user, sourceMessage: <turn id> }`; job outcomes `{ origin: "job-result", channel, job }` |
 | Job turn | id `job:<job id>`, user and name `aivi` |
 
-A turn id is the platform's message id (a Discord snowflake); it deduplicates
-gateway replays.
+A turn id is the platform's message id (a Discord snowflake, a Slack
+`channel:ts`); it deduplicates gateway replays.
 
 ## Reports
 

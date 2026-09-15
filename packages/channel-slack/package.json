@@ -1,0 +1,16 @@
+{
+  "name": "@aivi/channel-slack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "dependencies": {
+    "@aivi/core": "0.1.0",
+    "@aivi/host": "0.1.0",
+    "@slack/socket-mode": "3.0.1",
+    "@slack/web-api": "8.1.1",
+    "zod": "4.1.13"
+  }
+}

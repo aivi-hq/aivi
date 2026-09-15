@@ -165,6 +165,19 @@
             "config"
           ],
           "additionalProperties": false
+        },
+        "slack": {
+          "type": "object",
+          "properties": {
+            "config": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "config"
+          ],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

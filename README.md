@@ -3,7 +3,7 @@
 An always-on teammate built around OpenCode v2. OpenCode stays the runtime for
 agents, sessions, providers, tools, skills, and permissions. aivi adds what a
 team needs around it: a shared knowledge server, scheduled work, and channels
-such as Discord, all started by one **`aivi serve`**. Ordinary OpenCode
+such as Discord and Slack, all started by one **`aivi serve`**. Ordinary OpenCode
 installs reach the knowledge server through a small native plugin.
 
 ## Try it
@@ -44,7 +44,10 @@ verifies the real boundary.
 
 For Discord, fill in the IDs in `example/discord.json`, put `DISCORD_BOT_TOKEN`
 in `example/.env`, register commands once with `npm run aivi -- discord register`,
-and run `serve` as above. See [Discord setup](docs/discord.md).
+and run `serve` as above. See [Discord setup](docs/discord.md). For Slack,
+create the app from the manifest in [Slack setup](docs/slack.md), fill in
+`example/slack.json`, and put `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in
+`example/.env`.
 
 ## Packages
 
@@ -56,6 +59,7 @@ and run `serve` as above. See [Discord setup](docs/discord.md).
 | `@aivi/knowledge` | QMD-backed document indexing and scoped keyword search |
 | `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
 | `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads |
+| `@aivi/channel-slack` | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads |
 | `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `aivi_schedule`, `aivi_browser` |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
@@ -89,5 +93,6 @@ CLI and daemon smoke). Live gates: `npm run live:opencode`, `npm run smoke:brows
 New here? Start with [CONTEXT.md](CONTEXT.md). Then [configuration](docs/configuration.md),
 [application lifecycle](docs/application.md), [knowledge search](docs/knowledge.md),
 [dreaming](docs/dreaming.md), [OpenCode integration](docs/opencode.md),
-[Discord](docs/discord.md), [architecture decisions](docs/architecture.md),
+[channel modules](docs/channels.md), [Discord](docs/discord.md),
+[Slack](docs/slack.md), [architecture decisions](docs/architecture.md),
 and [roadmap](docs/roadmap.md).

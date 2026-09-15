@@ -1,0 +1,22 @@
+{
+  "$schema": "../schemas/slack.schema.json",
+  "version": 1,
+  "agent": "librarian",
+  "commandPrefix": "aivi",
+  "access": {
+    "dm": {
+      "users": ["U0000000001"]
+    },
+    "channels": [
+      {
+        "id": "C0000000001",
+        "users": "anyone"
+      }
+    ]
+  },
+  "reportChannels": ["C0000000001"],
+  "resource": "local-model",
+  "maxConcurrent": 1,
+  "maxPending": 100,
+  "turnTimeoutMs": 300000
+}

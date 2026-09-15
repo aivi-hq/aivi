@@ -18,6 +18,9 @@
       "path": "../channel-discord"
     },
     {
+      "path": "../channel-slack"
+    },
+    {
       "path": "../knowledge"
     },
     {

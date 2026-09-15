@@ -12,7 +12,8 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 2. Scoped knowledge search | **Done** for documents: QMD keyword search, kinds, scope never widens on unknown IDs. Conversation export and semantic retrieval not started. |
 | 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_schedule`), one-offs, outcomes re-entering conversations, per-job abort added 2026-09-15; Discord parts await their live gate ([backlog/jobs.md](backlog/jobs.md)). |
 | 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
-| 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. |
+| 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. Lifted onto the channel contract 2026-09-15; live re-check pending. |
+| 5b. Slack adapter | **Built, mock-tested only** ([slack.md](slack.md)); live gate pending. |
 | 6. Worker lifecycle without Linear | Not started. |
 | 7. Native Linear AgentSessions | Not started; configuration validation exists. |
 
@@ -24,13 +25,17 @@ Mock tests do not establish these; each has its own command.
   (passed 2026-09-15, including `session.list` ordering and the `.env` guard).
 - Browser: `npm run smoke:browser` with Chrome installed (passed 2026-09-15).
 - Discord: `aivi … discord register` then `serve` against a test server.
+- Slack: create the app from the manifest in [slack.md](slack.md#setup),
+  `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
+  the thread, a report into `reportChannels`, a reply in that thread,
+  `/<prefix>-status` and `/<prefix>-search`.
 
 ## Next, in order of intent
 
-1. Live Discord gate for the jobs work (re-entry turns, report threads,
-   `/status`).
-2. Channel adapter contract, then Slack
-   ([backlog/channel-adapters.md](backlog/channel-adapters.md)).
+1. Live Discord gate for the jobs work and the channel lift (re-entry turns,
+   report threads, `/status`).
+2. Live Slack gate on the owner's workspace; then Signal and Telegram against
+   the same contract ([backlog/channel-adapters.md](backlog/channel-adapters.md)).
 3. Projects as pools and maintenance only when idle
    ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 4. Project-scoped memory and a per-project dreamer boundary

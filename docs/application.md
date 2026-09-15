@@ -1,8 +1,8 @@
 # One application, contained modules
 
 Run **`aivi serve`**. It starts the HTTP API, scheduler, knowledge service, and
-configured modules together. Discord is a package boundary, not a deployment
-boundary. A future Linear module will receive webhooks through the same host
+configured modules together. Discord and Slack are package boundaries, not
+deployment boundaries. A future Linear module will receive webhooks through the same host
 listener and use the same services.
 
 The package table is in the [README](../README.md#packages).
@@ -65,7 +65,8 @@ once at startup and starts a missing one whenever needed, handing it
 `AIVI_TOKEN`; `ensure` only starts, `discover` never touches it. aivi never
 manages OpenCode's installation. QMD uses its
 library API inside aivi, with no QMD server or separate launch command. Only the
-configured Discord module loads discord.js, and only enabled search loads QMD.
+configured Discord module loads discord.js, only the configured Slack module
+loads the Slack SDK, and only enabled search loads QMD.
 
 ```json
 {

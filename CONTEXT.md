@@ -8,7 +8,8 @@ document owns which fact. Details live behind the links.
 
 An always-on teammate around OpenCode v2. OpenCode stays the runtime (agents,
 sessions, providers, tools, permissions). aivi adds a shared knowledge server,
-scheduled work, and channels such as Discord, all started by one `aivi serve`.
+scheduled work, and channels such as Discord and Slack, all started by one
+`aivi serve`.
 Ordinary OpenCode installs reach the knowledge server through a small plugin.
 Principles: simplicity in architecture and use, and a focus on performance.
 
@@ -27,11 +28,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | blocked | ended without proof that the external side stopped; keeps its capacity until `jobs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
 | report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing |
-| channel module | a chat platform adapter (`discord`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
+| channel module | a chat platform adapter (`discord`, `slack`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
 | conversation | what a channel module binds to one OpenCode session: a thread, a DM, or a whole channel |
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation` |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
-| origin | `metadata.aivi.origin` on every session aivi creates: `discord`, `job`, `dreaming`; on messages also `job-result` |
+| origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`), `job`, `dreaming`; on messages also `job-result` |
 
 ## Decisions and why
 
@@ -105,6 +106,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Dreaming run, memory contract, dreamer boundary | [docs/dreaming.md](docs/dreaming.md) |
 | Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |
 | Discord behavior, setup, recovery | [docs/discord.md](docs/discord.md) |
+| Slack behavior, app manifest, setup | [docs/slack.md](docs/slack.md) |
 | Browser service | [docs/browser.md](docs/browser.md) |
 | Decisions | [docs/architecture.md](docs/architecture.md) |
 | Status per milestone, live gates, next steps | [docs/roadmap.md](docs/roadmap.md) |
@@ -114,7 +116,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 ## Where things are
 
-`packages/{core,host,knowledge,browser,channel-discord,opencode,app}` with tests in
+`packages/{core,host,knowledge,browser,channel-discord,channel-slack,opencode,app}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `scripts/` holds the smoke, schema, and live
 checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
@@ -127,9 +129,10 @@ the tests load it.
 
 - Live gates: OpenCode passed 2026-09-15 including the schedule handler
   (session lookup, `agent.list` validation, create/refuse). Discord still to
-  re-check after today's changes: librarian directory, feedback messages, job
-  outcomes re-entering threads, report threads adopting job sessions,
-  `/status` lists.
+  re-check after today's changes (the lift into the host, the report union):
+  librarian directory, feedback messages, job outcomes re-entering threads,
+  report threads adopting job sessions, `/status` lists. Slack has never run
+  live ([slack.md](docs/slack.md)).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
   deferred until the projects work settles.

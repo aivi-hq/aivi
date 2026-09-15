@@ -401,6 +401,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     return {
       async stop() {
         unregister();
+        stop();
         try {
           await loop.catch(() => {}); // already reported through services.fail
         } finally {

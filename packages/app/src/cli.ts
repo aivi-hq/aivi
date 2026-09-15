@@ -37,13 +37,16 @@ const usage = `aivi <command>
   discord register             Register slash commands for the configured application
   discord status               Inspect Discord turns and leases
   discord resolve ID           Release a blocked turn --reason TEXT --confirm-stopped
+  slack status                 Inspect Slack turns and leases
+  slack resolve ID             Release a blocked turn --reason TEXT --confirm-stopped
   opencode check               Probe the OpenCode v2 service the host would use
 
 Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/;
 an aivi.local.json there takes precedence over aivi.json.
 Options: --log-level debug|info|warn|error
 Secrets come from the environment: AIVI_TOKEN (host.auth.mode "token"),
-DISCORD_BOT_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD (only with opencode.url).
+DISCORD_BOT_TOKEN, SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD
+(only with opencode.url).
 <home>/.env is loaded without overriding existing variables; fnox exec works too.
 No secrets in config files.
 `;
@@ -92,6 +95,10 @@ async function main(): Promise<void> {
   const discordConfig = discord ? await discord.loadDiscordConfig(loaded.config.modules.discord!.config) : undefined;
   if (discordConfig && !(discordConfig.resource in loaded.config.scheduler.resources))
     throw new Error('Unknown Discord resource pool');
+  const slack = loaded.config.modules.slack ? await import('@aivi/channel-slack') : undefined;
+  const slackConfig = slack ? await slack.loadSlackConfig(loaded.config.modules.slack!.config) : undefined;
+  if (slackConfig && !(slackConfig.resource in loaded.config.scheduler.resources))
+    throw new Error('Unknown Slack resource pool');
 
   // Commands that need no database.
   switch (`${command} ${subcommand ?? ''}`.trim()) {
@@ -149,6 +156,24 @@ async function main(): Promise<void> {
         return;
       }
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
+    }
+    if (command === 'slack') {
+      if (!slack || !slackConfig) throw new Error('Slack module is not configured in aivi.json');
+      const inbox = slack.openSlackStore(store, slackConfig);
+      if (subcommand === 'status') {
+        print({ turns: inbox.list(), leases: store.leases() });
+        return;
+      }
+      if (subcommand === 'resolve') {
+        if (!argument || !values.reason || !values['confirm-stopped'])
+          throw new Error('slack resolve ID --reason TEXT --confirm-stopped');
+        inbox.resolve(argument, values.reason);
+        print({ resolved: true });
+        return;
+      }
+      throw new Error(
+        'Slack runs inside `aivi serve`; slash commands come from the app manifest; commands: status, resolve',
+      );
     }
     if (command === 'status') {
       print(status(store, loaded));
@@ -273,6 +298,7 @@ async function main(): Promise<void> {
         : resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
       const modules: HostModule[] = [];
       if (!once && discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
+      if (!once && slack && slackConfig) modules.push(slack.createSlackModule(slackConfig));
       const abort = new AbortController();
       const stop = () => abort.abort();
       process.once('SIGINT', stop);

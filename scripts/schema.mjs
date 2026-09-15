@@ -3,6 +3,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { discordConfigSchema } from '@aivi/channel-discord';
+import { slackConfigSchema } from '@aivi/channel-slack';
 import { configSchema, projectSchema } from '@aivi/core';
 import { z } from 'zod';
 
@@ -10,6 +11,7 @@ const targets = [
   ['schemas/aivi.schema.json', configSchema],
   ['schemas/aivi.project.schema.json', projectSchema],
   ['schemas/discord.schema.json', discordConfigSchema],
+  ['schemas/slack.schema.json', slackConfigSchema],
 ];
 const mode = process.argv[2];
 if (!['--write', '--check'].includes(mode)) {

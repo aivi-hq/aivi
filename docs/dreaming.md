@@ -14,7 +14,8 @@ stays stable.
 2. The host reads the cursor for the memory directory: the newest session
    update it has already reviewed.
 3. It lists OpenCode sessions newer than that whose `metadata.aivi.origin` is
-   in `origins` (Discord conversations by default; worker jobs are noise), takes
+   in `origins` (Discord conversations by default; add `slack` for a Slack
+   installation, as the example does; worker jobs are noise), takes
    the oldest `maxSessions`, and pulls their new messages (user text and the
    agent's answers; no tool output or reasoning).
 4. It writes one transcript file under `<stateDirectory>/dreaming/` and runs
