@@ -53,7 +53,8 @@ export default Plugin.define({
     // A missing token must not prevent the plugin from loading: the host may run with
     // auth mode "none", and a clear per-call error beats silently losing every tool.
     const client = createHostClient(baseUrl, { token: process.env.AIVI_TOKEN });
-    const json = (value: unknown) => ({ content: JSON.stringify(value) });
+    // `output` is what Code Mode hands back as a value; `content` is the text form for ordinary tool calls.
+    const json = (value: unknown) => ({ output: value, content: JSON.stringify(value) });
 
     const registration = await ctx.tool.transform(editor => {
       editor.namespace({ name: 'aivi', description: 'aivi installation status and configured knowledge sources' });

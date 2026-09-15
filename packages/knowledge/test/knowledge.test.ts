@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { LoadedConfig } from '@aivi/core';
-import { configSchema } from '@aivi/core';
+import { configSchema, silentLogger } from '@aivi/core';
 import type { QmdSDK } from '../src/index.ts';
 import { createKnowledgeService } from '../src/index.ts';
 
@@ -44,8 +44,8 @@ test('scopes are filtered before search; empty/unknown scopes cannot broaden ret
   assert.equal(requests[1]!.length, 2);
   await service.search({ query: 'a', projects: [], includeCore: false });
   assert.equal(requests.length, 2);
-  assert.throws(() => service.search({ query: 'a', projects: ['typo'] }), /Unknown project/);
-  assert.throws(() => service.search({ query: '' }));
+  await assert.rejects(service.search({ query: 'a', projects: ['typo'] }), /Unknown project/);
+  await assert.rejects(service.search({ query: '' }));
 });
 
 test('real QMD keyword indexing retrieves scoped documents and refreshes modified/deleted content', async t => {
@@ -103,38 +103,57 @@ test('real QMD keyword indexing retrieves scoped documents and refreshes modifie
   assert.equal((await service.search({ query: 'Cobalt' }))[0]!.path, project);
 });
 
-test('backend scope violations are rejected rather than relabelled as permitted results', async t => {
+test('backend scope violations are rejected; a result that escapes its source is dropped, not served', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-search-scope-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  const outside = await mkdtemp(join(tmpdir(), 'aivi-search-outside-'));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await writeFile(join(outside, 'leak.md'), 'leaked');
+  await symlink(join(outside, 'leak.md'), join(root, 'leak.md'));
+  await writeFile(join(root, 'ok.md'), 'fine');
   const loaded: LoadedConfig = {
     path: '/config',
     config: configSchema.parse({ version: 1, stateDirectory: root, search: { provider: 'qmd' } }),
     projects: [],
     sources: [{ id: 'core', path: root, kind: 'doc', scope: 'core' }],
   };
-  const service = await createKnowledgeService(loaded, async () => ({
-    async createStore() {
-      return {
-        async update() {},
-        async close() {},
-        async searchLex() {
-          return [
-            {
-              collectionName: 'unconfigured',
-              filepath: '/private',
-              displayPath: 'private',
-              title: 'Private',
-              score: 1,
-              body: 'private',
-            },
-          ];
-        },
-      };
-    },
-    extractSnippet() {
-      return { snippet: '', line: 1 };
-    },
-  }));
+  let results: { collectionName: string; filepath: string; displayPath: string; title: string; score: number }[] = [];
+  let collection = '';
+  const warnings: string[] = [];
+  const service = await createKnowledgeService(
+    loaded,
+    async () => ({
+      async createStore(options) {
+        collection = Object.keys(options.config.collections)[0]!;
+        return {
+          async update() {},
+          async close() {},
+          async searchLex() {
+            return results;
+          },
+        };
+      },
+      extractSnippet() {
+        return { snippet: '', line: 1 };
+      },
+    }),
+    { ...silentLogger, warn: event => void warnings.push(event) },
+  );
   t.after(() => service.close());
+  results = [
+    { collectionName: 'unconfigured', filepath: '/private', displayPath: 'private', title: 'Private', score: 1 },
+  ];
   await assert.rejects(service.search({ query: 'secret' }), /out-of-scope/);
+  results = [
+    { collectionName: collection, filepath: 'leak.md', displayPath: `${collection}/leak.md`, title: 'Leak', score: 2 },
+    { collectionName: collection, filepath: 'ok.md', displayPath: `${collection}/ok.md`, title: 'Ok', score: 1 },
+  ];
+  const hits = await service.search({ query: 'x' });
+  assert.deepEqual(
+    hits.map(h => h.title),
+    ['Ok'],
+    'the symlinked file is dropped and the rest of the query is served',
+  );
+  await service.search({ query: 'x' });
+  assert.deepEqual(warnings, ['knowledge.escaped'], 'warned once per path, not per query');
 });

@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { LoadedConfig, LogLevel } from '@aivi/core';
+import type { LoadedConfig, Logger, LogLevel } from '@aivi/core';
 import { createLogger, errorMessage, loadConfig, reportSchema, selectSources, taskSchema } from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
 import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, status } from '@aivi/host';
@@ -220,7 +220,7 @@ async function main(): Promise<void> {
           log,
           once,
           signal: abort.signal,
-          resources: () => createResources(loaded, once),
+          resources: () => createResources(loaded, once, log),
           onReady: address =>
             console.log(
               JSON.stringify({ listening: address, modules: modules.map(m => m.id), sources: loaded.sources.length }),
@@ -252,8 +252,8 @@ const jobFileSchema = z.strictObject({
   resource: z.string().min(1).optional(),
 });
 
-async function createResources(loaded: LoadedConfig, once: boolean): Promise<HostResources> {
-  const knowledge = await createKnowledgeService(loaded);
+async function createResources(loaded: LoadedConfig, once: boolean, log: Logger): Promise<HostResources> {
+  const knowledge = await createKnowledgeService(loaded, undefined, log);
   // Browser construction is lazy; no Chrome launch occurs until a tool call. A one-shot tick never needs it.
   const browser =
     !once && loaded.config.browser

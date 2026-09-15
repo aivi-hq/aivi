@@ -11,7 +11,10 @@ import { OpenCode } from '@opencode/client';
 import { Service } from '@opencode/client/service';
 
 const { values } = parseArgs({ options: { plugin: { type: 'string' }, 'skip-prompt': { type: 'boolean' } } });
-const [providerID, modelID] = (process.env.MODEL ?? 'github-copilot/gemini-3.8-flash').split('/');
+// Provider ids may themselves contain '/', so split on the first one only.
+const model = process.env.MODEL ?? 'github-copilot/gemini-3.8-flash';
+const providerID = model.slice(0, model.indexOf('/'));
+const modelID = model.slice(model.indexOf('/') + 1);
 const report = (name, detail) => console.log(`ok  ${name}${detail ? `  ${detail}` : ''}`);
 
 // 1. Discovery and authentication. Verified on 2.0.3: basic auth only, bearer -> 401.

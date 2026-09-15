@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import type { KnowledgeService, KnowledgeSource, LoadedConfig, SearchHit, SearchRequest } from '@aivi/core';
+import type { KnowledgeService, KnowledgeSource, LoadedConfig, Logger, SearchHit, SearchRequest } from '@aivi/core';
 import { searchSchema, selectSources } from '@aivi/core';
 
 // Narrow boundary matches QMD 2.8.3's public SDK. No dependency on its internal database.
@@ -45,7 +45,9 @@ export async function createKnowledgeService(
       throw new SearchUnavailable('QMD is unavailable; install @tobilu/qmd@2.8.3 and its native dependencies');
     }
   },
+  log?: Logger,
 ): Promise<KnowledgeService> {
+  const warned = new Set<string>();
   if (!loaded.config.search)
     return {
       async search() {
@@ -90,11 +92,11 @@ export async function createKnowledgeService(
     return result;
   };
   return {
-    search(input: SearchRequest) {
+    async search(input: SearchRequest) {
       const request = searchSchema.parse(input);
       const ids = selectSources(loaded, request.projects, request.includeCore, request.kinds).map(collectionID);
       // Never pass an empty filter: QMD interprets it as an unscoped query.
-      if (!ids.length) return Promise.resolve([]);
+      if (!ids.length) return [];
       return run(async () => {
         const results = await store.searchLex(request.query, { limit: request.limit, collection: ids });
         const hits: SearchHit[] = [];
@@ -108,15 +110,20 @@ export async function createKnowledgeService(
           let path = result.filepath;
           if (path.startsWith('qmd://')) path = display;
           path = resolve(entry.root, path);
-          let canonical: string;
-          try {
-            canonical = await realpath(path);
-          } catch {
-            continue;
-          } // deleted since the last index refresh
+          // Deleted since the last index refresh: skip it.
+          const canonical = await realpath(path).catch(() => null);
+          if (!canonical) continue;
           const rel = relative(entry.root, canonical);
-          if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`) || (entry.file && canonical !== entry.file))
-            throw new Error('QMD result escaped its configured source');
+          const escaped =
+            isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`) || (entry.file && canonical !== entry.file);
+          // A symlink that leaves its source is not served, but it must not take the whole query down.
+          if (escaped) {
+            if (!warned.has(canonical)) {
+              warned.add(canonical);
+              log?.warn('knowledge.escaped', { source: entry.source.id, path: canonical });
+            }
+            continue;
+          }
           const snippet = sdk.extractSnippet(result.body ?? '', request.query, 900);
           hits.push({
             sourceId: entry.source.id,
