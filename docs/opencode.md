@@ -29,26 +29,12 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 
 ## Librarian in native chat
 
-1. `npm ci` (there is no build step; the packages run from their TypeScript sources).
-2. Start aivi, for example `npm run aivi -- serve`
-   (with `AIVI_TOKEN` from fnox, or `host.auth.mode: "none"` on a trusted machine).
-3. With `mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode **server**
-   environment and `opencode service restart`; with `opencode.lifecycle: "own"`
-   (the default) `aivi serve` does both for you. Whatever started the service,
-   restart it after every rebuild of the plugin or the host client: the
-   long-running service keeps `@aivi/host/client` in its module cache, so a
-   plugin that registers a new tool can still call a client without that
-   method ("client.jobs is not a function", seen 2026-09-15). The example
-   home uses `discover`, so there `opencode service restart` stays manual.
-4. Open `example/` in OpenCode v2. Its `opencode.jsonc` loads the local plugin
-   and selects the `librarian` agent from `.opencode/agents/`.
-5. Ask it to list aivi sources and read the company handbook.
-
-The example agent denies shell, edits, and subagent launches; everything else
-is OpenCode's default. The home is the OpenCode location, so the example's
-knowledge, memory and project directories are inside it and need no
-`external_directory` rules. Sources elsewhere (project checkouts) get those
-rules from aivi per session.
+Walkthrough in [getting started](getting-started.md#the-librarian-in-opencode).
+The home is the OpenCode location, so the example's knowledge, memory and
+project directories need no `external_directory` rules; sources elsewhere get
+those rules from aivi per session. The OpenCode service caches
+`@aivi/host/client`, so restart it after every change to the plugin or client
+(`opencode.lifecycle: "own"` does this at `aivi serve` startup).
 
 ## Host submission
 
@@ -82,19 +68,11 @@ targets. aivi never sends a deny.
 
 Task options: `timeoutMs` (default 30 min) and `onPermission`: `reject`
 (default; deny and let the agent continue, recorded in the result) or `fail`
-(leave the prompt pending for a human and block the run). A failure before the
-prompt is accepted (OpenCode unreachable, session create/get rejected) ends the
-run `failed`; the next occurrence retries. A timeout, a failed turn, a changed
-agent/directory, or a host shutdown mid-turn block the run, because none of
-those prove the session stopped doing things. Blocked runs keep
-their capacity until an operator has looked at the session:
-
-```sh
-npm run aivi -- runs resolve RUN_ID --outcome succeeded --reason "Inspected completed session" --confirm-stopped
-```
-
-Discord uses the same driver for each turn. Steering an active worker into
-cleanup (the Linear lifecycle) is not part of the driver yet.
+(leave the prompt pending for a human and block the run). Which failures end
+`failed` and which `blocked`, and how an operator releases a blocked run, is in
+[operations](operations.md#how-runs-end). Channel turns use the same driver.
+Steering an active worker into cleanup (the Linear lifecycle) is not part of
+the driver yet.
 
 ## Jobs tool
 

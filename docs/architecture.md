@@ -19,8 +19,44 @@ its `start` method. Linear will be another in-process module with webhook routes
 on the same listener, not another application server.
 
 There is no general-purpose plugin registry, decorator system, or service locator.
-Modules are explicit packages with a small start/stop contract. See
-[application lifecycle](application.md).
+Modules are explicit packages with a small start/stop contract; this is
+ordinary TypeScript composition, no NestJS, decorators or service locator.
+
+## One application, contained modules
+
+`aivi serve` starts the HTTP API, scheduler, knowledge service, and configured
+modules together. Discord and Slack are package boundaries, not deployment
+boundaries; a future Linear module will receive webhooks through the same host
+listener and use the same services. Only a configured module loads its SDK, and
+only enabled search loads QMD.
+
+Modules receive a `HostServices` object containing the loaded installation
+config, store, knowledge service, optional browser service, an `opencode()`
+client factory, a structured logger, the shutdown signal, the `channels`
+registry where chat modules register ([channels](channels.md)), `wake()` and
+`fail()`. They return an asynchronous `stop` function. They call shared
+services directly, rather than calling the host over HTTP from inside the same
+application.
+
+`fail()` aborts the whole host and is reserved for conditions the host cannot
+run without (an unreliable store). A module's `start` may throw
+`ConfigurationError` for what only the operator can fix; anything else is
+retried with backoff while the module shows as `degraded`, because an optional
+module must never take the knowledge server and scheduler down
+([operations](operations.md#startup)).
+
+Adapters keep their own tables in the host database under a name prefix and
+declare them through `Store.migrate(namespace, steps)`, which versions them
+independently of the host schema. Host tables are only reached through `Store`
+methods; shared capacity uses `acquireLease`/`releaseLease`/`blockLease`.
+
+OpenCode plugins live inside the native runtime, so they use the host's
+authenticated API. `knowledge_search` reaches the same service used by the
+channels' search commands and scheduled indexing jobs; `aivi_jobs` reaches the
+same store the CLI edits.
+
+What happens at startup, tick and shutdown, and how runs end, is described for
+operators in [operations](operations.md).
 
 ## SQLite and Croner
 
@@ -152,7 +188,7 @@ outcome brought back into a conversation is a message with origin `job-result`.
 Definitions (`jobs`, recurring or one-off) and executions (`runs`) are separate
 tables; one grace rule decides matched or missed; retention is a system job.
 The facts live in [configuration.md](configuration.md) and
-[application.md](application.md); the research that informed them in
+[operations.md](operations.md); the research that informed them in
 [research/jobs-2026-09-14.md](research/jobs-2026-09-14.md). Deliberately not
 built until someone asks twice:
 

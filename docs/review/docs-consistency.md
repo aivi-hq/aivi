@@ -13,10 +13,12 @@ Not applied: `Status.completion` / hardcoded version (documented as the
 payload instead; removing it is a contract change for the plugin); the
 `aivi sources --kind` CLI flag (doc corrected rather than a flag added).
 
-Deferred: the §3 restructure (`getting-started.md`, `operations.md`, merging
-`application.md` into `architecture.md`) until the jobs and projects work
-settles, because that work rewrites most of the operations content.
-`CONTEXT.md` is the interim "read this first" file.
+§3 restructure applied 2026-09-15: `getting-started.md` (newcomer) and
+`operations.md` (operator) created by moving prose from README, `opencode.md`,
+`knowledge.md`, `configuration.md` and `application.md`; the module contract
+went into `architecture.md` and `application.md` was deleted. `roadmap.md` had
+already replaced `implementation-roadmap.md`. `CONTEXT.md` stays the "read this
+first" file for agents.
 
 ---
 

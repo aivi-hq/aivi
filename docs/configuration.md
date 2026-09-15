@@ -195,29 +195,8 @@ application installation details belong to the future Linear adapter.
 
 ## Operator commands
 
-Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
-`runs …` on executions.
-
-`jobs add FILE` adds a job from a task file (a bare task, or
-`{ task, report?, resource? }`): `--cron EXPR --timezone TZ` makes it
-recurring, `--at ISO|30m|2h|1d` a one-off for later, neither a one-off for
-now, whose run is queued at once. `--title` labels it, `--resource` picks the
-pool, `--key` deduplicates identical requests (a changed payload under the
-same key is rejected). Operator jobs (source `operator`, ids `job-…`) and
-agent jobs are paused, resumed and removed with `jobs pause|resume|remove ID`;
-configured and system ones are edited in `aivi.json`. `jobs run ID` queues one
-run now, refused while one is outstanding. `jobs list` shows every definition
-with its source, state, next occurrence and last run; `jobs show ID` adds its
-runs.
-
-`runs list [--job ID --state S --limit N]` and `runs show ID` (task, session
-ID, result, transition history). `runs cancel ID` only cancels queued work.
-`runs abort ID` asks the scheduler to stop a running run (the command gets
-`SIGTERM`, an agent turn stops waiting); the run then ends `blocked` with
-"Aborted by operator" because aivi cannot know what the external side had
-already done, and keeps its capacity until `runs resolve`. Resolving a blocked
-run is an explicit operator action described in [OpenCode setup](opencode.md).
-Failed runs do not retry automatically.
+`npm run aivi -- --help` lists them; what each does and when to use it is in
+[operations](operations.md#jobs-and-runs-from-the-command-line).
 
 ## Secrets
 
@@ -243,9 +222,6 @@ environment minus the fixed names above and minus every key defined in
 `<home>/.env`. Everything else (PATH, HOME, the operator's shell variables)
 passes through, and a task's own `env` map is merged on top.
 
-`aivi serve` logs one JSON object per line on stderr; `--log-level debug` shows
-job materialization. stdout is reserved for command output.
-
 JSON schemas are generated into `schemas/` by `npm run schema`; `npm run check`
 fails when they are stale. Point your editor at them for autocompletion and
 field descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
@@ -253,5 +229,5 @@ config file) in `aivi.json` and the Discord and Slack configs. Runtime validatio
 expressions, timezones, uniqueness, that every project override has a
 checkout, and Linear application references.
 
-`aivi serve` is the single application command. See [application lifecycle](application.md)
+`aivi serve` is the single application command. See [operations](operations.md)
 for ownership and [knowledge search](knowledge.md) for indexing and retrieval.

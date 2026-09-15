@@ -5,7 +5,7 @@ Status: wanted before Linear workers exist.
 ## Today
 
 `aivi serve` stops modules in reverse start order, aborts in-flight jobs (they
-end `blocked`; see [application.md](../application.md)), closes
+end `blocked`; see [operations.md](../operations.md#shutdown)), closes
 the API, browser, knowledge, and releases the lock. Modules get `stop()` and an
 aborted `signal`; nothing tells the outside world.
 

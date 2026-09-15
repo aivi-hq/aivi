@@ -55,7 +55,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Retention is a system job.** `scheduler.retention` seeds `retention`
   (task `runs.prune`) into the same table, so it is listed, pooled, run and
   reported like everything else instead of being a hidden timer
-  ([application](docs/application.md)).
+  ([operations](docs/operations.md#how-runs-end)).
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
   `blocked`, capacity kept, human resolves. Exception: a conversation turn
@@ -125,7 +125,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **An optional module never takes the host down**, at startup either: a
   failed `start` is retried with backoff for as long as the host runs and shows
   as `degraded` in status; only a `ConfigurationError` (something the operator
-  must change) is fatal ([application](docs/application.md)).
+  must change) is fatal ([operations](docs/operations.md#startup)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
 - **No build step.** Packages run from `src/*.ts` via Node's type stripping;
@@ -143,7 +143,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Fact | Owner |
 | --- | --- |
 | Config fields, task kinds, secrets and `.env` order | [docs/configuration.md](docs/configuration.md) |
-| Startup, shutdown, `tick`, failed/blocked outcomes | [docs/application.md](docs/application.md) |
+| Startup, shutdown, `tick`, failed/blocked outcomes, resolving blocked work, CLI | [docs/operations.md](docs/operations.md) |
+| First run, librarian in OpenCode, first project and channel | [docs/getting-started.md](docs/getting-started.md) |
+| Module contract (`HostServices`, `Store.migrate`, `fail`) | [docs/architecture.md](docs/architecture.md#one-application-contained-modules) |
 | Tool ids, plugin loading, permission matching, session driver contract | [docs/opencode.md](docs/opencode.md) |
 | Knowledge scope, kinds, refresh | [docs/knowledge.md](docs/knowledge.md) |
 | What a project is, home layout, docs convention, who works in one | [docs/projects.md](docs/projects.md) |
@@ -180,5 +182,6 @@ the tests load it.
   bold, links, lists; `chat.update` on the placeholder; ephemeral command
   answers), and dreaming writing into a project's memory.
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
-- The docs restructure proposed in `docs/review/docs-consistency.md` §3 was
-  deferred until the projects work settled; it has (2026-09-15).
+- The docs restructure proposed in `docs/review/docs-consistency.md` §3 landed
+  2026-09-15 (`getting-started.md`, `operations.md`; `application.md` folded
+  into `architecture.md`).

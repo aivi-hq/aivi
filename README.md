@@ -8,50 +8,17 @@ installs reach the knowledge server through a small native plugin.
 
 ## Try it
 
-Use Node 26 and npm. From the monorepo root:
+Node 26 and npm, from the repository root:
 
 ```sh
 npm ci
 npm run check
-npm run aivi -- config check
-```
-
-There is no build step: every package runs from its TypeScript sources through
-Node's type stripping, and `npm run typecheck` (`tsc --noEmit`) is a check.
-
-aivi reads one **home** directory: `aivi.json`, `.env`, and `state/` together.
-Installed copies use `~/.aivi`; in this repo `npm run aivi` points `AIVI_HOME`
-at `example/`, a complete home with everything enabled. Its
-[README](example/README.md) has the quickstart, including how to provide or
-disable Discord.
-
-Start the host. Either have fnox inject an `AIVI_TOKEN` of at least 24
-characters, or set `host.auth.mode` to `"none"` for a trusted machine:
-
-```sh
 npm run aivi -- serve
 ```
 
-The example indexes bundled documents and runs scheduled maintenance. It needs
-no inference model. In another terminal:
-
-```sh
-npm run aivi -- knowledge search "decisions" --project demo
-npm run aivi -- jobs list
-npm run aivi -- runs list
-```
-
-To use the tools from OpenCode, open `example/` in OpenCode v2 with
-`opencode service` running; see [OpenCode integration](docs/opencode.md). With a
-running service, `npm run live:opencode -- --plugin "$PWD/example"`
-verifies the real boundary.
-
-For Discord, fill in the IDs in `example/discord.json`, put `DISCORD_BOT_TOKEN`
-in `example/.env`, register commands once with `npm run aivi -- discord register`,
-and run `serve` as above. See [Discord setup](docs/discord.md). For Slack,
-create the app from the manifest in [Slack setup](docs/slack.md), fill in
-`example/slack.json`, and put `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in
-`example/.env`.
+`npm run aivi` uses `example/`, a complete home with everything enabled; there
+is no build step. From here on: [getting started](docs/getting-started.md)
+(searching, the librarian in OpenCode, a project, a chat channel).
 
 ## Packages
 
@@ -97,9 +64,11 @@ unscheduled ideas: `docs/backlog/`.
 real SQLite, real QMD and the real v2 client on a mock server, schema check,
 CLI and daemon smoke). Live gates: `npm run live:opencode`, `npm run smoke:browser`.
 
-New here? Start with [CONTEXT.md](CONTEXT.md). Then [configuration](docs/configuration.md),
-[application lifecycle](docs/application.md), [knowledge search](docs/knowledge.md),
-[dreaming](docs/dreaming.md), [OpenCode integration](docs/opencode.md),
-[channel modules](docs/channels.md), [Discord](docs/discord.md),
-[Slack](docs/slack.md), [architecture decisions](docs/architecture.md),
-and [roadmap](docs/roadmap.md).
+New here? [Getting started](docs/getting-started.md) to run it,
+[operations](docs/operations.md) to keep it running,
+[configuration](docs/configuration.md) for every field. Working on it? Start
+with [CONTEXT.md](CONTEXT.md), then [architecture decisions](docs/architecture.md),
+[OpenCode integration](docs/opencode.md), [channel modules](docs/channels.md),
+[projects](docs/projects.md), [knowledge search](docs/knowledge.md),
+[dreaming](docs/dreaming.md), [Discord](docs/discord.md), [Slack](docs/slack.md),
+[browser](docs/browser.md), and [roadmap](docs/roadmap.md).
