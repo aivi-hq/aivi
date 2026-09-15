@@ -1,4 +1,5 @@
 import type { Logger } from '@aivi/core';
+import { errorMessage } from '@aivi/core';
 import { ConfigurationError } from '@aivi/host';
 import { SocketModeClient } from '@slack/socket-mode';
 import type { MarkdownBlock } from '@slack/web-api';
@@ -126,13 +127,35 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
       await web.chat.delete({ channel, ts });
     },
     async ephemeral(responseUrl, text) {
-      const response = await fetch(responseUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ response_type: 'ephemeral', ...markdown(text) }),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!response.ok) throw new Error(`Slack response_url answered ${response.status}`);
+      // response_url answers 200 with `ok` on success and 200 with `{"ok":false,"error":…}` on a
+      // rejected payload, so the status alone proves nothing. A rejected block falls back to plain text.
+      const post = async (body: Record<string, unknown>) => {
+        const response = await fetch(responseUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ response_type: 'ephemeral', ...body }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const raw = await response.text();
+        if (!response.ok) throw new Error(`Slack response_url answered ${response.status}: ${raw.slice(0, 200)}`);
+        if (raw && raw !== 'ok') {
+          let parsed: { ok?: boolean; error?: string } | undefined;
+          try {
+            parsed = JSON.parse(raw) as { ok?: boolean; error?: string };
+          } catch {
+            // Not JSON: Slack accepted it with an unexpected body.
+          }
+          if (parsed && parsed.ok === false)
+            throw new Error(`Slack response_url refused: ${parsed.error ?? raw.slice(0, 200)}`);
+        }
+      };
+      try {
+        await post(markdown(text));
+      } catch (error) {
+        if (!/invalid_blocks|blocks/.test(errorMessage(error))) throw error;
+        log.warn('ephemeral.blocks_rejected', { error });
+        await post({ text });
+      }
     },
     async react(channel, ts, name) {
       await web.reactions.add({ channel, timestamp: ts, name });
