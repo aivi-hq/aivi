@@ -81,7 +81,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Shutdown aborts** running runs; they end `blocked`. A grace period is a
   design choice not yet made ([shutdown-hooks](docs/backlog/shutdown-hooks.md)).
 - **The agent file is the boundary.** Discord, jobs and dreaming run the
-  configured OpenCode agent as defined; aivi adds only what the file cannot
+  configured OpenCode agent as defined, including its model (OpenCode's API
+  does not substitute it the way the TUI does; aivi sets it on the session
+  every turn); aivi adds only what the file cannot
   know (`external_directory` for configured sources; dreaming's two `edit`
   targets) and never a deny. Restrict an agent in its own file. The home is
   the OpenCode location (`<home>/.opencode/agents/`), so example sources need

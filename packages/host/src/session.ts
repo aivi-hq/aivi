@@ -59,7 +59,8 @@ export interface TurnInput {
   messageId: string;
   text: string;
   messageMetadata?: Metadata;
-  model?: { providerID: string; modelID: string };
+  /** Pin the session to this model; absent means the agent file's `model`, resolved per turn. */
+  model?: { providerID: string; modelID: string; variant?: string };
 }
 
 export interface TurnOptions {
@@ -106,12 +107,22 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
     aivi: { ...(aivi && typeof aivi === 'object' && !Array.isArray(aivi) ? aivi : {}), message: input.messageId },
   };
   try {
+    // The API does not substitute the agent file's model the way the TUI does (seen live 2026-09-15:
+    // sessions ran OpenCode's default model). The model is a session property; aivi sets it.
+    const wanted = input.model
+      ? {
+          providerID: input.model.providerID,
+          id: input.model.modelID,
+          ...(input.model.variant ? { variant: input.model.variant } : {}),
+        }
+      : await agentModel(client, input.agent, input.directory, request);
     if (input.create) {
       await client.session.create(
         {
           id: sessionID,
           agent: input.agent,
           location: { directory: input.directory },
+          ...(wanted ? { model: wanted } : {}),
           ...(input.title ? { title: input.title } : {}),
           ...(input.sessionMetadata ? { metadata: input.sessionMetadata } : {}),
           ...(input.permissions ? { permissions: input.permissions } : {}),
@@ -125,6 +136,8 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
       throw new Error(`Session ${sessionID} no longer runs agent ${input.agent} in ${input.directory}`);
     }
     if (input.permissions) await client.permission.rules({ sessionID, permissions: input.permissions }, request);
+    if (wanted && !sameModel(session.model, wanted))
+      await client.session.switchModel({ sessionID, model: wanted }, request);
   } catch (error) {
     throw new TurnNotStarted(error);
   }
@@ -163,7 +176,6 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
         text: input.text,
         delivery: 'queue',
         metadata: messageMetadata,
-        ...(input.model ? { model: input.model } : {}),
       },
       request,
     );
@@ -190,6 +202,28 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
   } finally {
     unwatch();
   }
+}
+
+type ModelRef = { providerID: string; id: string; variant?: string };
+const sameModel = (a: ModelRef | undefined, b: ModelRef) =>
+  a !== undefined && a.providerID === b.providerID && a.id === b.id && (a.variant ?? undefined) === b.variant;
+
+/**
+ * The model the agent file declares, resolved by OpenCode; undefined when it declares none
+ * (OpenCode's default then applies). `agent.list` with a location sees agents under that
+ * directory's .opencode/, where `agent.get` does not.
+ */
+export async function agentModel(
+  client: OpenCodeClient,
+  agent: string,
+  directory: string,
+  request: { signal: AbortSignal },
+): Promise<ModelRef | undefined> {
+  const agents = await client.agent.list({ location: { directory } }, request);
+  const model = agents.data.find(a => a.id === agent || a.name === agent)?.model;
+  return model
+    ? { providerID: model.providerID, id: model.id, ...(model.variant ? { variant: model.variant } : {}) }
+    : undefined;
 }
 
 /** Resolves on the next event of a session, or rejects when the signal aborts. */

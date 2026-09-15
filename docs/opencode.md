@@ -24,6 +24,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
 | Changes to a local plugin | The server caches module resolution; run `opencode service restart` after changing the plugin package layout **or after `npm install` rewrites `node_modules`** (the plugin otherwise fails with "Cannot find package"). The restart also reloads every client of that service, including an open TUI. |
 | `session.list` order | `order: "desc"` sorts by `time.updated`, not creation: a prompted older session moves to the top. Dreaming's cursor relies on this. |
+| Agent model (2026-09-15) | A session created with `agent` but no `model` runs `model.default`, not the agent file's `model`; only the TUI substitutes it. `agent.list({ location: { directory } })` returns each agent with its resolved `model: { id, providerID }` (`agent.get` does not see agents under a directory's `.opencode/`). `session.create` takes `model`; `session.switchModel` (`POST /api/session/{id}/model`) changes it later and `session.get().model` shows it. The `model` field of `session.prompt` does not exist; the client drops it. |
 | `.env` under aivi's session policy | With `read *` allow followed by `*.env` deny, a read of `.env` ends as a tool error (no permission prompt); a sibling file reads fine; the content never enters the transcript. |
 | Event stream (2026-09-15) | `client.event.subscribe()` is `GET /api/event` as `text/event-stream`: global, live-only (no replay), no automatic reconnect; an `AsyncIterable` of events with `type` and `data.sessionID`. During a turn it emits `session.execution.started`, `session.step.started/streamed/ended`, `session.tool.input.started` (`{ sessionID, assistantMessageID, id, name }`), `session.tool.input.ended`, `session.tool.called` (`data.input`), `session.tool.progress`, `session.tool.success` / `session.tool.failed`, `session.text.started/delta/ended`, `session.usage.updated`, `session.execution.succeeded/failed/interrupted`. Under codemode the tool name is `execute` and the aivi tools are calls inside `input.code` (`tools.aivi.status()`, `tools.knowledge.search({…})`); native tools (`read`, `grep`, `glob`, `webfetch`, `bash`) appear by name. `session.log({ follow: true })` yields only `log.synced` and is not usable for progress. The host's one stream and its reconnect loop: [channels](channels.md#progress-while-a-turn-runs). |
 
@@ -58,10 +59,16 @@ npm run aivi -- runs list
 
 The running host dispatches queued runs through the session driver
 (`packages/host/src/session.ts`): create the session with a client-chosen id,
-pin agent and directory, prompt, wait, answer permission prompts per policy, and
+pin agent, directory and model, prompt, wait, answer permission prompts per policy, and
 verify the final answer (`assistant.finish === "stop"`, `idle.outcome ===
 "succeeded"`, no unfinished tools, text present). The run then succeeds with
-`{ sessionId, text, rejectedPermissions }`. The agent file is the boundary for every caller: an `opencode.prompt` job
+`{ sessionId, text, rejectedPermissions }`. The model is a session property that
+the API does not fill in from the agent file (seen live 2026-09-15: sessions ran
+OpenCode's default model instead of the librarian's), so every turn resolves it:
+the agent's `model` from `agent.list` for the directory, or a conversation's
+`/model` pin; it goes into `session.create` and, when `session.get` shows
+something else, through `session.switchModel` before the prompt. An agent file
+that pins none leaves OpenCode's default alone. The agent file is the boundary for every caller: an `opencode.prompt` job
 sends no session rules; Discord adds `external_directory` allows for the
 configured sources; dreaming adds those plus `edit` allows for its two write
 targets. aivi never sends a deny.

@@ -113,6 +113,7 @@ async function fakeOpenCode(
     const url = req.url!;
     res.setHeader('content-type', 'application/json');
     if (url.endsWith('/wait')) await gate();
+    if (url.startsWith('/api/agent')) return void res.end('{"data":[{"id":"librarian","name":"librarian"}]}');
     if (url.endsWith('/permission/rules') || url.endsWith('/wait')) return void res.writeHead(204).end();
     if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (url === '/api/session' && req.method === 'POST') {

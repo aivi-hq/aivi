@@ -41,6 +41,8 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
       return;
     }
     res.setHeader('content-type', 'application/json');
+    if (req.url!.startsWith('/api/agent'))
+      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
     if (req.url!.endsWith('/permission') && req.method === 'GET') {
       res.end(JSON.stringify({ data: [] }));
       return;

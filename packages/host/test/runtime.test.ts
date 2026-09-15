@@ -37,6 +37,8 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
     });
     res.setHeader('content-type', 'application/json');
     const url = req.url!;
+    if (url.startsWith('/api/agent'))
+      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
     if (url.endsWith('/wait')) {
       res.writeHead(204);
       res.end();
@@ -143,6 +145,8 @@ test('a turn that times out while session.wait is pending reports the timeout, n
   const server = createServer(async (req, res) => {
     for await (const _ of req) void _;
     res.setHeader('content-type', 'application/json');
+    if (req.url!.startsWith('/api/agent'))
+      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
     if (req.url!.endsWith('/wait')) return; // never answers: the turn is still running
     if (req.url!.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (req.url!.endsWith('/prompt')) return void res.end('{"data":{"id":"m"}}');

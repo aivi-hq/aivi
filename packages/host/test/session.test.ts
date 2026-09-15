@@ -52,12 +52,15 @@ function mockOpenCode(
     /** Runs when `wait` is requested, before it answers: the moment a permission would be asked. */
     waitUntil?: () => void;
     onPermissionList?: () => void;
+    /** What the session reports as its model (`session.get`); the librarian's file pins gemini-3.8-flash. */
+    sessionModel?: { id: string; providerID: string };
   } = {},
 ) {
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
   let pending = options.pending ?? [];
   let lag = options.contextLagsFor ?? 0;
   let promptId = '';
+  let sessionModel = options.sessionModel;
   const agent = options.agent ?? 'librarian';
   const server = createServer(async (req, res) => {
     let raw = '';
@@ -67,7 +70,17 @@ function mockOpenCode(
     res.setHeader('content-type', 'application/json');
     const url = req.url!;
     if (url.endsWith('/wait')) options.waitUntil?.();
-    if (url.endsWith('/permission/rules') || url.endsWith('/wait')) {
+    if (url.startsWith('/api/agent')) {
+      res.end(
+        JSON.stringify({
+          data: [
+            { id: 'librarian', name: 'librarian', model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } },
+          ],
+        }),
+      );
+      return;
+    }
+    if (url.endsWith('/permission/rules') || url.endsWith('/wait') || url.endsWith('/model')) {
       res.writeHead(204);
       res.end();
       return;
@@ -83,6 +96,7 @@ function mockOpenCode(
       res.end();
       return;
     }
+    if (url === '/api/session' && req.method === 'POST') sessionModel = body.model;
     if (url.endsWith('/prompt')) {
       promptId = body.id;
       res.end(JSON.stringify({ data: { id: body.id } }));
@@ -112,7 +126,16 @@ function mockOpenCode(
       );
       return;
     }
-    res.end(JSON.stringify({ data: { id: 'ses_test', agent: 'librarian', location: { directory: '/lib' } } }));
+    res.end(
+      JSON.stringify({
+        data: {
+          id: 'ses_test',
+          agent: 'librarian',
+          location: { directory: '/lib' },
+          ...(sessionModel ? { model: sessionModel } : {}),
+        },
+      }),
+    );
   });
   return { server, requests };
 }
@@ -175,10 +198,55 @@ test('runTurn creates, pins permissions, prompts, and returns the verified answe
   assert.deepEqual(result, { sessionId: 'ses_test', text: 'Answer', rejected: [] });
   assert.equal(created, 1);
   const order = mock.requests.map(r =>
-    `${r.method} ${r.path.replace(/^\/api\/session\/ses_test/, '')}`.replace('/api/session', 'create'),
+    `${r.method} ${r.path.replace(/\?.*$/, '').replace(/^\/api\/session\/ses_test/, '')}`.replace(
+      '/api/session',
+      'create',
+    ),
   );
-  assert.deepEqual(order.slice(0, 4), ['POST create', 'GET ', 'PUT /permission/rules', 'POST /prompt']);
-  assert.deepEqual(mock.requests[3]!.body.metadata, { aivi: { message: 'msg_t1' } });
+  assert.deepEqual(order.slice(0, 5), [
+    'GET /api/agent',
+    'POST create',
+    'GET ',
+    'PUT /permission/rules',
+    'POST /prompt',
+  ]);
+  assert.deepEqual(mock.requests[4]!.body.metadata, { aivi: { message: 'msg_t1' } });
+  // The API does not apply the agent file's model on its own; the session is created with it.
+  assert.deepEqual(mock.requests[1]!.body.model, { id: 'gemini-3.8-flash', providerID: 'github-copilot' });
+  assert.ok(!order.includes('POST /model'), 'a session created with the model needs no switch');
+});
+
+test('runTurn keeps the session on the agent file’s model, or on the pinned one', async t => {
+  // An existing session that drifted (or predates this) is switched back before the prompt.
+  const drifted = mockOpenCode({ sessionModel: { id: 'gpt-5.2', providerID: 'github-copilot' } });
+  await withServer(t, drifted, client =>
+    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events: quiet }),
+  );
+  const switched = drifted.requests.find(r => r.path.endsWith('/model'));
+  assert.deepEqual(switched?.body, { model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } });
+  assert.ok(
+    drifted.requests.findIndex(r => r.path.endsWith('/model')) <
+      drifted.requests.findIndex(r => r.path.endsWith('/prompt')),
+  );
+  // One already on it is left alone.
+  const same = mockOpenCode({ sessionModel: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } });
+  await withServer(t, same, client =>
+    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events: quiet }),
+  );
+  assert.ok(!same.requests.some(r => r.path.endsWith('/model')));
+  // A pinned model (a conversation's /model) wins over the agent file, and skips the agent lookup.
+  const pinned = mockOpenCode({ sessionModel: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } });
+  await withServer(t, pinned, client =>
+    runTurn(
+      client,
+      { ...input, create: false, model: { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' } },
+      { signal: AbortSignal.timeout(5000), events: quiet },
+    ),
+  );
+  assert.deepEqual(pinned.requests.find(r => r.path.endsWith('/model'))?.body, {
+    model: { providerID: 'openai', id: 'gpt-5.2', variant: 'high' },
+  });
+  assert.ok(!pinned.requests.some(r => r.path.startsWith('/api/agent')));
 });
 
 test('runTurn auto-rejects permission prompts by default and reports them', async t => {
