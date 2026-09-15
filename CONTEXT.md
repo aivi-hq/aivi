@@ -52,6 +52,10 @@ runs in one process; adapters are optional modules with a start/stop contract.
   targets) and never a deny. Restrict an agent in its own file. The home is
   the OpenCode location (`<home>/.opencode/agents/`), so example sources need
   no external rules at all ([opencode.md](docs/opencode.md)).
+- **Two browsers, on purpose.** OpenCode's `browser.*` drives the desktop
+  app's browser; aivi's `aivi_browser` drives one persistent Chrome for
+  unattended sessions and shared logins. The example agents deny the former
+  so Discord and jobs are never offered a browser that cannot connect.
 - **Memory is files** inside a knowledge source, never system-prompt state.
 - **Blocked jobs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).

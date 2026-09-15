@@ -1,9 +1,19 @@
 # Browser control
 
+OpenCode has its own browser tools (`browser.*`), which drive the browser the
+**desktop app** attaches to a session. aivi's browser exists for what that
+cannot do: unattended sessions (Discord, scheduled jobs, dreaming) on a machine
+with no desktop app attached, and one persistent Chrome profile whose logins
+and tabs are shared, with each tab owned by one session. A person working in
+the desktop app is usually better served by OpenCode's browser; the example
+agents deny it so unattended sessions are not offered a browser that cannot
+connect, and the rule is one line to remove.
+
 `@aivi/browser` uses the official **Chrome DevTools MCP**, pinned to 1.9.0.
 There is no aivi Playwright dependency or replacement automation engine. One
-stdio MCP child belongs to the host; native OpenCode tools call it through aivi.
-Chrome and the MCP child start lazily on the first browser operation.
+stdio MCP child belongs to the host; native OpenCode tools call it through aivi
+as `aivi_browser`. Chrome and the MCP child start lazily on the first browser
+operation.
 
 ## Default: aivi's own Chrome
 

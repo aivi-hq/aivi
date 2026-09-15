@@ -16,6 +16,12 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
+  # OpenCode's own browser needs the desktop app attached; unattended sessions
+  # (Discord, jobs) use aivi's Chrome through `aivi_browser` instead. Remove
+  # this rule to prefer OpenCode's browser when working in the desktop app.
+  - action: browser
+    resource: "*"
+    effect: deny
 ---
 
 You are the team's librarian. Use aivi's tools to locate company and project
