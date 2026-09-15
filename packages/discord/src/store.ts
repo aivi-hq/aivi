@@ -13,8 +13,11 @@ export interface Turn {
   state: TurnState;
   result: string | null;
   error: string | null;
+  /** `message`: a person wrote it. `job`: aivi brings a job's outcome back into the conversation. */
+  kind: TurnKind;
 }
 export type TurnState = 'queued' | 'running' | 'replying' | 'sent' | 'blocked' | 'discarded';
+export type TurnKind = 'message' | 'job';
 type Row = Record<string, unknown>;
 const turn = (r: Row): Turn => ({
   id: String(r.id),
@@ -27,6 +30,7 @@ const turn = (r: Row): Turn => ({
   state: r.state as TurnState,
   result: r.result === null ? null : String(r.result),
   error: r.error === null ? null : String(r.error),
+  kind: (r.kind as TurnKind | undefined) ?? 'message',
 });
 
 export const LEASE_OWNER = 'discord';
@@ -40,6 +44,8 @@ const migrations = [
      channel TEXT NOT NULL, user TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL,
      session TEXT NOT NULL, state TEXT NOT NULL, result TEXT, error TEXT);
    CREATE INDEX discord_pending ON discord_turns(state,seq);`,
+  `ALTER TABLE discord_turns ADD COLUMN kind TEXT NOT NULL DEFAULT 'message' CHECK(kind IN ('message','job'));
+   CREATE INDEX discord_session_lookup ON discord_sessions(session);`,
 ];
 
 /**
@@ -103,7 +109,7 @@ export class DiscordStore {
   }
 
   enqueue(
-    input: { id: string; channel: string; user: string; name: string; text: string },
+    input: { id: string; channel: string; user: string; name: string; text: string; kind?: TurnKind },
     maxPending: number,
   ): boolean {
     return this.core.transaction(() => {
@@ -119,10 +125,25 @@ export class DiscordStore {
         this.core.db.prepare('SELECT session FROM discord_sessions WHERE channel=?').get(input.channel)!.session,
       );
       this.core.db
-        .prepare("INSERT INTO discord_turns(id,channel,user,name,text,session,state) VALUES(?,?,?,?,?,?,'queued')")
-        .run(input.id, input.channel, input.user, input.name, input.text, session);
+        .prepare(
+          "INSERT INTO discord_turns(id,channel,user,name,text,session,state,kind) VALUES(?,?,?,?,?,?,'queued',?)",
+        )
+        .run(input.id, input.channel, input.user, input.name, input.text, session, input.kind ?? 'message');
       return true;
     });
+  }
+
+  /** The conversation (thread or channel) bound to a session, if this module owns it. */
+  channelOf(session: string): string | null {
+    const row = this.core.db.prepare('SELECT channel FROM discord_sessions WHERE session=?').get(session);
+    return row ? String(row.channel) : null;
+  }
+
+  /** Bring a job's outcome into the conversation bound to `session` as a turn of kind `job`. */
+  enqueueJobResult(jobId: string, session: string, text: string, maxPending: number): boolean {
+    const channel = this.channelOf(session);
+    if (!channel) throw new Error(`No Discord conversation is bound to session ${session}`);
+    return this.enqueue({ id: `job:${jobId}`, channel, user: 'aivi', name: 'aivi', text, kind: 'job' }, maxPending);
   }
 
   reset(channel: string): void {

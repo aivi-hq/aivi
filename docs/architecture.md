@@ -123,7 +123,8 @@ service lives on a random port with basic auth, so the host uses the SDK's
 turn. Bearer tokens are rejected. Every session aivi creates carries
 `metadata.aivi = { origin, … }` so dreaming and future conversation indexing
 select sessions by origin (`discord`, `job`, `dreaming`, later `linear`)
-without inspecting content.
+without inspecting content. Messages aivi submits carry the same shape; a job
+outcome brought back into a conversation is a message with origin `job-result`.
 
 ## Open work
 

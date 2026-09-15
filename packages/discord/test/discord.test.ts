@@ -283,3 +283,32 @@ test('reply splitting preserves Unicode and respects Discord UTF-16 message limi
   assert.equal(chunks.join(''), text);
   assert.ok(chunks.every(c => c.length <= 1900 && c.isWellFormed()));
 });
+
+test('a job result re-enters the thread bound to its session as a turn of kind job, in order with messages', t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new DiscordStore(core, 'binding');
+  store.enqueue(message('one', 'thread-a'), 10);
+  const session = store.list()[0]!.session;
+  assert.equal(store.channelOf(session), 'thread-a');
+  assert.equal(store.channelOf('ses_unknown'), null);
+  assert.throws(() => store.enqueueJobResult('j1', 'ses_unknown', 'text', 10), /No Discord conversation/);
+  assert.equal(store.enqueueJobResult('j1', session, '✅ done', 10), true);
+  assert.equal(store.enqueueJobResult('j1', session, '✅ done', 10), false, 'one turn per job outcome');
+  const turns = store.list('thread-a');
+  assert.deepEqual(
+    turns.map(x => [x.id, x.kind, x.user]),
+    [
+      ['one', 'message', '10000000000000002'],
+      ['job:j1', 'job', 'aivi'],
+    ],
+  );
+  const first = store.claim(scheduler, config.resource)!;
+  assert.equal(first.id, 'one', 'the person’s message goes first');
+  assert.equal(store.claim(scheduler, config.resource), null, 'one turn per thread at a time');
+  store.ready(first.channel);
+  store.sent(first.id);
+  const result = store.claim(scheduler, config.resource)!;
+  assert.equal(result.kind, 'job');
+  assert.equal(result.session, session, 'the result continues the same session');
+});

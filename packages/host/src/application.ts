@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
-import { Destinations, describeOutcome, shouldReport } from './destinations.ts';
+import { Destinations, describeOutcome, reentryPrompt, shouldReport } from './destinations.ts';
 import { connectOpenCode, type OpenCodeClient } from './opencode.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import { createHostServer, type HostAuth } from './server.ts';
 import type { Store } from './store.ts';
+
+/** Consecutive failed runs of a recurring job before its failure report asks for a look. */
+const FAILURE_NUDGE_AT = 3;
 
 export interface HostServices {
   loaded: LoadedConfig;
@@ -130,7 +133,21 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     store.acquireDaemon(owner);
     acquired = true;
     ({ knowledge, browser } = await options.resources());
-    const destinations = new Destinations();
+    // A result for a session no module owns goes straight into that native session's inbox;
+    // OpenCode orders it behind whatever the person is doing. Nobody waits for the answer here.
+    const destinations = new Destinations(async (sessionId, text, context) => {
+      const client = await opencode();
+      await client.session.get({ sessionID: sessionId }, { signal: abort.signal });
+      await client.session.prompt(
+        {
+          sessionID: sessionId,
+          text: reentryPrompt(text),
+          delivery: 'queue',
+          metadata: { aivi: { origin: 'job-result', job: context.job.id } },
+        },
+        { signal: abort.signal },
+      );
+    });
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
@@ -138,8 +155,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       log,
       async (job, state, result, reason) => {
         if (!shouldReport(job.report, state)) return;
+        let text = describeOutcome(job, state, result, reason);
+        if (state !== 'succeeded' && job.scheduleId) {
+          const streak = store.failureStreak(job.scheduleId);
+          if (streak >= FAILURE_NUDGE_AT)
+            text += `\nThis schedule has failed ${streak} times in a row. Fix it, pause it, or remove it.`;
+        }
         try {
-          await destinations.deliver(job.report, describeOutcome(job, state, result, reason));
+          await destinations.deliver(job.report, text, { job, state });
           store.note(job.id, 'reported', `${job.report.to}:${job.report.channel}`);
         } catch (error) {
           store.note(job.id, 'report-failed', error instanceof Error ? error.message : String(error));

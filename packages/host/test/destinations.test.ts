@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Job } from '@aivi/core';
 import { configSchema, scheduleSchema, taskSchema } from '@aivi/core';
-import { Destinations, describeOutcome, shouldReport } from '../src/destinations.ts';
+import { Destinations, describeOutcome, reentryPrompt, shouldReport } from '../src/destinations.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 
@@ -43,7 +43,12 @@ test('outcome text prefers the agent answer or shell output and stays bounded', 
     describeOutcome(shell, 'failed', { exitCode: 2, stdout: '', stderr: 'boom' }, 'Command exited with 2'),
     '❌ job abcdef12 (shell) failed\nCommand exited with 2\nexit 2\nboom',
   );
-  assert.ok(describeOutcome(prompt, 'succeeded', { text: 'x'.repeat(5000) }, 'completed').length <= 1500);
+  assert.ok(describeOutcome(prompt, 'succeeded', { text: 'x'.repeat(5000) }, 'completed').length <= 4000);
+  assert.equal(
+    describeOutcome({ ...prompt, sessionId: 'ses_aivi_1' }, 'succeeded', { text: 'All good' }, 'completed'),
+    '✅ schedule daily (opencode.prompt) succeeded\nAll good\nsession ses_aivi_1 in OpenCode',
+    'an agent job links its transcript',
+  );
   const dreaming: Job = {
     ...base,
     task: taskSchema.parse({ kind: 'dreaming', directory: '/d', memoryDirectory: '/k/memory' }),
@@ -93,7 +98,7 @@ test('scheduled outcomes are delivered to the registered destination and audited
       async (job, state, result, reason) => {
         if (!shouldReport(job.report, state)) return;
         try {
-          await destinations.deliver(job.report, describeOutcome(job, state, result, reason));
+          await destinations.deliver(job.report, describeOutcome(job, state, result, reason), { job, state });
           store.note(job.id, 'reported', job.report.channel);
         } catch (error) {
           store.note(job.id, 'report-failed', (error as Error).message);
@@ -115,4 +120,51 @@ test('scheduled outcomes are delivered to the registered destination and audited
   const second = store.list()[1]!;
   assert.equal(second.state, 'succeeded', 'a delivery failure never changes the job outcome');
   assert.match(store.history(second.id).at(-1)!.reason, /No destination "discord"/);
+});
+
+test('a report to "session" goes to the module that owns the session, else into the native session', async () => {
+  const native: string[] = [];
+  const destinations = new Destinations(async (sessionId, text) => {
+    native.push(`${sessionId}:${text}`);
+  });
+  const reentered: string[] = [];
+  const unregister = destinations.registerSessionOwner({
+    owns: id => id.startsWith('ses_discord_'),
+    async reenter(id, text) {
+      reentered.push(`${id}:${text}`);
+    },
+  });
+  const job = {
+    id: 'j',
+    task: taskSchema.parse({ kind: 'system.check' }),
+    resource: 'r',
+    state: 'succeeded',
+    createdAt: 0,
+    scheduledFor: 0,
+    startedAt: null,
+    finishedAt: null,
+    scheduleId: null,
+    sessionId: null,
+    owner: null,
+    result: null,
+    error: null,
+    report: null,
+  } satisfies Job;
+  const context = { job, state: 'succeeded' as const };
+  await destinations.deliver({ to: 'session', channel: 'ses_discord_1', on: 'always' }, 'hi', context);
+  await destinations.deliver({ to: 'session', channel: 'ses_native', on: 'always' }, 'yo', context);
+  assert.deepEqual(reentered, ['ses_discord_1:hi']);
+  assert.deepEqual(native, ['ses_native:yo']);
+  assert.equal(destinations.ownsSession('ses_discord_1'), true);
+  assert.equal(destinations.ownsSession('ses_native'), false);
+  assert.equal(destinations.refuse({ to: 'session', channel: 'x', on: 'always' }), undefined);
+  assert.match(destinations.refuse({ to: 'discord', channel: '1', on: 'always' }) ?? '', /No destination "discord"/);
+  destinations.register('discord', { accepts: c => c === '42', deliver: async () => {} });
+  assert.match(destinations.refuse({ to: 'discord', channel: '1', on: 'always' }) ?? '', /does not allow posting to 1/);
+  assert.equal(destinations.refuse({ to: 'discord', channel: '42', on: 'always' }), undefined);
+  assert.throws(() => destinations.register('session', { deliver: async () => {} }), /reserved/);
+  unregister();
+  await destinations.deliver({ to: 'session', channel: 'ses_discord_1', on: 'always' }, 'later', context);
+  assert.deepEqual(native.at(-1), 'ses_discord_1:later', 'without an owner the native path is used');
+  assert.match(reentryPrompt('body'), /^\[aivi delivers the outcome[^\]]*\]\nbody$/);
 });

@@ -53,11 +53,26 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 ## Reporting
 
 Any schedule, or a task file passed to `jobs enqueue` as `{ "task": …, "report": …, "resource"?: … }`,
-may carry `"report": { "to": "discord", "channel": "<id>", "on": "always" | "failure" | "never" }`.
-`to` names a destination a running module registered; the module decides whether
-aivi may post there (Discord: `reportChannels` in its config). Delivery success
-or failure is recorded in the job's audit history and never changes the job's
-outcome. See `example/tasks/shell.json`.
+may carry `"report": { "to": …, "channel": …, "on": "always" | "failure" | "never" }`.
+Delivery success or failure is recorded in the job's audit history and never
+changes the job's outcome. Two kinds of destination exist:
+
+- **A channel**: `to` names a destination a running module registered
+  (`"discord"`), `channel` is that destination's own identifier. The module
+  decides whether aivi may post there (Discord: `reportChannels` in its config).
+  See `example/tasks/shell.json`.
+- **A session**: `to: "session"`, `channel` is an OpenCode session id. The
+  outcome is not posted as text; it is submitted as a prompt into that session
+  so the agent there reads it and answers in its own words. A session a
+  conversation module owns (a Discord thread) receives it as an ordinary turn,
+  in order with the people talking there, replied to in the thread. Any other
+  session gets it queued into its native inbox. This is the default for jobs an
+  agent creates from a conversation ([jobs](backlog/jobs.md)).
+
+The text is the job outcome (`describeOutcome`, up to 4000 characters, split
+by the destination) and, for agent jobs, one trailing line naming the OpenCode
+session. A recurring job that has failed three times in a row says so in its
+failure report.
 
 Scheduling starts at the next future occurrence on initial registration. Restart
 preserves the next occurrence for unchanged definitions. Changes cancel stale

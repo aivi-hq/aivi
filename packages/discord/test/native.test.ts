@@ -81,6 +81,7 @@ test('native chat creates one fixed-agent session and reapplies only the source-
     state: 'running' as const,
     result: null,
     error: null,
+    kind: 'message' as const,
   };
   assert.equal(
     await ask(turn, AbortSignal.timeout(3000), () => {
@@ -135,6 +136,7 @@ test('an unreachable OpenCode is a turn that never started, not a blocked one', 
     state: 'running' as const,
     result: null,
     error: null,
+    kind: 'message' as const,
   };
   await assert.rejects(
     ask(turn, AbortSignal.timeout(3000), () => {}),

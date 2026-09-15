@@ -156,6 +156,19 @@ Changing the application, agent, or directory against existing state acts as
 channel's next message starts fresh. It is refused while any turn is queued or
 blocked; finish or resolve those first.
 
+### Job outcomes in a thread
+
+A job whose `report` points at a thread's session (`to: "session"`; the default
+for jobs the librarian creates from a thread) does not post text. The module
+enqueues a turn of kind `job` into that thread's inbox, ordered behind the
+messages already waiting, taking a lease like any turn. The prompt says that
+aivi delivered a job outcome and nobody typed it; the librarian reads it and
+replies in the thread in its own words, with the whole conversation in context.
+The turn's native message id is `msg_discord_job_<jobId>` and its metadata
+origin is `job-result`. One job outcome becomes at most one turn. If no thread
+is bound to the session, delivery fails and is audited on the job; the job
+outcome is unchanged.
+
 ## Boundaries
 
 The session policy is the one under Behavior; web fetch/search are allowed,
@@ -174,9 +187,6 @@ in the [README](../README.md#status).
 
 - `/steer`: submit a message with `delivery: "steer"` into the running turn
   instead of queueing behind it (OpenCode supports both).
-- Jobs re-entering a conversation: a job's outcome submitted as a prompt into
-  the thread's session, so the librarian reacts in the thread instead of aivi
-  posting raw text ([jobs](backlog/jobs.md)).
 - Several Discord agents per installation (per channel or several module
   instances); the config already carries `agent` and `directory`.
 - See [chat commands](backlog/chat-commands.md) and

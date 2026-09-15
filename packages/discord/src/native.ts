@@ -2,7 +2,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LoadedConfig, Logger } from '@aivi/core';
 import type { OpenCodeClient } from '@aivi/host';
-import { connectForTurn, runTurn } from '@aivi/host';
+import { connectForTurn, reentryPrompt, runTurn } from '@aivi/host';
 import type { DiscordConfig } from './config.ts';
 import type { Turn } from './store.ts';
 
@@ -45,11 +45,17 @@ export async function createNativeChat(
         title: `Discord ${turn.channel}`,
         sessionMetadata: { aivi: { origin: 'discord', channel: turn.channel } },
         permissions,
-        messageId: `msg_discord_${turn.id}`,
+        messageId: `msg_discord_${turn.id.replaceAll(':', '_')}`,
         // Role behaviour lives in the agent definition; the prompt only carries who said what.
-        text: `[Discord message from ${turn.name} (user ${turn.user})]\n${turn.text}`,
+        text:
+          turn.kind === 'job'
+            ? reentryPrompt(turn.text)
+            : `[Discord message from ${turn.name} (user ${turn.user})]\n${turn.text}`,
         messageMetadata: {
-          aivi: { origin: 'discord', channel: turn.channel, user: turn.user, discordMessage: turn.id },
+          aivi:
+            turn.kind === 'job'
+              ? { origin: 'job-result', channel: turn.channel, job: turn.id.slice('job:'.length) }
+              : { origin: 'discord', channel: turn.channel, user: turn.user, discordMessage: turn.id },
         },
       },
       { signal, onPermission: 'reject', onCreated: ready, ...(log ? { log } : {}) },

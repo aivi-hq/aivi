@@ -128,6 +128,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       }
     };
     const clearQueued = async (turn: Turn) => {
+      if (turn.kind !== 'message') return;
       const channel = await client.channels.fetch(turn.channel).catch(() => null);
       if (!channel?.isTextBased()) return;
       const message = await channel.messages.fetch(turn.id).catch(() => null);
@@ -321,12 +322,22 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
 
     // Proactive posts only go where the operator said they may.
     const unregister = services.destinations.register('discord', {
+      accepts: channelId => config.reportChannels.includes(channelId),
       async deliver(channelId, text) {
         if (!config.reportChannels.includes(channelId))
           throw new Error(`Discord channel ${channelId} is not in reportChannels`);
         const channel = await client.channels.fetch(channelId);
         if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
         for (const chunk of splitReply(text)) await channel.send({ content: chunk, ...safeSend });
+      },
+    });
+    // A job's outcome comes back into the thread that asked for it as a turn: the librarian reads it
+    // and replies there, in order with everything else said in that thread.
+    const unregisterOwner = services.destinations.registerSessionOwner({
+      owns: session => store.channelOf(session) !== null,
+      async reenter(session, text, context) {
+        store.enqueueJobResult(context.job.id, session, text, config.maxPending);
+        engine?.tick();
       },
     });
 
@@ -349,6 +360,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     return {
       async stop() {
         unregister();
+        unregisterOwner();
         try {
           await loop.catch(() => {}); // already reported through services.fail
         } finally {
