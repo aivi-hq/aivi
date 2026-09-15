@@ -14,6 +14,8 @@ export type { DreamingResult } from './dreaming.ts';
 export { collectSessions, dream, readCursor, renderTranscript, writeCursor } from './dreaming.ts';
 export type { JobHandler, JobHandlerDeps } from './jobs.ts';
 export { createJobHandler, JobRefused } from './jobs.ts';
+export type { RetryPolicy } from './modules.ts';
+export { ConfigurationError, DEFAULT_RETRY, ModuleSupervisor } from './modules.ts';
 export type { OpenCodeClient } from './opencode.ts';
 export { connectOpenCode } from './opencode.ts';
 export { describeOutcome, reentryPrompt, reportTarget, SESSION_DESTINATION, shouldReport } from './reports.ts';

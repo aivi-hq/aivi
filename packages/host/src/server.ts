@@ -1,6 +1,14 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { BrowserService, KnowledgeKind, KnowledgeService, LoadedConfig, Logger, Status } from '@aivi/core';
+import type {
+  BrowserService,
+  KnowledgeKind,
+  KnowledgeService,
+  LoadedConfig,
+  Logger,
+  ModuleHealth,
+  Status,
+} from '@aivi/core';
 import {
   browserEnvelopeSchema,
   jobRequestSchema,
@@ -28,13 +36,14 @@ export function resolveHostAuth(mode: 'none' | 'token', token: string | undefine
   return { mode: 'token', token };
 }
 
-export function status(store: Store, loaded: LoadedConfig, now = Date.now()): Status {
+export function status(store: Store, loaded: LoadedConfig, now = Date.now(), modules: ModuleHealth[] = []): Status {
   return {
     version: '0.1.0',
     counts: store.counts(),
     sources: loaded.sources.length,
     leases: store.leaseCount(),
     completion: 'verified-final-answer',
+    modules,
     upcoming: store
       .jobs()
       .filter(j => j.state === 'active' && j.nextAt !== null)
@@ -67,6 +76,8 @@ export interface HostServerOptions {
   jobs?: JobHandler | undefined;
   /** `POST /v1/wake`: the CLI changed the queue in SQLite; dispatch now. */
   wake?: (() => void) | undefined;
+  /** Module health for `/v1/status`; absent from the CLI. */
+  health?: (() => ModuleHealth[]) | undefined;
   log?: Logger | undefined;
 }
 
@@ -81,6 +92,7 @@ export function createHostServer({
   browser,
   jobs,
   wake,
+  health,
   log = silentLogger,
 }: HostServerOptions) {
   const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
@@ -130,7 +142,7 @@ export function createHostServer({
       return;
     }
     if (url.pathname === '/v1/status') {
-      send(200, status(store, loaded));
+      send(200, status(store, loaded, Date.now(), health?.() ?? []));
       return;
     }
     if (url.pathname === '/v1/knowledge/search') {

@@ -19,13 +19,8 @@ inherited machinery, ids, report shape), [discord.md](../discord.md),
 3. Dreaming's default `origins` is `["discord"]`; a Slack installation must
    list `slack` itself. A default of "every registered channel module" needs
    the task to see the module list.
-4. **Startup resilience** (live finding 2026-09-15): a transient
-   `Unexpected server response: 503` from a chat platform's WebSocket during
-   `module.start` took the whole host down, because startup failure unwinds
-   everything ([application.md](../application.md)). After startup the rule
-   "an optional module never takes the knowledge server and scheduler down"
-   holds; at startup it does not. Wanted: a channel module that cannot connect
-   retries with backoff in the background and reports itself degraded, while
-   the API, scheduler and other channels run; only configuration errors (bad
-   token, wrong application id) stay fatal. Also name the module in that
-   error.
+4. ~~Startup resilience~~ built 2026-09-15: `ModuleSupervisor` retries a
+   failed module start with backoff (1 s → 10 min, forever), status shows the
+   module `degraded` with its last error, `ConfigurationError` stays fatal
+   ([application.md](../application.md)). Left: surface module health in the
+   channels' own `/status` replies and in a future health report.

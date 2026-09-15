@@ -96,6 +96,13 @@ meets an agent that knows what it did. Configuration and defaults:
 
 ## Feedback and recovery, shared
 
+A module's `start` may throw. Throw `ConfigurationError` (from `@aivi/host`)
+for what only the operator can fix (missing tokens, rejected credentials, a
+wrong application id); the host then stops. Anything else (a 5xx from the
+platform, DNS, a socket that never opened) is retried by the host with backoff
+while the module shows as `degraded` in status; the module needs no retry logic
+of its own and must leave nothing half-registered when it throws.
+
 Every state a person waits on gets a signal: a waiting reaction while a
 message is queued behind other work, a short message when a turn could not
 start or could not be finished, and one notice per conversation after a

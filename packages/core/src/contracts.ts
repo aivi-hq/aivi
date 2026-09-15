@@ -31,12 +31,22 @@ export interface Run {
 export type JobSource = 'config' | 'agent' | 'operator' | 'system';
 /** A definition's own state; `done` and `missed` only happen to one-offs. */
 export type JobState = 'active' | 'paused' | 'done' | 'missed';
+/** One optional module as the host sees it; `degraded` means its start failed and is being retried. */
+export interface ModuleHealth {
+  id: string;
+  state: 'starting' | 'running' | 'degraded' | 'stopped';
+  attempts: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
+}
 export interface Status {
   version: string;
   counts: Record<RunState, number>;
   sources: number;
   leases: number;
   completion: 'verified-final-answer';
+  /** Optional modules and whether each is running; empty from the CLI, which has no running host. */
+  modules: ModuleHealth[];
   /** The next few job occurrences, soonest first. */
   upcoming: { id: string; source: JobSource; kind: Task['kind']; title: string | null; nextAt: string }[];
   /** Runs that reached a final state in the last 24 hours, newest first. */

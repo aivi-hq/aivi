@@ -1,8 +1,8 @@
 import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
-import { accessEntry } from '@aivi/core';
+import { accessEntry, errorMessage } from '@aivi/core';
 import type { ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
-import { ChannelEngine, ConversationStore, createTurnRunner, splitReply, status } from '@aivi/host';
+import { ChannelEngine, ConfigurationError, ConversationStore, createTurnRunner, splitReply, status } from '@aivi/host';
 import {
   ChannelType,
   Client,
@@ -67,7 +67,8 @@ function threadName(text: string): string {
 
 function requireToken(): string {
   const token = process.env.DISCORD_BOT_TOKEN ?? process.env.DISCORD_TOKEN;
-  if (!token) throw new Error('DISCORD_BOT_TOKEN is required (a .env next to aivi.json is loaded automatically)');
+  if (!token)
+    throw new ConfigurationError('DISCORD_BOT_TOKEN is required (a .env next to aivi.json is loaded automatically)');
   return token;
 }
 
@@ -311,12 +312,18 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       })().catch(error => log.error('command.failed', { error }));
     });
 
-    await Promise.all([
-      once(client, Events.ClientReady, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]) }),
-      client.login(token),
-    ]);
+    try {
+      await Promise.all([
+        once(client, Events.ClientReady, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]) }),
+        client.login(token),
+      ]);
+    } catch (error) {
+      // discord.js names a rejected token; everything else (gateway 5xx, DNS) is worth another try.
+      if ((error as { code?: unknown }).code === 'TokenInvalid') throw new ConfigurationError(errorMessage(error));
+      throw error;
+    }
     if (client.application?.id !== config.applicationId)
-      throw new Error('Discord token does not match configured application');
+      throw new ConfigurationError('Discord token does not match configured application');
     log.info('ready', {
       application: config.applicationId,
       agent: config.agent,

@@ -102,6 +102,10 @@ runs in one process; adapters are optional modules with a start/stop contract.
   a turn and the librarian says what matters. A channel report opens a thread
   that continues the run's own session, so replying never meets an agent that
   does not know what it did ([discord](docs/discord.md)).
+- **An optional module never takes the host down**, at startup either: a
+  failed `start` is retried with backoff for as long as the host runs and shows
+  as `degraded` in status; only a `ConfigurationError` (something the operator
+  must change) is fatal ([application](docs/application.md)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
 - **No build step.** Packages run from `src/*.ts` via Node's type stripping;

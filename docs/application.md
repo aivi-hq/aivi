@@ -34,13 +34,25 @@ never launches QMD or Chrome), acquires installation ownership, initializes
 shared services, reconciles the job definitions it owns (`jobs[]` from
 `aivi.json` and the system job `retention` seeded from `scheduler.retention`;
 `Store.syncJobs`), refreshes the search index when configured, opens the API on
-`host.bind:host.port`, then starts modules. Only after configured modules start
-does it announce readiness and dispatch scheduled work. From then on the loop
-sleeps until the next due instant and wakes early when something changes the
-queue (`HostServices.wake`, `POST /v1/wake` from the CLI, a run or turn
-releasing capacity); `scheduler.pollMs` is a safety net, not the clock. Startup failure unwinds
-already-started modules. `aivi tick` runs the same lifecycle in one-shot mode:
-no API, no modules (and no token needed), one dispatch round, drain, exit.
+`host.bind:host.port`, then starts modules in order and announces readiness
+once each has had its first attempt. From then on the loop sleeps until the
+next due instant and wakes early when something changes the queue
+(`HostServices.wake`, `POST /v1/wake` from the CLI, a run or turn releasing
+capacity); `scheduler.pollMs` is a safety net, not the clock. `aivi tick` runs
+the same lifecycle in one-shot mode: no API, no modules (and no token needed),
+one dispatch round, drain, exit.
+
+A module whose start fails does not take the host down (live finding
+2026-09-15: a chat platform answered 503 during startup and the knowledge
+server and scheduler died with it). The `ModuleSupervisor` retries the start
+in the background with exponential backoff, 1 s doubling to a 10 minute cap,
+for as long as the host runs, and `/v1/status` lists every module as
+`starting`, `running`, `degraded` (with its last error and next retry) or
+`stopped`. Readiness never waits for a retry; the API, the scheduler and the
+other modules run meanwhile. Only a `ConfigurationError` is fatal: a missing
+token, a token Discord or Slack rejects, an application id that does not match.
+Modules throw it for what the operator has to change; everything else is
+assumed transient.
 
 Each tick first materializes due job occurrences into runs. An occurrence
 found later than its misfire grace (`scheduler.misfire.graceSeconds`, per-job

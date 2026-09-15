@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { HostModule, HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
+import { ConfigurationError } from '../src/modules.ts';
 import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
@@ -93,7 +94,7 @@ test('one host starts modules with shared services and stops them in reverse ord
   store.releaseDaemon('another');
 });
 
-test('startup failure unwinds earlier modules and releases ownership', async t => {
+test('a configuration error at module start unwinds earlier modules and releases ownership', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
   const events: string[] = [];
@@ -122,7 +123,7 @@ test('startup failure unwinds earlier modules and releases ownership', async t =
     {
       id: 'broken',
       async start() {
-        throw new Error('start failed');
+        throw new ConfigurationError('start failed');
       },
     },
   ];
@@ -153,7 +154,7 @@ test('the failure that ended the host survives a failing cleanup step', async t 
     {
       id: 'broken',
       async start() {
-        throw new Error('start failed');
+        throw new ConfigurationError('start failed');
       },
     },
   ];
@@ -301,4 +302,71 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
   await host;
   assert.equal(store.counts().succeeded, 1, 'the job ran without waiting for the 300 s safety net');
   assert.ok(ran[0]! < 4000, `ran after ${ran[0]}ms`);
+});
+
+test('a module whose start fails is retried with backoff while the host serves; status shows it degraded', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const knowledge = {
+    async index() {},
+    async search() {
+      return [];
+    },
+    async close() {},
+  };
+  let attempts = 0;
+  const flaky: HostModule = {
+    id: 'flaky',
+    async start() {
+      attempts++;
+      if (attempts < 3) throw new Error(`Unexpected server response: 503 (attempt ${attempts})`);
+      return { async stop() {} };
+    },
+  };
+  const steady: HostModule = {
+    id: 'steady',
+    async start() {
+      return { async stop() {} };
+    },
+  };
+  const abort = new AbortController();
+  let address: { port: number } | undefined;
+  const host = runHost({
+    loaded: loaded(),
+    store,
+    resources: async () => ({ knowledge }),
+    modules: [flaky, steady],
+    auth,
+    signal: abort.signal,
+    moduleRetry: { baseMs: 20, maxMs: 100 },
+    onReady: a => {
+      address = a as { port: number };
+    },
+  });
+  const fetchStatus = async () =>
+    (await (
+      await fetch(`http://127.0.0.1:${address!.port}/v1/status`, { headers: { authorization: `Bearer ${auth.token}` } })
+    ).json()) as {
+      modules: { id: string; state: string; attempts: number; lastError: string | null }[];
+    };
+  const started = Date.now();
+  while (!address && Date.now() - started < 5000) await new Promise(r => setTimeout(r, 10));
+  assert.ok(address, 'the host is ready although a module failed to start');
+  const first = await fetchStatus();
+  assert.deepEqual(
+    first.modules.map(m => [m.id, m.state]),
+    [
+      ['flaky', 'degraded'],
+      ['steady', 'running'],
+    ],
+    'readiness never waits for retries; later modules still start',
+  );
+  assert.match(first.modules[0]!.lastError ?? '', /503/);
+  while (attempts < 3 && Date.now() - started < 5000) await new Promise(r => setTimeout(r, 10));
+  await new Promise(r => setTimeout(r, 30));
+  const later = await fetchStatus();
+  assert.deepEqual(later.modules.find(m => m.id === 'flaky')!.state, 'running');
+  assert.equal(later.modules.find(m => m.id === 'flaky')!.attempts, 3);
+  abort.abort();
+  await host;
 });

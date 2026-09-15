@@ -1,4 +1,5 @@
 import type { Logger } from '@aivi/core';
+import { ConfigurationError } from '@aivi/host';
 import { SocketModeClient } from '@slack/socket-mode';
 import { WebClient } from '@slack/web-api';
 
@@ -51,7 +52,7 @@ export function requireSlackTokens(env: NodeJS.ProcessEnv = process.env): { bot:
   const bot = env.SLACK_BOT_TOKEN;
   const app = env.SLACK_APP_TOKEN;
   if (!bot || !app)
-    throw new Error(
+    throw new ConfigurationError(
       'SLACK_BOT_TOKEN (xoxb-…) and SLACK_APP_TOKEN (xapp-…) are required (a .env next to aivi.json is loaded automatically)',
     );
   return { bot, app };
@@ -63,7 +64,16 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
   const guard = (promise: Promise<unknown>, event: string) => promise.catch(error => log.error(event, { error }));
   return {
     async identify() {
-      const auth = await web.auth.test();
+      let auth: Awaited<ReturnType<typeof web.auth.test>>;
+      try {
+        auth = await web.auth.test();
+      } catch (error) {
+        // Slack names a bad token (`invalid_auth`, `account_inactive`); anything else may pass next time.
+        const code = (error as { data?: { error?: string } }).data?.error;
+        if (code === 'invalid_auth' || code === 'account_inactive' || code === 'token_revoked')
+          throw new ConfigurationError(`Slack rejected SLACK_BOT_TOKEN: ${code}`);
+        throw error;
+      }
       if (!auth.user_id) throw new Error('Slack auth.test returned no user id');
       return { userId: auth.user_id };
     },

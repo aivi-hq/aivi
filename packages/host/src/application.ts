@@ -4,6 +4,7 @@ import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@ai
 import { retentionJob, silentLogger } from '@aivi/core';
 import { Channels } from './channel/router.ts';
 import { createJobHandler } from './jobs.ts';
+import { type HostModule as ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
@@ -51,13 +52,8 @@ export interface HostResources {
   knowledge: KnowledgeService;
   browser?: BrowserService;
 }
-export interface RunningModule {
-  stop(): Promise<void>;
-}
-export interface HostModule {
-  id: string;
-  start(services: HostServices): Promise<RunningModule>;
-}
+export type { RunningModule } from './modules.ts';
+export type HostModule = ModuleContract<HostServices>;
 
 export interface RunHostOptions {
   loaded: LoadedConfig;
@@ -71,6 +67,8 @@ export interface RunHostOptions {
   log?: Logger;
   /** Materialize schedules, dispatch what is due, wait, and return. No API, no modules. */
   once?: boolean;
+  /** Backoff for module starts that fail; the default climbs from 1 s to 10 min. */
+  moduleRetry?: RetryPolicy;
   onReady?: (address: unknown) => void;
 }
 
@@ -94,7 +92,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   let browser: BrowserService | undefined;
   let scheduler: Scheduler | undefined;
   let server: ReturnType<typeof createHostServer> | undefined;
-  const started: RunningModule[] = [];
+  let supervisor: ModuleSupervisor<HostServices> | undefined;
   const owner = randomUUID();
   let acquired = false;
 
@@ -123,6 +121,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       browser,
       jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
+      health: () => supervisor?.health() ?? [],
       log,
     });
     server = http;
@@ -151,11 +150,11 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       wake: () => wake.notify(),
       fail,
     };
-    for (const module of modules) {
-      abort.signal.throwIfAborted();
-      started.push(await module.start(services));
-      log.info('module.started', { module: module.id });
-    }
+    // An optional module never takes the host down: a failed start is retried in the background
+    // and shows as degraded in status; only a ConfigurationError is fatal.
+    supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry);
+    await supervisor.start(modules);
+    abort.signal.throwIfAborted();
     options.onReady?.(http.address());
 
     // Sleep until the next due instant, a wake, or the safety-net tick, whichever comes first.
@@ -236,13 +235,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   } finally {
     stop();
     scheduler?.stop();
-    for (const module of started.reverse()) {
-      try {
-        await module.stop();
-      } catch (error) {
-        errors.push(error);
-      }
-    }
+    if (supervisor) errors.push(...(await supervisor.stop()));
     try {
       await scheduler?.drain();
     } catch (error) {
