@@ -5,7 +5,7 @@ import type { BrowserTransport, McpReply } from './transport.ts';
 import { createChromeTransport } from './transport.ts';
 
 export type { BrowserTransport, McpReply } from './transport.ts';
-export { chromeArguments } from './transport.ts';
+export { brandProfile, chromeArguments } from './transport.ts';
 
 type Page = { id: number; url: string; title: string; selected: boolean };
 type Owned = { owner: string; pageId: number; tabId: string };

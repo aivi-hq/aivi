@@ -176,3 +176,41 @@ test('refused close retains ownership and unknown popup tabs are never silently 
   assert.deepEqual((await service.execute('s', { action: 'tabs' })).tabs, [tab]);
   await service.close();
 });
+
+test('a launched profile is branded once and never overrides a colour the person chose', async t => {
+  const { mkdtemp, readFile, rm, writeFile, mkdir } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { brandProfile } = await import('../src/transport.ts');
+  const root = await mkdtemp(join(tmpdir(), 'aivi-brand-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const read = async (dir: string) => JSON.parse(await readFile(join(dir, 'Default', 'Preferences'), 'utf8'));
+
+  const fresh = join(root, 'fresh');
+  await brandProfile(fresh);
+  const seeded = await read(fresh);
+  assert.equal(seeded.profile.name, 'aivi');
+  assert.equal(seeded.browser.theme.user_color, 0xffffb300 - 0x100000000);
+  assert.equal(seeded.browser.theme.follows_system_colors, false);
+
+  const custom = join(root, 'custom');
+  await mkdir(join(custom, 'Default'), { recursive: true });
+  await writeFile(
+    join(custom, 'Default', 'Preferences'),
+    JSON.stringify({ browser: { theme: { user_color: 42 } }, profile: { name: 'mine' }, other: true }),
+  );
+  await brandProfile(custom);
+  assert.deepEqual(await read(custom), {
+    browser: { theme: { user_color: 42 } },
+    profile: { name: 'mine' },
+    other: true,
+  });
+
+  const partial = join(root, 'partial');
+  await mkdir(join(partial, 'Default'), { recursive: true });
+  await writeFile(join(partial, 'Default', 'Preferences'), JSON.stringify({ profile: { name: 'kept' } }));
+  await brandProfile(partial);
+  const merged = await read(partial);
+  assert.equal(merged.profile.name, 'kept');
+  assert.equal(merged.browser.theme.color_variant, 3, 'missing theme values are filled in');
+});

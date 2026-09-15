@@ -31,7 +31,10 @@ process owns one data directory. aivi can work with either level:
 ### Default: aivi's own Chrome
 
 Nothing to configure. On the first browser call aivi launches Chrome, visible
-(not headless), with the data directory `<home>/state/chrome`. Set
+(not headless), with the data directory `<home>/state/chrome`. The window is
+amber and its profile is named "aivi", so it is never mistaken for your own
+Chrome; aivi seeds those two preferences before the first start and leaves any
+colour you pick later alone. Set
 `"browser": false` to disable the service; `aivi_browser` then reports that the
 browser is not configured.
 
