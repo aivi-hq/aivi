@@ -26,8 +26,10 @@ exists):
 - Linear project lanes select apps; each app maps to one unique OpenCode agent.
 
 When behavior changes, update the one document that owns that fact (the map is
-in `CONTEXT.md`). `docs/review/*.md` are findings, not specifications;
-`docs/backlog/*.md` are unscheduled ideas.
+in `CONTEXT.md`) in the same commit; a change is not done while a document
+still describes the old behavior. When a backlog idea is built, shrink its page
+to what is left and point at the owners. `docs/review/*.md` are findings, not
+specifications; `docs/backlog/*.md` are unscheduled ideas.
 
 Use Node 26 (`engines` in `package.json`), pinned dependencies, and npm
 workspaces. Test lifecycle, persistence, and configuration changes at the actual
