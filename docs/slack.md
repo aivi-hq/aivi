@@ -27,9 +27,11 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   deletions, joins and other subtypes are ignored. A message with files or
   without text gets a "text only" reply.
 - Replies go through `chat.postMessage` into the thread (`thread_ts`) or the
-  DM, with link and media unfurling off, split at 3900 characters. A message
-  waiting behind other work gets an ⏳ (`hourglass_flowing_sand`) reaction,
-  removed when its turn starts. Slack has no typing indicator for bots.
+  DM, with link and media unfurling off, split at 3900 characters. Slack has
+  no typing indicator for bots, so reactions on the person's message carry the
+  signal: ⏳ (`hourglass_flowing_sand`) while it waits behind other work, 👀
+  (`eyes`) while the agent works on it, both removed when the answer is posted
+  (live request 2026-09-15).
 - Slash commands are predefined in the app manifest with a configurable
   prefix (`commandPrefix`, default `aivi`): `/<prefix>-new`,
   `/<prefix>-status`, `/<prefix>-search QUERY [project]`; replies are
@@ -171,8 +173,6 @@ Socket Mode client itself is only exercised live.
 ## Later
 
 - Live gate on the owner's workspace ([roadmap](roadmap.md#live-gates)).
-- Mark a running turn (Slack has no typing for bots; a reaction such as 👀
-  would do).
 - Reply to a top-level message in `channel` mode as a thread when the person
   started one.
 - Several Slack agents per installation; the config already carries `agent`

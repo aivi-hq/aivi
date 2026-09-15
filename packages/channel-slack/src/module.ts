@@ -11,6 +11,8 @@ import { createSocketModeConnection, requireSlackTokens } from './connection.ts'
 /** Slack's limit is 4000 characters (`chat.postMessage` truncates at 40 000; the UI collapses above 4000). */
 export const SLACK: ChannelPlatform = { id: 'slack', label: 'Slack', replyLimit: 3900 };
 const WAITING = 'hourglass_flowing_sand';
+/** Slack has no typing indicator for bots; 👀 on the message says the agent is on it. */
+const WORKING = 'eyes';
 const COMMANDS = ['new', 'status', 'search'] as const;
 
 export function bindingFor(config: SlackConfig): string {
@@ -113,19 +115,34 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       }
       return name;
     };
-    // The ⏳ reaction marks a message waiting behind other work; it goes when its turn starts.
-    const clearQueued = async (turn: Turn) => {
-      if (turn.kind !== 'message') return;
+    // The ⏳ reaction marks a message waiting behind other work; 👀 replaces it while the agent works
+    // and goes when the answer is ready to post. Job turns have no message to react to.
+    const messageOf = (turn: Turn): [string, string] | null => {
+      if (turn.kind !== 'message') return null;
       const [channel, ts] = turn.id.split(':');
-      await slack.unreact(channel!, ts!, WAITING).catch(() => {});
+      return channel && ts ? [channel, ts] : null;
+    };
+    const working = async (turn: Turn) => {
+      const at = messageOf(turn);
+      if (!at) return;
+      await slack.unreact(at[0], at[1], WAITING).catch(() => {});
+      await slack.react(at[0], at[1], WORKING).catch(() => {});
+    };
+    const done = async (turn: Turn) => {
+      const at = messageOf(turn);
+      if (at) await slack.unreact(at[0], at[1], WORKING).catch(() => {});
     };
     engine = new ChannelEngine(
       store,
       config,
       services.loaded.config.scheduler,
       async (turn, signal, ready) => {
-        void clearQueued(turn);
-        return ask(turn, signal, ready);
+        void working(turn);
+        try {
+          return await ask(turn, signal, ready);
+        } finally {
+          void done(turn);
+        }
       },
       send,
       services.log,

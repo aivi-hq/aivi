@@ -322,9 +322,11 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.match(slack.ephemerals.at(-1)!, /Usage/);
 
   assert.ok(
-    slack.reactions.every(r => r.startsWith('-')),
+    !slack.reactions.some(r => r.startsWith('+hourglass')),
     'nothing waited, so no hourglass was added (removal is attempted for every turn)',
   );
+  const eyes = slack.reactions.filter(r => r.includes('eyes'));
+  assert.ok(eyes.length >= 2 && eyes[0]!.startsWith('+eyes') && eyes.at(-1)!.startsWith('-eyes'), '👀 while working');
   await running.stop();
   assert.equal(channels.has('slack'), false);
 });
@@ -362,7 +364,13 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   assert.equal(openSlackStore(store, config).state(`${DM}:20.0`), 'queued');
   store.finish(busy.id, 'host', 'succeeded', {}, 'done');
   await until(() => slack.posts.length === 1, 'the person is told the turn did not start');
-  assert.deepEqual(slack.reactions.at(-1), `-hourglass_flowing_sand@${DM}:20.0`);
+  await until(() => slack.reactions.length === 4, 'the working reaction is cleared too');
+  assert.deepEqual(slack.reactions, [
+    `+hourglass_flowing_sand@${DM}:20.0`,
+    `-hourglass_flowing_sand@${DM}:20.0`,
+    `+eyes@${DM}:20.0`,
+    `-eyes@${DM}:20.0`,
+  ]);
   assert.match(slack.posts[0]!.text, /send that again/);
   assert.equal(openSlackStore(store, config).list()[0]!.state, 'discarded');
   assert.equal(store.leases().length, 0);
