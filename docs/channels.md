@@ -57,7 +57,16 @@ describeSpeaker? }`.
   `replyLimit` (UTF-16 units, surrogate pairs intact) and sends it, records
   `sent`; `TurnNotStarted` → the turn is discarded and the person asked to
   resend; anything else → `blocked` with "an operator has been notified". The
-  engine tells the host when capacity is released (`services.wake`).
+  engine tells the host when capacity is released (`services.wake`). It talks
+  to the platform through a `ChannelDelivery`: `send(conversation, text)`
+  returning the posted message id, and optional `edit(conversation,
+  messageId, text)` and `delete(conversation, messageId)`, which power the
+  progress placeholder below.
+- **Progress** (`progress.ts`, `reporter.ts`): while a turn runs, one
+  placeholder message in the conversation says what the agent is doing. The
+  module picks the mode from its config (`progress`: `silent` | `status` |
+  `tools`, default `status`); a platform without `edit` is silent whatever the
+  mode. See [progress](#progress-while-a-turn-runs).
 - **`createTurnRunner`**: one turn = one verified turn of the agent's session
   through `runTurn`, with `external_directory` allows for the configured
   knowledge sources and nothing else; permission prompts auto-rejected. It
@@ -65,6 +74,51 @@ describeSpeaker? }`.
   platform's `describeSpeaker`; the seed prefix for a script report's first
   turn; `reentryPrompt` for job outcomes) and the metadata (see ids below).
 - Report helpers: `describeOutcome`, `shouldReport`, `reentryPrompt`.
+
+## Progress while a turn runs
+
+The typing indicator and the 👀 reaction say "alive"; the placeholder says
+"what". Progress is one edited message, never a flood: the conversation ends
+with the answer only.
+
+- **Source.** The host opens OpenCode's `client.event.subscribe()` once
+  (`HostServices.events`, `packages/host/src/events.ts`): a live-only stream
+  with no replay and no reconnect of its own, so the host rediscovers the
+  client and reopens it with backoff (1 s doubling to 30 s) whenever it ends
+  or errors, until the host stops. The first `events.watch(sessionID,
+  listener)` opens it; `tick` and `once` never do. Events are fanned out by
+  `data.sessionID`; events for sessions nobody watches are dropped. Connect
+  and disconnect are logged once per transition (`events.connected`,
+  `events.disconnected`).
+- **Model** (`progress.ts`, pure): a turn's `phase` (`thinking` | `tool` |
+  `writing`), its tool calls so far (`{ name, detail?, state: running | done
+  | failed }`), start and last-activity times, folded from
+  `session.tool.input.started` / `session.tool.called` /
+  `session.tool.success` / `session.tool.failed`, `session.text.*`,
+  `session.step.started`. Under codemode the visible tool is `execute`; the
+  model shows the aivi tools its code calls (`tools.knowledge.search({ query
+  })` → `knowledge.search "…"`, `tools.aivi.status()` → `aivi.status`).
+  Native tools show their name and a short detail: `read` the file's
+  basename, `grep`/`glob` the pattern, `webfetch` the hostname, `bash` the
+  first 40 characters of the command.
+- **Text.** `status` is one line: `⏳ thinking…`, `🔧 reading handbook.md`,
+  `🔧 searching knowledge "leave policy"`, `✍️ writing the answer`; after 20 s
+  it carries ` · 3 tools · 1m 20s`; after 30 s without any event it reads
+  `⏳ still working (2m 10s)…`. `tools` adds one line per call in order,
+  capped at the last eight: `✓ knowledge.search "leave policy"`, `… read
+  handbook.md`, `✗ webfetch example.com`.
+- **Delivery.** The placeholder is posted when the turn is claimed. Edits are
+  coalesced to at most one per 2 s per placeholder (the first at once, the
+  rest on the trailing edge), and only when the text changed. There is no
+  polling: the one timer waits for the next instant the text changes by
+  itself (the 20 s suffix, the 30 s idle notice, then each 30 s refresh of
+  the elapsed time). When the answer is ready the reply is posted and the
+  placeholder deleted (edited into the first chunk where the platform cannot
+  delete), so a new message carries the answer and its notification. A turn
+  that could not start or finish edits the placeholder into the existing
+  notice instead of posting another message. `job` turns (an outcome
+  re-entering a conversation) get the same placeholder; scheduled runs with no
+  conversation get none.
 
 ## Identifiers and prefixes
 
@@ -104,8 +158,10 @@ while the module shows as `degraded` in status; the module needs no retry logic
 of its own and must leave nothing half-registered when it throws.
 
 Every state a person waits on gets a signal: a waiting reaction while a
-message is queued behind other work, a short message when a turn could not
-start or could not be finished, and one notice per conversation after a
+message is queued behind other work, a placeholder that says what the agent is
+doing while it works ([progress](#progress-while-a-turn-runs)), a short
+message when a turn could not start or could not be finished, and one notice
+per conversation after a
 restart interrupted a turn ("please send it again", or "my last answer may be
 incomplete" when delivery had started). Prompts are never resubmitted; a
 partial reply is never resent. Blocked turns keep their capacity until the
@@ -115,10 +171,14 @@ not backfilled from platform history.
 
 ## Live gate
 
-Mock tests establish the contract, the store, the engine and the turn runner
-against the real OpenCode client on a mock server. Each platform has its own
+Mock tests establish the contract, the store, the engine, the progress model
+and the event stream (fan-out and reconnection against a mock SSE server), and
+the turn runner against the real OpenCode client on a mock server. Each
+platform has its own
 live gate: a message in a DM and in a configured channel, a thread opened by
-a mention, a queued message showing the waiting signal, a job outcome
+a mention, a queued message showing the waiting signal, the progress
+placeholder changing while the agent works and vanishing with the answer, a
+job outcome
 re-entering a thread, a report opening a thread that continues the job
 session, and the slash commands. Record the result in
 [roadmap](roadmap.md#live-gates).

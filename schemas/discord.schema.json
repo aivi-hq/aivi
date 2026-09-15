@@ -121,6 +121,15 @@
       "default": false,
       "type": "boolean"
     },
+    "progress": {
+      "default": "status",
+      "type": "string",
+      "enum": [
+        "silent",
+        "status",
+        "tools"
+      ]
+    },
     "maxConcurrent": {
       "default": 1,
       "type": "integer",

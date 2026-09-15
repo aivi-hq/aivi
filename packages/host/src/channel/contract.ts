@@ -27,6 +27,18 @@ export interface ChannelModule {
 }
 
 /**
+ * How the shared engine talks back to a platform conversation. `edit` and
+ * `delete` power the progress placeholder; without `edit` progress falls back
+ * to silent, without `delete` the placeholder is edited into the reply.
+ */
+export interface ChannelDelivery {
+  /** Post text; return the platform's message id when it has one. */
+  send(conversation: string, text: string): Promise<string | undefined>;
+  edit?(conversation: string, messageId: string, text: string): Promise<void>;
+  delete?(conversation: string, messageId: string): Promise<void>;
+}
+
+/**
  * What differs between platforms in the shared machinery. `id` prefixes the
  * inbox tables (`<id>_turns`), owns the leases (`<id>:<turn>`), the session ids
  * (`ses_<id>_…`), the native message ids (`msg_<id>_…`) and is the session origin.

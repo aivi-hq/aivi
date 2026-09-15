@@ -1,6 +1,8 @@
 import type { Config, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
 import { TurnNotStarted } from '../session.ts';
+import type { ChannelDelivery } from './contract.ts';
+import { type ProgressOptions, ProgressReporter } from './reporter.ts';
 import type { ConversationStore, Turn } from './store.ts';
 
 /** Split on code points so surrogate pairs survive; the limit counts UTF-16 units like the platforms do. */
@@ -20,11 +22,18 @@ export function splitReply(text: string, limit: number): string[] {
 }
 
 export type Ask = (turn: Turn, signal: AbortSignal, ready: () => void) => Promise<string>;
-export type Send = (channel: string, text: string) => Promise<void>;
+export type Send = ChannelDelivery['send'];
 export interface EngineLimits {
   resource: string;
   maxConcurrent: number;
   turnTimeoutMs: number;
+}
+export interface EngineOptions {
+  log?: Logger;
+  /** A turn released shared capacity; the host may have queued jobs waiting for it. */
+  onRelease?: () => void;
+  /** Progress placeholder while a turn runs; `silent`, or a delivery without `edit`, means none. */
+  progress?: ProgressOptions;
 }
 
 /** Claims queued turns within shared capacity, asks the native session, and delivers replies. */
@@ -37,25 +46,25 @@ export class ChannelEngine {
   private readonly limits: EngineLimits;
   private readonly scheduler: Config['scheduler'];
   private readonly ask: Ask;
-  private readonly send: Send;
+  private readonly delivery: ChannelDelivery;
+  private readonly progress: ProgressOptions | undefined;
   private readonly onRelease: () => void;
   constructor(
     store: ConversationStore,
     limits: EngineLimits,
     scheduler: Config['scheduler'],
     ask: Ask,
-    send: Send,
-    log: Logger = silentLogger,
-    /** A turn released shared capacity; the host may have queued jobs waiting for it. */
-    onRelease: () => void = () => {},
+    delivery: ChannelDelivery,
+    options: EngineOptions = {},
   ) {
     this.store = store;
     this.limits = limits;
     this.scheduler = scheduler;
     this.ask = ask;
-    this.send = send;
-    this.log = log.child({ component: store.platform.id });
-    this.onRelease = onRelease;
+    this.delivery = delivery;
+    this.progress = options.progress;
+    this.log = (options.log ?? silentLogger).child({ component: store.platform.id });
+    this.onRelease = options.onRelease ?? (() => {});
   }
 
   tick(): void {
@@ -66,11 +75,28 @@ export class ChannelEngine {
     }
   }
 
+  private reporter(turn: Turn, log: Logger): ProgressReporter | undefined {
+    const progress = this.progress;
+    const { edit } = this.delivery;
+    if (!progress || progress.mode === 'silent' || !edit) return undefined;
+    return new ProgressReporter(
+      { ...this.delivery, edit },
+      turn.channel,
+      turn.session,
+      { ...progress, mode: progress.mode },
+      log,
+    );
+  }
+
   private launch(turn: Turn): void {
     const log = this.log.child({ turn: turn.id, channel: turn.channel });
     const startedAt = Date.now();
     log.info('turn.started', { newSession: !turn.ready });
-    const tell = (text: string) => this.send(turn.channel, text).catch(error => log.warn('notify.failed', { error }));
+    const reporter = this.reporter(turn, log);
+    const tell = (text: string) =>
+      (reporter ? reporter.fail(text) : this.delivery.send(turn.channel, text)).catch(error =>
+        log.warn('notify.failed', { error }),
+      );
     const work = Promise.resolve()
       .then(async () => {
         try {
@@ -78,7 +104,9 @@ export class ChannelEngine {
           const text = await this.ask(turn, signal, () => this.store.ready(turn.channel));
           const answeredMs = Date.now() - startedAt;
           this.store.result(turn.id, text);
-          for (const chunk of splitReply(text, this.store.platform.replyLimit)) await this.send(turn.channel, chunk);
+          const chunks = splitReply(text, this.store.platform.replyLimit);
+          if (reporter) await reporter.finish(chunks);
+          else for (const chunk of chunks) await this.delivery.send(turn.channel, chunk);
           this.store.sent(turn.id);
           log.info('turn.sent', { answeredMs, totalMs: Date.now() - startedAt, chars: text.length });
         } catch (error) {

@@ -25,10 +25,17 @@ Mock tests do not establish these; each has its own command.
   (passed 2026-09-15, including `session.list` ordering and the `.env` guard).
 - Browser: `npm run smoke:browser` with Chrome installed (passed 2026-09-15).
 - Discord: `aivi … discord register` then `serve` against a test server.
+  Progress (2026-09-15, not yet run live): with `progress: "status"` a message
+  gets a `⏳ thinking…` placeholder that changes while the agent works
+  (`🔧 …`, `✍️ writing the answer`) and disappears when the answer is posted;
+  with `"tools"` the tool calls are listed beneath; a failing turn leaves the
+  notice in the placeholder's place.
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
   the thread, a report into `reportChannels`, a reply in that thread,
-  `/<prefix>-status` and `/<prefix>-search`.
+  `/<prefix>-status` and `/<prefix>-search`. Progress (2026-09-15, not yet run
+  live): the same placeholder in the thread through `chat.update`, deleted
+  with `chat.delete` when the answer lands, alongside the ⏳/👀 reactions.
 
 ## Next, in order of intent
 

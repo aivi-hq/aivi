@@ -40,6 +40,9 @@ export interface SlackConnection {
   connect(handlers: SlackHandlers): Promise<void>;
   disconnect(): Promise<void>;
   post(channel: string, text: string, threadTs?: string): Promise<{ ts: string }>;
+  /** Edit and delete the bot's own messages (`chat.update`, `chat.delete`); the progress placeholder needs both. */
+  update(channel: string, ts: string, text: string): Promise<void>;
+  remove(channel: string, ts: string): Promise<void>;
   /** Ephemeral reply to a slash command through its `response_url`. */
   ephemeral(responseUrl: string, text: string): Promise<void>;
   react(channel: string, ts: string, name: string): Promise<void>;
@@ -108,6 +111,12 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
       });
       if (!result.ts) throw new Error('Slack did not return a message timestamp');
       return { ts: result.ts };
+    },
+    async update(channel, ts, text) {
+      await web.chat.update({ channel, ts, text });
+    },
+    async remove(channel, ts) {
+      await web.chat.delete({ channel, ts });
     },
     async ephemeral(responseUrl, text) {
       const response = await fetch(responseUrl, {

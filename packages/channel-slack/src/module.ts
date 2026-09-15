@@ -1,7 +1,7 @@
 import { setTimeout } from 'node:timers/promises';
 import type { AccessRoute } from '@aivi/core';
 import { accessEntry } from '@aivi/core';
-import type { ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
+import type { ChannelDelivery, ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
 import { ChannelEngine, ConversationStore, createTurnRunner, splitReply, status } from '@aivi/host';
 import type { SlackConfig } from './config.ts';
 import { authorized, isDMChannelId } from './config.ts';
@@ -100,7 +100,12 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
 
   const send = async (conversation: string, text: string) => {
     const { channel, threadTs } = conversationParts(conversation);
-    await slack.post(channel, text, threadTs);
+    return (await slack.post(channel, text, threadTs)).ts;
+  };
+  const delivery: ChannelDelivery = {
+    send,
+    edit: (conversation, ts, text) => slack.update(conversationParts(conversation).channel, ts, text),
+    delete: (conversation, ts) => slack.remove(conversationParts(conversation).channel, ts),
   };
 
   try {
@@ -144,9 +149,8 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
           void done(turn);
         }
       },
-      send,
-      services.log,
-      services.wake,
+      delivery,
+      { log: services.log, onRelease: services.wake, progress: { mode: config.progress, events: services.events } },
     );
 
     // Slack delivers a mention twice (`app_mention` and `message`); the first one wins.

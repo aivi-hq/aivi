@@ -51,10 +51,22 @@ the host's. This page has what is Discord's.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
-  grant Add Reactions), a typing indicator while the agent works, a short
+  grant Add Reactions), a typing indicator while the agent works, a
+  placeholder message in the conversation that says what the agent is doing
+  (`progress`, below), a short
   message when a turn could not start (please resend) or could not be finished
   (an operator has been notified). See
   [conversation feedback](backlog/conversation-feedback.md) for what is still wanted.
+- `progress` (`silent` | `status` | `tools`, default `status`) chooses what
+  the placeholder shows: nothing at all (`silent` is exactly the typing
+  indicator alone), one line such as `⏳ thinking…`, `🔧 reading handbook.md`,
+  `✍️ writing the answer` with the tool count and elapsed time after 20 s, or
+  that line plus one line per tool call (`✓ knowledge.search "leave policy"`).
+  It is edited in place at most every 2 s and deleted when the answer is
+  posted, so the thread ends with the answer only; a turn that fails turns the
+  placeholder into the failure notice. Shared behaviour:
+  [channels](channels.md#progress-while-a-turn-runs). Needs Manage Messages
+  only for other people's messages; the bot edits and deletes its own.
 - Input is text-only. A message with attachments or without text gets a
   "text only" reply.
 - Replies are split below Discord's message limit, with mentions and link embeds

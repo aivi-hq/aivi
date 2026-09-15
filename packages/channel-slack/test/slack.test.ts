@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Run } from '@aivi/core';
 import { configSchema, silentLogger } from '@aivi/core';
-import type { HostServices } from '@aivi/host';
+import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import { Channels, connectOpenCode, Store } from '@aivi/host';
 import { slackConfigSchema } from '../src/config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
@@ -26,6 +26,8 @@ const config = slackConfigSchema.parse({
     ],
   },
   reportChannels: [HOME],
+  // The shared module test asserts every post; progress placeholders have their own test below.
+  progress: 'silent',
 });
 const message = (over: Partial<SlackEvent> & { channel: string; ts: string }): SlackEvent => ({
   type: 'message',
@@ -96,7 +98,12 @@ test('routing: DMs, mentions opening threads, threads aivi is in, channel mode, 
 });
 
 /** A tiny OpenCode: any session exists with the module agent, every prompt gets the same answer. */
-async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer: string) {
+async function fakeOpenCode(
+  t: { after(fn: () => Promise<void>): void },
+  answer: string,
+  /** Holds `session.wait` so a test can act while the turn is running. */
+  gate: () => Promise<void> = async () => {},
+) {
   const prompts: { id: string; text: string; metadata: any }[] = [];
   const sessions = new Map<string, { agent: string; directory: string }>();
   const server = createServer(async (req, res) => {
@@ -105,6 +112,7 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
     const body = raw ? JSON.parse(raw) : {};
     const url = req.url!;
     res.setHeader('content-type', 'application/json');
+    if (url.endsWith('/wait')) await gate();
     if (url.endsWith('/permission/rules') || url.endsWith('/wait')) return void res.writeHead(204).end();
     if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (url === '/api/session' && req.method === 'POST') {
@@ -149,6 +157,7 @@ function fakeConnection() {
   const posts: { channel: string; text: string; threadTs?: string }[] = [];
   const reactions: string[] = [];
   const ephemerals: string[] = [];
+  const edits: string[] = [];
   let handlers: SlackHandlers | undefined;
   let ts = 1000;
   const connection: SlackConnection = {
@@ -161,6 +170,8 @@ function fakeConnection() {
       posts.push({ channel, text, ...(threadTs ? { threadTs } : {}) });
       return { ts: `${++ts}.0` };
     },
+    update: async (channel, ts, text) => void edits.push(`${channel}:${ts} ${text}`),
+    remove: async (channel, ts) => void edits.push(`${channel}:${ts} deleted`),
     ephemeral: async (_url, text) => void ephemerals.push(text),
     react: async (channel, ts, name) => void reactions.push(`+${name}@${channel}:${ts}`),
     unreact: async (channel, ts, name) => void reactions.push(`-${name}@${channel}:${ts}`),
@@ -171,12 +182,14 @@ function fakeConnection() {
     posts,
     reactions,
     ephemerals,
+    edits,
     event: (e: SlackEvent) => handlers!.event(e),
     command: (c: Partial<SlackCommand> & { command: string }) =>
       handlers!.command({ text: '', user_id: ME, channel_id: HOME, response_url: 'https://hooks/x', ...c }),
   };
 }
 
+const noEvents: SessionEvents = { watch: () => () => {} };
 const until = async (check: () => boolean, what: string) => {
   for (let i = 0; i < 200 && !check(); i++) await new Promise(r => setTimeout(r, 10));
   assert.ok(check(), what);
@@ -210,6 +223,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     store,
     knowledge,
     opencode: () => connectOpenCode(loaded.config.opencode, {}),
+    events: noEvents,
     signal: abort.signal,
     log: silentLogger,
     channels,
@@ -343,6 +357,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     opencode: async () => {
       throw new Error('No running OpenCode v2 service found');
     },
+    events: noEvents,
     signal: abort.signal,
     log: silentLogger,
     channels: new Channels(),
@@ -374,4 +389,61 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   assert.match(slack.posts[0]!.text, /send that again/);
   assert.equal(openSlackStore(store, config).list()[0]!.state, 'discarded');
   assert.equal(store.leases().length, 0);
+});
+
+test('progress: the placeholder goes into the thread, is updated through chat.update and removed when the answer lands', async t => {
+  const store = new Store(':memory:');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const opencode = await fakeOpenCode(t, 'Answer', () => gate);
+  const loaded = {
+    config: configSchema.parse({ version: 1, opencode: { url: opencode.url } }),
+    path: '/aivi.json',
+    projects: [],
+    sources: [],
+  };
+  const listeners = new Map<string, SessionEventListener>();
+  const events: SessionEvents = {
+    watch(sessionID, listener) {
+      listeners.set(sessionID, listener);
+      return () => void listeners.delete(sessionID);
+    },
+  };
+  const slack = fakeConnection();
+  const abort = new AbortController();
+  const services: HostServices = {
+    loaded,
+    store,
+    knowledge: { search: async () => [], index: async () => ({}), close: async () => {} },
+    opencode: () => connectOpenCode(loaded.config.opencode, {}),
+    events,
+    signal: abort.signal,
+    log: silentLogger,
+    channels: new Channels(),
+    wake: () => {},
+    fail: error => assert.fail(String(error)),
+  };
+  const running = await createSlackModule({ ...config, progress: 'tools' }, slack.connection).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  await slack.event(message({ type: 'app_mention', channel: HOME, ts: '30.0', text: `<@${BOT}> look this up` }));
+  await until(() => slack.posts.length === 1, 'the placeholder is posted in the thread at once');
+  assert.deepEqual(slack.posts[0], { channel: HOME, text: '⏳ thinking…', threadTs: '30.0' });
+  const session = openSlackStore(store, config).list()[0]!.session;
+  await until(() => listeners.has(session), 'the turn watches its session');
+  const emit = (type: string, data: Record<string, unknown> = {}) =>
+    listeners.get(session)!({ type, data: { sessionID: session, ...data } } as SessionEvent);
+  emit('session.tool.input.started', { id: 't1', name: 'execute' });
+  emit('session.tool.called', { id: 't1', input: { code: 'return tools.knowledge.search({ query: "leave" })' } });
+  await until(() => slack.edits.length === 1, 'the first edit lands after the throttle window (2 s)');
+  assert.deepEqual(slack.edits, [`${HOME}:1001.0 🔧 searching knowledge "leave"\n… knowledge.search "leave"`]);
+  release();
+  await until(() => slack.edits.length === 2, 'the placeholder is removed');
+  assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'Answer', threadTs: '30.0' });
+  assert.equal(slack.edits[1], `${HOME}:1001.0 deleted`);
+  assert.ok(!listeners.has(session), 'the watch is released with the turn');
 });

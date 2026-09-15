@@ -1,8 +1,18 @@
 export type { HostModule, HostResources, HostServices, RunHostOptions, RunningModule } from './application.ts';
 export { runHost } from './application.ts';
-export type { ChannelModule, ChannelPlatform, DeliveryContext } from './channel/contract.ts';
-export type { Ask, EngineLimits, Send } from './channel/engine.ts';
+export type { ChannelDelivery, ChannelModule, ChannelPlatform, DeliveryContext } from './channel/contract.ts';
+export type { Ask, EngineLimits, EngineOptions, Send } from './channel/engine.ts';
 export { ChannelEngine, splitReply } from './channel/engine.ts';
+export type { Progress, ProgressMode, ToolCall, ToolState } from './channel/progress.ts';
+export {
+  describeToolCall,
+  formatDuration,
+  reduceProgress,
+  renderProgress,
+  startProgress,
+} from './channel/progress.ts';
+export type { ProgressOptions } from './channel/reporter.ts';
+export { ProgressReporter } from './channel/reporter.ts';
 export type { NativeReentry } from './channel/router.ts';
 export { Channels } from './channel/router.ts';
 export type { Turn, TurnKind, TurnState } from './channel/store.ts';
@@ -12,6 +22,8 @@ export type { HostClientOptions } from './client.ts';
 export { createHostClient } from './client.ts';
 export type { DreamingResult } from './dreaming.ts';
 export { collectSessions, dream, readCursor, renderTranscript, writeCursor } from './dreaming.ts';
+export type { SessionEvent, SessionEventListener, SessionEvents } from './events.ts';
+export { EVENTS_RETRY, EventStream } from './events.ts';
 export type { JobHandler, JobHandlerDeps } from './jobs.ts';
 export { createJobHandler, JobRefused } from './jobs.ts';
 export type { RetryPolicy } from './modules.ts';

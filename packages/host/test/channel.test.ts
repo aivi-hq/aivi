@@ -170,9 +170,11 @@ test('turns queue behind a slow answer; delivery failures retain results and nev
       await pending;
       return 'Answer';
     },
-    async (_channel, text) => {
-      sends.push(text);
-      throw new Error('Ambiguous Discord response');
+    {
+      async send(_channel, text) {
+        sends.push(text);
+        throw new Error('Ambiguous Discord response');
+      },
     },
   );
   engine.tick();
@@ -206,7 +208,7 @@ test('a turn that never reached the agent is discarded with its capacity release
       if (turn.id === 'one') throw new TurnNotStarted(new Error('No running OpenCode v2 service found'));
       throw new Error('lost after prompt');
     },
-    async (_channel, text) => void sent.push(text),
+    { send: async (_channel, text) => void sent.push(text) },
   );
   engine.tick();
   await engine.drain();

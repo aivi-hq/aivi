@@ -1,6 +1,7 @@
 # Conversation feedback: nobody waits in silence
 
-Status: principle agreed (2026-09-15); the minimum is built, the rest is wanted.
+Status: principle agreed (2026-09-15); the minimum and progress are built, the
+rest is wanted.
 
 ## Principle
 
@@ -20,19 +21,15 @@ shutdown.
   not react), removed when the turn starts.
 - Restart during a turn: the turn is discarded, capacity released, and the
   conversation told once (resend, or "my last answer may be incomplete").
+- Progress while the agent works (2026-09-15): one placeholder message per
+  turn, edited in place from OpenCode's event stream with the phase and the
+  tool calls, `progress: silent | status | tools` per channel, "still
+  working" after 30 s of silence, replaced by the answer or turned into the
+  failure notice. Owner: [channels](../channels.md#progress-while-a-turn-runs);
+  the field: [discord](../discord.md#behavior), [slack](../slack.md#behavior).
 
 ## Wanted
 
-- **Progress while the agent works** (owner, 2026-09-15): the typing
-  indicator says "alive", not "what". Show the turn's tool calls in the thread
-  as they happen ("searching knowledge…", "reading handbook.md", "running
-  script"), configurable per channel (off / tool names / tool names with
-  arguments), and periodic "still working on X" updates for long turns.
-  OpenCode's event stream (`client.event.subscribe()`) carries tool state
-  changes live; a placeholder message edited in place (below) is the natural
-  surface, so both land together.
-- A placeholder message that is edited as the turn progresses or is retried,
-  instead of a new message per state.
 - Shutdown and restart notices to every conversation with active or queued
   work ([shutdown-hooks](shutdown-hooks.md)), and "a turn was interrupted"
   after restart recovery.

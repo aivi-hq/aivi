@@ -31,7 +31,16 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   no typing indicator for bots, so reactions on the person's message carry the
   signal: ⏳ (`hourglass_flowing_sand`) while it waits behind other work, 👀
   (`eyes`) while the agent works on it, both removed when the answer is posted
-  (live request 2026-09-15).
+  (live request 2026-09-15). In addition a placeholder message in the thread
+  or DM says what the agent is doing (`progress`: `silent` | `status` |
+  `tools`, default `status`): `⏳ thinking…`, `🔧 searching knowledge "leave
+  policy"`, `✍️ writing the answer`, in `tools` mode with one line per call
+  beneath it. It is updated through `chat.update` at most every 2 s and
+  deleted (`chat.delete`) when the answer is posted, so the thread ends with
+  the answer; a turn that fails turns it into the failure notice. `silent`
+  keeps the reactions only. Shared behaviour:
+  [channels](channels.md#progress-while-a-turn-runs). `chat:write` covers
+  editing and deleting the bot's own messages; no new scope is needed.
 - Slash commands are predefined in the app manifest with a configurable
   prefix (`commandPrefix`, default `aivi`): `/<prefix>-new`,
   `/<prefix>-status`, `/<prefix>-search QUERY [project]`; replies are
@@ -122,6 +131,7 @@ The example home enables Slack with placeholder ids in `example/slack.json`;
     "channels": [{ "id": "C0000000001", "users": "anyone" }]
   },
   "reportChannels": ["C0000000001"],
+  "progress": "status",
   "resource": "local-model",
   "maxConcurrent": 1,
   "maxPending": 100,
@@ -167,7 +177,8 @@ installs.
 Tests mirror Discord's: routing and access with Slack ids, the example
 config, and the module against a fake connection and the real OpenCode client
 on a mock server (mention → thread reply, dedupe, files, report thread
-adoption, re-entry, slash commands, waiting reaction, not-started turns). The
+adoption, re-entry, slash commands, waiting reaction, not-started turns, the
+progress placeholder through `chat.update`/`chat.delete`). The
 Socket Mode client itself is only exercised live.
 
 ## Later

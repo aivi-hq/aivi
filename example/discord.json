@@ -16,6 +16,7 @@
   },
   "reportChannels": ["10000000000000005"],
   "messageContent": true,
+  "progress": "status",
   "resource": "local-model",
   "maxConcurrent": 1,
   "maxPending": 100,

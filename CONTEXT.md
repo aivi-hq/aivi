@@ -34,6 +34,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation` |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`), `job`, `dreaming`; on messages also `job-result` |
+| progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
 
 ## Decisions and why
 
@@ -89,6 +90,12 @@ runs in one process; adapters are optional modules with a start/stop contract.
   seeds, restart recovery, the verified-turn driver and reply splitting; a
   channel module registers one `ChannelModule` and keeps only its gateway,
   routing, sending and commands ([channels](docs/channels.md)).
+- **Progress is one edited message, never a flood.** While a turn runs, one
+  placeholder in the conversation says what the agent is doing (fed by the
+  host's single OpenCode event stream, edited at most every 2 s) and is
+  deleted when the answer is posted or edited into the failure notice, so a
+  conversation ends with the answer only. Per channel: `progress: silent |
+  status | tools` ([channels](docs/channels.md#progress-while-a-turn-runs)).
 - **Memory is files** inside a knowledge source, never system-prompt state.
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
   through `aivi_jobs` (`POST /v1/jobs`, the one job mutation on the

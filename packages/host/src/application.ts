@@ -3,6 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { retentionJob, silentLogger } from '@aivi/core';
 import { Channels } from './channel/router.ts';
+import { EventStream, type SessionEvents } from './events.ts';
 import { createJobHandler } from './jobs.ts';
 import { type HostModule as ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
@@ -39,6 +40,8 @@ export interface HostServices {
   browser?: BrowserService;
   /** Discovers the OpenCode service on every call. Call once per unit of work and hold the client for its duration. */
   opencode: () => Promise<OpenCodeClient>;
+  /** The host's one OpenCode event stream, fanned out by session id; channel progress watches turns through it. */
+  events: SessionEvents;
   signal: AbortSignal;
   log: Logger;
   /** Chat platform modules register here once; that makes them report destinations and session owners. */
@@ -144,6 +147,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       knowledge,
       ...(browser ? { browser } : {}),
       opencode,
+      // Opened by the first watcher and kept for the host's lifetime; `tick` and `once` never open it.
+      events: new EventStream(opencode, abort.signal, log),
       signal: abort.signal,
       log,
       channels,

@@ -20,6 +20,8 @@ export const discordConfigSchema = z
     reportChannels: z.array(snowflake).default([]),
     /** Requires the Message Content intent in the developer portal; needed for any trigger other than "mention". */
     messageContent: z.boolean().default(false),
+    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
+    progress: z.enum(['silent', 'status', 'tools']).default('status'),
     maxConcurrent: z.number().int().min(1).max(32).default(1),
     maxPending: z.number().int().min(1).max(1000).default(100),
     turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),

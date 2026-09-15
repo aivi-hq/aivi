@@ -156,13 +156,24 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       config,
       services.loaded.config.scheduler,
       askWithTyping,
-      async (channelId, content) => {
-        const channel = await client.channels.fetch(channelId);
-        if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
-        await channel.send({ content, ...safeSend });
+      {
+        async send(channelId, content) {
+          const channel = await client.channels.fetch(channelId);
+          if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
+          return (await channel.send({ content, ...safeSend })).id;
+        },
+        async edit(channelId, messageId, content) {
+          const channel = await client.channels.fetch(channelId);
+          if (!channel?.isTextBased()) throw new Error('Discord channel is not text based');
+          await channel.messages.edit(messageId, { content, ...safeSend });
+        },
+        async delete(channelId, messageId) {
+          const channel = await client.channels.fetch(channelId);
+          if (!channel?.isTextBased()) throw new Error('Discord channel is not text based');
+          await channel.messages.delete(messageId);
+        },
       },
-      services.log,
-      services.wake,
+      { log: services.log, onRelease: services.wake, progress: { mode: config.progress, events: services.events } },
     );
 
     // Gateway errors are transient and discord.js reconnects on its own. An optional
