@@ -1,6 +1,6 @@
-import { setTimeout } from 'node:timers/promises';
 import type { Logger } from '@aivi/core';
 import { errorMessage, silentLogger } from '@aivi/core';
+import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
 
 type NativeMessages = Awaited<ReturnType<OpenCodeClient['session']['context']>>;
@@ -70,7 +70,8 @@ export interface TurnOptions {
    * `fail`: throw `PermissionRequired`, leaving the prompt pending for a human.
    */
   onPermission?: 'reject' | 'fail';
-  pollMs?: number;
+  /** The host's OpenCode event stream; permission prompts arrive here as `permission.asked`. */
+  events: SessionEvents;
   log?: Logger;
   /** Called once the session exists (after create) so callers can persist that fact. */
   onCreated?: () => void;
@@ -96,7 +97,6 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
   const { signal } = options;
   const log = (options.log ?? silentLogger).child({ session: input.sessionId, turn: input.messageId });
   const onPermission = options.onPermission ?? 'reject';
-  const pollMs = options.pollMs ?? 1000;
   const sessionID = input.sessionId;
   const request = { signal };
 
@@ -128,42 +128,87 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
   } catch (error) {
     throw new TurnNotStarted(error);
   }
-  await client.session.prompt(
-    {
-      sessionID,
-      id: input.messageId,
-      text: input.text,
-      delivery: 'queue',
-      metadata: messageMetadata,
-      ...(input.model ? { model: input.model } : {}),
-    },
-    request,
-  );
-
+  // Permission prompts park the turn until someone answers; nobody is at the server, so the policy
+  // answers them as they are asked. Anything already pending from before this prompt is handled once.
   const rejected: TurnResult['rejected'] = [];
-  let waited = client.session.wait({ sessionID }, request).then(() => true);
-  while (true) {
-    const finished = await Promise.race([waited, setTimeout(pollMs, false, { signal })]);
-    const pending = await client.permission.list({ sessionID }, request);
-    if (pending.length) {
-      const summary = pending.map(p => ({ action: p.action, resources: [...p.resources] }));
-      if (onPermission === 'fail') throw new PermissionRequired(summary);
-      for (const p of pending) await client.permission.reply({ sessionID, requestID: p.id, reply: 'reject' }, request);
-      rejected.push(...summary);
-      log.warn('permission.rejected', { requests: summary });
+  const asks = new Set<string>();
+  let failed: PermissionRequired | undefined;
+  const failWith = (requests: { action: string; resources: string[] }[]) => {
+    failed ??= new PermissionRequired(requests);
+    parked.abort();
+  };
+  const parked = new AbortController();
+  const answer = async (id: string, action: string, resources: string[]) => {
+    if (asks.has(id)) return;
+    asks.add(id);
+    const summary = { action, resources: [...resources] };
+    if (onPermission === 'fail') return failWith([summary]);
+    await client.permission.reply({ sessionID, requestID: id, reply: 'reject' }, request);
+    rejected.push(summary);
+    log.warn('permission.rejected', { requests: [summary] });
+  };
+  let awaited = Promise.resolve();
+  const unwatch = options.events.watch(sessionID, event => {
+    if (event.type !== 'permission.asked') return;
+    const { id, action, resources } = event.data as { id: string; action: string; resources: string[] };
+    awaited = awaited
+      .then(() => answer(id, action, resources))
+      .catch(error => log.warn('permission.reply.failed', { error }));
+  });
+  try {
+    await client.session.prompt(
+      {
+        sessionID,
+        id: input.messageId,
+        text: input.text,
+        delivery: 'queue',
+        metadata: messageMetadata,
+        ...(input.model ? { model: input.model } : {}),
+      },
+      request,
+    );
+    for (const p of await client.permission.list({ sessionID }, request))
+      await answer(p.id, p.action, [...p.resources]);
+    // The context can trail `wait` by a moment; every step of a session emits events, so the next one is the re-check.
+    while (true) {
+      await Promise.race([
+        client.session.wait({ sessionID }, request),
+        new Promise<never>((_, reject) =>
+          parked.signal.addEventListener('abort', () => reject(failed), { once: true }),
+        ),
+      ]);
+      if (failed) throw failed;
+      await awaited;
+      try {
+        const text = finalAnswer(await client.session.context({ sessionID }, request), input.messageId, input.agent);
+        return { sessionId: sessionID, text, rejected };
+      } catch (error) {
+        if (!(error instanceof PendingAnswer)) throw error;
+        await nextEvent(options.events, sessionID, signal);
+      }
     }
-    if (!finished) continue;
-    try {
-      const text = finalAnswer(await client.session.context({ sessionID }, request), input.messageId, input.agent);
-      return { sessionId: sessionID, text, rejected };
-    } catch (error) {
-      if (!(error instanceof PendingAnswer)) throw error;
-      // wait() returned but the context does not show a finished turn yet (lag, or another step
-      // started). wait() resolves at once for an idle session, so pace the re-check before re-arming.
-      await setTimeout(pollMs, undefined, { signal });
-      waited = client.session.wait({ sessionID }, request).then(() => true);
-    }
+  } finally {
+    unwatch();
   }
+}
+
+/** Resolves on the next event of a session, or rejects when the signal aborts. */
+function nextEvent(events: SessionEvents, sessionID: string, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      unwatch();
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      done();
+      reject(signal.reason);
+    };
+    const unwatch = events.watch(sessionID, () => {
+      done();
+      resolve();
+    });
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /**

@@ -99,11 +99,16 @@ async function main(): Promise<void> {
   const loaded = await loadConfig(configPath);
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
-  // The CLI writes to SQLite directly; a running host learns about it now instead of at its safety-net tick.
+  // The CLI writes to SQLite directly; the running host learns about it through this poke and nothing
+  // else, so a poke that cannot be delivered is said out loud rather than swallowed.
   const poke = async () => {
     await createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN })
       .wake()
-      .catch(() => {});
+      .catch(error =>
+        console.error(
+          `Note: could not wake the host (${errorMessage(error)}). Saved; it takes effect when the host next dispatches (a due job, or \`aivi serve\` starting).`,
+        ),
+      );
   };
 
   const discord = loaded.config.modules.discord ? await import('@aivi/channel-discord') : undefined;

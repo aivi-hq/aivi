@@ -1,4 +1,3 @@
-import { setTimeout } from 'node:timers/promises';
 import type { AccessRoute } from '@aivi/core';
 import { accessEntry } from '@aivi/core';
 import type { ChannelDelivery, ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
@@ -110,7 +109,14 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
 
   try {
     const { userId: botUserId } = await slack.identify();
-    const ask = await createTurnRunner(SLACK, config, services.loaded, services.opencode, services.log);
+    const ask = await createTurnRunner(
+      SLACK,
+      config,
+      services.loaded,
+      services.opencode,
+      services.events,
+      services.log,
+    );
     const names = new Map<string, Promise<string>>();
     const nameOf = (user: string) => {
       let name = names.get(user);
@@ -150,7 +156,12 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         }
       },
       delivery,
-      { log: services.log, onRelease: services.wake, progress: { mode: config.progress, events: services.events } },
+      {
+        log: services.log,
+        onRelease: services.wake,
+        onFailure: services.fail,
+        progress: { mode: config.progress, events: services.events },
+      },
     );
 
     // Slack delivers a mention twice (`app_mention` and `message`); the first one wins.
@@ -314,31 +325,17 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       },
     });
 
-    // Turns are picked up when they arrive and when capacity frees inside this module; the loop
-    // only catches capacity released elsewhere (a job finishing) and so can be slow.
-    const loop = (async () => {
-      while (!abort.signal.aborted && !engine!.stopped) {
-        engine!.tick();
-        try {
-          await setTimeout(2000, undefined, { signal: abort.signal });
-        } catch (error) {
-          if (!abort.signal.aborted) throw error;
-        }
-      }
-      if (!abort.signal.aborted) throw new Error('Slack engine stopped unexpectedly');
-    })();
-    // The engine only stops itself when the store is unreliable; that is host-fatal.
-    void loop.catch(services.fail);
+    // Turns are picked up when they arrive, when capacity frees inside this module, and when the
+    // host says capacity moved elsewhere (a job finished). Nothing polls.
+    const unsubscribeWake = services.onWake(() => {
+      engine!.tick();
+    });
 
     return {
       async stop() {
         unregister();
-        stop();
-        try {
-          await loop.catch(() => {}); // already reported through services.fail
-        } finally {
-          await teardown();
-        }
+        unsubscribeWake();
+        await teardown();
       },
     };
   } catch (error) {

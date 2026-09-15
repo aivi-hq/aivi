@@ -227,15 +227,6 @@ export const configSchema = z
       .strictObject({
         maxConcurrent: z.number().int().min(1).max(64).default(1),
         resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
-        pollMs: z
-          .number()
-          .int()
-          .min(100)
-          .max(300_000)
-          .default(30_000)
-          .describe(
-            'Safety-net interval. The host sleeps until the next due instant and is woken by changes; this bounds how long a missed wake can delay dispatch.',
-          ),
         agentSchedules: z
           .union([
             z.strictObject({
@@ -282,7 +273,6 @@ export const configSchema = z
       .default({
         maxConcurrent: 1,
         resources: { 'local-model': 1 },
-        pollMs: 1000,
         agentSchedules: { resource: 'local-model', max: 50 },
         misfire: { graceSeconds: 60 },
         retention: { cron: '0 4 * * *', olderThanDays: 30 },

@@ -1,6 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LoadedConfig, Logger } from '@aivi/core';
+import type { SessionEvents } from '../events.ts';
 import type { OpenCodeClient } from '../opencode.ts';
 import { reentryPrompt } from '../reports.ts';
 import { connectForTurn, runTurn } from '../session.ts';
@@ -22,6 +23,7 @@ export async function createTurnRunner(
   config: { agent: string; directory: string },
   loaded: LoadedConfig,
   opencode: () => Promise<OpenCodeClient>,
+  events: SessionEvents,
   log?: Logger,
 ): Promise<Ask> {
   const permissions: { action: string; resource: string; effect: 'allow' }[] = [];
@@ -71,7 +73,7 @@ export async function createTurnRunner(
               : { origin: platform.id, channel: turn.channel, user: turn.user, sourceMessage: turn.id },
         },
       },
-      { signal, onPermission: 'reject', onCreated: ready, ...(log ? { log } : {}) },
+      { signal, onPermission: 'reject', events, onCreated: ready, ...(log ? { log } : {}) },
     );
     return result.text;
   };

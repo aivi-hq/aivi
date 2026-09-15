@@ -165,6 +165,7 @@ test('dream writes the transcript, adds only its two write targets, advances the
   const deps = {
     store,
     client,
+    events: { watch: () => () => {} },
     stateDirectory: join(root, 'state'),
     signal: AbortSignal.timeout(10000),
     now: () => T0 + 10_000,

@@ -7,6 +7,8 @@ import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 
+const quiet = { watch: () => () => {} };
+
 test('opencode.prompt jobs run a full verified turn and succeed with the final answer', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
@@ -87,7 +89,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    createExecutor({ path: '/aivi.json', config, projects: [], sources: [] }, { store, opencode }),
+    createExecutor({ path: '/aivi.json', config, projects: [], sources: [] }, { store, events: quiet, opencode }),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -120,7 +122,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    createExecutor({ path: '/aivi.json', config, projects: [], sources: [] }, { store, opencode }),
+    createExecutor({ path: '/aivi.json', config, projects: [], sources: [] }, { store, events: quiet, opencode }),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -157,7 +159,7 @@ test('a turn that times out while session.wait is pending reports the timeout, n
   const config = configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } });
   const execute = createExecutor(
     { path: '/aivi.json', config, projects: [], sources: [] },
-    { store, opencode: () => connectOpenCode(config.opencode, {}) },
+    { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}) },
   );
   // Below the schema minimum on purpose: the executor is called directly to keep the test fast.
   assert.equal(job.task.kind, 'opencode.prompt');
@@ -194,7 +196,7 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
     config.scheduler,
     createExecutor(
       { path: '/aivi.json', config, projects: [], sources: [] },
-      { store, opencode: () => connectOpenCode(config.opencode, {}) },
+      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}) },
     ),
   );
   scheduler.tick();
@@ -231,7 +233,7 @@ test('a dreaming job persists its session id before the first request and blocks
     config.scheduler,
     createExecutor(
       { path: '/aivi.json', config, projects: [], sources: [] },
-      { store, opencode: () => connectOpenCode(config.opencode, {}) },
+      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}) },
     ),
   );
   scheduler.tick();
@@ -268,7 +270,7 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   const scheduler = new Scheduler(
     store,
     { ...config.scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
-    createExecutor(loaded, { store, opencode }),
+    createExecutor(loaded, { store, events: quiet, opencode }),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -318,6 +320,7 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
       { path: '/aivi.json', config, projects: [], sources: [] },
       {
         store,
+        events: quiet,
         protectedEnv: ['FROM_DOTENV'],
         opencode: async () => {
           throw new Error('x');
@@ -353,6 +356,7 @@ test('a command that cannot start fails instead of blocking capacity', async t =
       { path: '/aivi.json', config, projects: [], sources: [] },
       {
         store,
+        events: quiet,
         opencode: async () => {
           throw new Error('x');
         },
@@ -387,6 +391,7 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
       { path: '/aivi.json', config, projects: [], sources: [] },
       {
         store,
+        events: quiet,
         opencode: async () => {
           throw new Error('x');
         },

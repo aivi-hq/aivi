@@ -247,7 +247,7 @@ test('scheduled knowledge indexing uses the same injected service', async t => {
   const scheduler = new Scheduler(
     store,
     config.config.scheduler,
-    createExecutor(config, { store, knowledge, opencode: noOpenCode }),
+    createExecutor(config, { store, knowledge, events: { watch: () => () => {} }, opencode: noOpenCode }),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -275,12 +275,11 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
       return { async stop() {} };
     },
   };
-  // A very long safety-net interval: if the loop only polled, nothing below would finish in time.
+  // Nothing periodic exists: only the wake can make the job below run.
   const config = configSchema.parse({
     version: 1,
     host: { port: 0 },
     opencode: { lifecycle: 'discover' },
-    scheduler: { pollMs: 300_000 },
   });
   const host = runHost({
     loaded: { path: '/config', config, sources: [], projects: [] },
@@ -300,7 +299,7 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
   ran.push(Date.now() - started);
   abort.abort();
   await host;
-  assert.equal(store.counts().succeeded, 1, 'the job ran without waiting for the 300 s safety net');
+  assert.equal(store.counts().succeeded, 1, 'the job ran on the wake; nothing periodic exists to fall back on');
   assert.ok(ran[0]! < 4000, `ran after ${ran[0]}ms`);
 });
 

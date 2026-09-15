@@ -112,7 +112,14 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
   };
 
   try {
-    const ask = await createTurnRunner(DISCORD, config, services.loaded, services.opencode, services.log);
+    const ask = await createTurnRunner(
+      DISCORD,
+      config,
+      services.loaded,
+      services.opencode,
+      services.events,
+      services.log,
+    );
     // Discord's typing indicator lasts ~10 s; keep it alive while the agent works so people know it is alive.
     const typing = async (channelId: string, signal: AbortSignal) => {
       const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -173,7 +180,12 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           await channel.messages.delete(messageId);
         },
       },
-      { log: services.log, onRelease: services.wake, progress: { mode: config.progress, events: services.events } },
+      {
+        log: services.log,
+        onRelease: services.wake,
+        onFailure: services.fail,
+        progress: { mode: config.progress, events: services.events },
+      },
     );
 
     // Gateway errors are transient and discord.js reconnects on its own. An optional
@@ -412,31 +424,17 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       },
     });
 
-    // Turns are picked up when they arrive and when capacity frees inside this module; the loop
-    // only catches capacity released elsewhere (a job finishing) and so can be slow.
-    const loop = (async () => {
-      while (!abort.signal.aborted && !engine!.stopped) {
-        if (client.isReady()) engine!.tick();
-        try {
-          await setTimeout(2000, undefined, { signal: abort.signal });
-        } catch (error) {
-          if (!abort.signal.aborted) throw error;
-        }
-      }
-      if (!abort.signal.aborted) throw new Error('Discord engine stopped unexpectedly');
-    })();
-    // The engine only stops itself when the store is unreliable; that is host-fatal.
-    void loop.catch(services.fail);
+    // Turns are picked up when they arrive, when capacity frees inside this module, and when the
+    // host says capacity moved elsewhere (a job finished). Nothing polls.
+    const unsubscribeWake = services.onWake(() => {
+      if (client.isReady()) engine!.tick();
+    });
 
     return {
       async stop() {
         unregister();
-        stop();
-        try {
-          await loop.catch(() => {}); // already reported through services.fail
-        } finally {
-          await teardown();
-        }
+        unsubscribeWake();
+        await teardown();
       },
     };
   } catch (error) {

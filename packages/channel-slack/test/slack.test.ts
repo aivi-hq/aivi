@@ -228,6 +228,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     log: silentLogger,
     channels,
     wake: () => {},
+    onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
   const running = await createSlackModule(config, slack.connection).start(services);
@@ -347,6 +348,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
 
 test('a queued message shows the hourglass until its turn starts; a turn that never started asks to resend', async t => {
   const store = new Store(':memory:');
+  const woken = new Set<() => void>();
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/aivi.json', projects: [], sources: [] };
   const slack = fakeConnection();
   const abort = new AbortController();
@@ -361,7 +363,13 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     signal: abort.signal,
     log: silentLogger,
     channels: new Channels(),
-    wake: () => {},
+    wake: () => {
+      for (const l of woken) l();
+    },
+    onWake: l => {
+      woken.add(l);
+      return () => woken.delete(l);
+    },
     fail: error => assert.fail(String(error)),
   };
   // Capacity is taken by a job, so the message waits.
@@ -378,6 +386,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   assert.deepEqual(slack.reactions, [`+hourglass_flowing_sand@${DM}:20.0`]);
   assert.equal(openSlackStore(store, config).state(`${DM}:20.0`), 'queued');
   store.finish(busy.id, 'host', 'succeeded', {}, 'done');
+  services.wake(); // what the host does when a run releases capacity; the engine ticks, nothing polls
   await until(() => slack.posts.length === 1, 'the person is told the turn did not start');
   await until(() => slack.reactions.length === 4, 'the working reaction is cleared too');
   assert.deepEqual(slack.reactions, [
@@ -423,6 +432,7 @@ test('progress: the placeholder goes into the thread, is updated through chat.up
     log: silentLogger,
     channels: new Channels(),
     wake: () => {},
+    onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
   const running = await createSlackModule({ ...config, progress: 'tools' }, slack.connection).start(services);

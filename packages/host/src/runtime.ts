@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { errorMessage, silentLogger } from '@aivi/core';
 import { dream } from './dreaming.ts';
+import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import type { Execute, ExecutionResult } from './scheduler.ts';
 import { connectForTurn, PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
@@ -13,6 +14,8 @@ export interface ExecutorDeps {
   knowledge?: KnowledgeService | undefined;
   /** Resolved lazily: system checks and indexing never need the model server. */
   opencode: () => Promise<OpenCodeClient>;
+  /** The host's OpenCode event stream; turns answer permission prompts from it. */
+  events: SessionEvents;
   /** Environment variable names scripts must not inherit, in addition to `SECRET_ENV` (for example the keys of `<home>/.env`). */
   protectedEnv?: Iterable<string> | undefined;
   log?: Logger | undefined;
@@ -135,6 +138,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
           context.attachSession(sessionId);
           const outcome = await dream(task, run.id, {
             store: deps.store,
+            events: deps.events,
             client,
             stateDirectory: loaded.config.stateDirectory,
             signal: AbortSignal.any([context.signal, timeout]),
@@ -177,7 +181,12 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
               text: task.prompt,
               messageMetadata: metadata,
             },
-            { signal: AbortSignal.any([context.signal, timeout]), onPermission: task.onPermission, log },
+            {
+              signal: AbortSignal.any([context.signal, timeout]),
+              onPermission: task.onPermission,
+              events: deps.events,
+              log,
+            },
           );
           return { state: 'succeeded', result: { sessionId, text: turn.text, rejectedPermissions: turn.rejected } };
         } catch (error) {

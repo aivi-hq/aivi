@@ -70,9 +70,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
   `AIVI_TOKEN` are in, a start whenever it is missing, never a stop later.
   `ensure` and `discover` are the smaller degrees; the example home uses
   `discover` so tests never touch a developer's OpenCode.
-- **No timers hold state.** The loop sleeps until `Store.nextDue()` and is
-  woken by whatever changed the queue; `pollMs` (30 s) is only a safety net.
-  SQLite is the single truth, so restarts reconcile nothing.
+- **No polling, no periodic timers.** The loop sleeps until `Store.nextDue()`
+  and is woken by whatever changed the queue; channel engines tick on the same
+  wake; turns take permission prompts (`permission.asked`) and channels take
+  progress from the one OpenCode event stream. SQLite is the single truth, so
+  restarts reconcile nothing.
 - **Shutdown aborts** running runs; they end `blocked`. A grace period is a
   design choice not yet made ([shutdown-hooks](docs/backlog/shutdown-hooks.md)).
 - **The agent file is the boundary.** Discord, jobs and dreaming run the

@@ -4,7 +4,7 @@ import { configSchema } from '@aivi/core';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 
-const config = configSchema.parse({ version: 1, scheduler: { pollMs: 100, agentSchedules: false } }).scheduler;
+const config = configSchema.parse({ version: 1, scheduler: { agentSchedules: false } }).scheduler;
 
 test('a slow task queues the next task; execution failure blocks further dispatch', async t => {
   const store = new Store(':memory:');

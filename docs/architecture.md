@@ -36,9 +36,9 @@ Croner is only a timezone-aware date calculator. The host loop sleeps until the
 next due instant (`Store.nextDue`: the earliest future occurrence of an active
 job, recurring or one-off), and is woken early when the queue changes: the
 jobs tool, a run or Discord turn releasing capacity, or the CLI poking
-`POST /v1/wake` after it wrote to SQLite. `scheduler.pollMs` (30 s) is only a safety net for a missed
-wake. No in-memory timer holds state, so a crash or restart has nothing to
-reconcile. A tick does not invoke a model unless a queued task requests one.
+`POST /v1/wake` after it wrote to SQLite (and says so when the host cannot be
+reached). Nothing periodic exists: no safety-net interval, no polling. No
+in-memory timer holds state, so a crash or restart has nothing to reconcile. A tick does not invoke a model unless a queued task requests one.
 
 `BEGIN IMMEDIATE` transactions serialize job creation, materialization of due
 occurrences into runs, and run claims. Unique keys on definitions deduplicate

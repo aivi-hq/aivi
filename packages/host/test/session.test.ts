@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
+import type { SessionEvent, SessionEventListener, SessionEvents } from '../src/events.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { finalAnswer, PermissionRequired, runTurn } from '../src/session.ts';
 
@@ -48,6 +49,9 @@ function mockOpenCode(
     pending?: { id: string; action: string; resources: string[] }[];
     agent?: string;
     contextLagsFor?: number;
+    /** Runs when `wait` is requested, before it answers: the moment a permission would be asked. */
+    waitUntil?: () => void;
+    onPermissionList?: () => void;
   } = {},
 ) {
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
@@ -62,12 +66,14 @@ function mockOpenCode(
     requests.push({ method: req.method!, path: req.url!, body });
     res.setHeader('content-type', 'application/json');
     const url = req.url!;
+    if (url.endsWith('/wait')) options.waitUntil?.();
     if (url.endsWith('/permission/rules') || url.endsWith('/wait')) {
       res.writeHead(204);
       res.end();
       return;
     }
     if (url.endsWith('/permission') && req.method === 'GET') {
+      options.onPermissionList?.();
       res.end(JSON.stringify({ data: pending }));
       return;
     }
@@ -125,6 +131,31 @@ async function withServer<T>(
 }
 
 const input = { sessionId: 'ses_test', agent: 'librarian', directory: '/lib', messageId: 'msg_t1', text: 'q' };
+/** A fake host event stream: `emit` pushes an event to whoever watches that session. */
+function fakeEvents(): SessionEvents & { emit(sessionID: string, event: SessionEvent): void; watchers: number } {
+  const listeners = new Map<string, Set<SessionEventListener>>();
+  return {
+    watchers: 0,
+    watch(sessionID, listener) {
+      this.watchers++;
+      const set = listeners.get(sessionID) ?? new Set();
+      set.add(listener);
+      listeners.set(sessionID, set);
+      return () => set.delete(listener);
+    },
+    emit(sessionID, event) {
+      for (const l of listeners.get(sessionID) ?? []) l(event);
+    },
+  };
+}
+/** Every watch is answered by an event at once: the "context trails wait()" re-check has something to wake on. */
+const chatty: SessionEvents = {
+  watch(_id, listener) {
+    const t = setImmediate(() => listener({ type: 'session.idle', data: { sessionID: 'ses_test' } }));
+    return () => clearImmediate(t);
+  },
+};
+const quiet = fakeEvents();
 
 test('runTurn creates, pins permissions, prompts, and returns the verified answer', async t => {
   const mock = mockOpenCode();
@@ -138,7 +169,7 @@ test('runTurn creates, pins permissions, prompts, and returns the verified answe
         permissions: [{ action: '*', resource: '*', effect: 'deny' }],
         sessionMetadata: { aivi: { origin: 'test' } },
       },
-      { signal: AbortSignal.timeout(5000), pollMs: 10, onCreated: () => created++ },
+      { signal: AbortSignal.timeout(5000), events: quiet, onCreated: () => created++ },
     ),
   );
   assert.deepEqual(result, { sessionId: 'ses_test', text: 'Answer', rejected: [] });
@@ -153,7 +184,7 @@ test('runTurn creates, pins permissions, prompts, and returns the verified answe
 test('runTurn auto-rejects permission prompts by default and reports them', async t => {
   const mock = mockOpenCode({ pending: [{ id: 'per_1', action: 'external_directory', resources: ['/secret/**'] }] });
   const result = await withServer(t, mock, client =>
-    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), pollMs: 10 }),
+    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events: quiet }),
   );
   assert.deepEqual(result.rejected, [{ action: 'external_directory', resources: ['/secret/**'] }]);
   const reply = mock.requests.find(r => r.path.endsWith('/permission/per_1/reply'));
@@ -167,7 +198,7 @@ test('runTurn with onPermission fail leaves the prompt pending and throws Permis
       runTurn(
         client,
         { ...input, create: false },
-        { signal: AbortSignal.timeout(5000), pollMs: 10, onPermission: 'fail' },
+        { signal: AbortSignal.timeout(5000), events: quiet, onPermission: 'fail' },
       ),
       (error: unknown) => error instanceof PermissionRequired && error.requests[0]!.action === 'shell',
     ),
@@ -182,21 +213,41 @@ test('runTurn refuses a session whose agent changed', async t => {
       runTurn(
         client,
         { ...input, agent: 'developer', create: false },
-        { signal: AbortSignal.timeout(5000), pollMs: 10 },
+        { signal: AbortSignal.timeout(5000), events: quiet },
       ),
       /no longer runs agent developer/,
     ),
   );
 });
 
-test('runTurn paces its re-check when wait() returns before the context shows the finished turn', async t => {
+test('runTurn re-checks on the next session event when wait() returns before the context shows the finished turn', async t => {
   const mock = mockOpenCode({ contextLagsFor: 5 });
-  const started = Date.now();
   const result = await withServer(t, mock, client =>
-    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), pollMs: 50 }),
+    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events: chatty }),
   );
   assert.equal(result.text, 'Answer');
   const contexts = mock.requests.filter(r => r.path.endsWith('/context')).length;
-  assert.equal(contexts, 6, 'one context read per pending answer plus the final one');
-  assert.ok(Date.now() - started >= 5 * 50, 'each re-arm waits pollMs instead of spinning');
+  assert.equal(contexts, 6, 'one context read per session event plus the final one; no timer between them');
+});
+
+test('a permission asked mid-turn arrives as an event and is answered by the policy, without polling', async t => {
+  const events = fakeEvents();
+  let listed = 0;
+  const mock = mockOpenCode({
+    waitUntil: () => {
+      // The prompt is running; the agent asks for a permission. Only the event tells us.
+      events.emit('ses_test', {
+        type: 'permission.asked',
+        data: { id: 'per_9', sessionID: 'ses_test', action: 'shell', resources: ['ls'] },
+      });
+    },
+    onPermissionList: () => listed++,
+  });
+  const result = await withServer(t, mock, client =>
+    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events }),
+  );
+  assert.deepEqual(result.rejected, [{ action: 'shell', resources: ['ls'] }]);
+  assert.deepEqual(mock.requests.find(r => r.path.endsWith('/permission/per_9/reply'))?.body, { reply: 'reject' });
+  assert.equal(listed, 1, 'permission.list is read once after the prompt, never in a loop');
+  assert.equal(events.watchers, 1, 'the turn watched its session once and unwatched');
 });

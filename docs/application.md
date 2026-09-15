@@ -38,7 +38,7 @@ shared services, reconciles the job definitions it owns (`jobs[]` from
 once each has had its first attempt. From then on the loop sleeps until the
 next due instant and wakes early when something changes the queue
 (`HostServices.wake`, `POST /v1/wake` from the CLI, a run or turn releasing
-capacity); `scheduler.pollMs` is a safety net, not the clock. `aivi tick` runs
+capacity). Nothing periodic exists. `aivi tick` runs
 the same lifecycle in one-shot mode: no API, no modules (and no token needed),
 one dispatch round, drain, exit.
 

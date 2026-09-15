@@ -40,7 +40,6 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked runs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
-| `scheduler.pollMs` | `30000`; safety-net interval. The host sleeps until the next due instant and is woken by changes; this only bounds a missed wake |
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
 | `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/aivi.json` writes the default out explicitly, in its `maintenance` pool |

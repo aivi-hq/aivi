@@ -9,6 +9,7 @@ import { TurnNotStarted } from '../src/session.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 const config = { agent: 'librarian', directory: '/librarian' };
+const quiet = { watch: () => () => {} };
 const turn = {
   id: 'one',
   channel: 'dm',
@@ -82,7 +83,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     projects: [],
     sources: [],
   };
-  const ask = await createTurnRunner(platform, config, loaded, () => connectOpenCode(loaded.config.opencode));
+  const ask = await createTurnRunner(platform, config, loaded, () => connectOpenCode(loaded.config.opencode), quiet);
   let ready = 0;
   assert.equal(
     await ask(turn, AbortSignal.timeout(3000), () => {
@@ -157,7 +158,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     describeSpeaker: t => `[Slack message from <@${t.user}>]`,
   };
   assert.equal(messageIdFor(slack, 'C1:1726000000.000100'), 'msg_slack_C1_1726000000_000100');
-  const slackAsk = await createTurnRunner(slack, config, loaded, () => connectOpenCode(loaded.config.opencode));
+  const slackAsk = await createTurnRunner(slack, config, loaded, () => connectOpenCode(loaded.config.opencode), quiet);
   await slackAsk(
     { ...turn, id: 'C1:1.5', ready: true, session: 'ses_slack_test' },
     AbortSignal.timeout(3000),
@@ -171,9 +172,15 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
 
 test('an unreachable OpenCode is a turn that never started, not a blocked one', async () => {
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/config', projects: [], sources: [] };
-  const ask = await createTurnRunner(platform, config, loaded, async () => {
-    throw new Error('No running OpenCode v2 service found');
-  });
+  const ask = await createTurnRunner(
+    platform,
+    config,
+    loaded,
+    async () => {
+      throw new Error('No running OpenCode v2 service found');
+    },
+    quiet,
+  );
   await assert.rejects(
     ask(turn, AbortSignal.timeout(3000), () => {}),
     (error: unknown) => error instanceof TurnNotStarted && /No running OpenCode/.test(error.message),

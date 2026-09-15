@@ -21,14 +21,29 @@ const FAILURE_NUDGE_AT = 3;
  * the queue changes (a tool created a job, the CLI poked `/v1/wake`). A notify
  * that arrives between two waits is not lost: the next wait returns at once.
  */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 export class Wake {
   private controller = new AbortController();
+  private readonly listeners = new Set<() => void>();
   notify(): void {
     this.controller.abort();
+    for (const listener of this.listeners) listener();
   }
-  async wait(ms: number, signal: AbortSignal): Promise<void> {
+  /** Also tell channel engines: capacity a job held may be free for their queued turns. */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  /** Sleep until `until` (an instant; null = only a wake or the host signal ends the sleep). */
+  async wait(until: number | null, signal: AbortSignal): Promise<void> {
     const current = this.controller;
-    await setTimeout(ms, undefined, { signal: AbortSignal.any([signal, current.signal]) }).catch(() => {});
+    const combined = AbortSignal.any([signal, current.signal]);
+    // Node timers cap at 2^31-1 ms; a due instant further out re-arms when this one expires.
+    const ms = until === null ? MAX_TIMER_MS : Math.min(MAX_TIMER_MS, Math.max(0, until - Date.now()));
+    await setTimeout(ms, undefined, { signal: combined }).catch(() => {});
     if (current.signal.aborted) this.controller = new AbortController();
   }
 }
@@ -46,8 +61,10 @@ export interface HostServices {
   log: Logger;
   /** Chat platform modules register here once; that makes them report destinations and session owners. */
   channels: Channels;
-  /** Tell the scheduler the queue changed so it dispatches now instead of at its next safety-net tick. */
+  /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
   wake(): void;
+  /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
+  onWake(listener: () => void): () => void;
   /** Abort the whole host. Only for failures the module cannot recover from. */
   fail(error: unknown): void;
 }
@@ -106,6 +123,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       onStart: reason => log.info('opencode.started', { reason }),
     });
   const wake = new Wake();
+  // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
+  // the host's lifetime. Turns take permission prompts and channels take progress from it.
+  const events = new EventStream(opencode, abort.signal, log);
 
   const serve = async (scheduler: Scheduler, channels: Channels, knowledge: KnowledgeService) => {
     // With lifecycle "own", a running service is replaced now, before any module or job needs it:
@@ -147,12 +167,12 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       knowledge,
       ...(browser ? { browser } : {}),
       opencode,
-      // Opened by the first watcher and kept for the host's lifetime; `tick` and `once` never open it.
-      events: new EventStream(opencode, abort.signal, log),
+      events,
       signal: abort.signal,
       log,
       channels,
       wake: () => wake.notify(),
+      onWake: listener => wake.subscribe(listener),
       fail,
     };
     // An optional module never takes the host down: a failed start is retried in the background
@@ -162,14 +182,12 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     abort.signal.throwIfAborted();
     options.onReady?.(http.address());
 
-    // Sleep until the next due instant, a wake, or the safety-net tick, whichever comes first.
-    // No in-memory timers hold state: the queue in SQLite is the only truth, and a crash costs nothing.
+    // Sleep until the next due instant or a wake, whichever comes first; nothing periodic. No in-memory
+    // timer holds state: the queue in SQLite is the only truth, and a crash costs nothing.
     while (!abort.signal.aborted) {
       scheduler.tick();
       if (scheduler.stopped) throw new Error('Scheduler stopped unexpectedly');
-      const due = store.nextDue();
-      const ms = Math.min(loaded.config.scheduler.pollMs, due === null ? Infinity : Math.max(0, due - Date.now()));
-      await wake.wait(ms, abort.signal);
+      await wake.wait(store.nextDue(), abort.signal);
     }
     if (failure !== undefined) throw failure;
   };
@@ -198,7 +216,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
-      createExecutor(loaded, { store, knowledge, opencode, protectedEnv: options.protectedEnv, log }),
+      createExecutor(loaded, { store, knowledge, opencode, events, protectedEnv: options.protectedEnv, log }),
       log,
       async (run, state, result, reason) => {
         // Capacity was released: queued work may be claimable now.

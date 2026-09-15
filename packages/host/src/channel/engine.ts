@@ -32,6 +32,8 @@ export interface EngineOptions {
   log?: Logger;
   /** A turn released shared capacity; the host may have queued jobs waiting for it. */
   onRelease?: () => void;
+  /** The store failed underneath a turn; the engine has stopped itself and the host should know. */
+  onFailure?: (error: unknown) => void;
   /** Progress placeholder while a turn runs; `silent`, or a delivery without `edit`, means none. */
   progress?: ProgressOptions;
 }
@@ -49,6 +51,7 @@ export class ChannelEngine {
   private readonly delivery: ChannelDelivery;
   private readonly progress: ProgressOptions | undefined;
   private readonly onRelease: () => void;
+  private readonly onFailure: (error: unknown) => void;
   constructor(
     store: ConversationStore,
     limits: EngineLimits,
@@ -65,6 +68,7 @@ export class ChannelEngine {
     this.progress = options.progress;
     this.log = (options.log ?? silentLogger).child({ component: store.platform.id });
     this.onRelease = options.onRelease ?? (() => {});
+    this.onFailure = options.onFailure ?? (() => {});
   }
 
   tick(): void {
@@ -129,6 +133,7 @@ export class ChannelEngine {
         this.log.error('engine.failed', { error });
         this.failure = error;
         this.stop();
+        this.onFailure(error);
       })
       .finally(() => {
         this.active.delete(turn.id);

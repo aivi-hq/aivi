@@ -354,7 +354,6 @@
         "resources": {
           "local-model": 1
         },
-        "pollMs": 1000,
         "agentSchedules": {
           "resource": "local-model",
           "max": 50
@@ -389,13 +388,6 @@
             "minimum": 1,
             "maximum": 64
           }
-        },
-        "pollMs": {
-          "description": "Safety-net interval. The host sleeps until the next due instant and is woken by changes; this bounds how long a missed wake can delay dispatch.",
-          "default": 30000,
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 300000
         },
         "agentSchedules": {
           "description": "OpenCode agents create jobs through the aivi_jobs tool; whoever may talk to an agent may schedule. `false` disables the tool.",

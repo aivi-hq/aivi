@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/pro
 import { join, relative } from 'node:path';
 import type { Logger, Task } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
+import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import { runTurn, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
@@ -12,6 +13,7 @@ type DreamingTask = Extract<Task, { kind: 'dreaming' }>;
 export interface DreamingDeps {
   store: Store;
   client: OpenCodeClient;
+  events: SessionEvents;
   stateDirectory: string;
   signal: AbortSignal;
   log?: Logger | undefined;
@@ -220,7 +222,7 @@ export async function dream(
         `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
       ].join('\n'),
     },
-    { signal: deps.signal, onPermission: 'reject', log },
+    { signal: deps.signal, onPermission: 'reject', events: deps.events, log },
   );
 
   const after = await snapshot(memory);
