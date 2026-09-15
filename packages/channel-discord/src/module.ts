@@ -2,7 +2,15 @@ import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
 import { accessEntry, errorMessage } from '@aivi/core';
 import type { ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
-import { ChannelEngine, ConfigurationError, ConversationStore, createTurnRunner, splitReply, status } from '@aivi/host';
+import {
+  ChannelEngine,
+  ConfigurationError,
+  ConversationStore,
+  createTurnRunner,
+  describeConversation,
+  splitReply,
+  status,
+} from '@aivi/host';
 import {
   ChannelType,
   Client,
@@ -42,6 +50,9 @@ export async function registerDiscordCommands(config: DiscordConfig): Promise<vo
   const commands = [
     new SlashCommandBuilder().setName('new').setDescription('Start a fresh conversation'),
     new SlashCommandBuilder().setName('status').setDescription('Show this conversation status'),
+    new SlashCommandBuilder()
+      .setName('context')
+      .setDescription('What this conversation’s session knows: agent, model, messages, tokens, knowledge in scope'),
     new SlashCommandBuilder()
       .setName('search')
       .setDescription('Search team knowledge')
@@ -104,7 +115,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
   const teardown = async () => {
     stop();
     try {
-      await engine?.drain();
+      await engine?.shutdown();
     } finally {
       await client.destroy();
       services.signal.removeEventListener('abort', stop);
@@ -304,9 +315,25 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           return;
         }
         let content: string;
-        // In thread mode the channel itself is never a conversation; /new and /status belong in a thread.
+        // In thread mode the channel itself is never a conversation; /new, /status and /context belong in a thread.
         if (!route.isDM && route.parentId === null && accessEntry(config.access, route)?.sessions === 'threads') {
           content = 'Run this inside a thread. In this channel every conversation is its own thread.';
+        } else if (interaction.commandName === 'context') {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          try {
+            content = await describeConversation(
+              store,
+              interaction.channelId,
+              config,
+              services.loaded,
+              services.opencode,
+            );
+          } catch (error) {
+            log.warn('context.failed', { error });
+            content = 'I could not read this session from OpenCode just now.';
+          }
+          await interaction.editReply({ content, allowedMentions: safeSend.allowedMentions });
+          return;
         } else if (interaction.commandName === 'new') {
           try {
             store.reset(interaction.channelId);

@@ -1,7 +1,14 @@
 import type { AccessRoute } from '@aivi/core';
 import { accessEntry } from '@aivi/core';
 import type { ChannelDelivery, ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
-import { ChannelEngine, ConversationStore, createTurnRunner, splitReply, status } from '@aivi/host';
+import {
+  ChannelEngine,
+  ConversationStore,
+  createTurnRunner,
+  describeConversation,
+  splitReply,
+  status,
+} from '@aivi/host';
 import type { SlackConfig } from './config.ts';
 import { authorized, isDMChannelId } from './config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent } from './connection.ts';
@@ -12,7 +19,7 @@ export const SLACK: ChannelPlatform = { id: 'slack', label: 'Slack', replyLimit:
 const WAITING = 'hourglass_flowing_sand';
 /** Slack has no typing indicator for bots; 👀 on the message says the agent is on it. */
 const WORKING = 'eyes';
-const COMMANDS = ['new', 'status', 'search'] as const;
+const COMMANDS = ['new', 'status', 'search', 'context'] as const;
 
 export function bindingFor(config: SlackConfig): string {
   return JSON.stringify({ agent: config.agent, directory: config.directory });
@@ -90,7 +97,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
   const teardown = async () => {
     stop();
     try {
-      await engine?.drain();
+      await engine?.shutdown();
     } finally {
       await slack.disconnect().catch(error => log.warn('disconnect.failed', { error }));
       services.signal.removeEventListener('abort', stop);
@@ -243,6 +250,18 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       // Slash commands carry no thread, so in thread mode they speak for the channel: every new
       // top-level message is already a fresh conversation, and status covers all its threads.
       const threads = !route.isDM && accessEntry(config.access, route)?.sessions === 'threads';
+      if (name === 'context') {
+        if (threads)
+          return reply(
+            'In this channel every thread is its own conversation; slash commands cannot tell which one you mean.',
+          );
+        try {
+          return reply(await describeConversation(store, channel, config, services.loaded, services.opencode));
+        } catch (error) {
+          log.warn('context.failed', { error });
+          return reply('I could not read this session from OpenCode just now.');
+        }
+      }
       if (name === 'new') {
         if (threads)
           return reply('In this channel every thread is its own conversation; a new message starts a fresh one.');

@@ -284,6 +284,44 @@ export class ConversationStore {
     });
   }
 
+  /**
+   * The host is going down mid-turn. Like a restart, the turn's only external effect is
+   * its reply, so it is discarded and its capacity released; the caller tells the person.
+   */
+  interrupt(id: string): void {
+    this.core.transaction(() => {
+      this.core.db
+        .prepare(
+          `UPDATE ${this.n.turns} SET state='discarded',text='',result=NULL,error='Interrupted by a shutdown' WHERE id=? AND state IN ('running','replying')`,
+        )
+        .run(id);
+      this.core.releaseLease(this.n.leaseID(id), this.n.leaseOwner);
+    });
+  }
+
+  /** Conversations with messages still waiting; they survive a restart and are answered after it. */
+  queuedChannels(): string[] {
+    return (
+      this.core.db.prepare(`SELECT DISTINCT channel FROM ${this.n.turns} WHERE state='queued'`).all() as Row[]
+    ).map(r => String(r.channel));
+  }
+
+  /** The session a conversation is bound to, with what the binding pinned; null when aivi is not part of it yet. */
+  sessionOf(
+    channel: string,
+  ): { session: string; ready: boolean; agent: string | null; directory: string | null } | null {
+    const row = this.core.db
+      .prepare(`SELECT session,ready,agent,directory FROM ${this.n.sessions} WHERE channel=?`)
+      .get(channel);
+    if (!row) return null;
+    return {
+      session: String(row.session),
+      ready: Boolean(Number(row.ready)),
+      agent: row.agent == null ? null : String(row.agent),
+      directory: row.directory == null ? null : String(row.directory),
+    };
+  }
+
   resolve(id: string, reason: string): void {
     if (!reason.trim()) throw new Error('A reason is required');
     this.core.transaction(() => {

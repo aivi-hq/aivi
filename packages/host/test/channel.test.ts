@@ -226,6 +226,47 @@ test('a turn that never reached the agent is discarded with its capacity release
   assert.match(sent[1]!, /operator has been notified/);
 });
 
+test('shutdown discards the running turn instead of blocking it, warns queued conversations, and leaves no lease behind', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-b'), 10);
+  store.enqueue(message('three', 'dm-b'), 10);
+  const sent: [string, string][] = [];
+  const engine = new ChannelEngine(
+    store,
+    limits, // one at a time: `one` runs, `two` and `three` wait
+    scheduler,
+    (_turn, signal) =>
+      new Promise<string>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      }),
+    { send: async (channel, text) => void sent.push([channel, text]) },
+  );
+  engine.tick();
+  await Promise.resolve();
+  await engine.shutdown();
+  const [one, two, three] = store.list();
+  assert.equal(
+    one!.state,
+    'discarded',
+    'a shutdown is a restart from the turn’s point of view: discarded, not blocked',
+  );
+  assert.match(one!.error ?? '', /shutdown/);
+  assert.equal(two!.state, 'queued');
+  assert.equal(three!.state, 'queued');
+  assert.deepEqual(core.leases(), [], 'nothing waits for an operator');
+  assert.deepEqual(
+    sent.map(([channel]) => channel).sort(),
+    ['dm-a', 'dm-b'],
+    'the interrupted conversation and each waiting conversation hear about it once',
+  );
+  assert.match(sent.find(([c]) => c === 'dm-a')![1], /going offline .* send it again/);
+  assert.match(sent.find(([c]) => c === 'dm-b')![1], /stays queued/);
+  assert.deepEqual(store.recover(), [], 'nothing left for restart recovery to announce a second time');
+});
+
 test('reply splitting preserves Unicode and respects the platform UTF-16 message limit', () => {
   const text = `${'a'.repeat(1899)}${'🦊'.repeat(1000)}\nlast`;
   const chunks = splitReply(text, platform.replyLimit);

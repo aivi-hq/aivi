@@ -101,6 +101,7 @@ export class ChannelEngine {
       (reporter ? reporter.fail(text) : this.delivery.send(turn.channel, text)).catch(error =>
         log.warn('notify.failed', { error }),
       );
+    let delivering = false;
     const work = Promise.resolve()
       .then(async () => {
         try {
@@ -108,6 +109,7 @@ export class ChannelEngine {
           const text = await this.ask(turn, signal, () => this.store.ready(turn.channel));
           const answeredMs = Date.now() - startedAt;
           this.store.result(turn.id, text);
+          delivering = true;
           const chunks = splitReply(text, this.store.platform.replyLimit);
           if (reporter) await reporter.finish(chunks);
           else for (const chunk of chunks) await this.delivery.send(turn.channel, chunk);
@@ -119,6 +121,18 @@ export class ChannelEngine {
             log.warn('turn.not_started', { error });
             this.store.fail(turn.id);
             await tell('I could not reach my agent runtime just now. Please send that again in a moment.');
+            return;
+          }
+          if (this.abort.signal.aborted) {
+            // The host is going down. As after a restart, the reply is the turn's only external
+            // effect, so the turn is discarded rather than blocked, and the person hears why.
+            log.info('turn.interrupted', { delivering });
+            this.store.interrupt(turn.id);
+            await tell(
+              delivering
+                ? OFFLINE_MID_REPLY
+                : 'I am going offline for a moment (a restart or shutdown) and could not finish this. Please send it again when I am back.',
+            );
             return;
           }
           // No automatic resend: delivery may already have succeeded before a response was lost.
@@ -153,4 +167,27 @@ export class ChannelEngine {
     await Promise.all([...this.active.values()]);
     if (this.failure !== undefined) throw this.failure;
   }
+  /**
+   * Going down: stop claiming, tell every conversation that is still waiting (its
+   * messages survive the restart and are answered after it), then let the running
+   * turns finish their own goodbye. Notices are best effort and never delay the stop.
+   */
+  async shutdown(): Promise<void> {
+    this.stop();
+    await Promise.all(
+      this.store
+        .queuedChannels()
+        .map(channel =>
+          this.delivery
+            .send(channel, OFFLINE_QUEUED)
+            .catch(error => this.log.warn('notify.failed', { channel, error })),
+        ),
+    );
+    await this.drain();
+  }
 }
+
+export const OFFLINE_QUEUED =
+  'I am going offline for a moment (a restart or shutdown). Your message stays queued and I will answer it when I am back.';
+export const OFFLINE_MID_REPLY =
+  'I am going offline for a moment and was cut off mid-reply, so my last answer may be incomplete. Ask again when I am back if you need it.';

@@ -59,8 +59,10 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
   `blocked`, capacity kept, human resolves. Exception: a conversation turn
-  interrupted by a *restart* is discarded and the person told, because its
-  only external effect is the reply; jobs still block.
+  interrupted by a *shutdown or restart* is discarded and the person told,
+  because its only external effect is the reply; conversations with queued
+  messages hear that aivi is going offline and that they will be answered
+  after; jobs still block.
 - **Verified final answer**, never idleness: `finalAnswer` reads the native
   context (`user → assistant(finish: stop) → idle(succeeded)`, no unfinished
   tools).

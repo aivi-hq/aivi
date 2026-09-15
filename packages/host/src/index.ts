@@ -1,8 +1,9 @@
 export type { HostModule, HostResources, HostServices, RunHostOptions, RunningModule } from './application.ts';
 export { runHost } from './application.ts';
+export { describeConversation } from './channel/context.ts';
 export type { ChannelDelivery, ChannelModule, ChannelPlatform, DeliveryContext } from './channel/contract.ts';
 export type { Ask, EngineLimits, EngineOptions, Send } from './channel/engine.ts';
-export { ChannelEngine, splitReply } from './channel/engine.ts';
+export { ChannelEngine, OFFLINE_MID_REPLY, OFFLINE_QUEUED, splitReply } from './channel/engine.ts';
 export type { Progress, ProgressMode, ToolCall, ToolState } from './channel/progress.ts';
 export {
   describeToolCall,

@@ -97,9 +97,11 @@ browser/MCP and QMD close, and ownership is released. A grace period that lets
 work finish first is a design choice not yet made
 ([shutdown-hooks](backlog/shutdown-hooks.md)).
 
-A conversation turn interrupted by a restart is the one exception to "blocked":
-its only external effect is the reply, so it is discarded and the person is
-told to send the message again ([channels](channels.md#feedback-and-recovery-shared)).
+A conversation turn interrupted by the shutdown is the one exception to
+"blocked": its only external effect is the reply, so it is discarded and the
+person is told aivi is going offline and to send the message again; waiting
+conversations hear that their messages stay queued
+([channels](channels.md#feedback-and-recovery-shared)).
 
 ## Blocked conversation turns
 

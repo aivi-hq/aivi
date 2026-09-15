@@ -49,12 +49,14 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   editing and deleting the bot's own messages; no new scope is needed.
 - Slash commands are predefined in the app manifest with a configurable
   prefix (`commandPrefix`, default `aivi`): `/<prefix>-new`,
-  `/<prefix>-status`, `/<prefix>-search QUERY [project]`; replies are
-  ephemeral through the command's `response_url`. Slack commands carry no
-  thread, so in a `threads` channel they speak for the channel: `-new` says
-  that every new top-level message already starts a fresh conversation, and
-  `-status` counts the pending turns of all its threads. In a DM or a
-  `channel`-mode channel they behave like Discord's `/new` and `/status`.
+  `/<prefix>-status`, `/<prefix>-context`, `/<prefix>-search QUERY [project]`;
+  replies are ephemeral through the command's `response_url`. Slack commands
+  carry no thread, so in a `threads` channel they speak for the channel:
+  `-new` says that every new top-level message already starts a fresh
+  conversation, `-status` counts the pending turns of all its threads, and
+  `-context` says it cannot tell which thread is meant. In a DM or a
+  `channel`-mode channel they behave like Discord's `/new`, `/status` and
+  `/context` ([discord](discord.md#behavior)).
   `-search` treats the last word as a project only when it names a
   configured one.
 - Sessions carry `metadata.aivi = { origin: "slack", channel }` and each
@@ -79,6 +81,9 @@ features:
       should_escape: false
     - command: /{prefix}-status
       description: Show this conversation status
+      should_escape: false
+    - command: /{prefix}-context
+      description: What this conversation's session knows
       should_escape: false
     - command: /{prefix}-search
       description: Search team knowledge
@@ -199,5 +204,4 @@ Socket Mode client itself is only exercised live.
   assistant threads (the app's DM in the AI side panel), not in channel
   threads, and it changes the DM UX (suggested prompts, split view). An option
   for DM-heavy use; the 👀 reaction covers channels either way.
-- See [chat commands](backlog/chat-commands.md) and
-  [conversation feedback](backlog/conversation-feedback.md).
+- See [chat commands](backlog/chat-commands.md).

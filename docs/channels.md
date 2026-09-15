@@ -160,14 +160,24 @@ of its own and must leave nothing half-registered when it throws.
 Every state a person waits on gets a signal: a waiting reaction while a
 message is queued behind other work, a placeholder that says what the agent is
 doing while it works ([progress](#progress-while-a-turn-runs)), a short
-message when a turn could not start or could not be finished, and one notice
-per conversation after a
-restart interrupted a turn ("please send it again", or "my last answer may be
-incomplete" when delivery had started). Prompts are never resubmitted; a
-partial reply is never resent. Blocked turns keep their capacity until the
-operator runs `<module> resolve TURN_ID --reason … --confirm-stopped` after
-inspecting the native session. Messages received while aivi was offline are
-not backfilled from platform history.
+message when a turn could not start or could not be finished, and a goodbye
+when aivi goes down. On shutdown (`ChannelEngine.shutdown`) the running turn is
+discarded, not blocked, since its only external effect is the reply, and its
+conversation hears "I am going offline … please send it again" (or "my last
+answer may be incomplete" when delivery had started); every conversation with
+messages still queued hears that they stay queued and are answered after the
+restart, which they are. Only a hard kill leaves `running`/`replying` turns
+for the next start, where `recover()` discards them and the module posts the
+same two notices. Prompts are never resubmitted; a partial reply is never
+resent. Blocked turns keep their capacity until the operator runs
+`<module> resolve TURN_ID --reason … --confirm-stopped` after inspecting the
+native session. Messages received while aivi was offline are not backfilled
+from platform history.
+
+`describeConversation` (host) backs a `/context` command in every channel: the
+bound session's agent, directory, last model, message and token counts, cost,
+the knowledge in scope and the conversation's pending turns, read from
+OpenCode's transcript plus aivi's binding.
 
 ## Live gate
 

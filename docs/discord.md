@@ -48,6 +48,10 @@ the host's. This page has what is Discord's.
 - `/status` shows that conversation's pending states, the next job
   occurrences, and how many runs finished in the last 24 hours (missed ones
   included).
+- `/context` says what this conversation's session knows, read from OpenCode:
+  agent and directory, the model that answered last, messages and answers,
+  tokens and cost so far, the knowledge in scope, and what is pending here.
+  Before the first message it says what the first one would start.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
@@ -55,8 +59,8 @@ the host's. This page has what is Discord's.
   placeholder message in the conversation that says what the agent is doing
   (`progress`, below), a short
   message when a turn could not start (please resend) or could not be finished
-  (an operator has been notified). See
-  [conversation feedback](backlog/conversation-feedback.md) for what is still wanted.
+  (an operator has been notified), and a goodbye when aivi goes offline
+  mid-turn or with messages waiting ([channels](channels.md#feedback-and-recovery-shared)).
 - `progress` (`silent` | `status` | `tools`, default `status`) chooses what
   the placeholder shows: nothing at all (`silent` is exactly the typing
   indicator alone), one line such as `⏳ thinking…`, `🔧 reading handbook.md`,
@@ -124,7 +128,7 @@ npm run aivi -- discord register
 npm run aivi -- serve
 ```
 
-`discord register` upserts `/new`, `/status`, and `/search`. Startup does not change
+`discord register` upserts `/new`, `/status`, `/context`, and `/search`. Startup does not change
 Discord commands. Only the final command is a long-running aivi process: it starts
 the host HTTP API, scheduler, knowledge service, and Discord together. OpenCode
 remains its native execution service.
@@ -186,5 +190,4 @@ client against a mock server. Live status is in the [README](../README.md#status
   instead of queueing behind it (OpenCode supports both).
 - Several Discord agents per installation (per channel or several module
   instances); the config already carries `agent` and `directory`.
-- See [chat commands](backlog/chat-commands.md) and
-  [conversation feedback](backlog/conversation-feedback.md).
+- See [chat commands](backlog/chat-commands.md).
