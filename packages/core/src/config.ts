@@ -102,6 +102,8 @@ export const scheduleSchema = z
     enabled: z.boolean().default(true),
     task: taskSchema,
     report: reportSchema.optional(),
+    /** An occurrence found more than `skipAfterMs` late (host was down) is recorded as skipped instead of run. */
+    misfire: z.strictObject({ skipAfterMs: z.number().int().min(1000) }).optional(),
   })
   .superRefine((value, ctx) => {
     try {

@@ -23,7 +23,7 @@ export type OnFinished = (
  */
 export class Scheduler {
   readonly owner = randomUUID();
-  private readonly active = new Map<string, Promise<void>>();
+  private readonly active = new Map<string, { promise: Promise<void>; abort: AbortController }>();
   private readonly warned = new Set<string>();
   private readonly abort = new AbortController();
   private failure: unknown;
@@ -51,6 +51,13 @@ export class Scheduler {
     if (this.abort.signal.aborted) return;
     const created = this.store.materializeDue(now);
     if (created) this.log.debug('schedules.materialized', { created });
+    for (const id of this.store.cancelRequested(this.owner)) {
+      const entry = this.active.get(id);
+      if (entry && !entry.abort.signal.aborted) {
+        this.log.info('job.abort', { job: id });
+        entry.abort.abort();
+      }
+    }
     for (const resource of this.store.queuedResources()) {
       if (resource in this.config.resources || this.warned.has(resource)) continue;
       this.warned.add(resource);
@@ -69,12 +76,14 @@ export class Scheduler {
   private launch(job: Job): void {
     const log = this.log.child({ job: job.id, kind: job.task.kind, resource: job.resource });
     log.info('job.started');
+    const own = new AbortController();
+    const signal = AbortSignal.any([this.abort.signal, own.signal]);
     const promise = Promise.resolve()
       .then(async () => {
         let outcome: ExecutionResult;
         try {
           outcome = await this.execute(job, {
-            signal: this.abort.signal,
+            signal,
             attachSession: id => this.store.attachSession(job.id, this.owner, id),
           });
           log.info('job.finished', { state: outcome.state, reason: outcome.reason });
@@ -83,6 +92,9 @@ export class Scheduler {
           log.warn('job.blocked', { error });
           outcome = { state: 'blocked', result: null, reason: errorMessage(error) };
         }
+        // An operator abort is the agent-first step of cleanup, not proof that the work stopped.
+        if (own.signal.aborted && !this.abort.signal.aborted && outcome.state !== 'succeeded')
+          outcome = { ...outcome, state: 'blocked', reason: `Aborted by operator. ${outcome.reason ?? ''}`.trim() };
         const reason = outcome.reason ?? 'completed';
         this.store.finish(job.id, this.owner, outcome.state, outcome.result, reason);
         if (this.onFinished)
@@ -97,7 +109,7 @@ export class Scheduler {
         this.stop();
       })
       .finally(() => this.active.delete(job.id));
-    this.active.set(job.id, promise);
+    this.active.set(job.id, { promise, abort: own });
   }
 
   get activeCount(): number {
@@ -105,7 +117,7 @@ export class Scheduler {
   }
 
   async drain(): Promise<void> {
-    await Promise.all([...this.active.values()]);
+    await Promise.all([...this.active.values()].map(a => a.promise));
     if (this.failure !== undefined) throw this.failure;
   }
 

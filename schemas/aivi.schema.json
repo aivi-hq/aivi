@@ -586,6 +586,20 @@
               "channel"
             ],
             "additionalProperties": false
+          },
+          "misfire": {
+            "type": "object",
+            "properties": {
+              "skipAfterMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "skipAfterMs"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

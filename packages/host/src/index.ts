@@ -24,5 +24,5 @@ export {
   TurnNotStarted,
   turnIdsFor,
 } from './session.ts';
-export type { AuditEntry, Lease } from './store.ts';
+export type { AuditEntry, EnqueueOptions, Lease, ScheduleEntry, ScheduleSource } from './store.ts';
 export { Store } from './store.ts';

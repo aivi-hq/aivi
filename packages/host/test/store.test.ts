@@ -17,13 +17,13 @@ test('schema v1 upgrades in place without losing existing jobs', async t => {
   const old = new Store(path);
   const job = old.enqueue(check, 'local-model', 'existing');
   old.db.exec(
-    'DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job; ALTER TABLE jobs DROP COLUMN report; PRAGMA user_version=1;',
+    'DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job; ALTER TABLE jobs DROP COLUMN report; ALTER TABLE jobs DROP COLUMN cancel_requested; ALTER TABLE schedules DROP COLUMN source; PRAGMA user_version=1;',
   );
   old.close();
   const upgraded = new Store(path);
   t.after(() => upgraded.close());
   assert.equal(upgraded.get(job.id).state, 'queued');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 4);
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 5);
   assert.equal(upgraded.get(job.id).report, null);
   assert.equal(upgraded.acquireLease('discord:one', 'discord', 'local-model', 1, { 'local-model': 1 }), true);
   assert.equal(upgraded.claim('host', 1, { 'local-model': 1 }), null);
@@ -141,4 +141,109 @@ test('restart recovery blocks interrupted work without resubmitting it', async t
   assert.throws(() => after.cancelQueued(job.id), /Only queued/);
   assert.throws(() => after.resolveBlocked(job.id, 'failed', ' '), /reason/);
   after.releaseDaemon('new');
+});
+
+test('agent-created schedules live beside config ones: sync never touches them, mutations never touch config ones', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  store.syncSchedules([schedule()], start);
+  const agent = store.addSchedule(
+    scheduleSchema.parse({ id: 'agent-1', cron: '0 9 * * 1', timezone: 'Europe/Amsterdam', task: check }),
+    start,
+  );
+  assert.equal(agent.source, 'agent');
+  assert.deepEqual(
+    store.schedules().map(s => [s.spec.id, s.source, s.enabled]),
+    [
+      ['daily', 'config', true],
+      ['agent-1', 'agent', true],
+    ],
+  );
+  // Reconciling the config (even to nothing) leaves the agent schedule enabled and unchanged.
+  store.syncSchedules([], start + 1);
+  assert.deepEqual(
+    store.schedules().map(s => [s.spec.id, s.enabled]),
+    [
+      ['daily', false],
+      ['agent-1', true],
+    ],
+  );
+  assert.throws(() => store.syncSchedules([{ ...schedule(), id: 'agent-1' }], start + 2), /agent-created/);
+  assert.throws(() => store.setScheduleEnabled('daily', false), /defined in aivi.json/);
+  assert.throws(() => store.removeSchedule('daily'), /defined in aivi.json/);
+
+  // Pause cancels queued occurrences; resume re-anchors to the next future occurrence.
+  store.materializeDue(agent.nextAt);
+  const queued = store.list().find(j => j.scheduleId === 'agent-1')!;
+  assert.equal(queued.state, 'queued');
+  store.setScheduleEnabled('agent-1', false, agent.nextAt + 1);
+  assert.equal(store.get(queued.id).state, 'cancelled');
+  assert.equal(store.history(queued.id).at(-1)!.reason, 'schedule paused');
+  assert.equal(store.materializeDue(agent.nextAt + 8 * 86_400_000), 0, 'paused schedules never catch up');
+  const resumed = store.setScheduleEnabled('agent-1', true, agent.nextAt + 8 * 86_400_000);
+  assert.ok(resumed.nextAt > agent.nextAt + 8 * 86_400_000);
+
+  // Manual run: one outstanding occurrence at a time, like cron ones.
+  const manual = store.runSchedule('agent-1', resumed.nextAt - 1000);
+  assert.equal(manual.scheduleId, 'agent-1');
+  assert.throws(() => store.runSchedule('agent-1', resumed.nextAt - 900), /outstanding/);
+  assert.equal(store.lastRun('agent-1')!.id, manual.id);
+  store.removeSchedule('agent-1', resumed.nextAt - 800);
+  assert.equal(store.get(manual.id).state, 'cancelled');
+  assert.throws(() => store.schedule('agent-1'), /Unknown schedule/);
+});
+
+test('a one-off with a future due time waits in the queue until then', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const job = store.enqueue(check, 'local-model', 'later', start, null, {
+    due: start + 3600_000,
+    reason: 'agent:ses_1',
+  });
+  assert.equal(job.scheduledFor, start + 3600_000);
+  assert.equal(store.history(job.id)[0]!.reason, 'agent:ses_1');
+  assert.equal(store.claim('host', 1, { 'local-model': 1 }, start + 3599_000), null);
+  assert.equal(store.claim('host', 1, { 'local-model': 1 }, start + 3600_000)?.id, job.id);
+});
+
+test('misfire.skipAfterMs records a too-late occurrence as skipped instead of running it', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const standup = scheduleSchema.parse({
+    id: 'standup',
+    cron: '0 9 * * *',
+    task: check,
+    misfire: { skipAfterMs: 1800_000 },
+  });
+  store.syncSchedules([standup], start);
+  const nine = store.schedule('standup').nextAt;
+  assert.equal(store.materializeDue(nine + 3600_000), 0, 'nothing runnable was created');
+  const skipped = store.list()[0]!;
+  assert.equal(skipped.state, 'cancelled');
+  assert.match(store.history(skipped.id).at(-1)!.reason, /^missed by 3600s/);
+  assert.equal(store.history(skipped.id).at(-1)!.action, 'skipped');
+  assert.ok(store.schedule('standup').nextAt > nine + 3600_000, 'the schedule moved on to the next occurrence');
+  // Within the window the occurrence runs normally.
+  const next = store.schedule('standup').nextAt;
+  assert.equal(store.materializeDue(next + 60_000), 1);
+});
+
+test('recent outcomes and failure streaks are read from the jobs table', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  store.syncSchedules([schedule()], start);
+  const finish = (state: 'succeeded' | 'failed', at: number) => {
+    store.materializeDue(at);
+    const job = store.claim('host', 1, { 'local-model': 1 }, at)!;
+    store.finish(job.id, 'host', state, null, state, at);
+  };
+  finish('succeeded', start + 60_000);
+  finish('failed', start + 120_000);
+  finish('failed', start + 180_000);
+  finish('failed', start + 240_000);
+  assert.equal(store.failureStreak('daily'), 3);
+  assert.equal(store.recent(start + 150_000).length, 2);
+  assert.equal(store.recent(start + 150_000)[0]!.finishedAt, start + 240_000, 'newest first');
+  finish('succeeded', start + 300_000);
+  assert.equal(store.failureStreak('daily'), 0);
 });

@@ -38,7 +38,7 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.pollMs` | `1000`; polling interval, no model call |
-| `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `report` and `enabled` (default `true`) |
+| `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `report`, `enabled` (default `true`) and `misfire.skipAfterMs` (an occurrence found later than that after downtime is recorded as skipped, not run) |
 
 ## Tasks
 
@@ -95,11 +95,24 @@ application installation details belong to the future Linear adapter.
 
 Run `npm run aivi -- --help` for commands.
 The `--key` on `jobs enqueue` deduplicates identical requests; changed payloads
-with the same key are rejected. Failed jobs do not retry automatically.
+with the same key are rejected. `--at` makes a one-off that waits in the queue
+until an ISO 8601 instant or a relative duration (`30m`, `2h`, `1d`) has
+passed. Failed jobs do not retry automatically.
 
 Use `jobs show ID` for the task, session ID, result, and transition history.
-`jobs cancel ID` only cancels queued work. Resolving a blocked job is an explicit
-operator action described in [OpenCode setup](opencode.md).
+`jobs cancel ID` only cancels queued work. `jobs abort ID` asks the scheduler
+to stop a running job (the command gets `SIGTERM`, an agent turn stops
+waiting); the job then ends `blocked` with "Aborted by operator" because aivi
+cannot know what the external side had already done, and keeps its capacity
+until `jobs resolve`. Resolving a blocked job is an explicit operator action
+described in [OpenCode setup](opencode.md).
+
+`schedules list` shows configured and agent-created schedules with their next
+occurrence and last outcome. Agent-created schedules (source `agent`, see
+[jobs](backlog/jobs.md)) are paused, resumed and removed with
+`schedules pause|resume|remove ID`; configured ones are edited in `aivi.json`.
+`schedules run ID` enqueues one occurrence now, refused while one is
+outstanding.
 
 ## Secrets
 

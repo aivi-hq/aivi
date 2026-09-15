@@ -41,7 +41,9 @@ Shutdown stops dispatch and aborts running jobs at once: a shell command gets
 `SIGTERM`, an agent turn stops waiting. Each interrupted job ends `blocked` with
 the reason "Host stopped …" and keeps its capacity, because aivi cannot know
 what the external side had already done; `aivi jobs resolve` releases it after a
-look. Modules are then stopped in reverse startup order, the aborted jobs are
+look. `aivi jobs abort ID` does the same to one job while the host keeps
+running (reason "Aborted by operator"); every job has its own abort signal
+combined with the host's. Modules are then stopped in reverse startup order, the aborted jobs are
 awaited so their outcomes are recorded and reported, HTTP requests finish, the
 browser/MCP and QMD close, and ownership is released. A grace period that lets
 work finish first is a design choice not yet made

@@ -55,7 +55,28 @@ const job = (r: Row): Job => ({
   report: r.report === null || r.report === undefined ? null : (JSON.parse(String(r.report)) as Report),
 });
 
-const HOST_SCHEMA_VERSION = 4;
+const HOST_SCHEMA_VERSION = 5;
+
+export type ScheduleSource = 'config' | 'agent';
+export interface ScheduleEntry {
+  spec: Schedule;
+  nextAt: number;
+  enabled: boolean;
+  source: ScheduleSource;
+}
+const scheduleEntry = (r: Row): ScheduleEntry => ({
+  spec: JSON.parse(String(r.spec)) as Schedule,
+  nextAt: Number(r.next_at),
+  enabled: Boolean(Number(r.enabled)),
+  source: r.source as ScheduleSource,
+});
+export interface EnqueueOptions {
+  report?: Report | null;
+  /** Earliest start; a one-off "run at" is simply a queued job with a future due time. */
+  due?: number;
+  /** Audit reason for the `enqueued` entry; default `operator`. */
+  reason?: string;
+}
 
 /**
  * Durable host state in one SQLite file. Host tables (jobs, schedules, leases,
@@ -105,6 +126,12 @@ export class Store {
         this.db.exec(`
         ALTER TABLE jobs ADD COLUMN report TEXT;
         PRAGMA user_version=4;
+      `);
+      if (version < 5)
+        this.db.exec(`
+        ALTER TABLE schedules ADD COLUMN source TEXT NOT NULL DEFAULT 'config' CHECK(source IN ('config','agent'));
+        ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;
+        PRAGMA user_version=5;
       `);
     });
   }
@@ -160,8 +187,17 @@ export class Store {
       result[r.state as JobState] = Number(r.n);
     return result;
   }
-  enqueue(task: Task, resource: string, dedupeKey: string, now = Date.now(), report: Report | null = null): Job {
-    return this.transaction(() => this.insert(task, resource, dedupeKey, now, now, null, report));
+  enqueue(
+    task: Task,
+    resource: string,
+    dedupeKey: string,
+    now = Date.now(),
+    report: Report | null = null,
+    options: Omit<EnqueueOptions, 'report'> = {},
+  ): Job {
+    return this.transaction(() =>
+      this.insert(task, resource, dedupeKey, now, options.due ?? now, null, report, options.reason ?? 'operator'),
+    );
   }
   private insert(
     task: Task,
@@ -171,6 +207,7 @@ export class Store {
     due: number,
     scheduleId: string | null,
     report: Report | null,
+    reason = scheduleId ? `schedule:${scheduleId}` : 'operator',
   ): Job {
     const fingerprint = hash({ task, resource });
     const existing = this.db.prepare('SELECT * FROM jobs WHERE dedupe_key=?').get(key);
@@ -193,40 +230,116 @@ export class Store {
         scheduleId,
         report ? JSON.stringify(report) : null,
       );
-    this.record(id, 'enqueued', scheduleId ? `schedule:${scheduleId}` : 'operator', now);
+    this.record(id, 'enqueued', reason, now);
     return this.get(id);
   }
+  /** Reconcile the operator's `schedules[]`; agent-created schedules are left alone. */
   syncSchedules(schedules: Schedule[], now = Date.now()): void {
     this.transaction(() => {
-      this.db.prepare('UPDATE schedules SET enabled=0').run();
+      this.db.prepare("UPDATE schedules SET enabled=0 WHERE source='config'").run();
       for (const spec of schedules) {
         const fingerprint = hash(spec);
-        const current = this.db.prepare('SELECT fingerprint,next_at FROM schedules WHERE id=?').get(spec.id);
-        if (current && current.fingerprint !== fingerprint) {
-          for (const row of this.db
-            .prepare("SELECT id FROM jobs WHERE state='queued' AND schedule_id=?")
-            .all(spec.id)) {
-            this.db.prepare("UPDATE jobs SET state='cancelled',finished_at=? WHERE id=?").run(now, String(row.id));
-            this.record(String(row.id), 'cancelled', 'schedule definition changed', now);
-          }
-        }
+        const current = this.db.prepare('SELECT fingerprint,next_at,source FROM schedules WHERE id=?').get(spec.id);
+        if (current && current.source !== 'config')
+          throw new Error(`Schedule ${spec.id} already exists as an agent-created schedule; choose another id`);
+        if (current && current.fingerprint !== fingerprint)
+          this.cancelQueuedOf(spec.id, 'schedule definition changed', now);
         const next =
           current?.fingerprint === fingerprint
             ? Number(current.next_at)
             : nextOccurrence(spec.cron, spec.timezone, now);
         this.db
-          .prepare(`INSERT INTO schedules(id,spec,fingerprint,next_at,enabled) VALUES(?,?,?,?,?)
+          .prepare(`INSERT INTO schedules(id,spec,fingerprint,next_at,enabled,source) VALUES(?,?,?,?,?,'config')
           ON CONFLICT(id) DO UPDATE SET spec=excluded.spec,fingerprint=excluded.fingerprint,next_at=excluded.next_at,enabled=excluded.enabled`)
           .run(spec.id, JSON.stringify(spec), fingerprint, next, Number(spec.enabled));
       }
-      // Disabling/removing a schedule cancels queued occurrences, never active work.
-      for (const row of this.db
-        .prepare(`SELECT id FROM jobs WHERE state='queued' AND schedule_id IS NOT NULL
+      this.cancelQueuedOfDisabled(now);
+    });
+  }
+  /** Disabling/removing a schedule cancels queued occurrences, never active work. */
+  private cancelQueuedOfDisabled(now: number): void {
+    for (const row of this.db
+      .prepare(`SELECT id FROM jobs WHERE state='queued' AND schedule_id IS NOT NULL
         AND schedule_id IN (SELECT id FROM schedules WHERE enabled=0)`)
-        .all()) {
-        this.db.prepare("UPDATE jobs SET state='cancelled',finished_at=? WHERE id=?").run(now, String(row.id));
-        this.record(String(row.id), 'cancelled', 'schedule disabled or removed', now);
-      }
+      .all()) {
+      this.db.prepare("UPDATE jobs SET state='cancelled',finished_at=? WHERE id=?").run(now, String(row.id));
+      this.record(String(row.id), 'cancelled', 'schedule disabled or removed', now);
+    }
+  }
+  private cancelQueuedOf(scheduleId: string, reason: string, now: number): void {
+    for (const row of this.db.prepare("SELECT id FROM jobs WHERE state='queued' AND schedule_id=?").all(scheduleId)) {
+      this.db.prepare("UPDATE jobs SET state='cancelled',finished_at=? WHERE id=?").run(now, String(row.id));
+      this.record(String(row.id), 'cancelled', reason, now);
+    }
+  }
+  schedules(): ScheduleEntry[] {
+    return (this.db.prepare('SELECT * FROM schedules ORDER BY next_at,id').all() as Row[]).map(scheduleEntry);
+  }
+  schedule(id: string): ScheduleEntry {
+    const row = this.db.prepare('SELECT * FROM schedules WHERE id=?').get(id);
+    if (!row) throw new Error(`Unknown schedule: ${id}`);
+    return scheduleEntry(row);
+  }
+  /** An agent-created schedule. Config schedules are only ever written by `syncSchedules`. */
+  addSchedule(spec: Schedule, now = Date.now()): ScheduleEntry {
+    return this.transaction(() => {
+      if (this.db.prepare('SELECT id FROM schedules WHERE id=?').get(spec.id))
+        throw new Error(`Schedule ${spec.id} already exists`);
+      this.db
+        .prepare("INSERT INTO schedules(id,spec,fingerprint,next_at,enabled,source) VALUES(?,?,?,?,?,'agent')")
+        .run(
+          spec.id,
+          JSON.stringify(spec),
+          hash(spec),
+          nextOccurrence(spec.cron, spec.timezone, now),
+          Number(spec.enabled),
+        );
+      return this.schedule(spec.id);
+    });
+  }
+  private agentSchedule(id: string): ScheduleEntry {
+    const entry = this.schedule(id);
+    if (entry.source !== 'agent')
+      throw new Error(`Schedule ${id} is defined in aivi.json; edit the configuration instead`);
+    return entry;
+  }
+  /** Pause (`false`) or resume (`true`) an agent-created schedule. Resuming re-anchors to the next future occurrence. */
+  setScheduleEnabled(id: string, enabled: boolean, now = Date.now()): ScheduleEntry {
+    return this.transaction(() => {
+      const { spec } = this.agentSchedule(id);
+      const next = enabled ? nextOccurrence(spec.cron, spec.timezone, now) : undefined;
+      this.db
+        .prepare(`UPDATE schedules SET enabled=?,next_at=COALESCE(?,next_at) WHERE id=?`)
+        .run(Number(enabled), next ?? null, id);
+      if (!enabled) this.cancelQueuedOf(id, 'schedule paused', now);
+      return this.schedule(id);
+    });
+  }
+  removeSchedule(id: string, now = Date.now()): void {
+    this.transaction(() => {
+      this.agentSchedule(id);
+      this.cancelQueuedOf(id, 'schedule removed', now);
+      this.db.prepare('DELETE FROM schedules WHERE id=?').run(id);
+    });
+  }
+  /** Enqueue one occurrence of a schedule now, outside its cron; refused while one is outstanding. */
+  runSchedule(id: string, now = Date.now()): Job {
+    return this.transaction(() => {
+      const { spec } = this.schedule(id);
+      if (
+        this.db.prepare("SELECT id FROM jobs WHERE schedule_id=? AND state IN ('queued','running','blocked')").get(id)
+      )
+        throw new Error(`Schedule ${id} already has an outstanding job`);
+      return this.insert(
+        spec.task,
+        spec.resource,
+        `schedule:${id}:manual:${now}`,
+        now,
+        now,
+        id,
+        spec.report ?? null,
+        'manual run',
+      );
     });
   }
   materializeDue(now = Date.now()): number {
@@ -239,7 +352,21 @@ export class Store {
         const outstanding = this.db
           .prepare("SELECT id FROM jobs WHERE schedule_id=? AND state IN ('queued','running','blocked')")
           .get(spec.id);
-        if (!outstanding) {
+        const late = now - Number(row.next_at);
+        if (!outstanding && spec.misfire && late > spec.misfire.skipAfterMs) {
+          // Too late to be useful (a 9:00 standup at 14:00): keep a visible record, run nothing.
+          const skipped = this.insert(
+            spec.task,
+            spec.resource,
+            `schedule:${spec.id}:${row.next_at}`,
+            now,
+            Number(row.next_at),
+            spec.id,
+            spec.report ?? null,
+          );
+          this.db.prepare("UPDATE jobs SET state='cancelled',finished_at=? WHERE id=?").run(now, skipped.id);
+          this.record(skipped.id, 'skipped', `missed by ${Math.round(late / 1000)}s, over misfire.skipAfterMs`, now);
+        } else if (!outstanding) {
           this.insert(
             spec.task,
             spec.resource,
@@ -425,5 +552,54 @@ export class Store {
   }
   history(id: string): AuditEntry[] {
     return (this.db.prepare('SELECT * FROM audit WHERE job_id=? ORDER BY seq').all(id) as Row[]).map(audit);
+  }
+  /** Jobs that reached a final state since `since`, newest first. */
+  recent(since: number, limit = 50): Job[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM jobs WHERE finished_at>=? AND state IN ('succeeded','failed','blocked','cancelled')
+           ORDER BY finished_at DESC,id LIMIT ?`,
+        )
+        .all(since, limit) as Row[]
+    ).map(job);
+  }
+  /** The most recent job of a schedule that has started, if any. */
+  lastRun(scheduleId: string): Job | null {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM jobs WHERE schedule_id=? AND state<>'cancelled' ORDER BY COALESCE(finished_at,started_at,created_at) DESC,id LIMIT 1",
+      )
+      .get(scheduleId);
+    return row ? job(row) : null;
+  }
+  /** Consecutive runs of a schedule that ended failed or blocked, counted back from the latest finished one. */
+  failureStreak(scheduleId: string): number {
+    let streak = 0;
+    for (const row of this.db
+      .prepare(
+        "SELECT state FROM jobs WHERE schedule_id=? AND state IN ('succeeded','failed','blocked') ORDER BY finished_at DESC,started_at DESC,id DESC",
+      )
+      .all(scheduleId)) {
+      if (row.state === 'succeeded') break;
+      streak++;
+    }
+    return streak;
+  }
+  /** Ask the scheduler to abort a running job; the job then ends blocked for `jobs resolve`. */
+  requestCancel(id: string, now = Date.now()): void {
+    this.transaction(() => {
+      const update = this.db
+        .prepare("UPDATE jobs SET cancel_requested=1 WHERE id=? AND state='running' AND cancel_requested=0")
+        .run(id);
+      if (Number(update.changes) !== 1) throw new Error('Only a running job without a pending abort can be aborted');
+      this.record(id, 'abort-requested', 'operator', now);
+    });
+  }
+  cancelRequested(owner: string): string[] {
+    return this.db
+      .prepare("SELECT id FROM jobs WHERE state='running' AND owner=? AND cancel_requested=1")
+      .all(owner)
+      .map(r => String(r.id));
   }
 }

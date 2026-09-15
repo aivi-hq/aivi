@@ -61,3 +61,38 @@ test('startup applies removed schedules before dispatching any stale queued occu
   assert.equal(calls, 0);
   assert.equal(store.list()[0]!.state, 'cancelled');
 });
+
+test('jobs abort stops one running job; it ends blocked and keeps its capacity', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const job = store.enqueue({ kind: 'system.check' }, 'local-model', 'long');
+  let seen: AbortSignal | undefined;
+  const scheduler = new Scheduler(
+    store,
+    { maxConcurrent: 1, resources: { 'local-model': 1 }, pollMs: 1000 },
+    async (_job, context) => {
+      seen = context.signal;
+      if (!context.signal.aborted)
+        await new Promise<void>(resolve => context.signal.addEventListener('abort', () => resolve(), { once: true }));
+      return { state: 'blocked', result: null, reason: 'Host stopped while working' };
+    },
+  );
+  scheduler.tick();
+  assert.equal(scheduler.activeCount, 1);
+  assert.throws(() => store.requestCancel('missing'), /Only a running job/);
+  store.requestCancel(job.id);
+  scheduler.tick();
+  await scheduler.drain();
+  assert.ok(seen?.aborted);
+  const done = store.get(job.id);
+  assert.equal(done.state, 'blocked');
+  assert.match(done.error ?? '', /^Aborted by operator\./);
+  assert.equal(
+    store
+      .history(job.id)
+      .map(h => h.action)
+      .includes('abort-requested'),
+    true,
+  );
+  assert.equal(scheduler.stopped, false, 'aborting one job does not stop the scheduler');
+});
