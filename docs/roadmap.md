@@ -24,7 +24,7 @@ Mock tests do not establish these; each has its own command.
 - OpenCode: `npm run live:opencode -- --plugin "$PWD/example"`
   (passed 2026-09-15, including `session.list` ordering and the `.env` guard).
 - Browser: `npm run smoke:browser` with Chrome installed (passed 2026-09-15).
-- Discord: `aivi … discord register` then `serve` against a test server.
+- Discord: `serve` against a test server (commands register at start).
   Progress (passed live 2026-09-15): with `progress: "status"` a message
   gets a `⏳ thinking…` placeholder that changes while the agent works
   (`🔧 …`, `✍️ writing the answer`) and disappears when the answer is posted;

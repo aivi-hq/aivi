@@ -32,7 +32,7 @@ const safeSend = {
   allowedMentions: { parse: [] as never[], repliedUser: false },
   flags: MessageFlags.SuppressEmbeds as const,
 };
-const COMMANDS = ['new', 'status', 'search'] as const;
+const COMMANDS = ['new', 'status', 'context', 'search'] as const;
 /** Discord's message limit is 2000 UTF-16 units; stay below it with room for formatting. */
 export const DISCORD: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 
@@ -44,6 +44,12 @@ export function openDiscordStore(store: Store, config: DiscordConfig): Conversat
   return new ConversationStore(store, DISCORD, bindingFor(config));
 }
 
+/**
+ * Tell Discord which slash commands exist. One bulk overwrite, so it is idempotent
+ * and removes commands aivi no longer has. Runs at every module start (after the
+ * gateway is ready) and on demand through `aivi discord register`; global commands
+ * can take up to an hour to show up in clients.
+ */
 export async function registerDiscordCommands(config: DiscordConfig): Promise<void> {
   const token = requireToken();
   const rest = new REST({ version: '10', timeout: 15000, retries: 0 }).setToken(token);
@@ -59,11 +65,12 @@ export async function registerDiscordCommands(config: DiscordConfig): Promise<vo
       .addStringOption(o => o.setName('query').setDescription('Search terms').setRequired(true))
       .addStringOption(o => o.setName('project').setDescription('Optional project ID; includes core knowledge')),
   ];
-  for (const command of commands) {
-    await rest.post(Routes.applicationCommands(config.applicationId), {
-      body: command.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).toJSON(),
-    });
-  }
+  for (const command of commands)
+    if (!(COMMANDS as readonly string[]).includes(command.name))
+      throw new Error(`Registered Discord command ${command.name} has no handler`);
+  await rest.put(Routes.applicationCommands(config.applicationId), {
+    body: commands.map(c => c.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).toJSON()),
+  });
 }
 
 export function createDiscordModule(config: DiscordConfig): HostModule {
@@ -379,6 +386,12 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       agent: config.agent,
       reportChannels: config.reportChannels.length,
     });
+    // Commands follow the code: register at every start so a new command needs no manual step.
+    // Best effort; Discord's API being slow is no reason to keep the conversations waiting.
+    registerDiscordCommands(config).then(
+      () => log.info('commands.registered', { commands: COMMANDS }),
+      error => log.warn('commands.register_failed', { error }),
+    );
 
     // Nobody waits in silence: each conversation with an interrupted turn hears about it once.
     for (const channel of new Set(interrupted.map(t => t.channel))) {

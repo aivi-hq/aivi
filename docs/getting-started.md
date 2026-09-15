@@ -79,8 +79,8 @@ described: [projects](projects.md).
 ## A chat channel
 
 For Discord, fill in the IDs in `example/discord.json`, put `DISCORD_BOT_TOKEN`
-in `example/.env`, register commands once with `npm run aivi -- discord register`,
-and run `serve` as above ([Discord setup](discord.md#setup)). For Slack,
+in `example/.env`, and run `serve` as above (slash commands are registered
+at start) ([Discord setup](discord.md#setup)). For Slack,
 create the app from the manifest in [Slack setup](slack.md#setup), fill in
 `example/slack.json`, and put `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in
 `example/.env`.

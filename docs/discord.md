@@ -124,12 +124,13 @@ later be selected by origin and speaker.
 
 ```sh
 npm run aivi -- config check
-npm run aivi -- discord register
 npm run aivi -- serve
 ```
 
-`discord register` upserts `/new`, `/status`, `/context`, and `/search`. Startup does not change
-Discord commands. Only the final command is a long-running aivi process: it starts
+Commands follow the code: at every start the module overwrites the application's
+command list with `/new`, `/status`, `/context` and `/search` (best effort,
+logged); `discord register` does the same on demand without a restart. Global
+commands can take up to an hour to appear in clients. Only the final command is a long-running aivi process: it starts
 the host HTTP API, scheduler, knowledge service, and Discord together. OpenCode
 remains its native execution service.
 

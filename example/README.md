@@ -16,8 +16,8 @@ npm run aivi -- serve
 because Discord and Slack are enabled here. Either:
 
 - **provide Discord**: put your application and channel IDs in `discord.json`
-  and the bot token in `.env`, then register the slash commands once with
-  `npm run aivi -- discord register`;
+  and the bot token in `.env` (slash commands are registered when `serve`
+  starts);
 - **provide Slack**: create the app from the manifest in
   [docs/slack.md](../docs/slack.md), put your user and channel IDs in
   `slack.json` and both tokens in `.env`; or
