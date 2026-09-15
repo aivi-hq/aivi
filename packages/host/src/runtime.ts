@@ -5,7 +5,7 @@ import { errorMessage, silentLogger } from '@aivi/core';
 import { dream } from './dreaming.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import type { Execute, ExecutionResult } from './scheduler.ts';
-import { PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
+import { connectForTurn, PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
 
 export interface ExecutorDeps {
@@ -86,7 +86,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         const { sessionId } = turnIdsFor(job.id);
         const timeout = AbortSignal.timeout(task.timeoutMs);
         try {
-          const client = await connect(deps.opencode);
+          const client = await connectForTurn(deps.opencode);
           // Persist the intended ID BEFORE any request. A dropped response then has a known reconciliation target.
           context.attachSession(sessionId);
           const outcome = await dream(task, job.id, {
@@ -117,7 +117,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         const timeout = AbortSignal.timeout(task.timeoutMs);
         const metadata = { aivi: { origin: 'job', job: job.id } };
         try {
-          const client = await connect(deps.opencode);
+          const client = await connectForTurn(deps.opencode);
           // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
           context.attachSession(sessionId);
           const turn = await runTurn(
@@ -143,15 +143,6 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       }
     }
   };
-}
-
-/** Discovery failure is a turn that never started. */
-async function connect(opencode: () => Promise<OpenCodeClient>): Promise<OpenCodeClient> {
-  try {
-    return await opencode();
-  } catch (error) {
-    throw new TurnNotStarted(error);
-  }
 }
 
 /**

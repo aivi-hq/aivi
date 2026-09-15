@@ -28,6 +28,15 @@ export class PermissionRequired extends Error {
   }
 }
 
+/** Resolve the client for one turn; a discovery failure is a turn that never started. */
+export async function connectForTurn(opencode: () => Promise<OpenCodeClient>): Promise<OpenCodeClient> {
+  try {
+    return await opencode();
+  } catch (error) {
+    throw new TurnNotStarted(error);
+  }
+}
+
 /** The native ids a job's turn uses, derived from the job id so a lost response has a known target. */
 export function turnIdsFor(jobId: string): { sessionId: string; messageId: string } {
   const suffix = jobId.replaceAll('-', '');

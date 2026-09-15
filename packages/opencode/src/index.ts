@@ -53,8 +53,9 @@ export default Plugin.define({
     // A missing token must not prevent the plugin from loading: the host may run with
     // auth mode "none", and a clear per-call error beats silently losing every tool.
     const client = createHostClient(baseUrl, { token: process.env.AIVI_TOKEN });
-    // `output` is what Code Mode hands back as a value; `content` is the text form for ordinary tool calls.
-    const json = (value: unknown) => ({ output: value, content: JSON.stringify(value) });
+    // Text only: OpenCode 2.0.3 rejects a structured `output` unless the tool declares an output schema
+    // ("Tool result declared output without an output schema"); Code Mode parses the JSON text.
+    const json = (value: unknown) => ({ content: JSON.stringify(value) });
 
     const registration = await ctx.tool.transform(editor => {
       editor.namespace({ name: 'aivi', description: 'aivi installation status and configured knowledge sources' });

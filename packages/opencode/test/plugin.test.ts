@@ -8,7 +8,7 @@ type RegisteredTool = {
   name: string;
   input: { type: string; required?: string[] };
   options: { namespace: string; permission?: string };
-  execute(input: unknown, context: { sessionID: string }): Promise<{ output: unknown; content: string }>;
+  execute(input: unknown, context: { sessionID: string }): Promise<{ content: string }>;
 };
 
 function setupWith(options: Record<string, unknown>, onAdd: (tool: RegisteredTool) => void, onDispose = () => {}) {
@@ -97,7 +97,6 @@ test('browser tool declares native permission and forwards the runtime session I
   assert.ok(browser);
   assert.equal(browser.options.permission, 'browser');
   assert.deepEqual(await browser.execute({ action: 'tabs' }, { sessionID: 'native-owner' }), {
-    output: { tabs: [] },
     content: '{"tabs":[]}',
   });
   assert.deepEqual(received, { sessionId: 'native-owner', request: { action: 'tabs' } });

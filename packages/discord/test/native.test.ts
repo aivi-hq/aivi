@@ -119,3 +119,33 @@ test('native chat creates one fixed-agent session and reapplies read-only rules 
     'pending permissions are checked',
   );
 });
+
+test('an unreachable OpenCode is a turn that never started, not a blocked one', async () => {
+  const { TurnNotStarted } = await import('@aivi/host');
+  const config = discordConfigSchema.parse({
+    version: 1,
+    applicationId: '10000000000000001',
+    directory: '/librarian',
+    access: { dm: { users: ['10000000000000002'] } },
+  });
+  const loaded = { config: configSchema.parse({ version: 1 }), path: '/config', projects: [], sources: [] };
+  const ask = await createNativeChat(config, loaded, async () => {
+    throw new Error('No running OpenCode v2 service found');
+  });
+  const turn = {
+    id: 'one',
+    channel: 'dm',
+    user: 'human',
+    name: 'Name',
+    text: 'Question',
+    session: 'ses_discord_test',
+    ready: false,
+    state: 'running' as const,
+    result: null,
+    error: null,
+  };
+  await assert.rejects(
+    ask(turn, AbortSignal.timeout(3000), () => {}),
+    (error: unknown) => error instanceof TurnNotStarted && /No running OpenCode/.test(error.message),
+  );
+});

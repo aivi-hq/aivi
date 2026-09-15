@@ -2,7 +2,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LoadedConfig, Logger } from '@aivi/core';
 import type { OpenCodeClient } from '@aivi/host';
-import { runTurn } from '@aivi/host';
+import { connectForTurn, runTurn } from '@aivi/host';
 import type { DiscordConfig } from './config.ts';
 import type { Turn } from './store.ts';
 
@@ -54,7 +54,7 @@ export async function createNativeChat(
   }
 
   return async (turn, signal, ready) => {
-    const client = await opencode();
+    const client = await connectForTurn(opencode);
     const result = await runTurn(
       client,
       {
