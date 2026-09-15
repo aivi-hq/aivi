@@ -44,9 +44,16 @@ const hostname = (url: string) => {
   }
 };
 
-/** A codemode `execute` is shown as the aivi tools its code calls: `tools.knowledge.search({ query })` → `knowledge.search "…"`. */
-const CALL = /tools\.((?:[\w-]+\.)+[\w-]+)\(/g;
+/**
+ * A codemode `execute` is shown as the aivi tools its code calls: `tools.knowledge.search({ query })`
+ * → `knowledge.search "…"`. Dotted and bracket notation both count (`tools.aivi["context"]()`), as
+ * does a destructured namespace (`const { aivi } = tools; aivi.context()`).
+ */
+const SEGMENT = String.raw`(?:\.[\w-]+|\[["'][\w-]+["']\])`;
+const CALL = new RegExp(String.raw`\btools(${SEGMENT}+)\(`, 'g');
+const DESTRUCTURE = /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*tools\b/g;
 const QUERY = /^\s*\{[^}]*?\bquery\s*:\s*(["'`])((?:\\.|(?!\1).)*)\1/;
+const dotted = (path: string) => path.replaceAll(/\[["']([\w-]+)["']\]/g, '.$1').replace(/^\./, '');
 
 /** Names and short details for one native tool call; `execute` may yield several, anything else exactly one. */
 export function describeToolCall(name: string, input: Record<string, unknown>): { name: string; detail?: string }[] {
@@ -54,10 +61,24 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
     const code = string(input.code);
     if (code) {
       const calls: { name: string; detail?: string }[] = [];
-      for (const match of code.matchAll(CALL)) {
-        const query = QUERY.exec(code.slice(match.index + match[0].length))?.[2];
-        const call = { name: match[1]!, ...(query ? { detail: `"${truncate(query, DETAIL_MAX)}"` } : {}) };
+      const add = (path: string, rest: string) => {
+        const query = QUERY.exec(rest)?.[2];
+        const call = { name: path, ...(query ? { detail: `"${truncate(query, DETAIL_MAX)}"` } : {}) };
         if (!calls.some(c => c.name === call.name && c.detail === call.detail)) calls.push(call);
+      };
+      for (const match of code.matchAll(CALL)) add(dotted(match[1]!), code.slice(match.index + match[0].length));
+      for (const match of code.matchAll(DESTRUCTURE)) {
+        for (const raw of match[1]!.split(',')) {
+          const alias = raw.split(':').pop()!.trim();
+          const namespace = raw.split(':')[0]!.trim();
+          if (!alias || !/^[\w$]+$/.test(alias)) continue;
+          const local = new RegExp(String.raw`\b${alias}(${SEGMENT}+)\(`, 'g');
+          for (const call of code.matchAll(local))
+            add(
+              `${namespace}${dotted(call[1]!) ? `.${dotted(call[1]!)}` : ''}`,
+              code.slice(call.index + call[0].length),
+            );
+        }
       }
       if (calls.length) return calls;
     }
@@ -103,6 +124,11 @@ export function reduceProgress(state: Progress, event: SessionEvent, now: number
     case 'session.tool.success':
     case 'session.tool.failed': {
       const state: ToolState = event.type === 'session.tool.success' ? 'done' : 'failed';
+      // The code may only travel with the result; name an `execute` we could not name before.
+      const input = d.input && typeof d.input === 'object' ? (d.input as Record<string, unknown>) : undefined;
+      const at = id ? next.tools.findIndex(t => t.id === id && t.name === 'execute') : -1;
+      if (id && input && at >= 0)
+        next.tools.splice(at, 1, ...describeToolCall('execute', input).map(c => ({ id, ...c, state })));
       next.tools = next.tools.map(t => (t.id === id ? { ...t, state } : t));
       next.phase = running() ? 'tool' : 'thinking';
       break;
@@ -143,6 +169,12 @@ const VERBS: Record<string, string> = {
   edit: 'editing',
   write: 'writing',
   'knowledge.search': 'searching knowledge',
+  'knowledge.projects': 'listing projects',
+  'aivi.sources': 'listing sources',
+  'aivi.status': 'checking status',
+  'aivi.context': 'reading the context',
+  'aivi.jobs': 'scheduling',
+  'aivi.browser': 'browsing',
 };
 const MARKS: Record<ToolState, string> = { running: '…', done: '✓', failed: '✗' };
 const withDetail = (label: string, tool: ToolCall) => (tool.detail ? `${label} ${tool.detail}` : label);

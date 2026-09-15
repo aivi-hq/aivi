@@ -36,6 +36,18 @@ test('tool names: codemode execute shows the aivi tools its code calls; native t
     [{ name: 'aivi.status' }, { name: 'knowledge.search', detail: '"working agreements"' }],
   );
   assert.deepEqual(describeToolCall('execute', { code: 'return 1 + 1;' }), [{ name: 'execute' }]);
+  assert.deepEqual(describeToolCall('execute', { code: 'return await tools.aivi["context"]();' }), [
+    { name: 'aivi.context' },
+  ]);
+  assert.deepEqual(describeToolCall('execute', { code: 'return await tools["knowledge"]["projects"]()' }), [
+    { name: 'knowledge.projects' },
+  ]);
+  assert.deepEqual(
+    describeToolCall('execute', {
+      code: 'const { aivi, knowledge: k } = tools;\nawait aivi.status();\nreturn k.search({ query: "leave" });',
+    }),
+    [{ name: 'aivi.status' }, { name: 'knowledge.search', detail: '"leave"' }],
+  );
   assert.deepEqual(describeToolCall('execute', {}), [{ name: 'execute' }]);
   assert.deepEqual(describeToolCall('execute', { code: 'await tools.browser.tabs.open({ url: "x" })' }), [
     { name: 'browser.tabs.open' },
