@@ -191,6 +191,12 @@ resent. Blocked turns keep their capacity until the operator runs
 native session. Messages received while aivi was offline are not backfilled
 from platform history.
 
+**Gateway status.** Every report channel sees `🟢 aivi is online.` when the
+module is ready and `🔴 aivi is going offline (a restart or shutdown).` when
+the host stops (`announce` in the host, best effort). These are plain posts,
+not conversations: no thread is opened and no session adopted; a reply
+underneath is an ordinary message under the channel's access policy.
+
 `describeSession` (host) renders one session's context: the window in use
 against the model's limit (last answer's input + cache + output vs
 `model.list().limit.context`), compactions, the session's token and cost

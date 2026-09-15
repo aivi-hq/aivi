@@ -80,7 +80,8 @@ the host's. This page has what is Discord's.
   (`progress`, below), a short
   message when a turn could not start (please resend) or could not be finished
   (an operator has been notified), and a goodbye when aivi goes offline
-  mid-turn or with messages waiting ([channels](channels.md#feedback-and-recovery-shared)).
+  mid-turn or with messages waiting. `reportChannels` see aivi come online
+  and go offline ([channels](channels.md#feedback-and-recovery-shared)).
 - `progress` (`silent` | `status` | `tools`, default `status`) chooses what
   the placeholder shows: nothing at all (`silent` is exactly the typing
   indicator alone), one line such as `⏳ thinking…`, `🔧 reading handbook.md`,

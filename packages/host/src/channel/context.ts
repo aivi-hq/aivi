@@ -36,7 +36,7 @@ export async function describeConversation(
   const queue = pending.length
     ? `${pending.length} pending turn${pending.length === 1 ? '' : 's'} here: ${pending.map(t => t.state).join(', ')}.`
     : 'Nothing pending here.';
-  if (!binding || !binding.ready)
+  if (!binding?.ready)
     return [
       `🧠 **Context** · no session yet`,
       `The next message starts one with agent \`${binding?.agent ?? config.agent}\` in \`${home(binding?.directory ?? config.directory)}\`.`,

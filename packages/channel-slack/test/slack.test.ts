@@ -193,6 +193,8 @@ async function fakeOpenCode(
 
 function fakeConnection() {
   const posts: { channel: string; text: string; threadTs?: string }[] = [];
+  /** Gateway status posts (online/offline) in report channels, kept apart from conversation posts. */
+  const notices: { channel: string; text: string }[] = [];
   const reactions: string[] = [];
   const ephemerals: string[] = [];
   const edits: string[] = [];
@@ -205,6 +207,11 @@ function fakeConnection() {
     },
     disconnect: async () => {},
     async post(channel, text, threadTs) {
+      // Status notices are not conversation posts and take no ts, so thread expectations stay put.
+      if (!threadTs && /^(🟢|🔴) aivi is /.test(text)) {
+        notices.push({ channel, text });
+        return { ts: '0.0' };
+      }
       posts.push({ channel, text, ...(threadTs ? { threadTs } : {}) });
       return { ts: `${++ts}.0` };
     },
@@ -218,6 +225,7 @@ function fakeConnection() {
   return {
     connection,
     posts,
+    notices,
     reactions,
     ephemerals,
     edits,
@@ -425,6 +433,14 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.ok(eyes.length >= 2 && eyes[0]!.startsWith('+eyes') && eyes.at(-1)!.startsWith('-eyes'), '👀 while working');
   await running.stop();
   assert.equal(channels.has('slack'), false);
+  assert.deepEqual(
+    slack.notices,
+    [
+      { channel: HOME, text: '🟢 aivi is online.' },
+      { channel: HOME, text: '🔴 aivi is going offline (a restart or shutdown).' },
+    ],
+    'the report channel sees the gateway come and go; a plain post, no thread, no session',
+  );
 });
 
 test('a queued message shows the hourglass until its turn starts; a turn that never started asks to resend', async t => {

@@ -3,6 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import { accessEntry, errorMessage } from '@aivi/core';
 import type { ChannelPlatform, ChatCommand, ChatCommandName, HostModule, HostServices, Store, Turn } from '@aivi/host';
 import {
+  announce,
   CHAT_COMMANDS,
   ChannelEngine,
   ConfigurationError,
@@ -17,6 +18,8 @@ import {
   isChatCommand,
   listModels,
   matchModels,
+  OFFLINE_NOTICE,
+  ONLINE_NOTICE,
   splitReply,
   status,
   steerTurn,
@@ -133,9 +136,15 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     engine?.stop();
   };
   services.signal.addEventListener('abort', stop, { once: true });
+  const post = async (channelId: string, text: string) => {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
+    return (await channel.send({ content: text, ...safeSend })).id;
+  };
   const teardown = async () => {
     stop();
     try {
+      if (client.isReady()) await announce(config.reportChannels, post, OFFLINE_NOTICE, log);
       await engine?.shutdown();
     } finally {
       await client.destroy();
@@ -471,6 +480,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       () => log.info('commands.registered', { commands: CHAT_COMMANDS.map(c => c.name) }),
       error => log.warn('commands.register_failed', { error }),
     );
+    void announce(config.reportChannels, post, ONLINE_NOTICE, log);
 
     // Nobody waits in silence: each conversation with an interrupted turn hears about it once.
     for (const channel of new Set(interrupted.map(t => t.channel))) {

@@ -2,6 +2,7 @@ import type { AccessRoute } from '@aivi/core';
 import { accessEntry } from '@aivi/core';
 import type { ChannelDelivery, ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
 import {
+  announce,
   CHAT_COMMANDS,
   ChannelEngine,
   ConversationStore,
@@ -11,6 +12,8 @@ import {
   describeModel,
   helpText,
   isChatCommand,
+  OFFLINE_NOTICE,
+  ONLINE_NOTICE,
   splitReply,
   status,
   steerTurn,
@@ -120,9 +123,11 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
     engine?.stop();
   };
   services.signal.addEventListener('abort', stop, { once: true });
+  let ready = false;
   const teardown = async () => {
     stop();
     try {
+      if (ready) await announce(config.reportChannels, (c, t) => slack.post(c, t), OFFLINE_NOTICE, log);
       await engine?.shutdown();
     } finally {
       await slack.disconnect().catch(error => log.warn('disconnect.failed', { error }));
@@ -351,6 +356,8 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
 
     await slack.connect({ event: onEvent, command: onCommand });
     log.info('ready', { bot: botUserId, agent: config.agent, reportChannels: config.reportChannels.length });
+    ready = true;
+    void announce(config.reportChannels, (c, t) => slack.post(c, t), ONLINE_NOTICE, log);
 
     // Nobody waits in silence: each conversation with an interrupted turn hears about it once.
     for (const channel of new Set(interrupted.map(t => t.channel))) {

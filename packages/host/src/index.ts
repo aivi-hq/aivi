@@ -24,6 +24,7 @@ export {
 } from './channel/engine.ts';
 export type { ModelChoice } from './channel/model.ts';
 export { describeModel, formatModel, listModels, matchModels, resolveModel, switchModel } from './channel/model.ts';
+export { announce, OFFLINE_NOTICE, ONLINE_NOTICE } from './channel/presence.ts';
 export type { Progress, ProgressMode, ToolCall, ToolState } from './channel/progress.ts';
 export {
   describeToolCall,
