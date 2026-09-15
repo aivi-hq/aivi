@@ -15,73 +15,55 @@ stdio MCP child belongs to the host; native OpenCode tools call it through aivi
 as `aivi_browser`. Chrome and the MCP child start lazily on the first browser
 operation.
 
-## Default: aivi's own Chrome
+## Which Chrome: three choices
 
-Nothing to configure. With no `browser` entry aivi launches Chrome itself on the
-first browser call, visible (not headless), with a dedicated profile under
-`<home>/state/chrome`. Logins made in that window persist in that profile.
-Set `"browser": false` to disable the service; then `browser_control` reports
-that the browser is not configured. The sections below are for pointing aivi
-at a Chrome you manage yourself.
+Chrome has two nesting levels and the words get mixed up. A **user data
+directory** is a whole Chrome world: its own process, cookies, extensions and
+its own list of **profiles** (the people in the profile switcher). One Chrome
+process owns one data directory. aivi can work with either level:
 
-## Use an existing Chrome profile
+| Mode | What aivi drives | When to use it |
+| --- | --- | --- |
+| `launch` (default) | Its own Chrome in `<home>/state/chrome`, a separate data directory. Never appears in your Chrome's profile switcher. | Servers and unattended work: nothing else needs to be running. Logins made in that window persist there. |
+| `existing` | A data directory you started yourself with `--user-data-dir`, extensions installed and signed in. | You want to prepare the aivi browser by hand, still separate from your own. |
+| `attach` | Your own running Chrome, over remote debugging. aivi's tabs open in it, in the profile that enabled debugging, with your logins. | You work at that Mac and want aivi's tabs next to yours. Unattended jobs then depend on your Chrome being open. |
 
-For the normal Chrome experience, start your dedicated aivi Chrome profile yourself,
-install extensions and sign in normally. In Chrome 144 or later, enable remote
-debugging at `chrome://inspect/#remote-debugging`. Chrome asks you to allow the
-incoming connection. Configure the **user data directory**, not its inner
-`Default` or `Profile 1` directory:
+### Default: aivi's own Chrome
 
-```json
-{
-  "version": 1,
-  "browser": {
-    "connection": { "mode": "existing", "userDataDir": "./chrome-aivi" },
-    "maxTabsPerSession": 5,
-    "maxTabs": 20
-  }
-}
-```
+Nothing to configure. On the first browser call aivi launches Chrome, visible
+(not headless), with the data directory `<home>/state/chrome`. Set
+`"browser": false` to disable the service; `aivi_browser` then reports that the
+browser is not configured.
 
-Paths resolve relative to aivi.json. On macOS, for example, start the dedicated
-profile with this command (use the same absolute directory as the config):
+### Attach to your own Chrome
 
-```sh
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="/absolute/path/chrome-aivi"
-```
-
-Run `aivi serve` normally. In native OpenCode with the aivi plugin, ask the agent
-to open a website. The native `browser` permission controls `browser_control`.
-The tool gets its session ID from OpenCode; the model cannot choose an owner ID.
-Use the `focus` action to bring an owned tab forward for manual login.
-The existing Discord librarian keeps its default-deny policy; this addition does
-not silently give it permission to click, submit forms, or send messages.
-
-## Other connection modes
-
-For aivi to start Chrome with a dedicated persistent profile, use:
-
-```json
-{ "browser": { "connection": { "mode": "launch", "userDataDir": "./chrome-aivi" } } }
-```
-
-Chrome is visible by default; `headless` is optional. `executablePath` can point
-to a non-default Chrome installation. This uses MCP's launcher with extension-
-disabling default arguments removed. Manually installed extensions and logins
-live in that profile. Close another Chrome using that directory before launch.
-The existing-profile mode is preferable when a site rejects automation-launched
-login flows. Neither mode guarantees that sites will never challenge automation.
-
-For Chrome already exposing a loopback debugging port:
+In Chrome 144 or later enable remote debugging at
+`chrome://inspect/#remote-debugging` (Chrome asks you to allow each incoming
+connection), or start Chrome with `--remote-debugging-port=9222`. Then:
 
 ```json
 { "browser": { "connection": { "mode": "attach", "browserUrl": "http://127.0.0.1:9222" } } }
 ```
 
-Only loopback attachment URLs are accepted. Attached/existing Chrome remains
-running when aivi exits; a Chrome launched by MCP is closed with its MCP process.
-MCP telemetry, CrUX requests, and update checks are disabled by the adapter.
-The child inherits basic OS environment settings, not aivi/provider tokens.
+Only loopback URLs are accepted. The agent then acts in your profile with your
+logins; restrict what it may do in its agent file accordingly.
+
+### A data directory you manage
+
+```sh
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="/absolute/path/chrome-aivi"
+```
+
+Install extensions and sign in there, enable remote debugging as above, and
+point aivi at the **data directory** (not its inner `Default` or `Profile 1`):
+
+```json
+{ "browser": { "connection": { "mode": "existing", "userDataDir": "/absolute/path/chrome-aivi" } } }
+```
+
+Paths resolve relative to the home. In every mode the tool gets its session ID
+from OpenCode (the model cannot choose an owner), and `focus` brings an owned
+tab forward for a manual login that then persists.
 
 ## Tools and ownership
 
