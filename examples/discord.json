@@ -16,7 +16,7 @@
     ]
   },
   "reportChannels": ["10000000000000005"],
-  "messageContent": false,
+  "messageContent": true,
   "resource": "local-model",
   "maxConcurrent": 1,
   "maxPending": 100,
