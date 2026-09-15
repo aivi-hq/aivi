@@ -38,7 +38,8 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.pollMs` | `1000`; polling interval, no model call |
-| `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `report`, `enabled` (default `true`) and `misfire.skipAfterMs` (an occurrence found later than that after downtime is recorded as skipped, not run) |
+| `scheduler.agentSchedules` | Absent: agents cannot create jobs. `{ "resource": "<pool>", "max": 50 }` lets any OpenCode agent create jobs through `aivi_schedule`, run in that pool, at most `max` schedules and pending one-offs at once |
+| `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `title`, `report`, `enabled` (default `true`) and `misfire.skipAfterMs` (an occurrence found later than that after downtime is recorded as skipped, not run) |
 
 ## Tasks
 
@@ -79,6 +80,39 @@ preserves the next occurrence for unchanged definitions. Changes cancel stale
 queued occurrences and calculate a new next time. Existing active work remains
 owned. Config changes require a daemon restart; `schedules sync` also provides
 explicit reconciliation when the daemon is stopped.
+
+## Agent-created jobs
+
+With `scheduler.agentSchedules` set, every OpenCode agent that has the aivi
+plugin gets `aivi_schedule`: create, list, pause, resume, remove and run. A
+person asks in chat ("every Monday at 9, summarize last week"; "in two hours,
+remind me"; "clean the logs nightly with this script"), the agent translates the
+time into cron, ISO 8601 or a duration (`30m`, `2h`, `1d`) and calls the tool.
+The host answers with the parsed schedule and its next occurrences so the agent
+can confirm what it made.
+
+Two kinds of job: an **agent job** (`prompt`) runs a fresh session of the
+calling agent in the calling directory, both read from the calling session in
+OpenCode and never trusted from tool input; `agent` and `directory` may
+override them explicitly. A **script job** (`command`, argv) runs a process
+with the sanitized environment above, in the session's directory unless `cwd`
+says otherwise. Both can be one-off (`at`) or recurring (`cron` + `timezone`,
+default the host's).
+
+Results default to `report: "session"`: the outcome comes back into the asking
+session as a turn (see Reporting), so the agent tells the person in the thread.
+`discord` posts to a channel in `reportChannels`; `none` keeps quiet. Only
+failures with `on: "failure"`.
+
+Authority is whoever may talk to the agent (Discord's access policy, or the
+operator in a native session). Jobs do not create jobs: a session whose origin
+is `job` or `dreaming` is refused, unless a conversation module has adopted it.
+Before anything is created the host checks the session exists, the agent exists
+in that directory, the cron and timezone parse, the report can be delivered,
+and the `max` limit; a failing check is refused with the reason and nothing is
+spent. Agent-created schedules have ids `agent-…`, are stored with source
+`agent`, and are never touched by `schedules sync`; `aivi schedules list`
+shows them beside the configured ones.
 
 ## Linear mapping (validation only)
 

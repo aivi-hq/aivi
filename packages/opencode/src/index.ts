@@ -1,4 +1,4 @@
-import type { BrowserRequest } from '@aivi/core';
+import type { BrowserRequest, ScheduleRequest } from '@aivi/core';
 import type { KnowledgeKind } from '@aivi/core/kinds';
 import { knowledgeKindHelp, knowledgeKindNames } from '@aivi/core/kinds';
 import { createHostClient } from '@aivi/host/client';
@@ -28,6 +28,52 @@ const browserInput = {
     value: { type: 'string', maxLength: 10000, description: 'Text for fill.' },
     key: { type: 'string', description: 'Key name for press.' },
     response: { type: 'string', enum: ['accept', 'dismiss'], description: 'Dialog response.' },
+  },
+} as const;
+
+const scheduleInput = {
+  type: 'object',
+  required: ['action'],
+  additionalProperties: false,
+  properties: {
+    action: { type: 'string', enum: ['create', 'list', 'pause', 'resume', 'remove', 'run'] },
+    id: { type: 'string', description: 'Schedule or one-off id, for pause/resume/remove/run (from list or create).' },
+    title: { type: 'string', maxLength: 80, description: 'create: short label the person would recognise.' },
+    prompt: {
+      type: 'string',
+      maxLength: 20000,
+      description:
+        'create, agent job: a self-contained instruction for a fresh session of the agent. It cannot ask questions; include everything it needs.',
+    },
+    command: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'create, script job: argv (no shell). Exactly one of prompt or command.',
+    },
+    cwd: { type: 'string', description: 'Script working directory; default the calling session’s directory.' },
+    env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Extra environment for the script.' },
+    timeoutMs: { type: 'integer', minimum: 10000, description: 'Default 30 min for agent jobs, 10 min for scripts.' },
+    agent: { type: 'string', description: 'Agent job override; default the calling agent.' },
+    directory: { type: 'string', description: 'Agent job override; default the calling session’s directory.' },
+    at: {
+      type: 'string',
+      description:
+        'One-off: ISO 8601 instant (2026-09-16T09:00:00+02:00) or a duration (30m, 2h, 1d). Exactly one of at or cron.',
+    },
+    cron: { type: 'string', description: 'Recurring: 5-field cron, e.g. "0 9 * * 1-5" for weekdays at 09:00.' },
+    timezone: { type: 'string', description: 'IANA timezone for cron; default the host’s.' },
+    report: {
+      type: 'string',
+      enum: ['session', 'discord', 'none'],
+      description:
+        'Where results go. session (default): back into this conversation, you will read and relay them. discord: a channel id in `channel`. none: nowhere.',
+    },
+    channel: { type: 'string', description: 'Discord channel id when report is discord.' },
+    on: {
+      type: 'string',
+      enum: ['always', 'failure'],
+      description: 'Report every outcome (default) or only failures.',
+    },
   },
 } as const;
 
@@ -103,6 +149,21 @@ export default Plugin.define({
         options: { namespace: 'aivi', codemode: true },
         execute: async input =>
           json(await client.sources(input as { projects?: string[]; includeCore?: boolean; kinds?: KnowledgeKind[] })),
+      });
+      editor.add({
+        name: 'schedule',
+        description:
+          'Create, list, pause, resume, remove or run jobs: a one-off (`at`) or recurring (`cron`) agent job (`prompt`, runs your agent in a fresh session) or script job (`command`). Translate what the person said into cron/ISO/duration yourself; the reply names the next occurrences, relay them so the person can confirm. Results default to coming back into this conversation for you to relay. Only create when a person asked; never from inside a job.',
+        input: scheduleInput,
+        options: { namespace: 'aivi', codemode: true },
+        execute: async (input, context) =>
+          json(
+            await client.schedule({
+              ...(input as Omit<ScheduleRequest, 'sessionId' | 'messageId'>),
+              sessionId: context.sessionID,
+              messageId: context.messageID,
+            } as ScheduleRequest),
+          ),
       });
       editor.add({
         // Under `aivi`, not `browser`: OpenCode 2.0.3 has its own `browser.*` desktop tools and the model

@@ -6,6 +6,7 @@ import { Destinations, describeOutcome, reentryPrompt, shouldReport } from './de
 import { connectOpenCode, type OpenCodeClient } from './opencode.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
+import { createScheduleHandler } from './schedules.ts';
 import { createHostServer, type HostAuth } from './server.ts';
 import type { Store } from './store.ts';
 
@@ -82,7 +83,15 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   const opencode = () => connectOpenCode(loaded.config.opencode);
 
   const serve = async (scheduler: Scheduler, destinations: Destinations, knowledge: KnowledgeService) => {
-    const http = createHostServer({ store, loaded, auth, knowledge, browser, log });
+    const http = createHostServer({
+      store,
+      loaded,
+      auth,
+      knowledge,
+      browser,
+      schedule: createScheduleHandler({ store, loaded, destinations, opencode }),
+      log,
+    });
     server = http;
     const { bind, port } = loaded.config.host;
     await new Promise<void>((yes, no) => {

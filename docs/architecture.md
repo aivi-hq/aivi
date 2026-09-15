@@ -106,9 +106,15 @@ knowledge, not per-human private memory.
 
 The API listens on `host.bind` (loopback by default; a tailnet or LAN address
 for a shared knowledge server) and exposes status, source discovery, scoped
-knowledge search, and optional permission-gated browser operations. `/health`
-is public; everything else requires the bearer token unless `host.auth.mode` is
-`none`. It does not expose prompts, job mutations, secrets, or ticket control.
+knowledge search, optional permission-gated browser operations, and one job
+mutation: `POST /v1/schedule`, the back end of the `aivi_schedule` tool.
+`/health` is public; everything else requires the bearer token unless
+`host.auth.mode` is `none`. The schedule route is a deliberate revision of the
+earlier "no job mutations over the API" rule (2026-09-15): it is limited to what
+an agent may do for a person who asked (its own agent and directory by default,
+a report the destination accepts, no other task kinds, refused from job
+sessions) and is switched on by `scheduler.agentSchedules`; the API still
+exposes no prompts, secrets, or ticket control.
 Per-device tokens and reverse-proxy SSO are future auth modes on the same
 listener.
 The operator CLI can inspect prompts and operates directly on local state.

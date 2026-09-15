@@ -82,6 +82,23 @@ npm run aivi -- jobs resolve JOB_ID --outcome succeeded --reason "Inspected comp
 Discord uses the same driver for each turn. Steering an active worker into
 cleanup (the Linear lifecycle) is not part of the driver yet.
 
+## Schedule tool
+
+The plugin registers `aivi_schedule` (namespace `aivi`, permission action
+`aivi_schedule` like the other aivi tools). Its input is flat: `action`, and for
+`create` one of `prompt`/`command`, one of `at`/`cron` (+ `timezone`), optional
+`title`, `agent`, `directory`, `cwd`, `env`, `timeoutMs`, `report`
+(`session` default, `discord` + `channel`, `none`) and `on`. The tool adds the
+calling `sessionID` and `messageID` from the native tool context; the host
+reads the session's agent, directory and `metadata.aivi.origin` from OpenCode
+and refuses sessions with origin `job` or `dreaming` (a job's own session
+adopted by a Discord thread is a conversation and is allowed). The route is
+`POST /v1/schedule`, same bearer auth as every other route; `messageID` is the
+dedupe key of a one-off, so a retried tool call creates one job, not two. The
+host validates the agent with `agent.get` for that directory before creating
+anything. Behaviour and the configuration switch are in
+[configuration](configuration.md#agent-created-jobs).
+
 ## Browser tool
 
 The plugin also registers `browser_control` with native permission action

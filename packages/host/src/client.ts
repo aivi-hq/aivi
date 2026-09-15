@@ -1,4 +1,12 @@
-import type { BrowserResult, HostClient, KnowledgeSource, SearchHit, SourceSelection, Status } from '@aivi/core';
+import type {
+  BrowserResult,
+  HostClient,
+  KnowledgeSource,
+  ScheduleResponse,
+  SearchHit,
+  SourceSelection,
+  Status,
+} from '@aivi/core';
 
 export interface HostClientOptions {
   /** Bearer token for hosts running with `host.auth.mode: "token"`. Omit for `mode: "none"`. */
@@ -59,6 +67,15 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       const params = new URLSearchParams();
       appendSelection(params, selection);
       return get<KnowledgeSource[]>(`/v1/sources?${params}`);
+    },
+    schedule(body) {
+      // Creating a job checks the calling session and agent against OpenCode; a few seconds at most.
+      return request<ScheduleResponse>('/v1/schedule', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        timeoutMs: 30_000,
+      });
     },
   };
 }

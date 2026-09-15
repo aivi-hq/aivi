@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
 import { accessEntry } from '@aivi/core';
 import type { HostModule, HostServices } from '@aivi/host';
+import { status } from '@aivi/host';
 import {
   ChannelType,
   Client,
@@ -285,9 +286,25 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           }
         } else {
           const pending = store.list(interaction.channelId).filter(t => !['sent', 'discarded'].includes(t.state));
-          content = pending.length
-            ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
-            : 'Ready for your next message.';
+          const host = status(services.store, services.loaded);
+          const upcoming = host.upcoming
+            .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
+            .join(', ');
+          const recent = Object.entries(
+            host.recent.reduce<Record<string, number>>(
+              (acc, r) => ({ ...acc, [r.state]: (acc[r.state] ?? 0) + 1 }),
+              {},
+            ),
+          )
+            .map(([state, n]) => `${n} ${state}`)
+            .join(', ');
+          content = [
+            pending.length
+              ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
+              : 'Ready for your next message.',
+            upcoming ? `Next scheduled: ${upcoming}.` : 'No schedules are due.',
+            recent ? `Last 24 h: ${recent}.` : 'No jobs finished in the last 24 h.',
+          ].join('\n');
         }
         await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
       })().catch(error => log.error('command.failed', { error }));

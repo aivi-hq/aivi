@@ -27,7 +27,11 @@
       "local-model": 1,
       "maintenance": 1
     },
-    "pollMs": 1000
+    "pollMs": 1000,
+    "agentSchedules": {
+      "resource": "local-model",
+      "max": 50
+    }
   },
   "schedules": [
     {

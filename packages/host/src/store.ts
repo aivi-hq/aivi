@@ -553,6 +553,14 @@ export class Store {
   history(id: string): AuditEntry[] {
     return (this.db.prepare('SELECT * FROM audit WHERE job_id=? ORDER BY seq').all(id) as Row[]).map(audit);
   }
+  /** Pending one-offs an agent created (`aivi_schedule` with `at`). */
+  agentOneOffs(): Job[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM jobs WHERE state='queued' AND dedupe_key LIKE 'agent:%' ORDER BY scheduled_for,id")
+        .all() as Row[]
+    ).map(job);
+  }
   /** Jobs that reached a final state since `since`, newest first. */
   recent(since: number, limit = 50): Job[] {
     return (

@@ -96,6 +96,8 @@ export type Report = z.infer<typeof reportSchema>;
 export const scheduleSchema = z
   .strictObject({
     id,
+    /** Short human label; agent-created schedules carry the one the person gave. */
+    title: z.string().min(1).max(80).optional(),
     cron: z.string().min(1),
     timezone: z.string().default('UTC'),
     resource: id.default('local-model'),
@@ -179,6 +181,21 @@ export const configSchema = z
         maxConcurrent: z.number().int().min(1).max(64).default(1),
         resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
         pollMs: z.number().int().min(100).max(60000).default(1000),
+        agentSchedules: z
+          .strictObject({
+            resource: id.describe('Pool that agent-created jobs run in.'),
+            max: z
+              .number()
+              .int()
+              .min(1)
+              .max(500)
+              .default(50)
+              .describe('How many agent-created schedules and pending one-offs may exist at once.'),
+          })
+          .optional()
+          .describe(
+            'Let OpenCode agents create jobs through the aivi_schedule tool. Absent: the tool answers "disabled by the operator".',
+          ),
       })
       .default({ maxConcurrent: 1, resources: { 'local-model': 1 }, pollMs: 1000 }),
     schedules: z.array(scheduleSchema).default([]),
@@ -210,6 +227,12 @@ export const configSchema = z
       if (!(schedule.resource in config.scheduler.resources))
         ctx.addIssue({ code: 'custom', path: ['schedules', i, 'resource'], message: 'Unknown resource pool' });
     }
+    if (config.scheduler.agentSchedules && !(config.scheduler.agentSchedules.resource in config.scheduler.resources))
+      ctx.addIssue({
+        code: 'custom',
+        path: ['scheduler', 'agentSchedules', 'resource'],
+        message: 'Unknown resource pool',
+      });
   });
 export type Config = z.infer<typeof configSchema>;
 

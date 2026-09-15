@@ -42,7 +42,8 @@ there is no separate Discord server or daemon command.
   so anything OpenCode would *ask* about is refused.
 - `/new` starts fresh on the next message, preserving old native sessions. It
   refuses while that conversation has queued, running, or blocked turns.
-- `/status` shows only that conversation's pending states.
+- `/status` shows that conversation's pending states, the next scheduled
+  occurrences, and how many jobs finished in the last 24 hours.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should

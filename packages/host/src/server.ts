@@ -1,7 +1,15 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { BrowserService, KnowledgeKind, KnowledgeService, LoadedConfig, Logger, Status } from '@aivi/core';
-import { browserEnvelopeSchema, knowledgeKindSchema, searchSchema, selectSources, silentLogger } from '@aivi/core';
+import {
+  browserEnvelopeSchema,
+  knowledgeKindSchema,
+  scheduleRequestSchema,
+  searchSchema,
+  selectSources,
+  silentLogger,
+} from '@aivi/core';
+import { type ScheduleHandler, ScheduleRefused } from './schedules.ts';
 import type { Store } from './store.ts';
 
 export type HostAuth = { mode: 'none' } | { mode: 'token'; token: string };
@@ -20,13 +28,31 @@ export function resolveHostAuth(mode: 'none' | 'token', token: string | undefine
   return { mode: 'token', token };
 }
 
-export function status(store: Store, loaded: LoadedConfig): Status {
+export function status(store: Store, loaded: LoadedConfig, now = Date.now()): Status {
   return {
     version: '0.1.0',
     counts: store.counts(),
     sources: loaded.sources.length,
     leases: store.leaseCount(),
     completion: 'verified-final-answer',
+    upcoming: store
+      .schedules()
+      .filter(s => s.enabled)
+      .slice(0, 3)
+      .map(s => ({
+        id: s.spec.id,
+        source: s.source,
+        kind: s.spec.task.kind,
+        nextAt: new Date(s.nextAt).toISOString(),
+      })),
+    recent: store.recent(now - 24 * 3_600_000, 20).map(j => ({
+      id: j.id,
+      scheduleId: j.scheduleId,
+      kind: j.task.kind,
+      state: j.state,
+      finishedAt: new Date(j.finishedAt ?? now).toISOString(),
+      error: j.error,
+    })),
   };
 }
 
@@ -36,12 +62,23 @@ export interface HostServerOptions {
   auth: HostAuth;
   knowledge?: KnowledgeService | undefined;
   browser?: BrowserService | undefined;
+  /** `POST /v1/schedule`; absent when the host runs without one (tests). */
+  schedule?: ScheduleHandler | undefined;
   log?: Logger | undefined;
 }
 
 const MAX_BROWSER_BODY = 32 * 1024;
+const MAX_SCHEDULE_BODY = 64 * 1024;
 
-export function createHostServer({ store, loaded, auth, knowledge, browser, log = silentLogger }: HostServerOptions) {
+export function createHostServer({
+  store,
+  loaded,
+  auth,
+  knowledge,
+  browser,
+  schedule,
+  log = silentLogger,
+}: HostServerOptions) {
   const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
   const authorized = (request: IncomingMessage) => {
     if (!expected) return true;
@@ -70,6 +107,10 @@ export function createHostServer({ store, loaded, auth, knowledge, browser, log 
 
     if (url.pathname === '/v1/browser') {
       handleBrowser(request, response, send);
+      return;
+    }
+    if (url.pathname === '/v1/schedule') {
+      handleSchedule(request, response, send);
       return;
     }
     if (request.method !== 'GET') {
@@ -180,22 +221,13 @@ export function createHostServer({ store, loaded, auth, knowledge, browser, log 
       send(503, { error: 'Browser is not configured' });
       return;
     }
-    if (!request.headers['content-type']?.startsWith('application/json')) {
-      send(415, { error: 'Expected JSON' });
-      return;
-    }
     void (async () => {
-      const chunks: Buffer[] = [];
-      let bytes = 0;
-      for await (const chunk of request as AsyncIterable<Buffer>) {
-        bytes += chunk.length;
-        if (bytes > MAX_BROWSER_BODY) {
-          send(413, { error: 'Browser request is too large' });
-          return;
-        }
-        chunks.push(chunk);
+      const body = await readJson(request, MAX_BROWSER_BODY);
+      if (typeof body === 'string') {
+        send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Browser request is too large' : body });
+        return;
       }
-      const parsed = browserEnvelopeSchema.safeParse(safeJson(Buffer.concat(chunks).toString('utf8')));
+      const parsed = browserEnvelopeSchema.safeParse(body);
       if (!parsed.success) {
         send(400, { error: 'Invalid browser request' });
         return;
@@ -214,6 +246,59 @@ export function createHostServer({ store, loaded, auth, knowledge, browser, log 
       if (!response.headersSent) send(400, { error: 'Browser request interrupted' });
     });
   }
+
+  function handleSchedule(request: IncomingMessage, response: ServerResponse, send: Send) {
+    if (request.method !== 'POST') {
+      send(405, { error: 'Use POST for schedule operations' });
+      return;
+    }
+    if (!schedule) {
+      send(503, { error: 'Scheduling is not available' });
+      return;
+    }
+    void (async () => {
+      const body = await readJson(request, MAX_SCHEDULE_BODY);
+      if (typeof body === 'string') {
+        send(body === 'too large' ? 413 : 415, {
+          error: body === 'too large' ? 'Schedule request is too large' : body,
+        });
+        return;
+      }
+      const parsed = scheduleRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        send(400, {
+          error: `Invalid schedule request: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+        });
+        return;
+      }
+      try {
+        send(200, await schedule(parsed.data));
+      } catch (error) {
+        if (error instanceof ScheduleRefused) {
+          send(error.status, { error: error.message });
+          return;
+        }
+        log.warn('schedule.failed', { action: parsed.data.action, error });
+        send(500, { error: 'Scheduling failed on the host; check its log.' });
+      }
+    })().catch(error => {
+      log.warn('schedule.interrupted', { error });
+      if (!response.headersSent) send(400, { error: 'Schedule request interrupted' });
+    });
+  }
+}
+
+/** The parsed JSON body, or a short reason it was not read (`too large`, `Expected JSON`). */
+async function readJson(request: IncomingMessage, max: number): Promise<unknown | string> {
+  if (!request.headers['content-type']?.startsWith('application/json')) return 'Expected JSON';
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request as AsyncIterable<Buffer>) {
+    bytes += chunk.length;
+    if (bytes > max) return 'too large';
+    chunks.push(chunk);
+  }
+  return safeJson(Buffer.concat(chunks).toString('utf8'));
 }
 
 function safeJson(text: string): unknown {

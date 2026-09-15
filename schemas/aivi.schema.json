@@ -359,6 +359,28 @@
           "type": "integer",
           "minimum": 100,
           "maximum": 60000
+        },
+        "agentSchedules": {
+          "description": "Let OpenCode agents create jobs through the aivi_schedule tool. Absent: the tool answers \"disabled by the operator\".",
+          "type": "object",
+          "properties": {
+            "resource": {
+              "description": "Pool that agent-created jobs run in.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]*$"
+            },
+            "max": {
+              "description": "How many agent-created schedules and pending one-offs may exist at once.",
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          "required": [
+            "resource"
+          ],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -372,6 +394,11 @@
           "id": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
           },
           "cron": {
             "type": "string",

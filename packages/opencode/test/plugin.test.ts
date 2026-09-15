@@ -8,7 +8,7 @@ type RegisteredTool = {
   name: string;
   input: { type: string; required?: string[] };
   options: { namespace: string; permission?: string };
-  execute(input: unknown, context: { sessionID: string }): Promise<{ content: string }>;
+  execute(input: unknown, context: { sessionID: string; messageID?: string }): Promise<{ content: string }>;
 };
 
 function setupWith(options: Record<string, unknown>, onAdd: (tool: RegisteredTool) => void, onDispose = () => {}) {
@@ -46,7 +46,7 @@ test('plugin registers its tools with root object schemas and disposes its regis
   );
   assert.deepEqual(
     tools.map(tool => tool.name),
-    ['search', 'status', 'sources', 'browser'],
+    ['search', 'status', 'sources', 'schedule', 'browser'],
   );
   for (const tool of tools) assert.equal(tool.input.type, 'object', `${tool.name} must declare a root object schema`);
   assert.equal(typeof cleanup, 'function');
@@ -101,5 +101,44 @@ test('browser tool lives under aivi (not OpenCode’s browser namespace) and for
     content: '{"tabs":[]}',
   });
   assert.deepEqual(received, { sessionId: 'native-owner', request: { action: 'tabs' } });
+  if (typeof cleanup === 'function') await cleanup();
+});
+
+test('schedule tool forwards the calling session and message so the host can derive agent, directory and authority', async t => {
+  withToken(t, 'test-native-schedule-token');
+  let received: unknown;
+  const server = createServer(async (request, response) => {
+    assert.equal(request.method, 'POST');
+    assert.equal(request.url, '/v1/schedule');
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    received = JSON.parse(body);
+    response.setHeader('content-type', 'application/json');
+    response.end('{"summary":"Created","items":[]}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  let schedule: RegisteredTool | undefined;
+  const cleanup = await setupWith({ url: `http://127.0.0.1:${address.port}` }, tool => {
+    if (tool.name === 'schedule') schedule = tool;
+  });
+  assert.ok(schedule);
+  assert.equal(schedule.options.namespace, 'aivi');
+  assert.deepEqual(
+    await schedule.execute(
+      { action: 'create', prompt: 'Summarize', cron: '0 9 * * 1', sessionId: 'spoofed' },
+      { sessionID: 'ses_caller', messageID: 'msg_caller' },
+    ),
+    { content: '{"summary":"Created","items":[]}' },
+  );
+  assert.deepEqual(received, {
+    action: 'create',
+    prompt: 'Summarize',
+    cron: '0 9 * * 1',
+    sessionId: 'ses_caller',
+    messageId: 'msg_caller',
+  });
   if (typeof cleanup === 'function') await cleanup();
 });
