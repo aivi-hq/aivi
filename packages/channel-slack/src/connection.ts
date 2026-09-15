@@ -1,6 +1,7 @@
 import type { Logger } from '@aivi/core';
 import { ConfigurationError } from '@aivi/host';
 import { SocketModeClient } from '@slack/socket-mode';
+import type { MarkdownBlock } from '@slack/web-api';
 import { WebClient } from '@slack/web-api';
 
 /** The parts of a Slack `message`/`app_mention` event the module reads. Untrusted input. */
@@ -65,6 +66,12 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
   const web = new WebClient(tokens.bot, { retryConfig: { retries: 0 }, timeout: 15000 });
   const socket = new SocketModeClient({ appToken: tokens.app, clientOptions: { retryConfig: { retries: 0 } } });
   const guard = (promise: Promise<unknown>, event: string) => promise.catch(error => log.error(event, { error }));
+  // Agents write standard Markdown; a plain `text` field is parsed as Slack's own mrkdwn dialect and
+  // mangles it. The `markdown` block renders it as written; `text` stays the notification preview.
+  const markdown = (text: string): { text: string; blocks: [MarkdownBlock] } => ({
+    text,
+    blocks: [{ type: 'markdown', text }],
+  });
   return {
     async identify() {
       let auth: Awaited<ReturnType<typeof web.auth.test>>;
@@ -104,7 +111,7 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
     async post(channel, text, threadTs) {
       const result = await web.chat.postMessage({
         channel,
-        text,
+        ...markdown(text),
         ...(threadTs ? { thread_ts: threadTs } : {}),
         unfurl_links: false,
         unfurl_media: false,
@@ -113,7 +120,7 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
       return { ts: result.ts };
     },
     async update(channel, ts, text) {
-      await web.chat.update({ channel, ts, text });
+      await web.chat.update({ channel, ts, ...markdown(text) });
     },
     async remove(channel, ts) {
       await web.chat.delete({ channel, ts });
@@ -122,7 +129,7 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
       const response = await fetch(responseUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ response_type: 'ephemeral', text }),
+        body: JSON.stringify({ response_type: 'ephemeral', ...markdown(text) }),
         signal: AbortSignal.timeout(15000),
       });
       if (!response.ok) throw new Error(`Slack response_url answered ${response.status}`);

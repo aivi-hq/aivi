@@ -163,7 +163,9 @@ the tests load it.
   jobs/runs split and the channel lift: DMs, mention → thread, `/status`,
   reactions, `aivi_jobs` through the plugin, outcomes re-entering a thread,
   report threads adopting the run's session. Not yet seen live: the progress
-  placeholder (edited message while a turn runs) in either channel.
+  placeholder (edited message while a turn runs) in either channel, and Slack
+  replies as a `markdown` block (headings, bold, links, lists; `chat.update`
+  on the placeholder; ephemeral command answers).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
   deferred until the projects work settles.

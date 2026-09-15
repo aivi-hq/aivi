@@ -27,7 +27,13 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   deletions, joins and other subtypes are ignored. A message with files or
   without text gets a "text only" reply.
 - Replies go through `chat.postMessage` into the thread (`thread_ts`) or the
-  DM, with link and media unfurling off, split at 3900 characters. Slack has
+  DM, with link and media unfurling off, split at 3900 characters. Every
+  message the module sends (replies, the progress placeholder, ephemeral
+  command answers) is a Block Kit `markdown` block with the same string as
+  `text` for the notification preview: agents write standard Markdown, and a
+  bare `text` field would be read as Slack's own mrkdwn dialect (`**bold**`,
+  headings, `[text](url)` all come out mangled). The block renders it as
+  written; the module translates nothing. Slack has
   no typing indicator for bots, so reactions on the person's message carry the
   signal: ⏳ (`hourglass_flowing_sand`) while it waits behind other work, 👀
   (`eyes`) while the agent works on it, both removed when the answer is posted
@@ -171,8 +177,8 @@ npm run aivi -- slack resolve TURN_ID --confirm-stopped --reason "Inspected nati
 Same as Discord's: the agent file is the boundary, web fetch/search allowed,
 browser denied by the example agents. Out of scope: agent or project
 switching, streaming replies, attachment ingestion, a permission-approval UI,
-Slack's Block Kit and interactive components, multi-workspace (org)
-installs.
+Block Kit beyond the `markdown` block (layouts, interactive components),
+multi-workspace (org) installs.
 
 Tests mirror Discord's: routing and access with Slack ids, the example
 config, and the module against a fake connection and the real OpenCode client
