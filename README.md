@@ -63,8 +63,8 @@ module with webhook routes on the same listener.
   Mac: discovery and auth, plugin tools, the session driver (jobs, dreaming,
   Discord turns all end in a verified final answer), Discord DMs/channels/
   threads with slash commands and job reports.
-- Built and unit-tested, live check still open: browser control
-  (`npm run smoke:browser`).
+- Browser control: live-verified against headless Chrome on the target Mac
+  (`npm run smoke:browser`); login takeover and extensions still to exercise.
 - Knowledge: core and per-project sources with kinds (`doc`, `decision`,
   `memory`, `conversation`); scope never widens on unknown IDs.
 - Jobs: SQLite + Croner schedules, `shell`/`opencode.prompt`/`dreaming`/

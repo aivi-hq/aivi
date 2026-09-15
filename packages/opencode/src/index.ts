@@ -24,7 +24,7 @@ const browserInput = {
       description: 'Tab owned by this session (from open/tabs). Required for every action except tabs/open.',
     },
     url: { type: 'string', description: 'HTTP(S) URL for open/navigate.' },
-    uid: { type: 'string', description: 'Element uid from the latest snapshot, for click/fill.' },
+    uid: { type: 'string', description: 'The `id` of a node in the latest snapshot, for click/fill.' },
     value: { type: 'string', maxLength: 10000, description: 'Text for fill.' },
     key: { type: 'string', description: 'Key name for press.' },
     response: { type: 'string', enum: ['accept', 'dismiss'], description: 'Dialog response.' },
@@ -107,7 +107,7 @@ export default Plugin.define({
       editor.add({
         name: 'control',
         description:
-          'Control this session’s Chrome tabs. Start with open or tabs; snapshot returns element uids for click/fill. Refresh snapshot after navigation. The shared profile retains logins; use focus for manual login. Never put passwords or secrets in fill. No automatic retries after uncertain actions.',
+          'Control this session’s Chrome tabs. Start with open or tabs; snapshot returns nodes whose `id` is the uid for click/fill. Refresh snapshot after navigation. The shared profile retains logins; use focus for manual login. Never put passwords or secrets in fill. No automatic retries after uncertain actions.',
         input: browserInput,
         options: { namespace: 'browser', permission: 'browser', codemode: true },
         execute: async (input, context) => json(await client.browser(context.sessionID, input as BrowserRequest)),

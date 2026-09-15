@@ -26,10 +26,12 @@ const service = createBrowserService(
     },
   }),
 );
-function find(node, name) {
-  if (node?.name === name && node.uid) return node.uid;
+// Snapshot nodes carry `id`; click/fill take that value as `uid`. A label's
+// text node shares the input's name, so match the role as well.
+function find(node, name, role) {
+  if (node?.name === name && node.role === role && node.id) return node.id;
   for (const child of node?.children ?? []) {
-    const result = find(child, name);
+    const result = find(child, name, role);
     if (result) return result;
   }
 }
@@ -39,13 +41,13 @@ try {
   const b = (await service.execute('smoke-b', { action: 'open', url })).tab;
   assert.ok(a && b);
   const snapshot = (await service.execute('smoke-a', { action: 'snapshot', tabId: a.tabId })).snapshot;
-  const input = find(snapshot, 'Name ') ?? find(snapshot, 'Name');
-  const button = find(snapshot, 'Greet');
+  const input = find(snapshot, 'Name ', 'textbox') ?? find(snapshot, 'Name', 'textbox');
+  const button = find(snapshot, 'Greet', 'button');
   assert.ok(input && button, 'Fixture input and button must have snapshot uids');
   await service.execute('smoke-a', { action: 'fill', tabId: a.tabId, uid: input, value: 'Aivi' });
   // A new snapshot prevents relying on element IDs surviving a DOM change.
   const refreshed = (await service.execute('smoke-a', { action: 'snapshot', tabId: a.tabId })).snapshot;
-  await service.execute('smoke-a', { action: 'click', tabId: a.tabId, uid: find(refreshed, 'Greet') });
+  await service.execute('smoke-a', { action: 'click', tabId: a.tabId, uid: find(refreshed, 'Greet', 'button') });
   const result = await service.execute('smoke-a', { action: 'snapshot', tabId: a.tabId });
   assert.match(JSON.stringify(result.snapshot), /Hello Aivi/);
   await assert.rejects(service.execute('smoke-b', { action: 'close', tabId: a.tabId }), /not owned/);

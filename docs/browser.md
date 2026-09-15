@@ -68,7 +68,7 @@ The child inherits basic OS environment settings, not aivi/provider tokens.
 
 `browser_control` provides `tabs`, `open`, `navigate`, `snapshot`, `click`, `fill`,
 `press`, `dialog`, `focus`, and `close`. Snapshot returns the accessibility tree
-and element uids. Read a new snapshot after navigation or significant page changes.
+with an `id` per node; pass that value as `uid` to click/fill. Read a new snapshot after navigation or significant page changes.
 The initial interface does not expose arbitrary JavaScript, network headers,
 local file uploads, downloads, or extension installation tools.
 
@@ -105,10 +105,13 @@ With Chrome installed, run `npm run smoke:browser`. Optionally set
 a local HTML fixture, checks typing/clicking and cross-session rejection, then
 closes it. It does not use your configured browser profile.
 
-Live Chrome control on the target Mac is not yet verified: run
-`npm run smoke:browser` there. Manual authentication, extensions, and native
-permission enforcement are part of that gate. Until it passes, browser recovery
-behaviour (a failed first `open`, tab identification) stays as built.
+`npm run smoke:browser` passed on the target Mac on 2026-09-15 against headless
+Chrome: two sessions open tabs, snapshot, fill, click, refuse each other's tabs,
+close. Two facts it settled: chrome-devtools-mcp 1.9.0 returns page lists and
+snapshots as structured content only with `--experimentalStructuredContent=true`
+(aivi passes it), and snapshot nodes carry `id`, which click/fill take as
+`uid`. Still open: manual login takeover, extensions, and the recovery paths a
+failed first `open` or a human flipping tab selection would exercise.
 
 ## Why this backend
 

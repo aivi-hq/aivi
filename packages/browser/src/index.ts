@@ -48,7 +48,16 @@ export function createBrowserService(
       throw fail();
     }
     if (reply.structuredContent?.reconnected) throw fail();
-    if (reply.isError) throw new Error('Browser action failed; inspect the tab before retrying');
+    if (reply.isError) {
+      const detail = (reply.content ?? [])
+        .map(c => c.text ?? '')
+        .join('\n')
+        .split('\n')
+        .find(line => line.trim());
+      throw new Error(
+        `Browser action failed${detail ? `: ${detail.slice(0, 200)}` : ''}; inspect the tab before retrying`,
+      );
+    }
     return reply;
   }
   function tab(entry: Owned, current: Page[]): BrowserTab {

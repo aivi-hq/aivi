@@ -84,8 +84,8 @@ and what the tests load. The state directory (default `.aivi/`) holds
 
 ## Open threads
 
-- Live gates still open: browser (`npm run smoke:browser`); Discord after
-  today's changes (librarian directory, feedback messages).
+- Live gates: OpenCode and browser passed 2026-09-15; Discord still to
+  re-check after today's changes (librarian directory, feedback messages).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
   deferred until the jobs/projects work settles.

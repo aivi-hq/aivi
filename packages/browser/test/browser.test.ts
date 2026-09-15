@@ -29,7 +29,12 @@ function fixture() {
         all.splice(all.indexOf(page), 1);
       }
       if (name === 'take_snapshot')
-        return { structuredContent: { snapshot: { uid: '1_0', name: page!.title }, pages: structuredClone(all) } };
+        return {
+          structuredContent: {
+            snapshot: { id: '1_0', role: 'RootWebArea', name: page!.title },
+            pages: structuredClone(all),
+          },
+        };
       return { structuredContent: { pages: structuredClone(all) } };
     },
     async close() {
@@ -49,7 +54,7 @@ test('two sessions own separate opaque tabs; page lists and snapshots do not lea
   await service.execute('session-a', { action: 'click', tabId: a.tabId, uid: '1_0' });
   assert.deepEqual(fake.calls.find(c => c.name === 'click')!.args, { pageId: 2, uid: '1_0' });
   assert.deepEqual(await service.execute('session-a', { action: 'snapshot', tabId: a.tabId }), {
-    snapshot: { uid: '1_0', name: 'Owned page' },
+    snapshot: { id: '1_0', role: 'RootWebArea', name: 'Owned page' },
   });
   await service.execute('session-a', { action: 'close', tabId: a.tabId });
   assert.deepEqual((await service.execute('session-b', { action: 'tabs' })).tabs, [b]);
@@ -127,6 +132,7 @@ test('configuration preserves profiles, limits attachment to loopback, and rejec
     '--no-usage-statistics',
     '--no-performance-crux',
     '--pageIdRouting=true',
+    '--experimentalStructuredContent=true',
     '--userDataDir=/aivi/chrome',
     '--autoConnect',
   ]);

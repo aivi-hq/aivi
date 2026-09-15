@@ -11,7 +11,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 1. Native librarian and minimal core | **Done.** Plugin tools, CLI, schema-validated config, fnox/`.env` secrets. |
 | 2. Scoped knowledge search | **Done** for documents: QMD keyword search, kinds, scope never widens on unknown IDs. Conversation export and semantic retrieval not started. |
 | 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. |
-| 4. Browser hands | **Built, live Chrome verification open.** MCP-backed profile/tab service and `browser_control`; run `npm run smoke:browser` on the target Mac. |
+| 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. |
 | 6. Worker lifecycle without Linear | Not started. |
 | 7. Native Linear AgentSessions | Not started; configuration validation exists. |
@@ -22,7 +22,7 @@ Mock tests do not establish these; each has its own command.
 
 - OpenCode: `npm run live:opencode -- --plugin "$PWD/examples/librarian"`
   (passed 2026-09-15, including `session.list` ordering and the `.env` guard).
-- Browser: `npm run smoke:browser` with Chrome installed.
+- Browser: `npm run smoke:browser` with Chrome installed (passed 2026-09-15).
 - Discord: `aivi … discord register` then `serve` against a test server.
 
 ## Next, in order of intent

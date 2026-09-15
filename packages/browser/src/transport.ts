@@ -7,13 +7,20 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 export interface McpReply {
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
+  content?: { type?: string; text?: string }[];
 }
 export interface BrowserTransport {
   call(name: string, args: Record<string, unknown>): Promise<McpReply>;
   close(): Promise<void>;
 }
 export function chromeArguments(config: BrowserConfig): string[] {
-  const args = ['--no-usage-statistics', '--no-performance-crux', '--pageIdRouting=true'];
+  // Page lists arrive only as prose unless structured content is switched on (default off in 1.9.0's stdio mode).
+  const args = [
+    '--no-usage-statistics',
+    '--no-performance-crux',
+    '--pageIdRouting=true',
+    '--experimentalStructuredContent=true',
+  ];
   const connection = config.connection;
   if (connection.mode === 'attach') args.push(`--browserUrl=${connection.browserUrl}`);
   else {
