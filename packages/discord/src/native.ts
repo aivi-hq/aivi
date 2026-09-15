@@ -20,7 +20,8 @@ export async function createNativeChat(
   opencode: () => Promise<OpenCodeClient>,
   log?: Logger,
 ): Promise<NativeChat> {
-  // Plugin tools use their tool id as permission action; `execute` only enables Code Mode.
+  // Plugin tools use their tool id as permission action unless the plugin names one
+  // (`browser_control` uses `browser`); `execute` only enables Code Mode.
   const readOnlyTools = [
     'read',
     'glob',

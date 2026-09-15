@@ -98,7 +98,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     try {
       await engine?.drain();
     } finally {
-      client.destroy();
+      await client.destroy();
       services.signal.removeEventListener('abort', stop);
     }
   };
@@ -161,7 +161,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           await message.reply({ content: 'Text messages only for now; paste the relevant text.', ...safeSend });
           return;
         }
-        const text = message.content.replaceAll(`<@${client.user!.id}>`, '').trim() || message.content;
+        const text = message.content.replace(new RegExp(`<@!?${client.user!.id}>`, 'g'), '').trim() || message.content;
         // In thread mode a top-level message opens the thread that becomes the conversation.
         let conversation = message.channelId;
         if (!route.isDM && !message.channel.isThread() && accessEntry(config.access, route)?.sessions === 'threads') {
@@ -191,6 +191,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
             },
             config.maxPending,
           );
+          engine?.tick(); // pick it up now; the poll loop is only the fallback
         } catch (error) {
           log.warn('enqueue.rejected', { channel: message.channelId, error });
           await message.reply({
@@ -247,7 +248,10 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           return;
         }
         let content: string;
-        if (interaction.commandName === 'new') {
+        // In thread mode the channel itself is never a conversation; /new and /status belong in a thread.
+        if (!route.isDM && route.parentId === null && accessEntry(config.access, route)?.sessions === 'threads') {
+          content = 'Run this inside a thread. In this channel every conversation is its own thread.';
+        } else if (interaction.commandName === 'new') {
           try {
             store.reset(interaction.channelId);
             content = 'The next message starts a fresh session. Previous sessions remain in OpenCode.';
@@ -287,11 +291,13 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       },
     });
 
+    // Turns are picked up when they arrive and when capacity frees inside this module; the loop
+    // only catches capacity released elsewhere (a job finishing) and so can be slow.
     const loop = (async () => {
       while (!abort.signal.aborted && !engine!.stopped) {
         if (client.isReady()) engine!.tick();
         try {
-          await setTimeout(500, undefined, { signal: abort.signal });
+          await setTimeout(2000, undefined, { signal: abort.signal });
         } catch (error) {
           if (!abort.signal.aborted) throw error;
         }
@@ -305,7 +311,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       async stop() {
         unregister();
         try {
-          await loop;
+          await loop.catch(() => {}); // already reported through services.fail
         } finally {
           await teardown();
         }
