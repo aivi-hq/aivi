@@ -220,7 +220,7 @@ test('turns queue behind a slow answer; delivery failures retain results and nev
 });
 
 test('reply splitting preserves Unicode and respects Discord UTF-16 message limits', () => {
-  const text = 'a'.repeat(1899) + '🦊'.repeat(1000) + '\nlast';
+  const text = `${'a'.repeat(1899)}${'🦊'.repeat(1000)}\nlast`;
   const chunks = splitReply(text);
   assert.equal(chunks.join(''), text);
   assert.ok(chunks.every(c => c.length <= 1900 && c.isWellFormed()));

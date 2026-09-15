@@ -35,15 +35,24 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
-      "suspicious": {
-        "noExplicitAny": "warn"
-      },
+      "preset": "recommended",
       "style": {
         "noNonNullAssertion": "off"
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/*/test/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "actions": {
       "source": {

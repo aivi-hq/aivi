@@ -133,12 +133,7 @@ export function renderTranscript(sessions: ReviewedSession[], since: number): st
 async function snapshot(directory: string): Promise<Map<string, string>> {
   const files = new Map<string, string>();
   const walk = async (dir: string) => {
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) await walk(path);

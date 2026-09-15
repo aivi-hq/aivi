@@ -41,7 +41,7 @@ export function createBrowserService(
   const fail = () =>
     (failure ??= new Error('Browser connection is uncertain; inspect Chrome and restart aivi before continuing'));
   async function call(name: string, args: Record<string, unknown>): Promise<McpReply> {
-    let reply;
+    let reply: McpReply;
     try {
       reply = await transport.call(name, args);
     } catch {
@@ -155,7 +155,8 @@ export function createBrowserService(
       closed = true;
       // Stop the MCP child after in-flight calls. Attached Chrome stays open;
       // owned tabs remain inspectable. Closing tabs never implies undoing effects.
-      return (closePromise ??= tail.then(() => transport.close()));
+      closePromise ??= tail.then(() => transport.close());
+      return closePromise;
     },
   };
 }

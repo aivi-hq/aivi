@@ -44,7 +44,7 @@ export function createChromeTransport(config: BrowserConfig): BrowserTransport {
   async function connect(): Promise<Client> {
     if (closed) throw new Error('Browser transport is closed');
     if (client) return client;
-    return (connecting ??= (async () => {
+    connecting ??= (async () => {
       const require = createRequire(import.meta.url);
       const entry = resolve(dirname(require.resolve('chrome-devtools-mcp')), 'bin/chrome-devtools-mcp.js');
       transport = new StdioClientTransport({
@@ -74,7 +74,8 @@ export function createChromeTransport(config: BrowserConfig): BrowserTransport {
         await candidate.close();
         throw error;
       }
-    })());
+    })();
+    return connecting;
   }
   return {
     async call(name, args) {

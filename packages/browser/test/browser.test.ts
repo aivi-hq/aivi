@@ -15,7 +15,7 @@ function fixture() {
     async call(name, args) {
       calls.push({ name, args });
       if (name === 'new_page') {
-        all.forEach(p => (p.selected = false));
+        for (const p of all) p.selected = false;
         all.push({ id: next++, url: String(args.url), title: 'Blank', selected: true });
       }
       const page = all.find(p => p.id === args.pageId);
