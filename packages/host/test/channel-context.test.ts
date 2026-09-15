@@ -47,6 +47,24 @@ test('/context describes the bound session from OpenCode: agent, model, counts, 
       );
       return;
     }
+    if (url.pathname === '/api/model') {
+      res.end(
+        JSON.stringify({
+          location: { directory: '/home', project: { id: 'p', directory: '/home', canonical: '/home' } },
+          data: [
+            {
+              id: 'github-copilot/gpt-5.2',
+              providerID: 'github-copilot',
+              modelID: 'gpt-5.2',
+              name: 'GPT 5.2',
+              limit: { context: 128_000, output: 16_000 },
+              compaction: { mode: 'provider', threshold: 100_000 },
+            },
+          ],
+        }),
+      );
+      return;
+    }
     if (url.pathname === '/api/session/ses_x/message') {
       res.end(
         JSON.stringify({
@@ -61,6 +79,15 @@ test('/context describes the bound session from OpenCode: agent, model, counts, 
               content: [{ type: 'text', text: 'hello' }],
               tokens: { input: 1200, output: 300, reasoning: 0, cache: { read: 1000, write: 0 } },
               cost: 0.0012,
+            },
+            {
+              type: 'compaction',
+              id: 'c1',
+              time: { created: 2.5 },
+              status: 'completed',
+              reason: 'auto',
+              summary: '',
+              recent: '',
             },
             { type: 'user', id: 'u2', time: { created: 3 }, text: 'more' },
             {
@@ -93,17 +120,27 @@ test('/context describes the bound session from OpenCode: agent, model, counts, 
 
   // Before any session: says what the first message would start, and what is in scope.
   const fresh = await describeConversation(store, 'dm-a', binding, loaded, async () => client);
-  assert.match(fresh, /^No session yet; the next message starts one with agent librarian in \/home\./m);
-  assert.match(fresh, /2 core source\(s\), projects demo\./, 'removed projects are not in scope');
+  assert.match(fresh, /^🧠 \*\*Context\*\* · no session yet\n.*agent `librarian` in `\/home`\./);
+  assert.match(fresh, /2 core sources · projects: demo/, 'removed projects are not in scope');
 
   store.adopt('dm-a', { session: 'ses_x', agent: 'librarian', directory: '/home' });
   store.enqueue({ id: 't1', channel: 'dm-a', user: 'u', name: 'Bob', text: 'later' }, 10);
   const text = await describeConversation(store, 'dm-a', binding, loaded, async () => client);
+  // The window is the last call's prompt (input + cache) plus its output: 800 + 500 + 200 = 1,500 of 128,000.
   assert.deepEqual(text.split('\n'), [
-    'Session ses_x since 2026-09-15 08:00 UTC, agent librarian in /home.',
-    'Model: github-copilot/gpt-5.2 (high).',
-    '2 message(s) from people, 2 answer(s); 2,550 tokens (2,000 in, 500 out, 50 reasoning; cache 1,000 read / 500 written), $0.0012.',
-    'Knowledge in scope: 2 core source(s), projects demo.',
-    '1 pending turn(s): queued.',
+    '🧠 **Context** · `librarian` in `/home`',
+    'Model `github-copilot/gpt-5.2 (high)` · window 128,000 tokens',
+    'In use 1,500 / 128,000 (1%)',
+    '░░░░░░░░░░░░░░░░░░░░░░░░',
+    'Headroom 126,500 tokens · 1 compaction · compacts at 100,000',
+    '',
+    '**This session** since 2026-09-15 08:00 UTC · `ses_x`',
+    '2 messages · 2 answers',
+    'Input 2,000 · Output 500 · Reasoning 50 · Cache read 1,000 / written 500',
+    'Billed $0.0012',
+    '_Totals are throughput, not context size: each answer re-sends the window above._',
+    '',
+    '**Knowledge in scope** 2 core sources · projects: demo',
+    '1 pending turn here: queued.',
   ]);
 });

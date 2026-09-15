@@ -175,9 +175,11 @@ native session. Messages received while aivi was offline are not backfilled
 from platform history.
 
 `describeConversation` (host) backs a `/context` command in every channel: the
-bound session's agent, directory, last model, message and token counts, cost,
-the knowledge in scope and the conversation's pending turns, read from
-OpenCode's transcript plus aivi's binding.
+window in use against the model's limit (last answer's input + cache + output
+vs `model.list().limit.context`), compactions, the session's token and cost
+totals, the knowledge in scope and the conversation's pending turns, as
+markdown both platforms render. Read from OpenCode's transcript and catalogue
+plus aivi's binding.
 
 ## Live gate
 

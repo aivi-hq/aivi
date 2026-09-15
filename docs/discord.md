@@ -48,10 +48,12 @@ the host's. This page has what is Discord's.
 - `/status` shows that conversation's pending states, the next job
   occurrences, and how many runs finished in the last 24 hours (missed ones
   included).
-- `/context` says what this conversation's session knows, read from OpenCode:
-  agent and directory, the model that answered last, messages and answers,
-  tokens and cost so far, the knowledge in scope, and what is pending here.
-  Before the first message it says what the first one would start.
+- `/context` shows the session's context window as a bar against the model's
+  limit (the last answer's prompt plus output, from OpenCode's model catalogue
+  and transcript), compactions, then the session's totals (messages, answers,
+  input/output/reasoning/cache tokens, billed cost), the knowledge in scope
+  and what is pending here. Before the first message it says what the first
+  one would start. No per-category breakdown: OpenCode does not expose one.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
