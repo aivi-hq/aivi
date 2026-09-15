@@ -1,7 +1,7 @@
 # Conversation feedback: nobody waits in silence
 
-Status: principle agreed (2026-09-15); the minimum and progress are built, the
-rest is wanted.
+Status: principle agreed (2026-09-15); the minimum and progress are built and
+seen live in Discord and Slack, the rest is wanted.
 
 ## Principle
 

@@ -175,10 +175,10 @@ the tests load it.
 - Live gates (2026-09-15): OpenCode, Discord and Slack all passed after the
   jobs/runs split and the channel lift: DMs, mention → thread, `/status`,
   reactions, `aivi_jobs` through the plugin, outcomes re-entering a thread,
-  report threads adopting the run's session. Not yet seen live: the progress
-  placeholder (edited message while a turn runs) in either channel, and Slack
-  replies as a `markdown` block (headings, bold, links, lists; `chat.update`
-  on the placeholder; ephemeral command answers).
+  report threads adopting the run's session, the progress placeholder in both
+  channels. Not yet seen live: Slack replies as a `markdown` block (headings,
+  bold, links, lists; `chat.update` on the placeholder; ephemeral command
+  answers), and dreaming writing into a project's memory.
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
-- The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
-  deferred until the projects work settles.
+- The docs restructure proposed in `docs/review/docs-consistency.md` §3 was
+  deferred until the projects work settled; it has (2026-09-15).

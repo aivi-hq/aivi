@@ -89,9 +89,8 @@ module with webhook routes on the same listener.
 - Dreaming: a scheduled agent maintains `facts.md` and proposals from
   conversations since its last run ([docs/dreaming.md](docs/dreaming.md)).
 
-Next, in order: live check of the progress placeholder, next channels,
-installation on other machines, Linear (with per-project locks and quiet-time
-maintenance). Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
+Next, in order: next channels, installation on other machines, Linear (with
+per-project locks and quiet-time maintenance). Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
 unscheduled ideas: `docs/backlog/`.
 
 `npm run agentic:verify` runs Biome and `npm run check` (build, tests against

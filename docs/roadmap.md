@@ -25,7 +25,7 @@ Mock tests do not establish these; each has its own command.
   (passed 2026-09-15, including `session.list` ordering and the `.env` guard).
 - Browser: `npm run smoke:browser` with Chrome installed (passed 2026-09-15).
 - Discord: `aivi … discord register` then `serve` against a test server.
-  Progress (2026-09-15, not yet run live): with `progress: "status"` a message
+  Progress (passed live 2026-09-15): with `progress: "status"` a message
   gets a `⏳ thinking…` placeholder that changes while the agent works
   (`🔧 …`, `✍️ writing the answer`) and disappears when the answer is posted;
   with `"tools"` the tool calls are listed beneath; a failing turn leaves the
@@ -33,26 +33,26 @@ Mock tests do not establish these; each has its own command.
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
   the thread, a report into `reportChannels`, a reply in that thread,
-  `/<prefix>-status` and `/<prefix>-search`. Progress (2026-09-15, not yet run
-  live): the same placeholder in the thread through `chat.update`, deleted
+  `/<prefix>-status` and `/<prefix>-search`. Progress (passed live 2026-09-15):
+  the same placeholder in the thread through `chat.update`, deleted
   with `chat.delete` when the answer lands, alongside the ⏳/👀 reactions.
 
 ## Next, in order of intent
 
-1. Projects: what one is, where it lives, how it is described, and dreaming
-   into per-project memory are built ([projects.md](projects.md), 2026-09-15).
-   `aivi projects add` clones; a clone is a registration. Per-project locks and
-   maintenance-when-idle wait for the Linear milestone
-   ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
-2. Live gate of the progress placeholder in Discord and Slack (a normal turn,
-   a job re-entry).
-3. Next channels once the research lands
+Projects are done (2026-09-15, [projects.md](projects.md)): discovered from
+`<home>/projects`, described from the home, per-project memory, add/remove/purge.
+Per-project locks and maintenance-when-idle wait for the Linear milestone
+([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
+
+1. Next channels once the research lands
    ([backlog/research-channels.md](backlog/research-channels.md)); Signal and
    Telegram will test the "conversation without threads" case.
-4. Installation and updates for other machines, last
-   ([backlog/installation.md](backlog/installation.md)).
-5. Remote access hardening (per-device tokens, SSO via reverse proxy), then
-   milestone 6 and 7.
+2. Installation and updates for other machines
+   ([backlog/installation.md](backlog/installation.md)); the home layout it
+   must produce is now fixed.
+3. Remote access hardening (per-device tokens, SSO via reverse proxy), then
+   milestone 6 (worker lifecycle, with [shutdown-hooks](backlog/shutdown-hooks.md)
+   and the project lock) and 7 (Linear).
 
 ## Decisions to make early, and decisions to defer
 

@@ -288,7 +288,9 @@ work; npm downloads the N-API prebuilds.
   current -> versions/0.3.0
   versions/0.2.1/      previous release kept for rollback
   versions/0.3.0/node_modules/aivi/...
-  agents/librarian/    OpenCode project dir: opencode.jsonc, AGENTS.md
+  .opencode/agents/    librarian, dreamer (the home is the OpenCode location)
+  projects/<id>/       clean git checkouts; a clone is a registration (docs/projects.md)
+  memory/              org facts.md; memory/<id>/ per project
   state/               SQLite queue/knowledge indexes, host.json (url + token, 0600)
   logs/                serve.log, update.log, receipts/
 ```

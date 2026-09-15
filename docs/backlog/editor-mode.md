@@ -77,7 +77,7 @@ in the adapter's OpenCode directory, running in that same Location. Operations:
 | review dreaming proposals | agent edits `<memory>/rules.md` and `<memory>/proposals/*` | yes |
 | edit a soul or its model | agent edits `<dir>/.opencode/agents/*.md`, never `editor.md` itself | yes |
 | install / update a skill | agent writes `<dir>/.opencode/skills/**` from text the user pastes; URLs only after the user has seen the fetched content | yes |
-| add project | new plugin tool `aivi_projects_add {id, url}`: host clones into `<home>/projects/<id>`, adds the id to `projects`, indexes ([projects](../projects.md)) | register-only |
+| add project | new plugin tool `aivi_projects_add {url, id?}` calling the same `addProject` as `aivi projects add` (built 2026-09-15: a clone into `<home>/projects/<id>` is the registration; no config write) ([projects](../projects.md)) | register-only |
 | clone repository, `aivi update`, cleanup, restart | none | defer |
 
 **Entering and leaving.** `access.editors: [userId]` is added to the shared
@@ -99,8 +99,8 @@ projects directory; `edit` allowed only on `<dir>/.opencode/agents/*.md`,
 `<dir>/.opencode/skills/**`, `<memory>/rules.md`, `<memory>/proposals/*`, then
 `edit` denied again on `<dir>/.opencode/agents/editor.md`. `shell` and
 `subagent` stay denied. `aivi.json` and adapter configs are never editable by
-the model: the only config write is the typed `aivi_projects_add` operation,
-validated by the host with the same zod schema. `steps` is capped in the
+the model: adding a project is a clone, not a config write, so `aivi.json`
+never changes from a chat. `steps` is capped in the
 agent file. After each turn the host snapshots the writable trees (reuse
 dreaming's `snapshot`) and appends the changed-file list to the reply, so the
 transcript is the audit.
