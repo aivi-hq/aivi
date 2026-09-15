@@ -214,24 +214,34 @@ test('dream writes the transcript, adds only its two write targets, advances the
   );
 });
 
-test('dreaming config requires the memory directory to live inside a core knowledge source', async t => {
+test('dreaming defaults to <home>/memory, which is always a core source; another directory must be inside one', async t => {
   const { loadConfig } = await import('@aivi/core');
   const root = await mkdtemp(join(tmpdir(), 'aivi-dream-cfg-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const write = (memoryDirectory: string) =>
+  const write = (memoryDirectory?: string) =>
     writeFile(
       join(root, 'aivi.json'),
       JSON.stringify({
         version: 1,
         knowledge: [{ id: 'k', path: 'knowledge' }],
-        jobs: [{ id: 'dreaming', cron: '0 3 * * *', task: { kind: 'dreaming', directory: 'lib', memoryDirectory } }],
+        jobs: [
+          {
+            id: 'dreaming',
+            cron: '0 3 * * *',
+            task: { kind: 'dreaming', directory: 'lib', ...(memoryDirectory ? { memoryDirectory } : {}) },
+          },
+        ],
       }),
     );
   await write('elsewhere/memory');
   await assert.rejects(loadConfig(join(root, 'aivi.json')), /inside a core knowledge source/);
   await write('knowledge/memory');
-  const loaded = await loadConfig(join(root, 'aivi.json'));
-  const task = loaded.config.jobs[0]!.task;
+  let loaded = await loadConfig(join(root, 'aivi.json'));
+  let task = loaded.config.jobs[0]!.task;
   assert.equal(task.kind === 'dreaming' && task.memoryDirectory, join(root, 'knowledge/memory'));
+  await write();
+  loaded = await loadConfig(join(root, 'aivi.json'));
+  task = loaded.config.jobs[0]!.task;
+  assert.equal(task.kind === 'dreaming' && task.memoryDirectory, join(root, 'memory'));
   assert.ok(configSchema);
 });

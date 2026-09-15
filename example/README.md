@@ -32,15 +32,15 @@ git-ignored, as is `.env`.
 
 | Path | Purpose |
 | --- | --- |
-| `aivi.json` | Installation config: sources, jobs, scheduler pools and retention, browser, Discord, Slack |
+| `aivi.json` | Installation config: sources, projects, jobs, scheduler pools and retention, browser, Discord, Slack |
 | `discord.json` | Discord access policy and IDs (placeholders) |
 | `slack.json` | Slack access policy, command prefix and IDs (placeholders) |
 | `.env.example` | The secrets `serve` reads from `.env` |
 | `.opencode/agents/` | The `librarian` and `dreamer` agents; the home is the OpenCode location |
 | `opencode.jsonc` | Loads the aivi plugin and selects `librarian` when you open this directory in OpenCode |
 | `knowledge/` | Company-wide documents (`doc`) |
-| `memory/` | Dreaming's `facts.md` and proposals (`memory`) |
-| `project/` | A registered project with its own `aivi.project.json` and ADRs (`decision`) |
+| `memory/` | Org memory: dreaming's `facts.md` and proposals; `memory/demo/` is the project's ([projects](../docs/projects.md)) |
+| `projects/demo/` | The registered project `demo`: a plain checkout whose `docs/adr` is indexed as `decision` by convention |
 | `tasks/` | Task files for `aivi jobs add` |
 | `state/` | Created on first run: SQLite, search index, dreaming transcripts, Chrome profile |
 

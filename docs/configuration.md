@@ -12,14 +12,15 @@ every feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` and the two Slack
 tokens in `example/.env` unless the `modules.discord` and `modules.slack`
 blocks are removed.
 
-`aivi.json` is installation configuration. `aivi.project.json` lives inside each
-registered project. OpenCode's own files stay in their native locations.
+`aivi.json` is installation configuration and describes the projects too; a
+project's checkout carries nothing of aivi's ([projects](projects.md)).
+OpenCode's own files stay in their native locations.
 Unknown fields and invalid combinations fail validation; nothing silently falls
 back to another project or resource pool.
 
 Paths in installation config and in task files resolve relative to the home.
-Project source paths resolve relative to the project directory. The home is
-also the OpenCode location: agents live in `<home>/.opencode/agents/`.
+Project source paths resolve relative to the checkout, `<home>/projects/<id>`.
+The home is also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 
 ## Fields
 
@@ -32,8 +33,9 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `host.auth.mode` | `token` (default): callers send `AIVI_TOKEN` as a bearer token. `none`: trust the network (loopback, Tailscale, LAN you control) |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, always with `AIVI_TOKEN` in its environment, so a new plugin build is live and the plugin can authenticate. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
-| `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation` |
-| `projects` | Project registry, each `{id, directory}` |
+| `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
+| `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
+| `projects` | Object keyed by project id; each value `{knowledge?, linear?}`. The checkout must exist at `<home>/projects/<id>`; `<home>/memory/<id>` is its `memory` source |
 | `modules.discord.config` | Optional path to Discord module settings ([discord](discord.md)) |
 | `modules.slack.config` | Optional path to Slack module settings ([slack](slack.md)) |
 | `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
@@ -54,7 +56,7 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `runs.prune` | `olderThanDays` (≥ 1) | Deletes runs that ended `succeeded`, `failed`, `cancelled` or `missed` before that, with their audit rows, then the `done`/`missed` one-off jobs that have no runs left. Blocked and active runs and recurring jobs are never touched. The host seeds one such job from `scheduler.retention` |
 | `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
 | `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
-| `dreaming` | `memoryDirectory`, `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
+| `dreaming` | `memoryDirectory` (`memory`, the org memory in the home), `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
 
 ## Jobs, runs, tasks
 
@@ -170,15 +172,18 @@ Installation config maps each application key to one unique OpenCode agent:
 { "linear": { "applications": { "dev-app": { "agent": "dev" } } } }
 ```
 
-The project config selects applications by lane:
+The project entry selects applications by lane:
 
 ```json
 {
-  "knowledge": [{ "id": "adrs", "path": "docs/adr" }],
-  "linear": {
-    "workspaceId": "linear-workspace-id",
-    "projectId": "linear-project-id",
-    "lanes": { "Development": "dev-app", "Review": "dev-app" }
+  "projects": {
+    "website": {
+      "linear": {
+        "workspaceId": "linear-workspace-id",
+        "projectId": "linear-project-id",
+        "lanes": { "Development": "dev-app", "Review": "dev-app" }
+      }
+    }
   }
 }
 ```
@@ -244,8 +249,9 @@ job materialization. stdout is reserved for command output.
 JSON schemas are generated into `schemas/` by `npm run schema`; `npm run check`
 fails when they are stale. Point your editor at them for autocompletion and
 field descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
-config file) in `aivi.json`, `aivi.project.json`, and the Discord and Slack configs. Runtime validation additionally checks cron
-expressions, timezones, uniqueness, and references across project files.
+config file) in `aivi.json` and the Discord and Slack configs. Runtime validation additionally checks cron
+expressions, timezones, uniqueness, that every project is checked out, and
+Linear application references.
 
 `aivi serve` is the single application command. See [application lifecycle](application.md)
 for ownership and [knowledge search](knowledge.md) for indexing and retrieval.

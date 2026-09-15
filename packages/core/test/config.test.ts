@@ -108,38 +108,69 @@ test('retention is a system job derived from config: default pool, host timezone
   );
 });
 
-test('project files own lane mappings and paths; source selection never falls back on an unknown project', async t => {
+test('projects are checkouts under <home>/projects, described from the home; selection never falls back on an unknown project', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, 'checkout'));
-  await writeFile(
-    join(root, 'aivi.json'),
-    JSON.stringify({
-      version: 1,
-      knowledge: [{ id: 'company', path: 'handbook' }],
-      projects: [{ id: 'website', directory: 'checkout' }],
-      linear: { applications: { worker: { agent: 'dev' } } },
-    }),
-  );
-  await writeFile(
-    join(root, 'checkout/aivi.project.json'),
-    JSON.stringify({
-      knowledge: [{ id: 'decisions', path: 'docs/adr' }],
+  await mkdir(join(root, 'projects/website'), { recursive: true });
+  await mkdir(join(root, 'projects/wiki'), { recursive: true });
+  const write = (projects: Record<string, unknown>) =>
+    writeFile(
+      join(root, 'aivi.json'),
+      JSON.stringify({
+        version: 1,
+        knowledge: [{ id: 'company', path: 'handbook' }],
+        projects,
+        linear: { applications: { worker: { agent: 'dev' } } },
+      }),
+    );
+  await write({
+    website: {
       linear: { workspaceId: 'team', projectId: 'project', lanes: { Development: 'worker', Review: 'worker' } },
-    }),
-  );
+    },
+    wiki: { knowledge: [{ id: 'pages', path: 'pages' }] },
+  });
   const loaded = await loadConfig(join(root, 'aivi.json'));
   assert.equal(loaded.config.stateDirectory, join(root, 'state'));
-  assert.equal(loaded.projects[0]!.settings.linear!.lanes.Review, 'worker');
+  assert.equal(loaded.projects[0]!.directory, join(root, 'projects/website'));
+  assert.equal(loaded.projects[0]!.linear!.lanes.Review, 'worker');
+  // The convention (docs as doc, docs/adr as decision) plus the project's memory, or the project's own list plus memory.
   assert.deepEqual(
-    selectSources(loaded, ['website']).map(s => s.path),
-    [join(root, 'handbook'), join(root, 'checkout/docs/adr')],
+    selectSources(loaded, ['website'], false).map(s => [s.id, s.kind, s.path]),
+    [
+      ['docs', 'doc', join(root, 'projects/website/docs')],
+      ['adr', 'decision', join(root, 'projects/website/docs/adr')],
+      ['memory', 'memory', join(root, 'memory/website')],
+    ],
   );
-  assert.equal(selectSources(loaded, [], true).length, 1);
+  assert.deepEqual(
+    selectSources(loaded, ['wiki'], false).map(s => [s.id, s.path]),
+    [
+      ['pages', join(root, 'projects/wiki/pages')],
+      ['memory', join(root, 'memory/wiki')],
+    ],
+  );
+  // Core is the configured sources plus the org memory.
+  assert.deepEqual(
+    selectSources(loaded, [], true).map(s => [s.id, s.path]),
+    [
+      ['company', join(root, 'handbook')],
+      ['memory', join(root, 'memory')],
+    ],
+  );
   assert.equal(selectSources(loaded, ['website'], false)[0]!.projectId, 'website');
   assert.throws(() => selectSources(loaded, ['typo']), /Unknown project/);
-  await writeFile(join(root, 'checkout/aivi.project.json'), '{broken');
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), SyntaxError);
+  // A registered project must be checked out; the id `memory` is reserved for aivi's own sources.
+  await write({ missing: {} });
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /Project missing: no checkout/);
+  assert.equal(
+    configSchema.safeParse({ version: 1, knowledge: [{ id: 'memory', path: 'memory', kind: 'memory' }] }).success,
+    false,
+  );
+  assert.equal(
+    configSchema.safeParse({ version: 1, projects: { a: { knowledge: [{ id: 'memory', path: 'm' }] } } }).success,
+    false,
+  );
+  assert.equal(configSchema.safeParse({ version: 1, projects: { 'Bad Id': {} } }).success, false);
 });
 
 test('calendar calculations use the configured timezone across daylight saving changes', () => {

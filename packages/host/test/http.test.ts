@@ -12,7 +12,7 @@ test('read API authenticates callers, scopes sources, and refuses job operations
   const loaded: LoadedConfig = {
     path: '/aivi.json',
     config: configSchema.parse({ version: 1 }),
-    projects: [{ id: 'app', directory: '/app', settings: { knowledge: [] } }],
+    projects: [{ id: 'app', directory: '/app' }],
     sources: [
       { id: 'company', path: '/company', kind: 'doc', scope: 'core' },
       { id: 'adrs', path: '/app/docs', kind: 'decision', scope: 'project', projectId: 'app' },

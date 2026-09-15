@@ -11,19 +11,11 @@
     {
       "id": "company",
       "path": "knowledge"
-    },
-    {
-      "id": "memory",
-      "path": "memory",
-      "kind": "memory"
     }
   ],
-  "projects": [
-    {
-      "id": "demo",
-      "directory": "project"
-    }
-  ],
+  "projects": {
+    "demo": {}
+  },
   "scheduler": {
     "maxConcurrent": 1,
     "resources": {
@@ -64,15 +56,9 @@
       "resource": "local-model",
       "task": {
         "kind": "dreaming",
-        "memoryDirectory": "memory",
         "origins": ["discord", "slack"]
       },
-      "report": {
-        "to": "channel",
-        "module": "discord",
-        "channel": "10000000000000005",
-        "on": "always"
-      }
+      "report": { "to": "channel", "module": "discord", "channel": "10000000000000005", "on": "always" }
     }
   ],
   "search": {

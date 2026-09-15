@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import { z } from 'zod';
 import { browserConfigSchema } from './browser.ts';
@@ -50,7 +50,10 @@ export const taskSchema = z.discriminatedUnion('kind', [
     memoryDirectory: z
       .string()
       .min(1)
-      .describe('Where facts.md and proposals/ live. Must be inside a core knowledge source so memory is searchable.'),
+      .default('memory')
+      .describe(
+        'Where the org facts.md and proposals/ live; default <home>/memory, which is always a core memory source. Must be inside a core knowledge source so memory is searchable.',
+      ),
     origins: z
       .array(z.string().min(1))
       .min(1)
@@ -148,9 +151,28 @@ export const jobSchema = z
     }
   });
 export type Job = z.infer<typeof jobSchema>;
+/** The id every memory source carries: `<home>/memory` for the org, `<home>/memory/<project>` per project. */
+export const MEMORY_SOURCE_ID = 'memory';
+/**
+ * The company-wide convention for what a repository's `docs/` holds. A file
+ * belongs to the most specific source that contains it, so `docs/adr/*` is
+ * `decision` and the rest of `docs/` is `doc`; nothing is indexed twice.
+ */
+export const DEFAULT_PROJECT_KNOWLEDGE = [
+  { id: 'docs', path: 'docs', kind: 'doc' },
+  { id: 'adr', path: 'docs/adr', kind: 'decision' },
+] as const satisfies readonly z.input<typeof source>[];
+/**
+ * One project: a clean git checkout at `<home>/projects/<id>`, described from
+ * the home so the repository carries nothing of aivi's. `knowledge` replaces
+ * `projectDefaults.knowledge` for a repository laid out differently; paths are
+ * relative to the checkout. `linear.lanes` is validated ahead of the module.
+ */
 export const projectSchema = z.strictObject({
-  $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
-  knowledge: z.array(source).default([]),
+  knowledge: z
+    .array(source)
+    .optional()
+    .describe('Replaces projectDefaults.knowledge for this project; paths relative to the checkout.'),
   linear: z
     .strictObject({
       workspaceId: z.string().min(1),
@@ -201,8 +223,25 @@ export const configSchema = z
     stateDirectory: z.string().default('state'),
     host: hostSchema.default({ bind: '127.0.0.1', port: 4100, auth: { mode: 'token' } }),
     opencode: opencodeSchema.default({ lifecycle: 'own' }),
-    knowledge: z.array(source).default([]),
-    projects: z.array(z.strictObject({ id, directory: z.string().min(1) })).default([]),
+    knowledge: z
+      .array(source)
+      .default([])
+      .describe('Core sources; `<home>/memory` is added as the core `memory` source automatically.'),
+    projectDefaults: z
+      .strictObject({
+        knowledge: z
+          .array(source)
+          .default([...DEFAULT_PROJECT_KNOWLEDGE])
+          .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
+      })
+      .default({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] })
+      .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
+    projects: z
+      .record(id, projectSchema)
+      .default({})
+      .describe(
+        'Projects by id; each is a git checkout at <home>/projects/<id> and gets <home>/memory/<id> as its memory source.',
+      ),
     modules: z
       .strictObject({
         discord: z.strictObject({ config: z.string().min(1) }).optional(),
@@ -280,18 +319,29 @@ export const configSchema = z
     jobs: z.array(jobSchema).default([]),
   })
   .superRefine((config, ctx) => {
-    for (const [field, values] of [
-      ['projects', config.projects],
-      ['knowledge', config.knowledge],
-      ['jobs', config.jobs],
-    ] as const) {
+    const sourceLists: [(string | number)[], { id: string }[]][] = [
+      [['knowledge'], config.knowledge],
+      [['projectDefaults', 'knowledge'], config.projectDefaults.knowledge],
+      ...Object.entries(config.projects).flatMap(([project, entry]): [(string | number)[], { id: string }[]][] =>
+        entry.knowledge ? [[['projects', project, 'knowledge'], entry.knowledge]] : [],
+      ),
+    ];
+    for (const [path, values] of [...sourceLists, [['jobs'], config.jobs] as (typeof sourceLists)[number]]) {
       const seen = new Set<string>();
       for (const [i, value] of values.entries()) {
         if (seen.has(value.id))
-          ctx.addIssue({ code: 'custom', path: [field, i, 'id'], message: 'Duplicate identifier' });
+          ctx.addIssue({ code: 'custom', path: [...path, i, 'id'], message: 'Duplicate identifier' });
         seen.add(value.id);
       }
     }
+    for (const [path, values] of sourceLists)
+      for (const [i, value] of values.entries())
+        if (value.id === MEMORY_SOURCE_ID)
+          ctx.addIssue({
+            code: 'custom',
+            path: [...path, i, 'id'],
+            message: 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically',
+          });
     const agents = new Set<string>();
     for (const [app, value] of Object.entries(config.linear?.applications ?? {})) {
       if (agents.has(value.agent))
@@ -447,8 +497,9 @@ export interface KnowledgeSource {
 }
 export interface Project {
   id: string;
+  /** The checkout: `<home>/projects/<id>`. */
   directory: string;
-  settings: z.infer<typeof projectSchema>;
+  linear?: NonNullable<z.infer<typeof projectSchema>['linear']>;
 }
 export interface LoadedConfig {
   config: Config;
@@ -471,28 +522,30 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
     if (browser.mode === 'launch' && browser.executablePath)
       browser.executablePath = absolute(base, browser.executablePath);
   }
-  const sources: KnowledgeSource[] = config.knowledge.map(s => ({ ...s, path: absolute(base, s.path), scope: 'core' }));
+  const memoryRoot = resolve(base, 'memory');
+  const sources: KnowledgeSource[] = [
+    ...config.knowledge.map((s): KnowledgeSource => ({ ...s, path: absolute(base, s.path), scope: 'core' })),
+    { id: MEMORY_SOURCE_ID, path: memoryRoot, kind: 'memory', scope: 'core' },
+  ];
   const projects: Project[] = [];
-  for (const entry of config.projects) {
-    const directory = absolute(base, entry.directory);
-    let raw: unknown = {};
-    try {
-      raw = JSON.parse(await readFile(resolve(directory, 'aivi.project.json'), 'utf8'));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    const settings = projectSchema.parse(raw);
-    const seen = new Set<string>();
-    for (const s of settings.knowledge) {
-      if (seen.has(s.id)) throw new Error(`Duplicate source ${s.id} in project ${entry.id}`);
-      seen.add(s.id);
-      sources.push({ ...s, path: absolute(directory, s.path), scope: 'project', projectId: entry.id });
-    }
-    for (const app of Object.values(settings.linear?.lanes ?? {})) {
+  for (const [projectId, entry] of Object.entries(config.projects)) {
+    const directory = resolve(base, 'projects', projectId);
+    const checkout = await stat(directory).catch(() => null);
+    if (!checkout?.isDirectory()) throw new Error(`Project ${projectId}: no checkout at ${directory}`);
+    for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
+      sources.push({ ...s, path: absolute(directory, s.path), scope: 'project', projectId });
+    sources.push({
+      id: MEMORY_SOURCE_ID,
+      path: join(memoryRoot, projectId),
+      kind: 'memory',
+      scope: 'project',
+      projectId,
+    });
+    for (const app of Object.values(entry.linear?.lanes ?? {})) {
       if (!config.linear?.applications[app])
-        throw new Error(`Project ${entry.id} refers to unknown Linear application ${app}`);
+        throw new Error(`Project ${projectId} refers to unknown Linear application ${app}`);
     }
-    projects.push({ id: entry.id, directory, settings });
+    projects.push({ id: projectId, directory, ...(entry.linear ? { linear: entry.linear } : {}) });
   }
   for (const job of config.jobs) {
     const task = job.task;

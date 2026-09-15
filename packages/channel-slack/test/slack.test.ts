@@ -201,7 +201,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   const loaded = {
     config: configSchema.parse({ version: 1, opencode: { url: opencode.url } }),
     path: '/aivi.json',
-    projects: [{ id: 'demo', directory: '/demo', settings: { knowledge: [] } }],
+    projects: [{ id: 'demo', directory: '/demo' }],
     sources: [],
   };
   const searches: unknown[] = [];

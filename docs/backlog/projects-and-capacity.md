@@ -1,16 +1,11 @@
-# Projects, one agent per project, and quiet-time maintenance
+# One agent per project, and quiet-time maintenance
 
-Status: idea from the owner (2026-09-14); pre-research wanted.
-
-## Projects
-
-- A project is a git repository checked out on the server. aivi's config
-  registers it (`projects[]` with `aivi.project.json` inside for knowledge
-  sources; later the Linear lane mapping). Nothing else needs a copy of that
-  registry: the OpenCode plugin asks the host (`aivi_sources`), agents work in
-  the checkout.
-- Adding a project should be one command (or one chat request in editor mode):
-  clone, register, index.
+Status: idea from the owner (2026-09-14); researched; deliberately deferred to
+the Linear milestone (2026-09-15), since nothing runs *in* a project until
+worker agents exist. What a project *is* was settled and built the same day
+([projects](../projects.md)): a checkout at `<home>/projects/<id>`, described
+from the home. The "Projects" recommendation below is superseded by that page;
+the lock and idle designs still stand.
 
 ## Capacity
 
@@ -51,7 +46,7 @@ facts relevant to locking and idleness are repeated here.
   (`blockLeasesOwnedBy`).
 - A job or lease has exactly one `resource`. Nothing records *which project*
   a job touches; `opencode.prompt` and `dreaming` carry a `directory`, `shell`
-  a `cwd`, and `projects[]` in `aivi.json` carries each project's `directory`.
+  a `cwd`; a project's checkout is `<home>/projects/<id>` (built 2026-09-15).
 - Both drivers poll: the host ticks the scheduler every `pollMs` (1 s), Discord
   its engine every 500 ms. There is no "idle" notion anywhere; the closest is
   `capacityUsage()` returning no rows.
@@ -81,12 +76,13 @@ facts relevant to locking and idleness are repeated here.
 
 ## Recommendation
 
-### Projects
+### Projects (superseded)
 
-Keep `projects[]` as the only registry. "Add a project" is one operator command
-(`aivi projects add <git-url> [--id]`: clone under a configured `projectsDirectory`,
-append to `aivi.json`, run `knowledge.index`) and is not needed for the lock or
-idle work below; do it when the Linear adapter needs it.
+Built as [projects.md](../projects.md): `projects` keyed by id, checkout at
+`<home>/projects/<id>`, no `aivi.project.json`. `aivi projects add <git-url>`
+(clone, register, index) is still to do. For the lock, "which project" is
+derived from a task's `directory`/`cwd` being under `projects/<id>`, so no
+`projectsDirectory` knob is needed.
 
 ### One active agent per project: a pool with limit 1
 
@@ -187,4 +183,4 @@ Express it on the schedule, enforce it in `claim()`:
    boundary with two projects and one pool.
 2. `when` on `scheduleSchema`, `materializeDue` sets `idle_until`, example
    configs updated, `dreaming.md` "Later" paragraph resolved.
-3. `projects[].concurrency` (accept only `1` until worktrees exist).
+3. `projects.<id>.concurrency` (accept only `1` until worktrees exist).

@@ -17,9 +17,11 @@ Owner's requirements (2026-09-14):
 - An interactive first run: when `opencode` v2 is missing, ask whether aivi
   should install it; if declined, exit with "OpenCode v2 is a hard requirement
   and must be on your PATH".
-- Projects are git repositories checked out on the server. aivi's config lists
-  them (knowledge sources, later Linear mapping); plugins must not need their
-  own copies of that config. Agents work inside those checkouts.
+- Projects are git repositories checked out on the server, at
+  `<home>/projects/<id>`. aivi's config describes them (knowledge sources,
+  later Linear mapping) from the home; the checkout carries nothing of aivi's
+  and plugins must not need their own copies of that config. Worker agents
+  work inside those checkouts ([projects](../projects.md)).
 
 ## Decision (2026-09-15): the installation is a git checkout
 

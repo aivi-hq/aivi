@@ -125,7 +125,7 @@ async function main(): Promise<void> {
     case 'config check':
       print({
         valid: true,
-        projects: loaded.projects.length,
+        projects: loaded.projects.map(p => ({ id: p.id, directory: p.directory })),
         sources: loaded.sources.length,
         host: loaded.config.host,
       });

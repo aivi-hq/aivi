@@ -14,7 +14,7 @@ test('scopes are filtered before search; empty/unknown scopes cannot broaden ret
   const loaded: LoadedConfig = {
     path: '/config',
     config: configSchema.parse({ version: 1, stateDirectory: root, search: { provider: 'qmd' } }),
-    projects: [{ id: 'app', directory: root, settings: { knowledge: [] } }],
+    projects: [{ id: 'app', directory: root }],
     sources: [
       { id: 'core', path: root, kind: 'doc', scope: 'core' },
       { id: 'docs', path: root, kind: 'doc', scope: 'project', projectId: 'app' },
@@ -61,7 +61,7 @@ test('real QMD keyword indexing retrieves scoped documents and refreshes modifie
   const loaded: LoadedConfig = {
     path: '/config',
     config: configSchema.parse({ version: 1, stateDirectory: root, search: { provider: 'qmd' } }),
-    projects: [{ id: 'app', directory: join(root, 'project'), settings: { knowledge: [] } }],
+    projects: [{ id: 'app', directory: join(root, 'project') }],
     sources: [
       { id: 'company', path: join(root, 'company'), kind: 'doc', scope: 'core' },
       { id: 'adrs', path: join(root, 'project'), kind: 'decision', scope: 'project', projectId: 'app' },
@@ -101,6 +101,58 @@ test('real QMD keyword indexing retrieves scoped documents and refreshes modifie
   await service.index();
   assert.deepEqual(await service.search({ query: 'Orchard' }), []);
   assert.equal((await service.search({ query: 'Cobalt' }))[0]!.path, project);
+});
+
+test('a file belongs to its most specific source; missing directories are skipped and memory directories created', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'aivi-qmd-nested-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'docs/adr'), { recursive: true });
+  await writeFile(join(root, 'docs/guide.md'), '# Guide\n\nPelican explains the release flow.');
+  await writeFile(join(root, 'docs/adr/0001.md'), '# ADR\n\nPelican releases are decided on Tuesdays.');
+  const loaded: LoadedConfig = {
+    path: '/config',
+    config: configSchema.parse({ version: 1, stateDirectory: root, search: { provider: 'qmd' } }),
+    projects: [{ id: 'app', directory: root }],
+    sources: [
+      { id: 'docs', path: join(root, 'docs'), kind: 'doc', scope: 'project', projectId: 'app' },
+      { id: 'adr', path: join(root, 'docs/adr'), kind: 'decision', scope: 'project', projectId: 'app' },
+      { id: 'research', path: join(root, 'docs/research'), kind: 'doc', scope: 'project', projectId: 'app' },
+      { id: 'memory', path: join(root, 'memory/app'), kind: 'memory', scope: 'project', projectId: 'app' },
+    ],
+  };
+  let sdk: QmdSDK;
+  try {
+    const name = '@tobilu/qmd';
+    sdk = (await import(name)) as QmdSDK;
+  } catch {
+    t.skip('Optional QMD dependency is not installed');
+    return;
+  }
+  const warnings: unknown[] = [];
+  const service = await createKnowledgeService(loaded, async () => sdk, {
+    ...silentLogger,
+    warn: (event, data) => void warnings.push([event, data]),
+  });
+  t.after(() => service.close());
+  await service.index();
+  const hits = await service.search({ query: 'Pelican' });
+  assert.deepEqual(
+    hits.map(h => [h.sourceId, h.kind]).sort(),
+    [
+      ['adr', 'decision'],
+      ['docs', 'doc'],
+    ],
+    'the ADR is indexed once, as a decision, not also under docs',
+  );
+  assert.deepEqual(warnings, [
+    ['knowledge.missing', { source: 'research', projectId: 'app', path: join(root, 'docs/research') }],
+  ]);
+  await writeFile(join(root, 'memory/app/facts.md'), '# Facts\n\n- Pelican is the codename.');
+  await service.index();
+  assert.ok(
+    (await service.search({ query: 'Pelican', kinds: ['memory'] })).length === 1,
+    'memory dir was created and indexed',
+  );
 });
 
 test('backend scope violations are rejected; a result that escapes its source is dropped, not served', async t => {

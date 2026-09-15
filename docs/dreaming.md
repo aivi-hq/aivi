@@ -62,7 +62,6 @@ should be rules" is the intended workflow.
   "resource": "local-model",
   "task": {
     "kind": "dreaming",
-    "memoryDirectory": "knowledge/memory",
     "origins": ["discord"],
     "maxSessions": 50
   },
@@ -70,8 +69,9 @@ should be rules" is the intended workflow.
 }
 ```
 
-`memoryDirectory` must be inside a core knowledge source (configuration fails
-otherwise). `agent` names an agent in the home's `.opencode/agents/` (set
+`memoryDirectory` defaults to `<home>/memory`, the org memory, which is always
+a core `memory` source ([projects](projects.md)); another directory must be
+inside a core knowledge source (configuration fails otherwise). `agent` names an agent in the home's `.opencode/agents/` (set
 `directory` for an agent defined elsewhere). The dreamer picks its model in
 its own frontmatter; replace the file to change how memory is kept.
 
@@ -83,7 +83,8 @@ example home schedules it next to Discord, which is where its default
 
 ## Later
 
-Project-scoped memory (facts that belong to one project's repository;
+Project-scoped memory: the dreamer writing to `<home>/memory/<project>/` when a
+fact belongs to a project ([projects](projects.md#memory),
 [project-memory](backlog/project-memory.md)), per-person
 memory once identities are linked, memory decay, and a queue-aware schedule that
 waits for quiet hours instead of a fixed cron

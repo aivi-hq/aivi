@@ -39,11 +39,12 @@ Mock tests do not establish these; each has its own command.
 
 ## Next, in order of intent
 
-1. Projects as pools and maintenance only when idle
-   ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)),
-   together with project-scoped memory and a per-project dreamer boundary
-   ([backlog/project-memory.md](backlog/project-memory.md)). Design
-   conversation first; both pages say "design wanted".
+1. Projects: what one is, where it lives and how it is described is built
+   ([projects.md](projects.md), 2026-09-15). Left, in order: dreaming writing to
+   project memory ([backlog/project-memory.md](backlog/project-memory.md)),
+   `aivi projects add <git-url>`. Per-project locks and maintenance-when-idle
+   wait for the Linear milestone
+   ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 2. Live gate of the progress placeholder in Discord and Slack (a normal turn,
    a job re-entry).
 3. Next channels once the research lands

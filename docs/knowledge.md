@@ -1,9 +1,14 @@
 # Knowledge search
 
 The host owns one QMD 2.8.3 SDK store. Authoritative documents remain in their
-configured core/project paths; the derived index lives in `.aivi/knowledge/`.
+configured core/project paths; the derived index lives in `<state>/knowledge/`.
 Each source maps to a separate collection. Directories index Markdown recursively;
-a source pointing to one file indexes only that file.
+a source pointing to one file indexes only that file. A file belongs to the most
+specific source that contains it: a directory source ignores every source nested
+inside it, so `docs/adr` as `decision` inside `docs` as `doc` indexes each ADR
+once ([projects](projects.md)). A source whose path does not exist is skipped
+with a `knowledge.missing` warning; `memory` sources are created, since aivi
+owns them.
 
 ```json
 { "search": { "provider": "qmd", "indexOnStart": true, "maxPending": 32 } }

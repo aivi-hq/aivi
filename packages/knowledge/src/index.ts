@@ -25,7 +25,7 @@ export interface QmdStore {
 export interface QmdSDK {
   createStore(options: {
     dbPath: string;
-    config: { collections: Record<string, { path: string; pattern: string }> };
+    config: { collections: Record<string, { path: string; pattern: string; ignore?: string[] }> };
   }): Promise<QmdStore>;
   extractSnippet(body: string, query: string, maxLen: number): { snippet: string; line: number };
 }
@@ -59,10 +59,17 @@ export async function createKnowledgeService(
       async close() {},
     };
   const sdk = await loader();
-  const collections: Record<string, { path: string; pattern: string }> = {};
+  const collections: Record<string, { path: string; pattern: string; ignore?: string[] }> = {};
   const sources = new Map<string, { source: KnowledgeSource; root: string; file?: string }>();
   for (const source of loaded.sources) {
-    const canonical = await realpath(source.path);
+    // Memory directories are aivi's own and appear once dreaming writes; create them so they
+    // are indexed from the start. A repository without the conventional directory is normal.
+    if (source.kind === 'memory') await mkdir(source.path, { recursive: true });
+    const canonical = await realpath(source.path).catch(() => null);
+    if (!canonical) {
+      log?.warn('knowledge.missing', { source: source.id, projectId: source.projectId, path: source.path });
+      continue;
+    }
     const directory = (await stat(canonical)).isDirectory();
     const root = directory ? canonical : dirname(canonical);
     const pattern = directory ? '**/*.md' : basename(canonical);
@@ -71,6 +78,21 @@ export async function createKnowledgeService(
     const id = collectionID(source);
     collections[id] = { path: root, pattern };
     sources.set(id, { source, root, ...(!directory ? { file: canonical } : {}) });
+  }
+  // A file belongs to the most specific source that contains it: a directory source ignores
+  // every source nested inside it, so nothing is indexed twice or under two kinds.
+  for (const [id, outer] of sources) {
+    if (outer.file) continue;
+    const ignore = [...sources.values()]
+      .filter(inner => inner !== outer && (inner.file ?? inner.root).startsWith(`${outer.root}${sep}`))
+      .map(
+        inner =>
+          `${relative(outer.root, inner.file ?? inner.root)
+            .split(sep)
+            .join('/')}${inner.file ? '' : '/**'}`,
+      )
+      .sort();
+    if (ignore.length) collections[id]!.ignore = ignore;
   }
   const folder = resolve(loaded.config.stateDirectory, 'knowledge');
   await mkdir(folder, { recursive: true, mode: 0o700 });
@@ -94,7 +116,9 @@ export async function createKnowledgeService(
   return {
     async search(input: SearchRequest) {
       const request = searchSchema.parse(input);
-      const ids = selectSources(loaded, request.projects, request.includeCore, request.kinds).map(collectionID);
+      const ids = selectSources(loaded, request.projects, request.includeCore, request.kinds)
+        .map(collectionID)
+        .filter(id => sources.has(id));
       // Never pass an empty filter: QMD interprets it as an unscoped query.
       if (!ids.length) return [];
       return run(async () => {

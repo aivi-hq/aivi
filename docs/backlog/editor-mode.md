@@ -77,7 +77,7 @@ in the adapter's OpenCode directory, running in that same Location. Operations:
 | review dreaming proposals | agent edits `<memory>/rules.md` and `<memory>/proposals/*` | yes |
 | edit a soul or its model | agent edits `<dir>/.opencode/agents/*.md`, never `editor.md` itself | yes |
 | install / update a skill | agent writes `<dir>/.opencode/skills/**` from text the user pastes; URLs only after the user has seen the fetched content | yes |
-| add project | new plugin tool `aivi_projects_add {id, directory}`: host validates the directory, appends to `projects[]`, writes `aivi.project.json`, indexes | register-only |
+| add project | new plugin tool `aivi_projects_add {id, url}`: host clones into `<home>/projects/<id>`, adds the id to `projects`, indexes ([projects](../projects.md)) | register-only |
 | clone repository, `aivi update`, cleanup, restart | none | defer |
 
 **Entering and leaving.** `access.editors: [userId]` is added to the shared

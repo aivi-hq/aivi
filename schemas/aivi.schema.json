@@ -95,6 +95,7 @@
       "additionalProperties": false
     },
     "knowledge": {
+      "description": "Core sources; `<home>/memory` is added as the core `memory` source automatically.",
       "default": [],
       "type": "array",
       "items": {
@@ -127,25 +128,147 @@
         "additionalProperties": false
       }
     },
+    "projectDefaults": {
+      "description": "The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.",
+      "default": {
+        "knowledge": [
+          {
+            "id": "docs",
+            "path": "docs",
+            "kind": "doc"
+          },
+          {
+            "id": "adr",
+            "path": "docs/adr",
+            "kind": "decision"
+          }
+        ]
+      },
+      "type": "object",
+      "properties": {
+        "knowledge": {
+          "description": "Sources every project gets unless it lists its own; paths relative to the checkout.",
+          "default": [
+            {
+              "id": "docs",
+              "path": "docs",
+              "kind": "doc"
+            },
+            {
+              "id": "adr",
+              "path": "docs/adr",
+              "kind": "decision"
+            }
+          ],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]*$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "description": "doc: Reference material: handbooks, guides, research notes. Relevant whenever the topic matches. decision: Recorded decisions (ADRs). Authoritative for why something is the way it is; cite them over inference. memory: Facts and proposals distilled from conversations by dreaming. Dated and attributed; softer than docs and decisions. conversation: Indexed conversation transcripts. Useful for recovering details; never authoritative.",
+                "default": "doc",
+                "type": "string",
+                "enum": [
+                  "doc",
+                  "decision",
+                  "memory",
+                  "conversation"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "projects": {
-      "default": [],
-      "type": "array",
-      "items": {
+      "description": "Projects by id; each is a git checkout at <home>/projects/<id> and gets <home>/memory/<id> as its memory source.",
+      "default": {},
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]*$"
+      },
+      "additionalProperties": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]*$"
+          "knowledge": {
+            "description": "Replaces projectDefaults.knowledge for this project; paths relative to the checkout.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]*$"
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "description": "doc: Reference material: handbooks, guides, research notes. Relevant whenever the topic matches. decision: Recorded decisions (ADRs). Authoritative for why something is the way it is; cite them over inference. memory: Facts and proposals distilled from conversations by dreaming. Dated and attributed; softer than docs and decisions. conversation: Indexed conversation transcripts. Useful for recovering details; never authoritative.",
+                  "default": "doc",
+                  "type": "string",
+                  "enum": [
+                    "doc",
+                    "decision",
+                    "memory",
+                    "conversation"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "path"
+              ],
+              "additionalProperties": false
+            }
           },
-          "directory": {
-            "type": "string",
-            "minLength": 1
+          "linear": {
+            "type": "object",
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "projectId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "lanes": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]*$"
+                }
+              }
+            },
+            "required": [
+              "workspaceId",
+              "projectId",
+              "lanes"
+            ],
+            "additionalProperties": false
           }
         },
-        "required": [
-          "id",
-          "directory"
-        ],
         "additionalProperties": false
       }
     },
@@ -625,7 +748,8 @@
                     "minLength": 1
                   },
                   "memoryDirectory": {
-                    "description": "Where facts.md and proposals/ live. Must be inside a core knowledge source so memory is searchable.",
+                    "description": "Where the org facts.md and proposals/ live; default <home>/memory, which is always a core memory source. Must be inside a core knowledge source so memory is searchable.",
+                    "default": "memory",
                     "type": "string",
                     "minLength": 1
                   },
@@ -656,8 +780,7 @@
                   }
                 },
                 "required": [
-                  "kind",
-                  "memoryDirectory"
+                  "kind"
                 ],
                 "additionalProperties": false
               },
