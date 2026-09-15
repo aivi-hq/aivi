@@ -36,6 +36,8 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
+| model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
+| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/help`): one shared table in the host, each platform only translates |
 
 ## Decisions and why
 
@@ -62,7 +64,8 @@ runs in one process; adapters are optional modules with a start/stop contract.
   interrupted by a *shutdown or restart* is discarded and the person told,
   because its only external effect is the reply; conversations with queued
   messages hear that aivi is going offline and that they will be answered
-  after; jobs still block.
+  after; jobs still block. A `/stop` discards the same way, with its own
+  notice.
 - **Verified final answer**, never idleness: `finalAnswer` reads the native
   context (`user → assistant(finish: stop) → idle(succeeded)`, no unfinished
   tools).
@@ -103,6 +106,14 @@ runs in one process; adapters are optional modules with a start/stop contract.
   deleted when the answer is posted or edited into the failure notice, so a
   conversation ends with the answer only. Per channel: `progress: silent |
   status | tools` ([channels](docs/channels.md#progress-while-a-turn-runs)).
+- **Commands are adapter UI over host operations.** One command table in the
+  host feeds Discord's registration, Slack's manifest and `/help`; a module
+  translates, never decides. A `/stop` is the person's choice, so the turn is
+  discarded like a shutdown (not blocked) and said so; a `/steer` goes into
+  the running turn with `delivery: "steer"` and is marked as its own; a
+  `/model` pin is a session property set before each turn and refused while
+  one runs; `/agent` is deliberately absent (personalities by configuration)
+  ([channels](docs/channels.md#chat-commands)).
 - **Memory is files** inside a knowledge source, never system-prompt state.
   `<home>/memory` (org) and `<home>/memory/<project>` are always `memory`
   sources; one dreaming run decides where a fact belongs, because channels
@@ -184,7 +195,10 @@ the tests load it.
   report threads adopting the run's session, the progress placeholder in both
   channels, Slack replies as a `markdown` block. Not yet seen live: dreaming
   writing into a project's memory; Slack's `response_url` answered 500 to a
-  `markdown` block for `/…-context` (plain-text fallback added).
+  `markdown` block for `/…-context` (plain-text fallback added); the
+  `/model`, `/stop`, `/steer`, `/jobs` and `/help` commands on either
+  platform (Slack needs the manifest in [slack.md](docs/slack.md#setup)
+  re-applied first).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 landed
   2026-09-15 (`getting-started.md`, `operations.md`; `application.md` folded

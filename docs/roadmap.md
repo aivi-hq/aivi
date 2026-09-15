@@ -29,13 +29,16 @@ Mock tests do not establish these; each has its own command.
   gets a `⏳ thinking…` placeholder that changes while the agent works
   (`🔧 …`, `✍️ writing the answer`) and disappears when the answer is posted;
   with `"tools"` the tool calls are listed beneath; a failing turn leaves the
-  notice in the placeholder's place.
+  notice in the placeholder's place. Not yet seen live: `/model` (autocomplete
+  and a pinned answer), `/stop` on a running turn, `/steer`, `/jobs`, `/help`.
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
   the thread, a report into `reportChannels`, a reply in that thread,
   `/<prefix>-status` and `/<prefix>-search`. Progress (passed live 2026-09-15):
   the same placeholder in the thread through `chat.update`, deleted
   with `chat.delete` when the answer lands, alongside the ⏳/👀 reactions.
+  Not yet seen live: the five new commands (the manifest must be re-applied
+  first).
 
 ## Next, in order of intent
 
