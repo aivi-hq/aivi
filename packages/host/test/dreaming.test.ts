@@ -141,7 +141,7 @@ test('collectSessions picks aivi sessions by origin updated after the cursor, ol
   assert.match(transcript, /## ses_new \(discord, channel c1\)/);
 });
 
-test('dream writes the transcript, confines edits to facts and proposals, advances the cursor, and reports changes', async t => {
+test('dream writes the transcript, adds only its two write targets, advances the cursor, and reports changes', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-dream-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const memory = join(root, 'knowledge', 'memory');
@@ -198,16 +198,10 @@ test('dream writes the transcript, confines edits to facts and proposals, advanc
         p.action === 'external_directory' && p.resource === `${canonical}/**`,
     ),
   );
+  // The agent file is the boundary; the job only adds where memory is and what may be written.
   assert.ok(
-    !create.body.permissions.some(
-      (p: { action: string; effect: string }) => ['shell', 'subagent'].includes(p.action) && p.effect === 'allow',
-    ),
-  );
-  assert.ok(
-    create.body.permissions.some(
-      (p: { action: string; resource: string; effect: string }) =>
-        p.action === 'read' && p.resource === '*.env' && p.effect === 'deny',
-    ),
+    create.body.permissions.every((p: { action: string }) => ['external_directory', 'edit'].includes(p.action)),
+    'no deny-all, no tool allow-list',
   );
 
   const again = await dream(task, 'job-2', deps);

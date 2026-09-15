@@ -5,7 +5,7 @@ import { configSchema } from '@aivi/core';
 import { discordConfigSchema } from '../src/config.ts';
 import { createNativeChat } from '../src/native.ts';
 
-test('native chat creates one fixed-agent session and reapplies read-only rules before each prompt', async t => {
+test('native chat creates one fixed-agent session and reapplies only the source-directory allows before each prompt', async t => {
   const requests: { path: string; method: string; body: Record<string, any> }[] = [];
   let metadata: Record<string, unknown> = {};
   const server = createServer(async (req, res) => {
@@ -98,18 +98,10 @@ test('native chat creates one fixed-agent session and reapplies read-only rules 
   assert.equal(requests.filter(r => r.path === '/api/session' && r.method === 'POST').length, 1);
   const rules = requests.filter(r => r.path.endsWith('/permission/rules'));
   assert.equal(rules.length, 2);
-  assert.deepEqual(rules[0]!.body.permissions[0], { action: '*', resource: '*', effect: 'deny' });
+  // The agent file is the boundary: aivi sends nothing but external_directory allows for sources.
   assert.ok(
-    !rules[0]!.body.permissions.some(
-      (p: { action: string; effect: string }) =>
-        ['shell', 'edit', 'subagent', 'browser'].includes(p.action) && p.effect === 'allow',
-    ),
-  );
-  assert.ok(
-    rules[0]!.body.permissions.some(
-      (p: { action: string; effect: string }) => p.action === 'knowledge_search' && p.effect === 'allow',
-    ),
-    'plugin tools need their own allow rules',
+    rules[0]!.body.permissions.every((p: { action: string; effect: string }) => p.action === 'external_directory'),
+    'no deny-all and no tool allow-list; the agent file decides',
   );
   assert.deepEqual(requests.filter(r => r.path.endsWith('/prompt'))[1]!.body.metadata, {
     aivi: { origin: 'discord', channel: 'dm', user: 'human', discordMessage: 'two', message: 'msg_discord_two' },
@@ -148,50 +140,4 @@ test('an unreachable OpenCode is a turn that never started, not a blocked one', 
     ask(turn, AbortSignal.timeout(3000), () => {}),
     (error: unknown) => error instanceof TurnNotStarted && /No running OpenCode/.test(error.message),
   );
-});
-
-test('browser: true adds the browser permission to the Discord session policy; the default denies it', async () => {
-  const base = { version: 1, applicationId: '10000000000000001', directory: '/librarian', access: {} };
-  const rules = async (browser: boolean) => {
-    const config = discordConfigSchema.parse({ ...base, browser });
-    const loaded = { config: configSchema.parse({ version: 1 }), path: '/config', projects: [], sources: [] };
-    let sent: { action: string; effect: string }[] = [];
-    const ask = await createNativeChat(config, loaded, async () => {
-      return {
-        session: {
-          async create() {},
-          async get() {
-            return { agent: 'librarian', location: { directory: '/librarian' } };
-          },
-          async prompt() {
-            throw new Error('stop here');
-          },
-        },
-        permission: {
-          async rules(input: { permissions: { action: string; effect: string }[] }) {
-            sent = input.permissions;
-          },
-        },
-      } as never;
-    });
-    await ask(
-      {
-        id: 'x',
-        channel: 'dm',
-        user: 'u',
-        name: 'n',
-        text: 't',
-        session: 's',
-        ready: false,
-        state: 'running',
-        result: null,
-        error: null,
-      },
-      AbortSignal.timeout(1000),
-      () => {},
-    ).catch(() => {});
-    return sent.filter(p => p.action === 'browser').map(p => p.effect);
-  };
-  assert.deepEqual(await rules(false), []);
-  assert.deepEqual(await rules(true), ['allow']);
 });

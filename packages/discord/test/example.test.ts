@@ -16,7 +16,7 @@ test('the example home loads through the real loaders with every feature enabled
   assert.ok(loaded.config.schedules.some(s => s.task.kind === 'dreaming'));
   const discord = await loadDiscordConfig(loaded.config.modules.discord!.config);
   assert.ok(discord.resource in loaded.config.scheduler.resources, 'Discord pool exists');
-  assert.equal(discord.directory, join(example, 'librarian'));
+  assert.equal(discord.directory, example, 'the home is the OpenCode location');
   for (const file of await readdir(join(example, 'tasks'))) {
     const raw = JSON.parse(await readFile(join(example, 'tasks', file), 'utf8'));
     const task = 'task' in raw ? raw.task : raw;

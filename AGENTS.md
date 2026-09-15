@@ -13,7 +13,9 @@ changing runtime behavior.
   A failure before the prompt is accepted is `failed`; after it, `blocked`.
 - Every state change a person waits on gets a visible signal; never silence.
 - Keep credentials in fnox/environment, never configuration examples or logs.
-- Discord uses one librarian agent and does not execute project work.
+- Agents are ordinary OpenCode agents in `<home>/.opencode/agents/`; their
+  file is the whole boundary. aivi adds session rules only for paths it
+  knows, never a deny.
 
 Design rules for the worker/Linear lifecycle (not built; only config validation
 exists):

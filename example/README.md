@@ -31,12 +31,13 @@ git-ignored, as is `.env`.
 | `aivi.json` | Installation config: sources, schedules, scheduler pools, browser, Discord |
 | `discord.json` | Discord access policy and IDs (placeholders) |
 | `.env.example` | The secrets `serve` reads from `.env` |
-| `librarian/` | OpenCode location with the `librarian` and `dreamer` agents and the aivi plugin |
+| `.opencode/agents/` | The `librarian` and `dreamer` agents; the home is the OpenCode location |
+| `opencode.jsonc` | Loads the aivi plugin and selects `librarian` when you open this directory in OpenCode |
 | `knowledge/` | Company-wide documents (`doc`) |
 | `memory/` | Dreaming's `facts.md` and proposals (`memory`) |
 | `project/` | A registered project with its own `aivi.project.json` and ADRs (`decision`) |
 | `tasks/` | Task files for `aivi jobs enqueue` |
 | `state/` | Created on first run: SQLite, search index, dreaming transcripts, Chrome profile |
 
-Use the tools from OpenCode by opening `librarian/` in OpenCode v2 while
+Use the tools from OpenCode by opening this directory in OpenCode v2 while
 `serve` runs; see [docs/opencode.md](../docs/opencode.md).

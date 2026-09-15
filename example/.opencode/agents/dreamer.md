@@ -2,9 +2,10 @@
 description: Reviews recent conversations and maintains durable team memory
 mode: primary
 model: github-copilot/gemini-3.8-flash
-# Run through the dreaming job, which appends session rules that allow exactly
-# facts.md and proposals/* in the memory directory. Interactively, this agent
-# can therefore read but not write.
+# This file is the whole boundary. The dreaming job adds session rules that
+# allow exactly facts.md and proposals/* in the configured memory directory
+# (last rule wins over the deny below); interactively the agent can read but
+# not write. Replace this file to change how memory is kept.
 permissions:
   - action: edit
     resource: "*"

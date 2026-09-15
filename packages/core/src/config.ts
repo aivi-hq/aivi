@@ -35,7 +35,11 @@ export const taskSchema = z.discriminatedUnion('kind', [
       .min(1)
       .default('dreamer')
       .describe('OpenCode agent that reviews conversations and maintains memory.'),
-    directory: z.string().min(1).describe('OpenCode location where that agent is defined.'),
+    directory: z
+      .string()
+      .min(1)
+      .default('.')
+      .describe('OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents.'),
     memoryDirectory: z
       .string()
       .min(1)

@@ -9,10 +9,10 @@ import type { Turn } from './store.ts';
 export type NativeChat = (turn: Turn, signal: AbortSignal, ready: () => void) => Promise<string>;
 
 /**
- * One Discord turn = one verified turn of a fixed-agent native session. The
- * librarian is read-only: deny everything, allow read/search tools and reads
- * inside the configured knowledge sources. Permission prompts are auto-rejected
- * because nobody sits at the server to approve them.
+ * One Discord turn = one verified turn of the configured agent's native session.
+ * The agent file is the whole boundary: aivi adds nothing but `external_directory`
+ * allows for the configured knowledge sources, which the agent file cannot know.
+ * Permission prompts are auto-rejected because nobody sits at the server.
  */
 export async function createNativeChat(
   config: DiscordConfig,
@@ -20,28 +20,7 @@ export async function createNativeChat(
   opencode: () => Promise<OpenCodeClient>,
   log?: Logger,
 ): Promise<NativeChat> {
-  // Plugin tools use their tool id as permission action unless the plugin names one
-  // (`browser_control` uses `browser`); `execute` only enables Code Mode.
-  const readOnlyTools = [
-    'read',
-    'glob',
-    'grep',
-    'execute',
-    'skill',
-    'webfetch',
-    'websearch',
-    'knowledge_search',
-    'aivi_sources',
-    'aivi_status',
-    ...(config.browser ? ['browser'] : []),
-  ];
-  const permissions: { action: string; resource: string; effect: 'allow' | 'deny' }[] = [
-    { action: '*', resource: '*', effect: 'deny' },
-    ...readOnlyTools.map(action => ({ action, resource: '*', effect: 'allow' as const })),
-    // `read *` above overrides OpenCode's default `*.env → ask` (last match wins); restore it as a deny.
-    { action: 'read', resource: '*.env', effect: 'deny' },
-    { action: 'read', resource: '*.env.*', effect: 'deny' },
-  ];
+  const permissions: { action: string; resource: string; effect: 'allow' }[] = [];
   // Sources may be files or directories. Match native canonical external-directory boundaries.
   for (const source of loaded.sources) {
     const path = await realpath(source.path);

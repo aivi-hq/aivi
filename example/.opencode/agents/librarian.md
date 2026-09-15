@@ -3,6 +3,9 @@ description: Answers questions using company and project knowledge
 mode: primary
 # Cheap and quick for a chat librarian; change per installation.
 model: github-copilot/gemini-3.8-flash
+# This file is the whole boundary. Discord and jobs run this agent exactly as
+# defined here; aivi only adds external_directory allows for the configured
+# knowledge sources. Deny here what the agent must never do anywhere.
 permissions:
   - action: edit
     resource: "*"
@@ -13,20 +16,6 @@ permissions:
   - action: subagent
     resource: "*"
     effect: deny
-  # Knowledge sources live outside this directory. Without these rules every read
-  # waits for a human to approve an external_directory prompt. Resources are
-  # matched against canonical absolute paths; adjust the globs if the repository
-  # is not checked out as `aivi`. Through Discord and jobs the host pins a
-  # stricter session policy on top of these rules.
-  - action: external_directory
-    resource: "**/aivi/example/knowledge/**"
-    effect: allow
-  - action: external_directory
-    resource: "**/aivi/example/project/**"
-    effect: allow
-  - action: external_directory
-    resource: "**/aivi/example/memory/**"
-    effect: allow
 ---
 
 You are the team's librarian. Use aivi's tools to locate company and project

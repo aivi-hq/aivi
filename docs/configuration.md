@@ -16,10 +16,9 @@ registered project. OpenCode's own files stay in their native locations.
 Unknown fields and invalid combinations fail validation; nothing silently falls
 back to another project or resource pool.
 
-Paths in installation config resolve relative to the home. Project source
-paths resolve relative to the project directory. A manually enqueued task's
-`directory` resolves relative to the caller's working directory. Scheduled task
-directories resolve relative to `aivi.json`.
+Paths in installation config and in task files resolve relative to the home.
+Project source paths resolve relative to the project directory. The home is
+also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 
 ## Fields
 
@@ -49,7 +48,7 @@ directories resolve relative to `aivi.json`.
 | `knowledge.index` | – | Refreshes the search index |
 | `shell` | `command` (argv array, never a shell string), `cwd`, `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept |
 | `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
-| `dreaming` | `directory`, `memoryDirectory`, `agent` (`dreamer`), `origins` (`["discord"]`), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
+| `dreaming` | `memoryDirectory`, `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
 
 ## Reporting
 

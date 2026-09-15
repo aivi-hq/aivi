@@ -55,7 +55,6 @@
       "resource": "local-model",
       "task": {
         "kind": "dreaming",
-        "directory": "librarian",
         "memoryDirectory": "memory",
         "origins": ["discord"]
       },

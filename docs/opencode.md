@@ -8,7 +8,7 @@ OpenCode or read its private storage.
 
 Milestone 0 of the roadmap, run against a real `opencode service` with
 `github-copilot/gemini-3.8-flash`. Repeat it any time with
-`npm run live:opencode -- --plugin "$PWD/example/librarian"`.
+`npm run live:opencode -- --plugin "$PWD/example"`.
 
 | Question | Finding |
 | --- | --- |
@@ -20,7 +20,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | Plugin loading | A directory entry in `plugins` resolves `<dir>/server.*` or `<dir>/index.*`, not `package.json#main`. `packages/opencode/server.js` re-exports the build for that reason. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
 | Plugin failure mode | An exception in `setup()` marks the plugin `failed` and registers no tools. The plugin therefore never throws for a missing token; the tool call reports the 401. |
 | Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `knowledge_search`, `browser_control`; tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion }`. |
-| Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the defaults, so a broad `read *` allow must be followed by an explicit `*.env` deny to keep OpenCode's default guard. |
+| Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the agent's, so an `edit` allow from dreaming wins over the dreamer's `edit: deny`; aivi never sends a broad allow, so OpenCode's default `.env` guard stays in force. |
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
 | Changes to a local plugin | The server caches module resolution; run `opencode service restart` after changing the plugin package layout **or after `npm install` rewrites `node_modules`** (the plugin otherwise fails with "Cannot find package"). The restart also reloads every client of that service, including an open TUI. |
 | `session.list` order | `order: "desc"` sorts by `time.updated`, not creation: a prompted older session moves to the top. Dreaming's cursor relies on this. |
@@ -33,14 +33,15 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
    (with `AIVI_TOKEN` from fnox, or `host.auth.mode: "none"` on a trusted machine).
 3. With `mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode **server**
    environment and `opencode service restart`.
-4. Open `example/librarian` in OpenCode v2. Its config loads the local plugin
-   and selects the `librarian` agent.
+4. Open `example/` in OpenCode v2. Its `opencode.jsonc` loads the local plugin
+   and selects the `librarian` agent from `.opencode/agents/`.
 5. Ask it to list aivi sources and read the company handbook.
 
-The example agent denies shell, edits, and subagent launches and allows
-`external_directory` reads for the example knowledge paths using `**` globs;
-without those rules every read waits for a permission prompt. Resources in
-permission rules are matched against absolute paths.
+The example agent denies shell, edits, and subagent launches; everything else
+is OpenCode's default. The home is the OpenCode location, so the example's
+knowledge, memory and project directories are inside it and need no
+`external_directory` rules. Sources elsewhere (project checkouts) get those
+rules from aivi per session.
 
 ## Host submission
 
@@ -60,9 +61,10 @@ The running host dispatches queued jobs through the session driver
 pin agent and directory, prompt, wait, answer permission prompts per policy, and
 verify the final answer (`assistant.finish === "stop"`, `idle.outcome ===
 "succeeded"`, no unfinished tools, text present). The job then succeeds with
-`{ sessionId, text, rejectedPermissions }`. An `opencode.prompt` job sends no
-session-level permission rules: the agent's own frontmatter is its only
-boundary. Discord and dreaming pin a session policy in addition.
+`{ sessionId, text, rejectedPermissions }`. The agent file is the boundary for every caller: an `opencode.prompt` job
+sends no session rules; Discord adds `external_directory` allows for the
+configured sources; dreaming adds those plus `edit` allows for its two write
+targets. aivi never sends a deny.
 
 Task options: `timeoutMs` (default 30 min) and `onPermission`: `reject`
 (default; deny and let the agent continue, recorded in the result) or `fail`

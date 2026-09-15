@@ -37,9 +37,9 @@ npm run aivi -- knowledge search "decisions" --project demo
 npm run aivi -- jobs list
 ```
 
-To use the tools from OpenCode, open `example/librarian` in OpenCode v2 with
+To use the tools from OpenCode, open `example/` in OpenCode v2 with
 `opencode service` running; see [OpenCode integration](docs/opencode.md). With a
-running service, `npm run live:opencode -- --plugin "$PWD/example/librarian"`
+running service, `npm run live:opencode -- --plugin "$PWD/example"`
 verifies the real boundary.
 
 For Discord, fill in the IDs in `example/discord.json`, put `DISCORD_BOT_TOKEN`

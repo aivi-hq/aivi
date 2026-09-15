@@ -33,13 +33,13 @@ there is no separate Discord server or daemon command.
   but `mention` needs `messageContent: true` (Discord's Message Content intent). Everyone else is silently ignored; bots,
   webhooks, system messages, and edits are ignored too. The same shape will be
   used for Slack and other adapters.
-- The librarian session is read-only: deny-all, then allow read/glob/grep, Code
-  Mode, skills, web fetch/search, and the aivi tools (`knowledge_search`,
-  `aivi_sources`, `aivi_status`) plus reads inside configured knowledge
-  sources. Never shell, edit, or subagents. The browser is off unless the
-  Discord config sets `"browser": true`, which adds `browser_control` to the
-  allow-list (aivi's own Chrome, see [browser](browser.md)). Permission
-  prompts are auto-rejected because nobody is at the server to approve them.
+- The agent is an ordinary OpenCode agent and its file is the whole boundary.
+  Discord runs it exactly as defined; aivi only adds `external_directory`
+  allows for the configured knowledge sources, which the agent file cannot
+  know. Want no shell, no edits, no browser in Discord? Deny them in the agent
+  file (the example librarian denies edit, shell and subagents). Permission
+  prompts are auto-rejected because nobody is at the server to approve them,
+  so anything OpenCode would *ask* about is refused.
 - `/new` starts fresh on the next message, preserving old native sessions. It
   refuses while that conversation has queued, running, or blocked turns.
 - `/status` shows only that conversation's pending states.
@@ -68,9 +68,10 @@ The example home enables Discord. Edit the IDs in `example/discord.json`;
 { "modules": { "discord": { "config": "discord.json" } } }
 ```
 
-That path resolves relative to the home; the librarian directory resolves
-relative to the Discord config. The example points at `example/librarian`,
-the same agent used in native chat; its config loads the aivi plugin.
+That path resolves relative to the home. `agent` names an agent in the home's
+`.opencode/agents/` (the home is the OpenCode location; `directory` overrides
+that for an agent defined elsewhere). Discord and native chat run the same
+agent file.
 
 `DISCORD_BOT_TOKEN` comes from the environment (`<home>/.env`, see
 [secrets](configuration.md#secrets)) and, with `host.auth.mode: "token"`, so

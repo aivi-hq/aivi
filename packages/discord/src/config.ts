@@ -11,7 +11,8 @@ export const discordConfigSchema = z
     version: z.literal(1),
     applicationId: snowflake,
     agent: z.string().default('librarian'),
-    directory: z.string().min(1),
+    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
+    directory: z.string().min(1).default('.'),
     resource: z.string().default('local-model'),
     /** Who may talk to the bot: DM allow-list and shared channels (with their threads). */
     access: accessPolicySchema,
@@ -19,8 +20,6 @@ export const discordConfigSchema = z
     reportChannels: z.array(snowflake).default([]),
     /** Requires the Message Content intent in the developer portal; needed for any trigger other than "mention". */
     messageContent: z.boolean().default(false),
-    /** Let the librarian use aivi's browser (`browser_control`) in Discord conversations. Off: the session policy denies it. */
-    browser: z.boolean().default(false),
     maxConcurrent: z.number().int().min(1).max(32).default(1),
     maxPending: z.number().int().min(1).max(1000).default(100),
     turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),

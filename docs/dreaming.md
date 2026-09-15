@@ -18,13 +18,12 @@ stays stable.
    the oldest `maxSessions`, and pulls their new messages (user text and the
    agent's answers; no tool output or reasoning).
 4. It writes one transcript file under `<stateDirectory>/dreaming/` and runs
-   the dreamer agent through the session driver with a narrow write boundary:
-   `facts.md` and `proposals/*` in the memory directory. Reads outside the
-   agent's own directory are limited to the memory directory and the transcript;
-   shell and subagents are denied, and `.env` files stay denied (aivi's own
-   `read *` allow would otherwise override OpenCode's default prompt for them).
-   Permission prompts are
-   rejected. Permission paths are canonical (`realpath`), as OpenCode matches
+   the dreamer agent through the session driver. The agent file is the
+   boundary (the example dreamer denies edit, shell and subagents); the job
+   adds only `external_directory` allows for the memory and transcript
+   directories and `edit` allows for `facts.md` and `proposals/*`, which win
+   over the agent's `edit: deny` because session rules come last. Permission
+   prompts are rejected. Paths are canonical (`realpath`), as OpenCode matches
    them. The job row carries the native session id before the first request, so
    `aivi jobs show` points at the session to inspect if the run blocks.
 5. It records which memory files changed, advances the cursor to the newest
@@ -38,7 +37,7 @@ agent reconciles against the current file before writing.
 
 ## Memory contract
 
-The dreamer's soul (`example/librarian/.opencode/agents/dreamer.md`) carries
+The dreamer's soul (`example/.opencode/agents/dreamer.md`) carries
 the judgement: what to keep, how to write it, what to leave out. The host only
 enforces the boundary. Files:
 
@@ -62,7 +61,6 @@ should be rules" is the intended workflow.
   "resource": "local-model",
   "task": {
     "kind": "dreaming",
-    "directory": "librarian",
     "memoryDirectory": "knowledge/memory",
     "origins": ["discord"],
     "maxSessions": 50
@@ -72,13 +70,13 @@ should be rules" is the intended workflow.
 ```
 
 `memoryDirectory` must be inside a core knowledge source (configuration fails
-otherwise). `directory` is the OpenCode location that defines the `dreamer`
-agent; set `agent` to use another name. The dreamer picks its model in its own
-frontmatter.
+otherwise). `agent` names an agent in the home's `.opencode/agents/` (set
+`directory` for an agent defined elsewhere). The dreamer picks its model in
+its own frontmatter; replace the file to change how memory is kept.
 
 The dreamer is meant to run through this job: the job appends the session rules
 that allow its two write targets. Opened interactively, the example agent can
-read but not write (`example/librarian/.opencode/agents/dreamer.md`). The
+read but not write (`example/.opencode/agents/dreamer.md`). The
 example home schedules it next to Discord, which is where its default
 `origins` come from.
 

@@ -175,8 +175,11 @@ async function main(): Promise<void> {
             report,
             resource: fileResource,
           } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
-          if (task.kind === 'opencode.prompt') task.directory = resolve(task.directory);
-          if (task.kind === 'shell' && task.cwd) task.cwd = resolve(task.cwd);
+          // Paths in task files resolve against the home, like paths in aivi.json.
+          if (task.kind === 'opencode.prompt' || task.kind === 'dreaming')
+            task.directory = resolve(home, task.directory);
+          if (task.kind === 'dreaming') task.memoryDirectory = resolve(home, task.memoryDirectory);
+          if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home, task.cwd);
           const resource = values.resource ?? fileResource ?? 'local-model';
           if (!(resource in loaded.config.scheduler.resources)) throw new Error(`Unknown resource pool: ${resource}`);
           print(store.enqueue(task, resource, `manual:${values.key ?? randomUUID()}`, Date.now(), report ?? null));

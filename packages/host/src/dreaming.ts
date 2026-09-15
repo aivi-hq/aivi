@@ -189,19 +189,12 @@ export async function dream(
 
   const before = await snapshot(memory);
   const posix = (path: string) => path.replaceAll('\\', '/');
-  const permissions: { action: string; resource: string; effect: 'allow' | 'deny' }[] = [
-    { action: '*', resource: '*', effect: 'deny' },
-    ...['read', 'glob', 'grep', 'execute', 'knowledge_search', 'aivi_sources'].map(action => ({
-      action,
-      resource: '*',
-      effect: 'allow' as const,
-    })),
-    // `read *` above overrides OpenCode's default `*.env → ask` (last match wins); restore it as a deny.
-    { action: 'read', resource: '*.env', effect: 'deny' },
-    { action: 'read', resource: '*.env.*', effect: 'deny' },
+  // The agent file is the boundary; aivi adds only what it knows: where memory and the transcript
+  // are, and that facts.md and proposals/* may be written (appended last, so they win over an
+  // `edit: deny` in the agent file). Everything else stays as the agent defines it.
+  const permissions: { action: string; resource: string; effect: 'allow' }[] = [
     { action: 'external_directory', resource: `${posix(memory)}/**`, effect: 'allow' },
     { action: 'external_directory', resource: `${posix(runDir)}/**`, effect: 'allow' },
-    // The agent may grow facts and proposals; rules and everything else stay human-owned.
     { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
     { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
   ];

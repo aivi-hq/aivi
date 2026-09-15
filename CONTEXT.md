@@ -46,10 +46,12 @@ runs in one process; adapters are optional modules with a start/stop contract.
   cached client, so `opencode service restart` is picked up by the next turn.
 - **Shutdown aborts** running jobs; they end `blocked`. A grace period is a
   design choice not yet made ([shutdown-hooks](docs/backlog/shutdown-hooks.md)).
-- **Permissions**: aivi pins a session policy for Discord and dreaming
-  (deny-all, allow-list, canonical paths). OpenCode's `*` matches `/` and the
-  last rule wins, so aivi's `read *` must be followed by an explicit `*.env`
-  deny to keep the default guard ([opencode.md](docs/opencode.md)).
+- **The agent file is the boundary.** Discord, jobs and dreaming run the
+  configured OpenCode agent as defined; aivi adds only what the file cannot
+  know (`external_directory` for configured sources; dreaming's two `edit`
+  targets) and never a deny. Restrict an agent in its own file. The home is
+  the OpenCode location (`<home>/.opencode/agents/`), so example sources need
+  no external rules at all ([opencode.md](docs/opencode.md)).
 - **Memory is files** inside a knowledge source, never system-prompt state.
 - **Blocked jobs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).

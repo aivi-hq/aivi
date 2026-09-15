@@ -464,7 +464,8 @@
                     "minLength": 1
                   },
                   "directory": {
-                    "description": "OpenCode location where that agent is defined.",
+                    "description": "OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents.",
+                    "default": ".",
                     "type": "string",
                     "minLength": 1
                   },
@@ -501,7 +502,6 @@
                 },
                 "required": [
                   "kind",
-                  "directory",
                   "memoryDirectory"
                 ],
                 "additionalProperties": false
