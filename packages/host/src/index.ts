@@ -1,9 +1,29 @@
 export type { HostModule, HostResources, HostServices, RunHostOptions, RunningModule } from './application.ts';
 export { runHost } from './application.ts';
+export type { ChatCommand, ChatCommandArgument, ChatCommandName } from './channel/commands.ts';
+export {
+  CHAT_COMMANDS,
+  chatCommand,
+  describeJobs,
+  helpText,
+  isChatCommand,
+  steerTurn,
+  stopTurn,
+  usageHint,
+} from './channel/commands.ts';
 export { describeConversation, describeSession } from './channel/context.ts';
 export type { ChannelDelivery, ChannelModule, ChannelPlatform, DeliveryContext } from './channel/contract.ts';
 export type { Ask, EngineLimits, EngineOptions, Send } from './channel/engine.ts';
-export { ChannelEngine, OFFLINE_MID_REPLY, OFFLINE_QUEUED, splitReply } from './channel/engine.ts';
+export {
+  ChannelEngine,
+  OFFLINE_MID_REPLY,
+  OFFLINE_QUEUED,
+  STOPPED_NOTICE,
+  STOPPED_REASON,
+  splitReply,
+} from './channel/engine.ts';
+export type { ModelChoice } from './channel/model.ts';
+export { describeModel, formatModel, listModels, matchModels, resolveModel, switchModel } from './channel/model.ts';
 export type { Progress, ProgressMode, ToolCall, ToolState } from './channel/progress.ts';
 export {
   describeToolCall,
@@ -16,7 +36,7 @@ export type { ProgressOptions } from './channel/reporter.ts';
 export { ProgressReporter } from './channel/reporter.ts';
 export type { NativeReentry } from './channel/router.ts';
 export { Channels } from './channel/router.ts';
-export type { Turn, TurnKind, TurnState } from './channel/store.ts';
+export type { ModelRef, Turn, TurnKind, TurnState } from './channel/store.ts';
 export { ConversationStore } from './channel/store.ts';
 export { createTurnRunner, messageIdFor } from './channel/turns.ts';
 export type { HostClientOptions } from './client.ts';

@@ -41,6 +41,27 @@ test('only the matching completed final answer is returned, without reasoning or
   const failed = structuredClone(messages);
   (failed.at(-1) as { outcome: string }).outcome = 'failed';
   assert.throws(() => finalAnswer(failed, 'msg_one', 'librarian'), /No confirmed/);
+  // A /steer into this turn is a user message that belongs to it; any other user message means the session moved on.
+  const steered = structuredClone(messages);
+  steered.splice(3, 0, {
+    type: 'user',
+    id: 'steer',
+    time: { created: 3.5 },
+    text: 'also check the handbook',
+    metadata: { aivi: { steer: 'msg_one' } },
+  } as unknown as (typeof messages)[number]);
+  assert.equal(finalAnswer(steered, 'msg_one', 'librarian'), 'Public answer');
+  const foreign = structuredClone(messages);
+  foreign.splice(3, 0, {
+    type: 'user',
+    id: 'other',
+    time: { created: 3.5 },
+    text: 'typed in the TUI',
+  } as unknown as (typeof messages)[number]);
+  assert.throws(() => finalAnswer(foreign, 'msg_one', 'librarian'), /changed outside this turn/);
+  const otherSteer = structuredClone(steered);
+  (otherSteer[3] as unknown as { metadata: { aivi: { steer: string } } }).metadata.aivi.steer = 'msg_two';
+  assert.throws(() => finalAnswer(otherSteer, 'msg_one', 'librarian'), /changed outside this turn/);
 });
 
 /** Mock of the OpenCode 2.0.3 endpoints runTurn touches; the context shape matches the live server. */

@@ -21,10 +21,33 @@ export interface Turn {
   directory: string | null;
   /** Text posted in the conversation before any session existed (a script's output); context for the first turn. */
   seed: string | null;
+  /** The conversation's model override (`/model`), applied to the session before each prompt; null means the agent's default. */
+  model: ModelRef | null;
 }
 export type TurnState = 'queued' | 'running' | 'replying' | 'sent' | 'blocked' | 'discarded';
 export type TurnKind = 'message' | 'job';
+/** A catalogue model as OpenCode names it, with an optional variant (`high`, `max`). */
+export interface ModelRef {
+  providerID: string;
+  modelID: string;
+  variant?: string;
+}
 type Row = Record<string, unknown>;
+const modelRef = (value: unknown): ModelRef | null => {
+  if (value == null) return null;
+  const parsed = JSON.parse(String(value)) as ModelRef;
+  return {
+    providerID: parsed.providerID,
+    modelID: parsed.modelID,
+    ...(parsed.variant ? { variant: parsed.variant } : {}),
+  };
+};
+const modelJson = (model: ModelRef) =>
+  JSON.stringify({
+    providerID: model.providerID,
+    modelID: model.modelID,
+    ...(model.variant ? { variant: model.variant } : {}),
+  });
 const turn = (r: Row): Turn => ({
   id: String(r.id),
   channel: String(r.channel),
@@ -40,6 +63,7 @@ const turn = (r: Row): Turn => ({
   agent: r.agent == null ? null : String(r.agent),
   directory: r.directory == null ? null : String(r.directory),
   seed: r.seed == null ? null : String(r.seed),
+  model: modelRef(r.model),
 });
 
 const PENDING = "('queued','running','replying','blocked')";
@@ -66,6 +90,7 @@ const migrations = (n: ReturnType<typeof namesFor>, id: string) => [
   `ALTER TABLE ${n.sessions} ADD COLUMN agent TEXT;
    ALTER TABLE ${n.sessions} ADD COLUMN directory TEXT;
    ALTER TABLE ${n.sessions} ADD COLUMN seed TEXT;`,
+  `ALTER TABLE ${n.sessions} ADD COLUMN model TEXT;`,
 ];
 
 /**
@@ -84,7 +109,7 @@ export class ConversationStore {
     this.platform = platform;
     const n = namesFor(platform.id);
     this.n = n;
-    this.select = `SELECT t.*,s.ready,s.agent,s.directory,s.seed FROM ${n.turns} t JOIN ${n.sessions} s ON s.channel=t.channel`;
+    this.select = `SELECT t.*,s.ready,s.agent,s.directory,s.seed,s.model FROM ${n.turns} t JOIN ${n.sessions} s ON s.channel=t.channel`;
     core.migrate(platform.id, migrations(n, platform.id));
     core.transaction(() => {
       const previous = core.db.prepare(`SELECT value FROM ${n.binding} WHERE id=1`).get();
@@ -98,7 +123,9 @@ export class ConversationStore {
           );
         for (const row of core.db.prepare(`SELECT channel FROM ${n.sessions}`).all())
           core.db
-            .prepare(`UPDATE ${n.sessions} SET session=?,ready=0,agent=NULL,directory=NULL,seed=NULL WHERE channel=?`)
+            .prepare(
+              `UPDATE ${n.sessions} SET session=?,ready=0,agent=NULL,directory=NULL,seed=NULL,model=NULL WHERE channel=?`,
+            )
             .run(n.newSession(), String(row.channel));
         core.db.prepare(`UPDATE ${n.binding} SET value=? WHERE id=1`).run(binding);
         this.rebound = true;
@@ -185,10 +212,31 @@ export class ConversationStore {
       this.core.db
         .prepare(
           `INSERT INTO ${this.n.sessions}(channel,session,ready) VALUES(?,?,0)
-           ON CONFLICT(channel) DO UPDATE SET session=excluded.session,ready=0,agent=NULL,directory=NULL,seed=NULL`,
+           ON CONFLICT(channel) DO UPDATE SET session=excluded.session,ready=0,agent=NULL,directory=NULL,seed=NULL,model=NULL`,
         )
         .run(channel, this.n.newSession());
     });
+  }
+
+  /**
+   * Pin the model of a conversation's session for its next turns (`/model`); null returns to
+   * the agent's default. Works before the first message too. `/new` and a rebind clear it.
+   */
+  setModel(channel: string, model: ModelRef | null): void {
+    this.core.transaction(() => {
+      this.core.db
+        .prepare(`INSERT OR IGNORE INTO ${this.n.sessions}(channel,session,ready) VALUES(?,?,0)`)
+        .run(channel, this.n.newSession());
+      this.core.db
+        .prepare(`UPDATE ${this.n.sessions} SET model=? WHERE channel=?`)
+        .run(model ? modelJson(model) : null, channel);
+    });
+  }
+
+  /** The turn the agent is working on in this conversation, if any (`running`: no reply yet). */
+  running(channel: string): Turn | null {
+    const row = this.core.db.prepare(`${this.select} WHERE t.channel=? AND t.state='running'`).get(channel);
+    return row ? turn(row as Row) : null;
   }
 
   /** One turn per channel at a time; the lease reserves shared model capacity. */
@@ -285,16 +333,17 @@ export class ConversationStore {
   }
 
   /**
-   * The host is going down mid-turn. Like a restart, the turn's only external effect is
-   * its reply, so it is discarded and its capacity released; the caller tells the person.
+   * The turn ends without an answer by choice: the host is going down, or the person asked
+   * (`/stop`). Like a restart, the turn's only external effect is its reply, so it is
+   * discarded and its capacity released; the caller tells the person.
    */
-  interrupt(id: string): void {
+  interrupt(id: string, reason = 'Interrupted by a shutdown'): void {
     this.core.transaction(() => {
       this.core.db
         .prepare(
-          `UPDATE ${this.n.turns} SET state='discarded',text='',result=NULL,error='Interrupted by a shutdown' WHERE id=? AND state IN ('running','replying')`,
+          `UPDATE ${this.n.turns} SET state='discarded',text='',result=NULL,error=? WHERE id=? AND state IN ('running','replying')`,
         )
-        .run(id);
+        .run(reason, id);
       this.core.releaseLease(this.n.leaseID(id), this.n.leaseOwner);
     });
   }
@@ -307,11 +356,15 @@ export class ConversationStore {
   }
 
   /** The session a conversation is bound to, with what the binding pinned; null when aivi is not part of it yet. */
-  sessionOf(
-    channel: string,
-  ): { session: string; ready: boolean; agent: string | null; directory: string | null } | null {
+  sessionOf(channel: string): {
+    session: string;
+    ready: boolean;
+    agent: string | null;
+    directory: string | null;
+    model: ModelRef | null;
+  } | null {
     const row = this.core.db
-      .prepare(`SELECT session,ready,agent,directory FROM ${this.n.sessions} WHERE channel=?`)
+      .prepare(`SELECT session,ready,agent,directory,model FROM ${this.n.sessions} WHERE channel=?`)
       .get(channel);
     if (!row) return null;
     return {
@@ -319,6 +372,7 @@ export class ConversationStore {
       ready: Boolean(Number(row.ready)),
       agent: row.agent == null ? null : String(row.agent),
       directory: row.directory == null ? null : String(row.directory),
+      model: modelRef(row.model),
     };
   }
 

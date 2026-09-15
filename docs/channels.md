@@ -46,18 +46,26 @@ describeSpeaker? }`.
   conversation, a lease on the module's pool in the same transaction),
   `ready`, `result`/`sent`, `block`, `fail`, `resolve`, `recover` (restart:
   interrupted turns are discarded, capacity released, the callers told),
-  `reset` (`/new`; refused while work is pending), `adopt` (a report thread
-  continues a job's session, or is seeded with a script's output),
-  `channelOf`, `enqueueJobResult`, `has`, `list`, and the binding rotation:
-  constructing the store with a different binding (agent, directory,
-  application) acts as `/new` for every conversation, refused while any turn
-  is queued or blocked.
+  `interrupt` (a turn ended by choice, a shutdown or a `/stop`: discarded with
+  the reason, lease released), `reset` (`/new`; refused while work is
+  pending), `adopt` (a report thread continues a job's session, or is seeded
+  with a script's output), `setModel` (the conversation's model pin, see
+  [commands](#chat-commands)), `running` (the turn the agent is working on in
+  a conversation), `channelOf`, `enqueueJobResult`, `has`, `list`,
+  `sessionOf`, and the binding rotation: constructing the store with a
+  different binding (agent, directory, application) acts as `/new` for every
+  conversation, refused while any turn is queued or blocked.
 - **`ChannelEngine`**: claims queued turns within `maxConcurrent` and shared
   capacity, calls the turn runner with a timeout, splits the reply at
   `replyLimit` (UTF-16 units, surrogate pairs intact) and sends it, records
   `sent`; `TurnNotStarted` → the turn is discarded and the person asked to
-  resend; anything else → `blocked` with "an operator has been notified". The
-  engine tells the host when capacity is released (`services.wake`). It talks
+  resend; anything else → `blocked` with "an operator has been notified". Each
+  launched turn has its own abort besides the engine's and the timeout:
+  `stopTurn(conversation)` aborts the one running there (`/stop`), which is
+  then discarded as "Stopped at the person's request" and the conversation
+  hears "Stopped at your request."; a reply already being delivered is not
+  stopped. The engine tells the host when capacity is released
+  (`services.wake`). It talks
   to the platform through a `ChannelDelivery`: `send(conversation, text)`
   returning the posted message id, and optional `edit(conversation,
   messageId, text)` and `delete(conversation, messageId)`, which power the
@@ -72,7 +80,10 @@ describeSpeaker? }`.
   knowledge sources and nothing else; permission prompts auto-rejected. It
   builds the prompt (`[<label> message from <name> (user <id>)]` or the
   platform's `describeSpeaker`; the seed prefix for a script report's first
-  turn; `reentryPrompt` for job outcomes) and the metadata (see ids below).
+  turn; `reentryPrompt` for job outcomes) and the metadata (see ids below),
+  and passes the conversation's model pin (`Turn.model`) as `TurnInput.model`,
+  so the session is switched to it before the prompt; without a pin the agent
+  file's model applies ([opencode](opencode.md#host-submission)).
 - Report helpers: `describeOutcome`, `shouldReport`, `reentryPrompt`.
 
 ## Progress while a turn runs
@@ -190,6 +201,33 @@ conversation's binding and pending turns), `GET /v1/context?session=` and the
 plugin tool `aivi_context`, so an agent asked "what's the context?" answers
 with the same text. Slack refuses slash commands inside threads; there the
 agent is the way to ask.
+
+## Chat commands
+
+Commands are adapter UI over host operations: the operation lives in the host
+and a module only translates its platform's command into it, so both
+platforms get the same set. `CHAT_COMMANDS` (`packages/host/src/channel/commands.ts`)
+is the one table: name, description, arguments (with `required` and an
+optional `autocomplete: "model"`), and whether the command acts on one
+conversation. Discord registers its slash commands from it, Slack checks its
+manifest against it (a test compares the snippet in [slack.md](slack.md#setup)
+with the table), and `helpText` renders `/help` from it, each platform
+spelling the names its own way (`/new`, `/aivi-new`). Conversation commands
+are refused where a slash command cannot name one conversation (a
+threads-mode channel outside a thread) and pass the same `access` policy as
+messages.
+
+| Command | Host operation |
+| --- | --- |
+| `new` | `ConversationStore.reset` |
+| `status` | `ConversationStore.list` + `status()` |
+| `context` | `describeConversation` |
+| `search QUERY [project]` | `HostServices.knowledge.search` |
+| `model [model]` | `describeModel` / `switchModel`: shows the conversation's pin, what its session last answered with and the agent's own model; with an argument pins the conversation to a catalogue model (`model.list` for the directory, enabled ones, spelled `provider/model` or `provider/model@variant`, `provider/model (variant)` accepted; a model id or display name that names exactly one entry works too; otherwise the closest matches are offered). The pin is `setModel` on the session row: `Turn.model` → `TurnInput.model`, applied by `session.switchModel` before each prompt, until `/new`; `default` unpins. Refused while a turn runs in that conversation. Discord autocompletes the argument from the catalogue (≤ 25 choices by prefix); Slack validates free text |
+| `stop` | `stopTurn`: `ChannelEngine.stopTurn` (the turn is discarded as stopped, the conversation hears "Stopped at your request.") then `session.interrupt` so the agent stops spending; queued messages stay queued and follow. Nothing running → says so |
+| `steer TEXT` | `steerTurn`: `session.prompt` with `delivery: "steer"` into the running turn's session, the speaker line as for a message, and `metadata.aivi.steer = <that turn's message id>` so `finalAnswer` counts it as part of the turn; nothing is queued when no turn runs |
+| `jobs` | `describeJobs`: the next five occurrences (id, title, when) and the last ten runs (job, state, when) from the host store, as short markdown |
+| `help` | `helpText`: one line per command |
 
 ## Live gate
 

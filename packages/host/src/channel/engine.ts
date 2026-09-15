@@ -41,7 +41,7 @@ export interface EngineOptions {
 /** Claims queued turns within shared capacity, asks the native session, and delivers replies. */
 export class ChannelEngine {
   private readonly abort = new AbortController();
-  private readonly active = new Map<string, Promise<void>>();
+  private readonly active = new Map<string, { work: Promise<void>; abort: AbortController }>();
   private failure: unknown;
   private readonly log: Logger;
   private readonly store: ConversationStore;
@@ -102,10 +102,15 @@ export class ChannelEngine {
         log.warn('notify.failed', { error }),
       );
     let delivering = false;
+    const own = new AbortController();
     const work = Promise.resolve()
       .then(async () => {
         try {
-          const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(this.limits.turnTimeoutMs)]);
+          const signal = AbortSignal.any([
+            this.abort.signal,
+            own.signal,
+            AbortSignal.timeout(this.limits.turnTimeoutMs),
+          ]);
           const text = await this.ask(turn, signal, () => this.store.ready(turn.channel));
           const answeredMs = Date.now() - startedAt;
           this.store.result(turn.id, text);
@@ -116,6 +121,13 @@ export class ChannelEngine {
           this.store.sent(turn.id);
           log.info('turn.sent', { answeredMs, totalMs: Date.now() - startedAt, chars: text.length });
         } catch (error) {
+          if (own.signal.aborted && !delivering) {
+            // Someone in the conversation asked (`/stop`): discarded like a shutdown, but said so.
+            log.info('turn.stopped');
+            this.store.interrupt(turn.id, STOPPED_REASON);
+            await tell(STOPPED_NOTICE);
+            return;
+          }
           if (error instanceof TurnNotStarted) {
             // Nothing reached the agent: release capacity and let the person try again.
             log.warn('turn.not_started', { error });
@@ -154,7 +166,20 @@ export class ChannelEngine {
         this.tick(); // capacity was just released; do not wait for the next poll
         this.onRelease();
       });
-    this.active.set(turn.id, work);
+    this.active.set(turn.id, { work, abort: own });
+  }
+
+  /**
+   * Abort the turn running in a conversation (`/stop`). Only a turn still waiting for its
+   * answer can be stopped; once the reply is on its way it lands. Returns the turn, or null
+   * when nothing was running. The caller interrupts the native session afterwards.
+   */
+  stopTurn(channel: string): Turn | null {
+    const turn = this.store.running(channel);
+    const entry = turn && this.active.get(turn.id);
+    if (!turn || !entry || entry.abort.signal.aborted) return null;
+    entry.abort.abort(new Error(STOPPED_REASON));
+    return turn;
   }
 
   stop(): void {
@@ -164,7 +189,7 @@ export class ChannelEngine {
     return this.abort.signal.aborted;
   }
   async drain(): Promise<void> {
-    await Promise.all([...this.active.values()]);
+    await Promise.all([...this.active.values()].map(a => a.work));
     if (this.failure !== undefined) throw this.failure;
   }
   /**
@@ -191,3 +216,7 @@ export const OFFLINE_QUEUED =
   'I am going offline for a moment (a restart or shutdown). Your message stays queued and I will answer it when I am back.';
 export const OFFLINE_MID_REPLY =
   'I am going offline for a moment and was cut off mid-reply, so my last answer may be incomplete. Ask again when I am back if you need it.';
+/** What a turn discarded through `/stop` records as its error. */
+export const STOPPED_REASON = 'Stopped at the person’s request';
+/** What the conversation hears in place of the answer. */
+export const STOPPED_NOTICE = 'Stopped at your request.';

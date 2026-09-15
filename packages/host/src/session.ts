@@ -248,17 +248,18 @@ function nextEvent(events: SessionEvents, sessionID: string, signal: AbortSignal
 /**
  * Extract the confirmed final answer for one turn from the native session
  * context, or throw. `PendingAnswer` means keep waiting; any other error means
- * the turn cannot be trusted.
+ * the turn cannot be trusted. A `/steer` delivered into this turn is a user
+ * message carrying `metadata.aivi.steer = <this message id>` and belongs to it.
  */
 export function finalAnswer(messages: NativeMessages, messageId: string, agent: string): string {
+  const aiviOf = (m: { metadata?: Record<string, unknown> }) =>
+    m.metadata?.aivi as { message?: string; steer?: string } | undefined;
   const start = messages.findLastIndex(
-    m =>
-      m.type === 'user' &&
-      (m.id === messageId || (m.metadata?.aivi as { message?: string } | undefined)?.message === messageId),
+    m => m.type === 'user' && (m.id === messageId || aiviOf(m)?.message === messageId),
   );
   if (start < 0) throw new PendingAnswer('Submitted turn is not present in native context');
   const tail = messages.slice(start + 1);
-  if (tail.some(m => m.type === 'user' || m.type === 'agent-switched'))
+  if (tail.some(m => (m.type === 'user' && aiviOf(m)?.steer !== messageId) || m.type === 'agent-switched'))
     throw new Error('Native session changed outside this turn');
 
   const idle = tail.findLast(m => m.type === 'idle');

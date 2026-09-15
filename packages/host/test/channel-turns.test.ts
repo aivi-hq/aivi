@@ -25,6 +25,7 @@ const turn = {
   agent: null,
   directory: null,
   seed: null,
+  model: null,
 };
 
 test('a turn runner creates one fixed-agent session and reapplies only the source-directory allows before each prompt', async t => {
@@ -35,7 +36,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
     requests.push({ path: req.url!, method: req.method!, body });
-    if (req.url!.endsWith('/permission/rules') || req.url!.endsWith('/wait')) {
+    if (req.url!.endsWith('/permission/rules') || req.url!.endsWith('/wait') || req.url!.endsWith('/model')) {
       res.writeHead(204);
       res.end();
       return;
@@ -151,6 +152,17 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     ),
     /no longer runs agent coder in \/other/,
   );
+
+  // A conversation's /model pin is applied to the session before the prompt; without one the agent file decides.
+  assert.ok(!requests.some(r => r.path.endsWith('/model')), 'no pin and no agent-file model: nothing is switched');
+  await ask(
+    { ...turn, id: 'pinned', ready: true, model: { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' } },
+    AbortSignal.timeout(3000),
+    () => {},
+  );
+  const switched = requests.find(r => r.path.endsWith('/model'))!;
+  assert.deepEqual(switched.body, { model: { providerID: 'openai', id: 'gpt-5.2', variant: 'high' } });
+  assert.ok(requests.indexOf(switched) < requests.findIndex(r => r.body.id === 'msg_discord_pinned'));
 
   // Another platform: its own origin, label and speaker line; ids are sanitized so Slack's `C1:1726.5` fits.
   const slack: ChannelPlatform = {

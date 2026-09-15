@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '../src/channel/contract.ts';
-import { ChannelEngine, splitReply } from '../src/channel/engine.ts';
+import { ChannelEngine, STOPPED_NOTICE, STOPPED_REASON, splitReply } from '../src/channel/engine.ts';
 import { ConversationStore } from '../src/channel/store.ts';
 import { TurnNotStarted } from '../src/session.ts';
 import { Store } from '../src/store.ts';
@@ -265,6 +265,90 @@ test('shutdown discards the running turn instead of blocking it, warns queued co
   assert.match(sent.find(([c]) => c === 'dm-a')![1], /going offline .* send it again/);
   assert.match(sent.find(([c]) => c === 'dm-b')![1], /stays queued/);
   assert.deepEqual(store.recover(), [], 'nothing left for restart recovery to announce a second time');
+});
+
+test('/stop aborts one conversation’s running turn: discarded as stopped, lease released, the person told; queued messages follow', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-a'), 10);
+  store.enqueue(message('three', 'dm-b'), 10);
+  const sent: [string, string][] = [];
+  const asked: string[] = [];
+  const engine = new ChannelEngine(
+    store,
+    { ...limits, maxConcurrent: 2 },
+    { ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
+    (turn, signal) =>
+      new Promise<string>((resolve, reject) => {
+        asked.push(turn.id);
+        if (turn.id === 'two') return resolve('Answer two');
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    { send: async (channel, text) => void sent.push([channel, text]) },
+  );
+  engine.tick();
+  await Promise.resolve();
+  assert.deepEqual(asked, ['one', 'three']);
+  assert.equal(store.running('dm-a')?.id, 'one');
+  assert.equal(store.running('dm-c'), null);
+  assert.equal(engine.stopTurn('dm-c'), null, 'nothing running there');
+  assert.equal(engine.stopTurn('dm-a')?.id, 'one');
+  assert.equal(engine.stopTurn('dm-a'), null, 'a stop is idempotent');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const one = store.list().find(t => t.id === 'one')!;
+  assert.equal(one.state, 'discarded', 'stopped by the person: discarded like a shutdown, not blocked');
+  assert.equal(one.error, STOPPED_REASON);
+  assert.deepEqual(sent[0], ['dm-a', STOPPED_NOTICE]);
+  assert.deepEqual(asked, ['one', 'three', 'two'], 'the next message in that conversation starts at once');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(store.list().find(t => t.id === 'two')!.state, 'sent');
+  assert.equal(store.list().find(t => t.id === 'three')!.state, 'running', 'the other conversation is untouched');
+  assert.deepEqual(
+    core.leases().map(l => l.id),
+    ['discord:three'],
+    'only the still-running turn holds capacity',
+  );
+  assert.equal(engine.stopped, false, 'a per-turn stop is not the engine’s stop');
+  engine.stop();
+  await engine.drain();
+  assert.match(sent.find(([c]) => c === 'dm-b')![1], /going offline/, 'a shutdown still reads as one');
+});
+
+test('a conversation’s model pin lives on its session row: read by every turn, cleared by /new, a rebind and a fresh adoption', t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  assert.equal(store.sessionOf('dm-a'), null);
+  store.setModel('dm-a', { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' });
+  assert.deepEqual(store.sessionOf('dm-a')?.model, { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' });
+  assert.equal(store.sessionOf('dm-a')?.ready, false, 'pinning before the first message creates the binding');
+  store.enqueue(message('one'), 10);
+  const one = store.claim(scheduler, limits.resource)!;
+  assert.deepEqual(one.model, { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' });
+  store.ready('dm-a');
+  store.sent('one');
+  store.setModel('dm-a', { providerID: 'anthropic', modelID: 'claude' });
+  store.enqueue(message('two'), 10);
+  assert.deepEqual(store.claim(scheduler, limits.resource)!.model, { providerID: 'anthropic', modelID: 'claude' });
+  store.sent('two');
+  store.setModel('dm-a', null);
+  assert.equal(store.sessionOf('dm-a')?.model, null, 'null returns to the agent’s default');
+  store.setModel('dm-a', { providerID: 'anthropic', modelID: 'claude' });
+  store.reset('dm-a');
+  assert.equal(store.sessionOf('dm-a')?.model, null, '/new clears the pin');
+  store.setModel('dm-a', { providerID: 'anthropic', modelID: 'claude' });
+  const rebound = new ConversationStore(core, platform, 'other-binding');
+  assert.equal(rebound.sessionOf('dm-a')?.model, null, 'a rebind clears the pin');
+  rebound.adopt('thread', { session: 'ses_aivi_job1', agent: 'coder', directory: '/other' });
+  assert.equal(rebound.sessionOf('thread')?.model, null, 'an adopted session runs its own model');
+  // A database from before the column has it added; existing rows read as unpinned.
+  assert.equal(
+    (core.db.prepare("SELECT count(*) AS n FROM pragma_table_info('discord_sessions') WHERE name='model'").get() as any)
+      .n,
+    1,
+  );
 });
 
 test('reply splitting preserves Unicode and respects the platform UTF-16 message limit', () => {

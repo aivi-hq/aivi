@@ -12,6 +12,12 @@ import type { Ask } from './engine.ts';
 export const messageIdFor = (platform: ChannelPlatform, turnId: string) =>
   `msg_${platform.id}_${turnId.replaceAll(/[^A-Za-z0-9_]/g, '_')}`;
 
+/** How a person's words are introduced to the agent; the platform may override the default line. */
+export const speakerLine = (platform: ChannelPlatform, speaker: { name: string; user: string }) =>
+  platform.describeSpeaker
+    ? platform.describeSpeaker(speaker)
+    : `[${platform.label} message from ${speaker.name} (user ${speaker.user})]`;
+
 /**
  * One conversation turn = one verified turn of the configured agent's native session.
  * The agent file is the whole boundary: aivi adds nothing but `external_directory`
@@ -38,15 +44,12 @@ export async function createTurnRunner(
       effect: 'allow',
     });
   }
-  const speaker =
-    platform.describeSpeaker ?? (turn => `[${platform.label} message from ${turn.name} (user ${turn.user})]`);
-
   return async (turn, signal, ready) => {
     const client = await connectForTurn(opencode);
     // A conversation that adopted a job's session keeps that session's agent and directory.
     const agent = turn.agent ?? config.agent;
     const directory = turn.directory ?? config.directory;
-    const said = `${speaker(turn)}\n${turn.text}`;
+    const said = `${speakerLine(platform, turn)}\n${turn.text}`;
     const text =
       turn.kind === 'job'
         ? reentryPrompt(turn.text)
@@ -72,6 +75,7 @@ export async function createTurnRunner(
               ? { origin: 'job-result', channel: turn.channel, run: turn.id.slice('run:'.length) }
               : { origin: platform.id, channel: turn.channel, user: turn.user, sourceMessage: turn.id },
         },
+        ...(turn.model ? { model: turn.model } : {}),
       },
       { signal, onPermission: 'reject', events, onCreated: ready, ...(log ? { log } : {}) },
     );
