@@ -19,9 +19,13 @@
     "schema:check": "node scripts/schema.mjs --check",
     "smoke": "node scripts/smoke.mjs",
     "smoke:browser": "npm run build && node scripts/browser-smoke.mjs",
-    "live:opencode": "node scripts/live-opencode.mjs"
+    "live:opencode": "node scripts/live-opencode.mjs",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.13",
     "@types/node": "26.5.1",
     "typescript": "5.9.3"
   }

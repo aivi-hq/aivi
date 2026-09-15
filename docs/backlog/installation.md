@@ -9,6 +9,18 @@ A developer who has never heard of aivi (or OpenCode) can get a running
 installation on a Mac (later Linux) from a short page of instructions, keep it
 updated, and run it unattended.
 
+Owner's requirements (2026-09-14):
+
+- No `npm ci && npm run build` on the target machine. Install and update must
+  be as easy as Hermes/OpenClaw: an install script, then `aivi update`.
+- Everything scoped under `~/.aivi/` (config, `.env`, state, logs).
+- An interactive first run: when `opencode` v2 is missing, ask whether aivi
+  should install it; if declined, exit with "OpenCode v2 is a hard requirement
+  and must be on your PATH".
+- Projects are git repositories checked out on the server. aivi's config lists
+  them (knowledge sources, later Linear mapping); plugins must not need their
+  own copies of that config. Agents work inside those checkouts.
+
 ## What the install must produce
 
 1. OpenCode v2 installed and its background service running (`opencode service`).
