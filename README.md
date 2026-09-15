@@ -18,11 +18,9 @@ npm run aivi -- config check
 
 aivi reads one **home** directory: `aivi.json`, `.env`, and `state/` together.
 Installed copies use `~/.aivi`; in this repo `npm run aivi` points `AIVI_HOME`
-at `example/`, a complete home with everything enabled (knowledge, dreaming,
-browser, Discord). Copy `example/.env.example` to `example/.env` and fill in
-the tokens, or delete the `modules.discord` block to run without Discord. An
-`aivi.local.json` in the home takes precedence over `aivi.json` and is
-git-ignored, so a private setup can live next to the public example.
+at `example/`, a complete home with everything enabled. Its
+[README](example/README.md) has the quickstart, including how to provide or
+disable Discord.
 
 Start the host. Either have fnox inject an `AIVI_TOKEN` of at least 24
 characters, or set `host.auth.mode` to `"none"` for a trusted machine:
