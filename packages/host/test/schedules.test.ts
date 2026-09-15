@@ -57,7 +57,7 @@ function setup(store: Store, url: string, enabled = true) {
     opencode: { url },
     scheduler: {
       resources: { 'local-model': 1, agents: 2 },
-      ...(enabled ? { agentSchedules: { resource: 'agents', max: 3 } } : {}),
+      agentSchedules: enabled ? { resource: 'agents', max: 3 } : false,
     },
   });
   const destinations = new Destinations(async () => {});

@@ -28,14 +28,16 @@ Mock tests do not establish these; each has its own command.
 ## Next, in order of intent
 
 1. Live Discord gate for the jobs work (re-entry turns, report threads,
-   `/status`), then enable `scheduler.agentSchedules` in the private home.
-2. Projects as pools and maintenance only when idle
+   `/status`).
+2. Channel adapter contract, then Slack
+   ([backlog/channel-adapters.md](backlog/channel-adapters.md)).
+3. Projects as pools and maintenance only when idle
    ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
-3. Project-scoped memory and a per-project dreamer boundary
+4. Project-scoped memory and a per-project dreamer boundary
    ([backlog/project-memory.md](backlog/project-memory.md)).
-4. Installation and updates for other machines
+5. Installation and updates for other machines
    ([backlog/installation.md](backlog/installation.md)).
-5. Remote access hardening (per-device tokens, SSO via reverse proxy), then
+6. Remote access hardening (per-device tokens, SSO via reverse proxy), then
    milestone 6 and 7.
 
 ## Decisions to make early, and decisions to defer

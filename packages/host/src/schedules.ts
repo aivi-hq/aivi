@@ -41,7 +41,7 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
   return async request => {
     if (!settings)
       throw new ScheduleRefused(
-        'Agent-created schedules are disabled by the operator (scheduler.agentSchedules is not configured).',
+        'Agent-created schedules are disabled by the operator (scheduler.agentSchedules is false).',
         403,
       );
     switch (request.action) {

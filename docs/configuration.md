@@ -38,7 +38,7 @@ also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 | `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.pollMs` | `1000`; polling interval, no model call |
-| `scheduler.agentSchedules` | Absent: agents cannot create jobs. `{ "resource": "<pool>", "max": 50 }` lets any OpenCode agent create jobs through `aivi_schedule`, run in that pool, at most `max` schedules and pending one-offs at once |
+| `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_schedule`, run in that pool, at most `max` schedules and pending one-offs at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `title`, `report`, `enabled` (default `true`) and `misfire.skipAfterMs` (an occurrence found later than that after downtime is recorded as skipped, not run) |
 
 ## Tasks
@@ -85,8 +85,9 @@ explicit reconciliation when the daemon is stopped.
 
 ## Agent-created jobs
 
-With `scheduler.agentSchedules` set, every OpenCode agent that has the aivi
-plugin gets `aivi_schedule`: create, list, pause, resume, remove and run. A
+Every OpenCode agent that has the aivi plugin gets `aivi_schedule` (unless
+`scheduler.agentSchedules` is `false`): create, list, pause, resume, remove
+and run. A
 person asks in chat ("every Monday at 9, summarize last week"; "in two hours,
 remind me"; "clean the logs nightly with this script"), the agent translates the
 time into cron, ISO 8601 or a duration (`30m`, `2h`, `1d`) and calls the tool.

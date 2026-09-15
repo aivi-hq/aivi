@@ -95,3 +95,19 @@ test('calendar calculations use the configured timezone across daylight saving c
     '2026-03-29T07:00:00.000Z',
   );
 });
+
+test('agent scheduling is on by default in local-model, can be disabled, and must name an existing pool', () => {
+  assert.deepEqual(configSchema.parse({ version: 1 }).scheduler.agentSchedules, { resource: 'local-model', max: 50 });
+  assert.equal(
+    configSchema.parse({ version: 1, scheduler: { agentSchedules: false } }).scheduler.agentSchedules,
+    false,
+  );
+  const custom = configSchema.safeParse({ version: 1, scheduler: { resources: { gpu: 1 } } });
+  assert.equal(custom.success, false, 'default pool local-model does not exist here');
+  assert.match(JSON.stringify(custom.error?.issues), /set agentSchedules to false/);
+  assert.deepEqual(
+    configSchema.parse({ version: 1, scheduler: { resources: { gpu: 1 }, agentSchedules: { resource: 'gpu' } } })
+      .scheduler.agentSchedules,
+    { resource: 'gpu', max: 50 },
+  );
+});

@@ -113,7 +113,7 @@ mutation: `POST /v1/schedule`, the back end of the `aivi_schedule` tool.
 earlier "no job mutations over the API" rule (2026-09-15): it is limited to what
 an agent may do for a person who asked (its own agent and directory by default,
 a report the destination accepts, no other task kinds, refused from job
-sessions) and is switched on by `scheduler.agentSchedules`; the API still
+sessions) and can be switched off with `scheduler.agentSchedules: false`; the API still
 exposes no prompts, secrets, or ticket control.
 Per-device tokens and reverse-proxy SSO are future auth modes on the same
 listener.

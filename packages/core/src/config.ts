@@ -182,22 +182,30 @@ export const configSchema = z
         resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
         pollMs: z.number().int().min(100).max(60000).default(1000),
         agentSchedules: z
-          .strictObject({
-            resource: id.describe('Pool that agent-created jobs run in.'),
-            max: z
-              .number()
-              .int()
-              .min(1)
-              .max(500)
-              .default(50)
-              .describe('How many agent-created schedules and pending one-offs may exist at once.'),
-          })
-          .optional()
+          .union([
+            z.strictObject({
+              resource: id.default('local-model').describe('Pool that agent-created jobs run in.'),
+              max: z
+                .number()
+                .int()
+                .min(1)
+                .max(500)
+                .default(50)
+                .describe('How many agent-created schedules and pending one-offs may exist at once.'),
+            }),
+            z.literal(false),
+          ])
+          .default({ resource: 'local-model', max: 50 })
           .describe(
-            'Let OpenCode agents create jobs through the aivi_schedule tool. Absent: the tool answers "disabled by the operator".',
+            'OpenCode agents create jobs through the aivi_schedule tool; whoever may talk to an agent may schedule. `false` disables the tool.',
           ),
       })
-      .default({ maxConcurrent: 1, resources: { 'local-model': 1 }, pollMs: 1000 }),
+      .default({
+        maxConcurrent: 1,
+        resources: { 'local-model': 1 },
+        pollMs: 1000,
+        agentSchedules: { resource: 'local-model', max: 50 },
+      }),
     schedules: z.array(scheduleSchema).default([]),
   })
   .superRefine((config, ctx) => {
@@ -231,7 +239,7 @@ export const configSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['scheduler', 'agentSchedules', 'resource'],
-        message: 'Unknown resource pool',
+        message: 'Unknown resource pool; name one of scheduler.resources or set agentSchedules to false',
       });
   });
 export type Config = z.infer<typeof configSchema>;

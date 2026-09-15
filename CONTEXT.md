@@ -62,7 +62,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Memory is files** inside a knowledge source, never system-prompt state.
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
   through `aivi_schedule` (`POST /v1/schedule`, the one job mutation on the
-  API, switched on by `scheduler.agentSchedules`); the host derives agent and
+  API, on by default; `scheduler.agentSchedules: false` turns it off); the host derives agent and
   directory from the calling session and refuses sessions with origin `job` or
   `dreaming`, unless a Discord thread adopted that session. Whoever may talk
   to the agent is the authority; jobs are the admin's responsibility

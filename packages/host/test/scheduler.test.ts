@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 
-const config = { maxConcurrent: 1, resources: { 'local-model': 1 }, pollMs: 100 };
+const config = { maxConcurrent: 1, resources: { 'local-model': 1 }, pollMs: 100, agentSchedules: false as const };
 
 test('a slow task queues the next task; execution failure blocks further dispatch', async t => {
   const store = new Store(':memory:');
@@ -67,16 +67,12 @@ test('jobs abort stops one running job; it ends blocked and keeps its capacity',
   t.after(() => store.close());
   const job = store.enqueue({ kind: 'system.check' }, 'local-model', 'long');
   let seen: AbortSignal | undefined;
-  const scheduler = new Scheduler(
-    store,
-    { maxConcurrent: 1, resources: { 'local-model': 1 }, pollMs: 1000 },
-    async (_job, context) => {
-      seen = context.signal;
-      if (!context.signal.aborted)
-        await new Promise<void>(resolve => context.signal.addEventListener('abort', () => resolve(), { once: true }));
-      return { state: 'blocked', result: null, reason: 'Host stopped while working' };
-    },
-  );
+  const scheduler = new Scheduler(store, config, async (_job, context) => {
+    seen = context.signal;
+    if (!context.signal.aborted)
+      await new Promise<void>(resolve => context.signal.addEventListener('abort', () => resolve(), { once: true }));
+    return { state: 'blocked', result: null, reason: 'Host stopped while working' };
+  });
   scheduler.tick();
   assert.equal(scheduler.activeCount, 1);
   assert.throws(() => store.requestCancel('missing'), /Only a running job/);
