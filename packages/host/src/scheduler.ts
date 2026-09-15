@@ -24,6 +24,7 @@ export type OnFinished = (
 export class Scheduler {
   readonly owner = randomUUID();
   private readonly active = new Map<string, Promise<void>>();
+  private readonly warned = new Set<string>();
   private readonly abort = new AbortController();
   private failure: unknown;
   private readonly store: Store;
@@ -50,6 +51,14 @@ export class Scheduler {
     if (this.abort.signal.aborted) return;
     const created = this.store.materializeDue(now);
     if (created) this.log.debug('schedules.materialized', { created });
+    for (const resource of this.store.queuedResources()) {
+      if (resource in this.config.resources || this.warned.has(resource)) continue;
+      this.warned.add(resource);
+      this.log.warn('pool.unknown', {
+        resource,
+        hint: 'Queued jobs wait until this pool is configured or they are cancelled.',
+      });
+    }
     while (true) {
       const job = this.store.claim(this.owner, this.config.maxConcurrent, this.config.resources, now);
       if (!job) break;

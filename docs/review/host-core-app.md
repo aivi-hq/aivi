@@ -1,5 +1,30 @@
 # Review: `@aivi/core`, `@aivi/host`, `@aivi/app` (2026-09-14)
 
+## Disposition (2026-09-15)
+
+Applied: B1, B2, B4, B5, B6, B7 (no cache; discovery per unit of work), B8
+(plus `errorMessage` prints `AggregateError.errors`), B3 (`realpath`, and the
+`.env` read-deny the librarian already had), B10 (doc comment only; the one
+caller uses `store.db`), B12 (warn once per pool name), B14 (docs now describe
+the abort; a grace period stays with `backlog/shutdown-hooks.md`), L8, S1, S2,
+S10, Q11 (Node 26). Tests added for gaps 1, 2, 4, 6 (primary error) and the
+dreaming session id.
+
+Rejected: B11 (two hand-written files that differ only in key order are an
+operator mistake either way); "rejected write-boundary permissions → failed"
+under B3 (a rejected prompt on a successful turn is a legitimate, audited
+outcome); S4 (Linear config stays: it records agreed constraints for the next
+module); S7 (the `PendingAnswer` contract is documented and tested; churn
+without a bug).
+
+Deferred: B9 / Q9 (the base for task paths is variable per project; part of
+`backlog/jobs.md` and `backlog/projects-and-capacity.md`); B13 / Q5 (verify at
+the live boundary; noted in `dreaming.md`); Q1 (blocked jobs holding global
+capacity is intended until per-project pools exist); Q6 transcript retention,
+L-items not listed above, and the remaining test gaps.
+
+---
+
 Scope: `packages/core/src/*.ts`, `packages/host/src/*.ts`, `packages/app/src/cli.ts`
 and their tests. All 36 tests pass on Node 26.5 (`node --test`, dist already built).
 Findings marked *confirmed* were reproduced with throwaway scripts against the

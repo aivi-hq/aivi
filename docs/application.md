@@ -44,14 +44,25 @@ does it announce readiness and dispatch scheduled work. Startup failure unwinds
 already-started modules. `aivi tick` runs the same lifecycle in one-shot mode:
 no API, no modules, one dispatch round, drain, exit.
 
-Shutdown stops dispatch, signals modules, drains them in reverse startup order,
-drains scheduled work and HTTP requests, closes browser/MCP and QMD, and releases ownership.
-Interrupted native work retains its blocked state and capacity; shutdown never
-pretends it cleaned up external effects.
+Shutdown stops dispatch and aborts running jobs at once: a shell command gets
+`SIGTERM`, an agent turn stops waiting. Each interrupted job ends `blocked` with
+the reason "Host stopped …" and keeps its capacity, because aivi cannot know
+what the external side had already done; `aivi jobs resolve` releases it after a
+look. Modules are then stopped in reverse startup order, the aborted jobs are
+awaited so their outcomes are recorded and reported, HTTP requests finish, the
+browser/MCP and QMD close, and ownership is released. A grace period that lets
+work finish first is a design choice not yet made
+([shutdown-hooks](backlog/shutdown-hooks.md)).
+
+Job outcomes distinguish "nothing happened" from "unknown": OpenCode not
+reachable or a command that cannot start ends `failed`, and the next occurrence
+simply tries again; anything after the first request or after the process
+started ends `blocked` when it cannot be verified.
 
 OpenCode runs as its own background service; aivi discovers it through the SDK's
-service registration and connects on first use rather than managing its
-installation or startup. QMD uses its
+service registration at the start of each job or conversation turn (one file
+read), so an `opencode service restart` is picked up by the next turn. aivi never
+manages OpenCode's installation or startup. QMD uses its
 library API inside aivi, with no QMD server or separate launch command. Only the
 configured Discord module loads discord.js, and only enabled search loads QMD.
 

@@ -19,6 +19,12 @@ export class PermissionRequired extends Error {
   }
 }
 
+/** The native ids a job's turn uses, derived from the job id so a lost response has a known target. */
+export function turnIdsFor(jobId: string): { sessionId: string; messageId: string } {
+  const suffix = jobId.replaceAll('-', '');
+  return { sessionId: `ses_aivi_${suffix}`, messageId: `msg_aivi_${suffix}` };
+}
+
 export interface TurnInput {
   /** Client-chosen id (`ses_…`). Persist it before calling so a lost response has a reconciliation target. */
   sessionId: string;
@@ -131,7 +137,9 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
       return { sessionId: sessionID, text, rejected };
     } catch (error) {
       if (!(error instanceof PendingAnswer)) throw error;
-      // The turn ended from wait()'s point of view but context lags or another step started; re-arm.
+      // wait() returned but the context does not show a finished turn yet (lag, or another step
+      // started). wait() resolves at once for an idle session, so pace the re-check before re-arming.
+      await setTimeout(pollMs, undefined, { signal });
       waited = client.session.wait({ sessionID }, request).then(() => true);
     }
   }

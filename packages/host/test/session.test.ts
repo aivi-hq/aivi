@@ -44,10 +44,15 @@ test('only the matching completed final answer is returned, without reasoning or
 
 /** Mock of the OpenCode 2.0.3 endpoints runTurn touches; the context shape matches the live server. */
 function mockOpenCode(
-  options: { pending?: { id: string; action: string; resources: string[] }[]; agent?: string } = {},
+  options: {
+    pending?: { id: string; action: string; resources: string[] }[];
+    agent?: string;
+    contextLagsFor?: number;
+  } = {},
 ) {
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
   let pending = options.pending ?? [];
+  let lag = options.contextLagsFor ?? 0;
   let promptId = '';
   const agent = options.agent ?? 'librarian';
   const server = createServer(async (req, res) => {
@@ -78,6 +83,11 @@ function mockOpenCode(
       return;
     }
     if (url.endsWith('/context')) {
+      if (lag > 0) {
+        lag--;
+        res.end(JSON.stringify({ data: [] })); // wait() already returned but the context is not there yet
+        return;
+      }
       res.end(
         JSON.stringify({
           data: [
@@ -177,4 +187,16 @@ test('runTurn refuses a session whose agent changed', async t => {
       /no longer runs agent developer/,
     ),
   );
+});
+
+test('runTurn paces its re-check when wait() returns before the context shows the finished turn', async t => {
+  const mock = mockOpenCode({ contextLagsFor: 5 });
+  const started = Date.now();
+  const result = await withServer(t, mock, client =>
+    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), pollMs: 50 }),
+  );
+  assert.equal(result.text, 'Answer');
+  const contexts = mock.requests.filter(r => r.path.endsWith('/context')).length;
+  assert.equal(contexts, 6, 'one context read per pending answer plus the final one');
+  assert.ok(Date.now() - started >= 5 * 50, 'each re-arm waits pollMs instead of spinning');
 });

@@ -36,6 +36,7 @@ export async function createNativeChat(
   const permissions: { action: string; resource: string; effect: 'allow' | 'deny' }[] = [
     { action: '*', resource: '*', effect: 'deny' },
     ...readOnlyTools.map(action => ({ action, resource: '*', effect: 'allow' as const })),
+    // `read *` above overrides OpenCode's default `*.env → ask` (last match wins); restore it as a deny.
     { action: 'read', resource: '*.env', effect: 'deny' },
     { action: 'read', resource: '*.env.*', effect: 'deny' },
   ];

@@ -14,7 +14,7 @@ export interface HostServices {
   store: Store;
   knowledge: KnowledgeService;
   browser?: BrowserService;
-  /** Resolved once per host; discovers the OpenCode service on first use. */
+  /** Discovers the OpenCode service on every call. Call once per unit of work and hold the client for its duration. */
   opencode: () => Promise<OpenCodeClient>;
   signal: AbortSignal;
   log: Logger;
@@ -72,49 +72,11 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   const owner = randomUUID();
   let acquired = false;
 
-  // One OpenCode client per host, resolved lazily so pure maintenance never needs the model server.
-  let opencodeClient: Promise<OpenCodeClient> | undefined;
-  const opencode = () =>
-    (opencodeClient ??= connectOpenCode(loaded.config.opencode).catch(error => {
-      opencodeClient = undefined; // allow a retry after the service comes up
-      throw error;
-    }));
+  // Discovery is one file read, so it runs per unit of work: a restarted `opencode service`
+  // (new port and password) is picked up by the next turn without restarting aivi.
+  const opencode = () => connectOpenCode(loaded.config.opencode);
 
-  try {
-    store.acquireDaemon(owner);
-    acquired = true;
-    ({ knowledge, browser } = await options.resources());
-    const destinations = new Destinations();
-    scheduler = new Scheduler(
-      store,
-      loaded.config.scheduler,
-      createExecutor(loaded, { store, knowledge, opencode, log }),
-      log,
-      async (job, state, result, reason) => {
-        if (!shouldReport(job.report, state)) return;
-        try {
-          await destinations.deliver(job.report, describeOutcome(job, state, result, reason));
-          store.note(job.id, 'reported', `${job.report.to}:${job.report.channel}`);
-        } catch (error) {
-          store.note(job.id, 'report-failed', error instanceof Error ? error.message : String(error));
-          throw error;
-        }
-      },
-    );
-    store.syncSchedules(loaded.config.schedules);
-    if (loaded.config.search?.indexOnStart) {
-      const startedAt = Date.now();
-      await knowledge.index();
-      log.info('knowledge.indexed', { ms: Date.now() - startedAt });
-    }
-    abort.signal.throwIfAborted();
-
-    if (options.once) {
-      scheduler.tick();
-      await scheduler.drain();
-      return;
-    }
-
+  const serve = async (scheduler: Scheduler, destinations: Destinations, knowledge: KnowledgeService) => {
     const http = createHostServer({ store, loaded, auth, knowledge, browser, log });
     server = http;
     const { bind, port } = loaded.config.host;
@@ -158,10 +120,50 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       }
     }
     if (failure !== undefined) throw failure;
+  };
+
+  const errors: unknown[] = [];
+  try {
+    abort.signal.throwIfAborted();
+    store.acquireDaemon(owner);
+    acquired = true;
+    ({ knowledge, browser } = await options.resources());
+    const destinations = new Destinations();
+    scheduler = new Scheduler(
+      store,
+      loaded.config.scheduler,
+      createExecutor(loaded, { store, knowledge, opencode, log }),
+      log,
+      async (job, state, result, reason) => {
+        if (!shouldReport(job.report, state)) return;
+        try {
+          await destinations.deliver(job.report, describeOutcome(job, state, result, reason));
+          store.note(job.id, 'reported', `${job.report.to}:${job.report.channel}`);
+        } catch (error) {
+          store.note(job.id, 'report-failed', error instanceof Error ? error.message : String(error));
+          throw error;
+        }
+      },
+    );
+    store.syncSchedules(loaded.config.schedules);
+    if (loaded.config.search?.indexOnStart) {
+      const startedAt = Date.now();
+      await knowledge.index();
+      log.info('knowledge.indexed', { ms: Date.now() - startedAt });
+    }
+    abort.signal.throwIfAborted();
+
+    if (options.once) {
+      scheduler.tick();
+      await scheduler.drain();
+    } else {
+      await serve(scheduler, destinations, knowledge);
+    }
+  } catch (error) {
+    errors.push(error);
   } finally {
     stop();
     scheduler?.stop();
-    const errors: unknown[] = [];
     for (const module of started.reverse()) {
       try {
         await module.stop();
@@ -192,8 +194,10 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     if (acquired) store.releaseDaemon(owner);
     signal.removeEventListener('abort', stop);
     log.info('host.stopped', { errors: errors.length });
-    if (errors.length) throw new AggregateError(errors, 'Application shutdown failed');
   }
+  // The first entry is the failure that ended the host; cleanup failures follow it, never replace it.
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, 'Application shutdown failed');
 }
 
 function isLoopback(address: string): boolean {

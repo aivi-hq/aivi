@@ -16,7 +16,7 @@ runtime behavior. The product requirements and roadmap are in `docs/`.
 - Discord uses one librarian agent and does not execute project work.
 - Keep credentials in fnox/environment, never configuration examples or logs.
 
-Use Node 24, pinned dependencies, and npm workspaces. `npm run check` builds and
+Use Node 26 (`engines` in `package.json`), pinned dependencies, and npm workspaces. `npm run check` builds and
 runs focused tests plus the CLI smoke test. Test lifecycle, persistence, and
 configuration changes at the actual boundaries they affect. Live OpenCode and
 macOS verification are separate gates; mock tests do not establish those.

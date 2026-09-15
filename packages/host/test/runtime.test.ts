@@ -105,7 +105,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
   assert.ok(done.finishedAt);
 });
 
-test('an unreachable OpenCode blocks the job instead of failing the scheduler', async t => {
+test('an unreachable OpenCode fails the job: nothing external happened, so the next occurrence retries', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
   const job = store.enqueue(
@@ -125,9 +125,88 @@ test('an unreachable OpenCode blocks the job instead of failing the scheduler', 
   scheduler.tick();
   await scheduler.drain();
   const result = store.get(job.id);
-  assert.equal(result.state, 'blocked');
-  assert.match(result.error ?? '', /No running OpenCode/);
+  assert.equal(result.state, 'failed');
+  assert.equal(result.sessionId, null, 'no session id is attached when no request was made');
+  assert.match(result.error ?? '', /OpenCode unreachable: No running OpenCode/);
   assert.equal(scheduler.stopped, false);
+});
+
+test('a turn that times out while session.wait is pending reports the timeout, not the SDK transport wrapper', async t => {
+  const store = new Store(':memory:');
+  const job = store.enqueue(
+    taskSchema.parse({ kind: 'opencode.prompt', agent: 'librarian', directory: '/team', prompt: 'slow' }),
+    'local-model',
+    'slow-turn',
+  );
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) void _;
+    res.setHeader('content-type', 'application/json');
+    if (req.url!.endsWith('/wait')) return; // never answers: the turn is still running
+    if (req.url!.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
+    if (req.url!.endsWith('/prompt')) return void res.end('{"data":{"id":"m"}}');
+    res.end(JSON.stringify({ data: { id: 'x', agent: 'librarian', location: { directory: '/team' } } }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const config = configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } });
+  const execute = createExecutor(
+    { path: '/aivi.json', config, projects: [], sources: [] },
+    { store, opencode: () => connectOpenCode(config.opencode, {}) },
+  );
+  // Below the schema minimum on purpose: the executor is called directly to keep the test fast.
+  assert.equal(job.task.kind, 'opencode.prompt');
+  const outcome = await execute(
+    { ...job, task: { ...job.task, timeoutMs: 300 } },
+    { signal: new AbortController().signal, attachSession() {} },
+  );
+  assert.equal(outcome.state, 'blocked');
+  assert.match(outcome.reason ?? '', /^Turn exceeded 300ms\. Inspect session ses_aivi_/);
+});
+
+test('a dreaming job persists its session id before the first request and blocks if that request fails', async t => {
+  const store = new Store(':memory:');
+  const job = store.enqueue(
+    taskSchema.parse({ kind: 'dreaming', directory: '/lib', memoryDirectory: '/tmp/aivi-memory-unused' }),
+    'local-model',
+    'dream',
+  );
+  let attachedAtRequest: string | null | undefined;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) void _;
+    attachedAtRequest ??= store.get(job.id).sessionId;
+    res.writeHead(500);
+    res.end('{}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const config = configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } });
+  const scheduler = new Scheduler(
+    store,
+    config.scheduler,
+    createExecutor(
+      { path: '/aivi.json', config, projects: [], sources: [] },
+      { store, opencode: () => connectOpenCode(config.opencode, {}) },
+    ),
+  );
+  scheduler.tick();
+  await scheduler.drain();
+  const expected = `ses_aivi_${job.id.replaceAll('-', '')}`;
+  assert.equal(attachedAtRequest, expected, 'session id is on the job row before OpenCode is asked anything');
+  const result = store.get(job.id);
+  assert.equal(result.state, 'blocked');
+  assert.equal(result.sessionId, expected);
+  assert.match(result.error ?? '', /Inspect session ses_aivi_/);
 });
 
 test('shell tasks run argv without a shell, capture output, and map exit codes to states', async t => {
@@ -169,6 +248,36 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   assert.equal(failed.state, 'failed');
   assert.match(failed.error ?? '', /exited with 3/);
   assert.equal((failed.result as { exitCode: number }).exitCode, 3);
+});
+
+test('a command that cannot start fails instead of blocking capacity', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const config = configSchema.parse({ version: 1, stateDirectory: '/tmp' });
+  const job = store.enqueue(
+    taskSchema.parse({ kind: 'shell', command: ['/nonexistent/aivi-binary', '--flag'] }),
+    'local-model',
+    'missing',
+  );
+  const scheduler = new Scheduler(
+    store,
+    config.scheduler,
+    createExecutor(
+      { path: '/aivi.json', config, projects: [], sources: [] },
+      {
+        store,
+        opencode: async () => {
+          throw new Error('x');
+        },
+      },
+    ),
+  );
+  scheduler.tick();
+  await scheduler.drain();
+  const result = store.get(job.id);
+  assert.equal(result.state, 'failed');
+  assert.match(result.error ?? '', /could not start: \/nonexistent\/aivi-binary/);
+  assert.match((result.result as { stderr: string }).stderr, /ENOENT/);
 });
 
 test('a shell task that exceeds its timeout is blocked, not failed', async t => {

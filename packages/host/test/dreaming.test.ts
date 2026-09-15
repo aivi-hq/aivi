@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -164,7 +164,7 @@ test('dream writes the transcript, confines edits to facts and proposals, advanc
   });
   const deps = {
     store,
-    opencode: async () => client,
+    client,
     stateDirectory: join(root, 'state'),
     signal: AbortSignal.timeout(10000),
     now: () => T0 + 10_000,
@@ -184,14 +184,29 @@ test('dream writes the transcript, confines edits to facts and proposals, advanc
   assert.match(await readFile(outcome.result.transcript!, 'utf8'), /We deploy on Tuesdays/);
 
   const create = mock.requests.find(r => r.method === 'POST' && r.path === '/api/session')!;
+  assert.equal(create.body.id, 'ses_aivi_job1');
   assert.deepEqual(create.body.metadata, { aivi: { origin: 'dreaming', job: 'job-1' } });
+  // Permission resources use canonical paths (tmpdir is a symlink on macOS), as OpenCode matches them.
+  const canonical = await realpath(memory);
   const edits = create.body.permissions
     .filter((p: { action: string }) => p.action === 'edit')
     .map((p: { resource: string }) => p.resource);
-  assert.deepEqual(edits, [`${memory}/facts.md`, `${memory}/proposals/*`]);
+  assert.deepEqual(edits, [`${canonical}/facts.md`, `${canonical}/proposals/*`]);
+  assert.ok(
+    create.body.permissions.some(
+      (p: { action: string; resource: string }) =>
+        p.action === 'external_directory' && p.resource === `${canonical}/**`,
+    ),
+  );
   assert.ok(
     !create.body.permissions.some(
       (p: { action: string; effect: string }) => ['shell', 'subagent'].includes(p.action) && p.effect === 'allow',
+    ),
+  );
+  assert.ok(
+    create.body.permissions.some(
+      (p: { action: string; resource: string; effect: string }) =>
+        p.action === 'read' && p.resource === '*.env' && p.effect === 'deny',
     ),
   );
 

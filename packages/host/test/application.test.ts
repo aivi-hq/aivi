@@ -129,6 +129,38 @@ test('startup failure unwinds earlier modules and releases ownership', async t =
   store.releaseDaemon('another');
 });
 
+test('the failure that ended the host survives a failing cleanup step', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const resources = async () => ({
+    knowledge: {
+      async search() {
+        return [];
+      },
+      async index() {},
+      async close() {
+        throw new Error('close failed');
+      },
+    },
+  });
+  const modules: HostModule[] = [
+    {
+      id: 'broken',
+      async start() {
+        throw new Error('start failed');
+      },
+    },
+  ];
+  await assert.rejects(
+    runHost({ loaded: loaded(), store, resources, modules, auth, signal: new AbortController().signal }),
+    (error: unknown) =>
+      error instanceof AggregateError &&
+      error.errors.map(e => (e as Error).message).join(',') === 'start failed,close failed',
+  );
+  store.acquireDaemon('another');
+  store.releaseDaemon('another');
+});
+
 test('duplicate host is rejected before initializing shared services', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());

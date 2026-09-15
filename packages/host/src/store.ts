@@ -287,9 +287,18 @@ export class Store {
     ) GROUP BY resource`)
       .all();
   }
+  /** Pools that queued work is waiting for; lets the scheduler notice a pool that no longer exists. */
+  queuedResources(): string[] {
+    return this.db
+      .prepare("SELECT DISTINCT resource FROM jobs WHERE state='queued'")
+      .all()
+      .map(r => String(r.resource));
+  }
   /**
    * Reserve capacity for non-job work (for example one Discord turn). The
-   * caller's own state change runs inside the same transaction via `onAcquire`.
+   * caller's own state change runs inside the same transaction via `onAcquire`,
+   * so it must use `store.db` directly: Store methods that open their own
+   * transaction cannot nest here.
    */
   acquireLease(
     id: string,

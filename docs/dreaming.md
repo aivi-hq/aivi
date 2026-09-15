@@ -19,8 +19,14 @@ stays stable.
    agent's answers; no tool output or reasoning).
 4. It writes one transcript file under `<stateDirectory>/dreaming/` and runs
    the dreamer agent through the session driver with a narrow write boundary:
-   `facts.md` and `proposals/*` in the memory directory. Everything else is
-   read-only; shell and subagents are denied. Permission prompts are rejected.
+   `facts.md` and `proposals/*` in the memory directory. Reads outside the
+   agent's own directory are limited to the memory directory and the transcript;
+   shell and subagents are denied, and `.env` files stay denied (aivi's own
+   `read *` allow would otherwise override OpenCode's default prompt for them).
+   Permission prompts are
+   rejected. Permission paths are canonical (`realpath`), as OpenCode matches
+   them. The job row carries the native session id before the first request, so
+   `aivi jobs show` points at the session to inspect if the run blocks.
 5. It records which memory files changed, advances the cursor to the newest
    reviewed session, refreshes the search index, and reports the agent's
    summary to the configured destination.
@@ -72,6 +78,10 @@ frontmatter.
 
 ## Later
 
-Project-scoped memory (facts that belong to one project's repository), per-person
+Project-scoped memory (facts that belong to one project's repository;
+[project-memory](backlog/project-memory.md)), per-person
 memory once identities are linked, memory decay, and a queue-aware schedule that
-waits for quiet hours instead of a fixed cron.
+waits for quiet hours instead of a fixed cron
+([projects-and-capacity](backlog/projects-and-capacity.md)). Open verification:
+`collectSessions` assumes `session.list` with `order: 'desc'` sorts by
+`time.updated`; confirm at the live boundary (`npm run live:opencode`).

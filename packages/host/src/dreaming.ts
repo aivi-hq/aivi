@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { Logger, Task } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
 import type { OpenCodeClient } from './opencode.ts';
-import { runTurn } from './session.ts';
+import { runTurn, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
 
 type DreamingTask = Extract<Task, { kind: 'dreaming' }>;
 
 export interface DreamingDeps {
   store: Store;
-  opencode: () => Promise<OpenCodeClient>;
+  client: OpenCodeClient;
   stateDirectory: string;
   signal: AbortSignal;
   log?: Logger | undefined;
@@ -35,7 +35,6 @@ const CURSOR_MIGRATIONS = [
 
 /** One memory directory has one cursor: the newest session update it has already reviewed. */
 export function readCursor(store: Store, key: string): number {
-  store.migrate('dreaming', CURSOR_MIGRATIONS);
   const row = store.db.prepare('SELECT since FROM dreaming_cursor WHERE key=?').get(key);
   return row ? Number(row.since) : 0;
 }
@@ -168,8 +167,9 @@ export async function dream(
 ): Promise<{ state: 'succeeded' | 'blocked'; result: DreamingResult; reason?: string }> {
   const log = (deps.log ?? silentLogger).child({ component: 'dreaming', job: jobId });
   const now = deps.now ?? Date.now;
+  deps.store.migrate('dreaming', CURSOR_MIGRATIONS);
   const since = readCursor(deps.store, task.memoryDirectory);
-  const client = await deps.opencode();
+  const client = deps.client;
   const sessions = await collectSessions(client, since, task.origins, task.maxSessions, deps.signal);
   if (!sessions.length) {
     log.info('nothing.new', { since });
@@ -177,10 +177,12 @@ export async function dream(
   }
   const until = Math.max(...sessions.map(s => s.updated));
 
-  const runDir = join(deps.stateDirectory, 'dreaming');
-  await mkdir(runDir, { recursive: true, mode: 0o700 });
+  await mkdir(join(deps.stateDirectory, 'dreaming'), { recursive: true, mode: 0o700 });
   await mkdir(join(task.memoryDirectory, 'proposals'), { recursive: true });
-  const factsPath = join(task.memoryDirectory, 'facts.md');
+  // OpenCode matches permission resources against canonical paths; symlinked directories (macOS /tmp, /var) would otherwise be denied.
+  const runDir = await realpath(join(deps.stateDirectory, 'dreaming'));
+  const memory = await realpath(task.memoryDirectory);
+  const factsPath = join(memory, 'facts.md');
   await stat(factsPath).catch(() =>
     writeFile(
       factsPath,
@@ -190,8 +192,8 @@ export async function dream(
   const transcript = join(runDir, `${jobId}.md`);
   await writeFile(transcript, renderTranscript(sessions, since), { mode: 0o600 });
 
-  const before = await snapshot(task.memoryDirectory);
-  const memory = task.memoryDirectory.replaceAll('\\', '/');
+  const before = await snapshot(memory);
+  const posix = (path: string) => path.replaceAll('\\', '/');
   const permissions: { action: string; resource: string; effect: 'allow' | 'deny' }[] = [
     { action: '*', resource: '*', effect: 'deny' },
     ...['read', 'glob', 'grep', 'execute', 'knowledge_search', 'aivi_sources'].map(action => ({
@@ -199,29 +201,32 @@ export async function dream(
       resource: '*',
       effect: 'allow' as const,
     })),
-    { action: 'external_directory', resource: `${memory}/**`, effect: 'allow' },
-    { action: 'external_directory', resource: `${runDir.replaceAll('\\', '/')}/**`, effect: 'allow' },
+    // `read *` above overrides OpenCode's default `*.env → ask` (last match wins); restore it as a deny.
+    { action: 'read', resource: '*.env', effect: 'deny' },
+    { action: 'read', resource: '*.env.*', effect: 'deny' },
+    { action: 'external_directory', resource: `${posix(memory)}/**`, effect: 'allow' },
+    { action: 'external_directory', resource: `${posix(runDir)}/**`, effect: 'allow' },
     // The agent may grow facts and proposals; rules and everything else stay human-owned.
-    { action: 'edit', resource: `${memory}/facts.md`, effect: 'allow' },
-    { action: 'edit', resource: `${memory}/proposals/*`, effect: 'allow' },
+    { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
+    { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
   ];
-  const suffix = jobId.replaceAll('-', '');
+  const { sessionId, messageId } = turnIdsFor(jobId);
   const metadata = { aivi: { origin: 'dreaming', job: jobId } };
   const turn = await runTurn(
     client,
     {
-      sessionId: `ses_aivi_${suffix}`,
+      sessionId,
       agent: task.agent,
       directory: task.directory,
       create: true,
       title: `aivi dreaming ${new Date(now()).toISOString().slice(0, 10)}`,
       sessionMetadata: metadata,
       permissions,
-      messageId: `msg_aivi_${suffix}`,
+      messageId,
       messageMetadata: metadata,
       text: [
         `Dreaming run. Review the conversations in ${transcript} (${sessions.length} session(s), ${since ? `since ${new Date(since).toISOString()}` : 'all history'}).`,
-        `Memory directory: ${task.memoryDirectory}`,
+        `Memory directory: ${memory}`,
         `- Read ${factsPath} first and reconcile: update or date-supersede existing entries instead of duplicating them.`,
         `- You may edit only facts.md and files under proposals/. Do not touch anything else.`,
         `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
@@ -230,7 +235,7 @@ export async function dream(
     { signal: deps.signal, onPermission: 'reject', log },
   );
 
-  const after = await snapshot(task.memoryDirectory);
+  const after = await snapshot(memory);
   const changed = [...new Set([...before.keys(), ...after.keys()])]
     .filter(file => before.get(file) !== after.get(file))
     .sort();

@@ -63,6 +63,8 @@ function serializable(fields: LogFields): LogFields {
 
 /** OpenCode's client rejects with plain tagged objects, not Errors; read their message too. */
 export function errorMessage(error: unknown): string {
+  if (error instanceof AggregateError)
+    return [error.message, ...error.errors.map(e => `  - ${errorMessage(e)}`)].join('\n');
   if (error instanceof Error) return error.message;
   if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
     const tag = '_tag' in error && typeof error._tag === 'string' ? `${error._tag}: ` : '';

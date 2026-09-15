@@ -4,8 +4,8 @@ import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { errorMessage, silentLogger } from '@aivi/core';
 import { dream } from './dreaming.ts';
 import type { OpenCodeClient } from './opencode.ts';
-import type { Execute } from './scheduler.ts';
-import { PermissionRequired, runTurn } from './session.ts';
+import type { Execute, ExecutionResult } from './scheduler.ts';
+import { PermissionRequired, runTurn, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
 
 export interface ExecutorDeps {
@@ -40,21 +40,23 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         const task = job.task;
         const [file, ...args] = task.command;
         const cwd = task.cwd ?? loaded.config.stateDirectory;
-        const outcome = await new Promise<{
+        const { started, ...outcome } = await new Promise<{
+          started: boolean;
           exitCode: number | null;
           signal: string | null;
           stdout: string;
           stderr: string;
         }>(resolve => {
-          execFile(
+          const child = execFile(
             file!,
             args,
             { cwd, timeout: task.timeoutMs, maxBuffer: 1024 * 1024, signal: context.signal, windowsHide: true },
             (error, stdout, stderr) => {
-              const exec = error as
-                | (NodeJS.ErrnoException & { code?: number | string; signal?: string; killed?: boolean })
-                | null;
+              // Node reports a non-zero exit as a numeric `code`, a kill (timeout, abort, maxBuffer) with
+              // `signal` or a string code, and a spawn failure (ENOENT, EACCES) with a string code and no pid.
+              const exec = error as (NodeJS.ErrnoException & { code?: number | string; signal?: string }) | null;
               resolve({
+                started: child.pid !== undefined,
                 exitCode: typeof exec?.code === 'number' ? exec.code : exec ? null : 0,
                 signal: exec?.signal ?? null,
                 stdout: tail(stdout),
@@ -64,23 +66,35 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
           );
         });
         if (outcome.exitCode === 0) return { state: 'succeeded', result: outcome };
-        // Aborted by host shutdown or timeout: the process may still be running, keep it inspectable.
-        if (outcome.exitCode === null)
-          return {
-            state: 'blocked',
-            result: outcome,
-            reason: outcome.signal ? `Command killed by ${outcome.signal}` : 'Command did not exit cleanly',
-          };
-        return { state: 'failed', result: outcome, reason: `Command exited with ${outcome.exitCode}` };
+        if (typeof outcome.exitCode === 'number')
+          return { state: 'failed', result: outcome, reason: `Command exited with ${outcome.exitCode}` };
+        // Nothing ran: the next occurrence may simply try again.
+        if (!started) return { state: 'failed', result: outcome, reason: `Command could not start: ${file}` };
+        // Killed by timeout, host shutdown or output limit: the process may still be running, keep it inspectable.
+        return {
+          state: 'blocked',
+          result: outcome,
+          reason: context.signal.aborted
+            ? 'Host stopped while the command was running'
+            : outcome.signal
+              ? `Command killed by ${outcome.signal}`
+              : 'Command did not exit cleanly',
+        };
       }
       case 'dreaming': {
-        const sessionId = `ses_aivi_${job.id.replaceAll('-', '')}`;
+        const task = job.task;
+        const client = await connect(deps.opencode);
+        if (!client.ok) return client.outcome;
+        const { sessionId } = turnIdsFor(job.id);
+        const timeout = AbortSignal.timeout(task.timeoutMs);
+        // Persist the intended ID BEFORE any request. A dropped response then has a known reconciliation target.
+        context.attachSession(sessionId);
         try {
-          const outcome = await dream(job.task, job.id, {
+          const outcome = await dream(task, job.id, {
             store: deps.store,
-            opencode: deps.opencode,
+            client: client.value,
             stateDirectory: loaded.config.stateDirectory,
-            signal: AbortSignal.any([context.signal, AbortSignal.timeout(job.task.timeoutMs)]),
+            signal: AbortSignal.any([context.signal, timeout]),
             log,
           });
           if (outcome.result.reviewed && deps.knowledge)
@@ -89,65 +103,86 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         } catch (error) {
           // The cursor did not advance, so the next run reviews the same conversations again.
           log.warn('dreaming.failed', { error });
-          const reason = context.signal.aborted
-            ? 'Host stopped during dreaming'
-            : error instanceof Error && error.name === 'TimeoutError'
-              ? `Dreaming exceeded ${job.task.timeoutMs}ms`
-              : errorMessage(error);
-          return {
-            state: 'blocked',
-            result: { sessionId },
-            reason: `${reason}. Inspect session ${sessionId} and resolve this job.`,
-          };
+          return blocked(error, {
+            sessionId,
+            work: 'Dreaming',
+            host: context.signal,
+            timeout,
+            timeoutMs: task.timeoutMs,
+          });
         }
       }
       case 'opencode.prompt': {
-        const client = await deps.opencode();
-        const suffix = job.id.replaceAll('-', '');
-        const sessionId = `ses_aivi_${suffix}`;
+        const task = job.task;
+        const client = await connect(deps.opencode);
+        if (!client.ok) return client.outcome;
+        const { sessionId, messageId } = turnIdsFor(job.id);
+        const timeout = AbortSignal.timeout(task.timeoutMs);
         // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
         context.attachSession(sessionId);
         const metadata = { aivi: { origin: 'job', job: job.id } };
         try {
           const turn = await runTurn(
-            client,
+            client.value,
             {
               sessionId,
-              agent: job.task.agent,
-              directory: job.task.directory,
+              agent: task.agent,
+              directory: task.directory,
               create: true,
               title: `aivi ${job.id}`,
               sessionMetadata: metadata,
-              messageId: `msg_aivi_${suffix}`,
-              text: job.task.prompt,
+              messageId,
+              text: task.prompt,
               messageMetadata: metadata,
             },
-            {
-              signal: AbortSignal.any([context.signal, AbortSignal.timeout(job.task.timeoutMs)]),
-              onPermission: job.task.onPermission,
-              log,
-            },
+            { signal: AbortSignal.any([context.signal, timeout]), onPermission: task.onPermission, log },
           );
           return { state: 'succeeded', result: { sessionId, text: turn.text, rejectedPermissions: turn.rejected } };
         } catch (error) {
           // The session may still be doing things; keep its capacity until an operator has looked.
           log.warn('turn.failed', { error });
-          const reason =
-            error instanceof PermissionRequired
-              ? error.message
-              : context.signal.aborted
-                ? 'Host stopped while the turn was running'
-                : error instanceof Error && error.name === 'TimeoutError'
-                  ? `Turn exceeded ${job.task.timeoutMs}ms`
-                  : errorMessage(error);
-          return {
-            state: 'blocked',
-            result: { sessionId },
-            reason: `${reason}. Inspect session ${sessionId} and resolve this job.`,
-          };
+          return blocked(error, { sessionId, work: 'Turn', host: context.signal, timeout, timeoutMs: task.timeoutMs });
         }
       }
     }
+  };
+}
+
+/** Discovery failure has no external effect: fail the job so the next occurrence simply tries again. */
+async function connect(
+  opencode: () => Promise<OpenCodeClient>,
+): Promise<{ ok: true; value: OpenCodeClient } | { ok: false; outcome: ExecutionResult }> {
+  try {
+    return { ok: true, value: await opencode() };
+  } catch (error) {
+    return {
+      ok: false,
+      outcome: { state: 'failed', result: null, reason: `OpenCode unreachable: ${errorMessage(error)}` },
+    };
+  }
+}
+
+/**
+ * A turn that ended without a verified answer blocks its job. The SDK wraps an
+ * aborted request as a transport error, so the cause is read from the signals,
+ * not from the error.
+ */
+function blocked(
+  error: unknown,
+  turn: { sessionId: string; work: 'Turn' | 'Dreaming'; host: AbortSignal; timeout: AbortSignal; timeoutMs: number },
+): ExecutionResult {
+  const reason =
+    error instanceof PermissionRequired
+      ? error.message
+      : turn.host.aborted
+        ? `Host stopped during ${turn.work.toLowerCase()}`
+        : turn.timeout.aborted
+          ? `${turn.work} exceeded ${turn.timeoutMs}ms`
+          : errorMessage(error);
+  return {
+    state: 'blocked',
+    result: { sessionId: turn.sessionId },
+    reason: `${reason}. Inspect session ${turn.sessionId} and resolve this job.`,
   };
 }
 
