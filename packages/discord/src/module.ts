@@ -290,14 +290,9 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           const upcoming = host.upcoming
             .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
             .join(', ');
-          const recent = Object.entries(
-            host.recent.reduce<Record<string, number>>(
-              (acc, r) => ({ ...acc, [r.state]: (acc[r.state] ?? 0) + 1 }),
-              {},
-            ),
-          )
-            .map(([state, n]) => `${n} ${state}`)
-            .join(', ');
+          const tally = new Map<string, number>();
+          for (const r of host.recent) tally.set(r.state, (tally.get(r.state) ?? 0) + 1);
+          const recent = [...tally].map(([state, n]) => `${n} ${state}`).join(', ');
           content = [
             pending.length
               ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
