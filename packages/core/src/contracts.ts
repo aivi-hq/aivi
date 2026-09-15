@@ -148,10 +148,18 @@ export interface KnowledgeService {
   index(): Promise<unknown>;
   close(): Promise<void>;
 }
+/** What the librarian sees of a project: enough to know it exists (or existed) and what can be searched. */
+export interface ProjectSummary {
+  id: string;
+  /** The checkout is gone; only memory remains until purged. */
+  removed?: true;
+  sources: { id: string; kind: KnowledgeKind }[];
+}
 export interface HostClient {
   browser(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   status(): Promise<Status>;
   sources(selection?: SourceSelection): Promise<KnowledgeSource[]>;
+  projects(): Promise<ProjectSummary[]>;
   search(request: SearchRequest): Promise<SearchHit[]>;
   jobs(request: JobRequest): Promise<JobResponse>;
   /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */

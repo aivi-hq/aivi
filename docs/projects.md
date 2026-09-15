@@ -69,8 +69,8 @@ only overrides:
 
 - **Channels talk about projects, never in one.** A Discord or Slack
   conversation runs the module's agent in the home; it reads projects through
-  `knowledge_search` and `knowledge_sources`, and learns which projects exist on
-  demand. It never claims or edits a checkout.
+  `knowledge_search` and `aivi_sources`, and learns which projects exist on
+  demand through `knowledge_projects`. It never claims or edits a checkout.
 - **Workers work in a project.** Linear's worker agents (milestone 7) run in
   `<home>/projects/<id>` with the lane's mapped agent. One active agent per
   project and maintenance-when-idle are designed but not built
@@ -90,19 +90,31 @@ allows `facts.md` and `proposals/*` in each, and names them in the prompt
 with that project's scope and, like every project source, when no scope is
 given.
 
-## Adding, listing, renaming
+## Adding, listing, renaming, removing
 
 ```sh
 aivi projects add https://github.com/acme/website.git   # clones into projects/website
 aivi projects add git@github.com:acme/api.git --id backend
 aivi projects list
+aivi projects remove website          # checkout gone, memory stays
+aivi projects purge website           # shows what would go, deletes nothing
+aivi projects purge website --confirm # deletes memory/website (and a lingering checkout)
 ```
 
 `add` is `git clone` plus an id check (the id is the repository name,
 lower-cased, unless `--id` says otherwise); it prints the sources the project
 will have. The host reads the projects directory at startup, so restart
-`aivi serve` to index a new project. To rename a project, rename its directory
-(and `memory/<id>` if the memory should follow). Old collections in the search
-index are dropped by QMD at the next start and never searched, since queries
-name their collections; the index is a rebuildable derivative, so deleting
-`state/knowledge` reclaims the space.
+`aivi serve` after adding or removing. To rename a project, rename its
+directory (and `memory/<id>` if the memory should follow). Old collections in
+the search index are dropped by QMD at the next start and never searched, since
+queries name their collections; the index is a rebuildable derivative, so
+deleting `state/knowledge` reclaims the space.
+
+**Removed is a state, not an absence.** A memory home with a `facts.md` and no
+checkout is a removed project: `projects list`, `/v1/projects` and the
+librarian's `knowledge_projects` show it with `removed: true` and only its
+`memory` source, so "what did we decide for website?" still has an answer, and
+the librarian says the project is gone. Nothing is forgotten until someone runs
+`purge --confirm`, which is the one destructive command here. `enabled: false`
+is different: the checkout stays and the project is hidden entirely, memory
+included.

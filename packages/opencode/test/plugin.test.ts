@@ -46,7 +46,7 @@ test('plugin registers its tools with root object schemas and disposes its regis
   );
   assert.deepEqual(
     tools.map(tool => tool.name),
-    ['search', 'status', 'sources', 'jobs', 'browser'],
+    ['search', 'status', 'sources', 'projects', 'jobs', 'browser'],
   );
   for (const tool of tools) assert.equal(tool.input.type, 'object', `${tool.name} must declare a root object schema`);
   assert.equal(typeof cleanup, 'function');

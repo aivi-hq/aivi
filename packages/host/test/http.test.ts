@@ -12,10 +12,14 @@ test('read API authenticates callers, scopes sources, and refuses job operations
   const loaded: LoadedConfig = {
     path: '/aivi.json',
     config: configSchema.parse({ version: 1 }),
-    projects: [{ id: 'app', directory: '/app' }],
+    projects: [
+      { id: 'app', directory: '/app' },
+      { id: 'old', directory: '/projects/old', removed: true },
+    ],
     sources: [
       { id: 'company', path: '/company', kind: 'doc', scope: 'core' },
       { id: 'adrs', path: '/app/docs', kind: 'decision', scope: 'project', projectId: 'app' },
+      { id: 'memory', path: '/memory/old', kind: 'memory', scope: 'project', projectId: 'old' },
     ],
   };
   const token = 'test-only-token-never-for-deployment';
@@ -44,7 +48,7 @@ test('read API authenticates callers, scopes sources, and refuses job operations
   const client = createHostClient(base, { token });
   assert.equal((await fetch(`${base}/v1/status`)).status, 401);
   assert.equal((await fetch(`${base}/health`)).status, 200, 'liveness is public');
-  assert.equal((await client.status()).sources, 2);
+  assert.equal((await client.status()).sources, 3);
   assert.equal((await client.sources({ projects: [] })).length, 1);
   assert.equal((await client.sources({ projects: ['app'], includeCore: false }))[0]!.projectId, 'app');
   assert.deepEqual(
@@ -57,6 +61,10 @@ test('read API authenticates callers, scopes sources, and refuses job operations
     400,
   );
   await assert.rejects(client.sources({ projects: ['typo'] }), /HTTP 400: Unknown project: typo/);
+  assert.deepEqual(await client.projects(), [
+    { id: 'app', sources: [{ id: 'adrs', kind: 'decision' }] },
+    { id: 'old', removed: true, sources: [{ id: 'memory', kind: 'memory' }] },
+  ]);
   assert.equal(
     (await fetch(`${base}/v1/jobs`, { method: 'POST', headers: { authorization: `Bearer ${token}` } })).status,
     503,

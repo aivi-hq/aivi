@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import { z } from 'zod';
 import { browserConfigSchema } from './browser.ts';
+import type { ProjectSummary } from './contracts.ts';
 import type { KnowledgeKind } from './kinds.ts';
 import { knowledgeKindHelp, knowledgeKindNames } from './kinds.ts';
 
@@ -501,8 +502,10 @@ export interface KnowledgeSource {
 }
 export interface Project {
   id: string;
-  /** The checkout: `<home>/projects/<id>`. */
+  /** The checkout: `<home>/projects/<id>`; absent when `removed`. */
   directory: string;
+  /** The checkout is gone but `<home>/memory/<id>` remains: still listed and searchable until purged. */
+  removed?: true;
   linear?: NonNullable<z.infer<typeof projectSchema>['linear']>;
 }
 export interface LoadedConfig {
@@ -514,24 +517,35 @@ export interface LoadedConfig {
 
 const absolute = (base: string, value: string): string => (isAbsolute(value) ? value : resolve(base, value));
 
-/**
- * Projects are the directories of `<home>/projects` (symlinks to directories
- * included), sorted; a clone is a registration. A name that is not a valid id
- * must be renamed, and an override for a project that is not checked out is a
- * mistake, so both fail loudly.
- */
-async function discoverProjects(home: string, overrides: Record<string, unknown>): Promise<string[]> {
-  const root = resolve(home, 'projects');
+/** Sub-directories of `root` (following symlinks), sorted, skipping dotfiles; `[]` when `root` is absent. */
+async function subdirectories(root: string): Promise<string[]> {
   const found: string[] = [];
   for (const name of (await readdir(root).catch(() => [])).sort()) {
     if (name.startsWith('.')) continue;
-    if (!(await stat(join(root, name))).isDirectory()) continue;
+    if ((await stat(join(root, name))).isDirectory()) found.push(name);
+  }
+  return found;
+}
+
+/**
+ * Projects are the directories of `<home>/projects` (symlinks to directories
+ * included), sorted; a clone is a registration. A name that is not a valid id
+ * must be renamed, and an override for a project that is neither checked out
+ * nor remembered is a mistake, so both fail loudly.
+ */
+async function discoverProjects(
+  home: string,
+  overrides: Record<string, unknown>,
+  remembered: string[],
+): Promise<string[]> {
+  const root = resolve(home, 'projects');
+  const found = await subdirectories(root);
+  for (const name of found)
     if (!PROJECT_ID.test(name))
       throw new Error(`${join(root, name)}: a project directory must be named like ${PROJECT_ID}`);
-    found.push(name);
-  }
   for (const id of Object.keys(overrides))
-    if (!found.includes(id)) throw new Error(`Project ${id}: no checkout at ${join(root, id)}`);
+    if (!found.includes(id) && !remembered.includes(id))
+      throw new Error(`Project ${id}: no checkout at ${join(root, id)}`);
   return found;
 }
 
@@ -553,7 +567,12 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
     { id: MEMORY_SOURCE_ID, path: memoryRoot, kind: 'memory', scope: 'core' },
   ];
   const projects: Project[] = [];
-  for (const projectId of await discoverProjects(base, config.projects)) {
+  // A project's memory home always has a facts.md (dreaming seeds it); the org's own proposals/ does not.
+  const remembered: string[] = [];
+  for (const name of await subdirectories(memoryRoot))
+    if (PROJECT_ID.test(name) && (await stat(join(memoryRoot, name, 'facts.md')).catch(() => null)))
+      remembered.push(name);
+  for (const projectId of await discoverProjects(base, config.projects, remembered)) {
     const entry = config.projects[projectId] ?? projectSchema.parse({});
     if (!entry.enabled) continue;
     const directory = resolve(base, 'projects', projectId);
@@ -571,6 +590,20 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
         throw new Error(`Project ${projectId} refers to unknown Linear application ${app}`);
     }
     projects.push({ id: projectId, directory, ...(entry.linear ? { linear: entry.linear } : {}) });
+  }
+  // A memory home without a checkout is a removed project: what was learned about it stays
+  // listed and searchable until `aivi projects purge`. Disabled projects are hidden entirely.
+  for (const projectId of remembered) {
+    if (projects.some(p => p.id === projectId)) continue;
+    if (config.projects[projectId]?.enabled === false) continue;
+    sources.push({
+      id: MEMORY_SOURCE_ID,
+      path: join(memoryRoot, projectId),
+      kind: 'memory',
+      scope: 'project',
+      projectId,
+    });
+    projects.push({ id: projectId, directory: resolve(base, 'projects', projectId), removed: true });
   }
   for (const job of config.jobs) {
     const task = job.task;
@@ -604,4 +637,13 @@ export function selectSources(
   return loaded.sources
     .filter(s => (s.scope === 'core' ? includeCore : projectIds === undefined || projectIds.includes(s.projectId!)))
     .filter(s => !kinds || kinds.includes(s.kind));
+}
+
+/** Projects as the librarian and `aivi projects list` see them: id, removed marker, searchable sources. */
+export function projectSummaries(loaded: LoadedConfig): ProjectSummary[] {
+  return loaded.projects.map(p => ({
+    id: p.id,
+    ...(p.removed ? { removed: true as const } : {}),
+    sources: loaded.sources.filter(s => s.projectId === p.id).map(s => ({ id: s.id, kind: s.kind })),
+  }));
 }

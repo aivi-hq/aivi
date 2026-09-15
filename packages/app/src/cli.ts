@@ -13,6 +13,9 @@ import {
   jobSchema,
   loadConfig,
   parseDue,
+  projectSummaries,
+  purgeProject,
+  removeProject,
   reportSchema,
   selectSources,
   taskSchema,
@@ -29,8 +32,10 @@ const usage = `aivi <command>
   status                       Inspect durable queue counts
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
-  projects list                Projects: the directories of <home>/projects, with their sources
+  projects list                Projects: the directories of <home>/projects, with their sources; removed ones keep their memory
   projects add URL [--id ID]   git clone into <home>/projects/<id>; that is the whole registration
+  projects remove ID           Delete the checkout; memory stays and the project is listed as removed
+  projects purge ID --confirm  Delete the project's memory (and checkout); without --confirm only shows what would go
   knowledge search QUERY       Search via the running host [--project ID --core-only --no-core --limit N]
   knowledge index              Queue a source refresh now [--resource maintenance]
   jobs list                    Job definitions: configured, system, agent- and operator-created
@@ -86,6 +91,7 @@ async function main(): Promise<void> {
       outcome: { type: 'string' },
       reason: { type: 'string' },
       'confirm-stopped': { type: 'boolean' },
+      confirm: { type: 'boolean' },
     },
   });
   if (values.help || !positionals.length) {
@@ -139,10 +145,9 @@ async function main(): Promise<void> {
       return;
     case 'projects list':
       print(
-        loaded.projects.map(p => ({
-          id: p.id,
-          directory: p.directory,
-          sources: loaded.sources.filter(s => s.projectId === p.id).map(s => `${s.id} (${s.kind})`),
+        projectSummaries(loaded).map((p, i) => ({
+          ...p,
+          ...(p.removed ? {} : { directory: loaded.projects[i]!.directory }),
         })),
       );
       return;
@@ -151,6 +156,21 @@ async function main(): Promise<void> {
       const added = await addProject(configPath, argument, values.id ? { id: values.id } : {});
       print(added);
       console.error('Restart `aivi serve` to index it; the host reads the projects directory at startup.');
+      return;
+    }
+    case 'projects remove':
+      if (!argument) throw new Error('Provide a project id');
+      print(await removeProject(configPath, argument));
+      console.error('Memory kept; the project is listed as removed until `aivi projects purge`. Restart `aivi serve`.');
+      return;
+    case 'projects purge': {
+      if (!argument) throw new Error('Provide a project id');
+      const purge = await purgeProject(configPath, argument, { confirm: values.confirm ?? false });
+      print(purge);
+      if (!purge.purged) {
+        console.error('Nothing deleted. Re-run with --confirm to delete these paths; memory cannot be recovered.');
+        process.exitCode = 1;
+      } else console.error('Restart `aivi serve` so the index forgets it.');
       return;
     }
     case 'opencode check': {

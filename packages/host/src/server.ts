@@ -13,6 +13,7 @@ import {
   browserEnvelopeSchema,
   jobRequestSchema,
   knowledgeKindSchema,
+  projectSummaries,
   searchSchema,
   selectSources,
   silentLogger,
@@ -151,6 +152,10 @@ export function createHostServer({
     }
     if (url.pathname === '/v1/sources') {
       handleSources(url, send);
+      return;
+    }
+    if (url.pathname === '/v1/projects') {
+      send(200, projectSummaries(loaded));
       return;
     }
     send(404, { error: 'Not found' });

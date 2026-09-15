@@ -116,6 +116,11 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
   await mkdir(join(root, 'projects/paused'), { recursive: true });
   await mkdir(join(root, 'projects/.hidden'), { recursive: true });
   await writeFile(join(root, 'projects/README.md'), 'files are not projects');
+  await mkdir(join(root, 'memory/gone'), { recursive: true });
+  await writeFile(join(root, 'memory/gone/facts.md'), '# Facts: gone');
+  await mkdir(join(root, 'memory/proposals'), { recursive: true });
+  await mkdir(join(root, 'memory/paused'), { recursive: true });
+  await writeFile(join(root, 'memory/paused/facts.md'), '# Facts: paused');
   const write = (projects: Record<string, unknown>) =>
     writeFile(
       join(root, 'aivi.json'),
@@ -136,9 +141,18 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
   const loaded = await loadConfig(join(root, 'aivi.json'));
   assert.equal(loaded.config.stateDirectory, join(root, 'state'));
   assert.deepEqual(
-    loaded.projects.map(p => p.id),
-    ['website', 'wiki'],
-    'discovered and sorted; disabled, hidden and plain files left out',
+    loaded.projects.map(p => [p.id, p.removed ?? false]),
+    [
+      ['website', false],
+      ['wiki', false],
+      ['gone', true],
+    ],
+    'discovered and sorted; disabled, hidden and plain files left out; a memory home without a checkout is a removed project, the org proposals/ is not',
+  );
+  assert.deepEqual(
+    selectSources(loaded, ['gone'], false).map(s => [s.id, s.path]),
+    [['memory', join(root, 'memory/gone')]],
+    'a removed project keeps only its memory',
   );
   assert.equal(loaded.projects[0]!.directory, join(root, 'projects/website'));
   assert.equal(loaded.projects[0]!.linear!.lanes.Review, 'worker');

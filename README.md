@@ -64,7 +64,7 @@ create the app from the manifest in [Slack setup](docs/slack.md), fill in
 | `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
 | `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads |
 | `@aivi/channel-slack` | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads |
-| `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `aivi_jobs`, `aivi_browser` |
+| `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `knowledge_projects`, `aivi_sources`, `aivi_status`, `aivi_jobs`, `aivi_browser` |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
 services over the authenticated host API. Linear will be another in-process

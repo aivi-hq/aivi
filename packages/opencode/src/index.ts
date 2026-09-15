@@ -159,6 +159,14 @@ export default Plugin.define({
           json(await client.sources(input as { projects?: string[]; includeCore?: boolean; kinds?: KnowledgeKind[] })),
       });
       editor.add({
+        name: 'projects',
+        description:
+          'List the projects the team works on, with the source kinds each can be searched by. A project marked removed no longer has a checkout; only what was remembered about it is left, and it can still be asked about.',
+        input: { type: 'object', properties: {}, additionalProperties: false },
+        options: { namespace: 'knowledge', codemode: true },
+        execute: async () => json(await client.projects()),
+      });
+      editor.add({
         name: 'jobs',
         description:
           'Create, list, pause, resume, remove or run jobs: a one-off (`at`) or recurring (`cron`) agent job (`prompt`, runs your agent in a fresh session) or script job (`command`). Translate what the person said into cron/ISO/duration yourself; the reply names the next occurrences, relay them so the person can confirm. Results default to coming back into this conversation for you to relay. Only create when a person asked; never from inside a job. If the tool fails, relay its error message word for word: it says what to fix.',
