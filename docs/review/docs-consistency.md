@@ -1,5 +1,26 @@
 # Documentation consistency review
 
+## Disposition (2026-09-15)
+
+Applied: every item in §1 except the two noted below; §2 for README Status,
+`architecture.md` Deferred work and Verification, `implementation-roadmap.md`
+(replaced by `roadmap.md`), `requirements.md` header and §9, `knowledge.md`
+follow-up, `browser.md` anecdote, `discord.md` Boundaries; §4 in a shorter
+form (pointer to a new root `CONTEXT.md` instead of a layout paragraph and
+pinned versions, which the environment already states); §5 agent files.
+
+Not applied: `Status.completion` / hardcoded version (documented as the
+payload instead; removing it is a contract change for the plugin); the
+`aivi sources --kind` CLI flag (doc corrected rather than a flag added).
+
+Deferred: the §3 restructure (`getting-started.md`, `operations.md`, merging
+`application.md` into `architecture.md`) until the jobs and projects work
+settles, because that work rewrites most of the operations content.
+`CONTEXT.md` is the interim "read this first" file.
+
+---
+
+
 Scope: `README.md`, `AGENTS.md`, `docs/*.md` (not `backlog/`, `review/`),
 `examples/**/*.md`, cross-checked against `packages/*/src`, `examples/*.json`,
 `examples/**/opencode.jsonc`, `schemas/`, `package.json`. Read-only review;

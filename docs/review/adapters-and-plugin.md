@@ -1,5 +1,29 @@
 # Review: adapters and plugin
 
+## Disposition (2026-09-15)
+
+Applied: 2 (as `TurnNotStarted` thrown by `runTurn`, used by jobs and Discord),
+3, 4, 5, 6, 8, 10, 15, 16, 17, 25, 29, 32 (one librarian; `discord-librarian/`
+deleted), 33, 34 (comment), test gap 2 (examples load through the real
+loaders), agent-file items in §5 except tool naming (see below).
+
+Wrong: 13. OpenCode's permissions doc states `*` matches any characters
+including `/` and that the last matching rule wins; `*.env` is correct. The
+answer to Q5 is recorded in `docs/opencode.md`.
+
+Rejected: Q1 / "Discord turns as host jobs" (decision recorded in
+`architecture.md`: two queues, one capacity); 18 as a read/write gate now
+(documented; "queue index behind searches" is planned work); 11, 12, 14 (a
+missing source path is a configuration error and should fail startup).
+
+Deferred: 20–24 and test gaps 8–9 until the live Chrome gate runs (changing
+recovery logic without Chrome is guesswork); 1 was fixed the day before;
+7, 9, 26, 27, 28, 30, 31, the simplicity items on shared helpers, and test
+gaps 1, 3–7, 10–12. Q6 (tool names under Code Mode) is a live check.
+
+---
+
+
 Scope: `packages/knowledge`, `packages/discord`, `packages/browser`,
 `packages/opencode`, `scripts/*.mjs`, `examples/**`. Host/core/app are covered
 in `host-core-app.md`; host APIs are referenced where the adapters lean on them.

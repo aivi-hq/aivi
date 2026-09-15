@@ -20,6 +20,10 @@ Global commands can take up to an hour to appear after `aivi discord register`.
   runtime switch.
 - `/stop` or `/cancel`: abort the running turn for this conversation
   (`session.interrupt`), release its lease.
+- `/steer`: send this message into the running turn with `delivery: "steer"`
+  instead of queueing behind it. Ordinary messages stay `queue`. OpenCode owns
+  both modes and the inbox (`session.inbox`), so this is a one-flag change in
+  `runTurn` plus the command.
 - `/jobs`: upcoming schedules and recent outcomes (ties into the jobs ticket).
 - `/help`.
 - Reactions or a short acknowledgement when a message is queued behind other

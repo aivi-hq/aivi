@@ -208,6 +208,14 @@ only (`cron: "0 9 * * 1"`), never as a noun in aivi's own UI.
    `reportChannels` the job is created with `report: null` and the tool says so.
    No "home channel" concept and no digest yet: `on: "failure"` plus the
    `[SILENT]` marker below cover the noise problem for now.
+   Owner's idea (2026-09-15) for the step after that: instead of posting a
+   job's text into the thread, submit the outcome as a prompt into the
+   thread's own session (`delivery: "queue"`), so the librarian reads it,
+   reacts, and replies in the thread while the person may already have moved
+   on. Jobs stay fresh sessions; only their *result* re-enters the
+   conversation. Needs the origin session id on the job (same field as
+   `report`) and a guard against loops (a job created from a job's re-entry
+   does not re-enter).
 5. **Result shape.** Chat text (current `describeOutcome`) plus one trailing
    line `session ses_aivi_… in OpenCode` so long answers are one click away;
    raise the cap to ~4000 chars and let the destination split (Discord already
