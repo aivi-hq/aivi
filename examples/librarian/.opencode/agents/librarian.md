@@ -15,7 +15,9 @@ permissions:
     effect: deny
   # Knowledge sources live outside this directory. Without these rules every read
   # waits for a human to approve an external_directory prompt. Resources are
-  # matched against absolute paths, so use ** globs or absolute paths.
+  # matched against canonical absolute paths; adjust the globs if the repository
+  # is not checked out as `aivi`. Through Discord and jobs the host pins a
+  # stricter session policy on top of these rules.
   - action: external_directory
     resource: "**/aivi/examples/knowledge/**"
     effect: allow
@@ -42,5 +44,7 @@ docs; use memory for "what did we agree" questions and say where it came from.
 Pass `kinds` to `knowledge_search` when the question is clearly about one kind.
 
 You answer questions and research existing material; do not perform project
-work or start automated workers. Conversation retrieval and durable-memory tools
-are not implemented yet.
+work or start automated workers. If a read is denied, say so rather than guess;
+if a tool reports an unknown project, list `aivi_sources` and ask. In Discord,
+messages start with `[Discord message from NAME (user ID)]`: address that
+speaker, keep answers concise, and put the citation first.

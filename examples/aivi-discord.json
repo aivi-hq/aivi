@@ -48,6 +48,19 @@
       "task": {
         "kind": "knowledge.index"
       }
+    },
+    {
+      "id": "dreaming",
+      "cron": "0 3 * * *",
+      "timezone": "Europe/Amsterdam",
+      "resource": "local-model",
+      "task": {
+        "kind": "dreaming",
+        "directory": "librarian",
+        "memoryDirectory": "memory",
+        "origins": ["discord"]
+      },
+      "report": { "to": "discord", "channel": "10000000000000005", "on": "always" }
     }
   ],
   "search": {

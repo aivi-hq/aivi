@@ -3,7 +3,7 @@
   "version": 1,
   "applicationId": "10000000000000001",
   "agent": "librarian",
-  "directory": "discord-librarian",
+  "directory": "librarian",
   "access": {
     "dm": {
       "users": ["10000000000000002"]
