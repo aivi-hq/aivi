@@ -3,12 +3,24 @@ import { z } from 'zod';
 const profile = z.string().min(1);
 const loopback = z.url().refine(value => {
   const u = new URL(value);
-  return u.protocol === 'http:' && ['127.0.0.1', '[::1]', 'localhost'].includes(u.hostname)
-    && !u.username && !u.password && u.pathname === '/' && !u.search && !u.hash;
+  return (
+    u.protocol === 'http:' &&
+    ['127.0.0.1', '[::1]', 'localhost'].includes(u.hostname) &&
+    !u.username &&
+    !u.password &&
+    u.pathname === '/' &&
+    !u.search &&
+    !u.hash
+  );
 }, 'Use a loopback Chrome debugging URL without credentials');
 export const browserConfigSchema = z.strictObject({
   connection: z.discriminatedUnion('mode', [
-    z.strictObject({ mode: z.literal('launch'), userDataDir: profile, executablePath: profile.optional(), headless: z.boolean().default(false) }),
+    z.strictObject({
+      mode: z.literal('launch'),
+      userDataDir: profile,
+      executablePath: profile.optional(),
+      headless: z.boolean().default(false),
+    }),
     z.strictObject({ mode: z.literal('existing'), userDataDir: profile }),
     z.strictObject({ mode: z.literal('attach'), browserUrl: loopback }),
   ]),
@@ -38,10 +50,24 @@ export const browserRequestSchema = z.discriminatedUnion('action', [
 ]);
 export type BrowserRequest = z.infer<typeof browserRequestSchema>;
 export const browserEnvelopeSchema = z.strictObject({
-  sessionId: z.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/), request: browserRequestSchema,
+  sessionId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-zA-Z0-9_-]+$/),
+  request: browserRequestSchema,
 });
-export interface BrowserTab { tabId: string; url: string; title: string }
-export interface BrowserResult { tabs?: BrowserTab[]; tab?: BrowserTab; snapshot?: unknown; completed?: boolean }
+export interface BrowserTab {
+  tabId: string;
+  url: string;
+  title: string;
+}
+export interface BrowserResult {
+  tabs?: BrowserTab[];
+  tab?: BrowserTab;
+  snapshot?: unknown;
+  completed?: boolean;
+}
 export interface BrowserService {
   execute(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   close(): Promise<void>;

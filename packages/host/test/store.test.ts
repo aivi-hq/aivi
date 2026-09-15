@@ -1,8 +1,8 @@
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { test } from 'node:test';
 import { scheduleSchema } from '@aivi/core';
 import { Store } from '../src/store.ts';
 
@@ -16,9 +16,12 @@ test('schema v1 upgrades in place without losing existing jobs', async t => {
   t.after(() => rm(root, { recursive: true, force: true }));
   const old = new Store(path);
   const job = old.enqueue(check, 'local-model', 'existing');
-  old.db.exec('DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job; ALTER TABLE jobs DROP COLUMN report; PRAGMA user_version=1;');
+  old.db.exec(
+    'DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job; ALTER TABLE jobs DROP COLUMN report; PRAGMA user_version=1;',
+  );
   old.close();
-  const upgraded = new Store(path); t.after(() => upgraded.close());
+  const upgraded = new Store(path);
+  t.after(() => upgraded.close());
   assert.equal(upgraded.get(job.id).state, 'queued');
   assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 4);
   assert.equal(upgraded.get(job.id).report, null);
@@ -29,7 +32,8 @@ test('schema v1 upgrades in place without losing existing jobs', async t => {
 });
 
 test('adapters get versioned namespaced migrations and cannot downgrade', t => {
-  const store = new Store(':memory:'); t.after(() => store.close());
+  const store = new Store(':memory:');
+  t.after(() => store.close());
   const steps = ['CREATE TABLE demo_a(id INTEGER PRIMARY KEY)', 'ALTER TABLE demo_a ADD COLUMN note TEXT'];
   store.migrate('demo', [steps[0]!]);
   store.migrate('demo', steps); // second step applies once
@@ -39,17 +43,25 @@ test('adapters get versioned namespaced migrations and cannot downgrade', t => {
 });
 
 test('adapter restart blocks only running leases it owns', t => {
-  const store = new Store(':memory:'); t.after(() => store.close());
+  const store = new Store(':memory:');
+  t.after(() => store.close());
   const pools = { 'local-model': 2 };
   assert.equal(store.acquireLease('discord:1', 'discord', 'local-model', 2, pools), true);
   assert.equal(store.acquireLease('slack:1', 'slack', 'local-model', 2, pools), true);
   assert.equal(store.blockLeasesOwnedBy('discord', 'restart'), 1);
-  assert.deepEqual(store.leases().map(l => [l.id, l.state]), [['discord:1', 'blocked'], ['slack:1', 'running']]);
+  assert.deepEqual(
+    store.leases().map(l => [l.id, l.state]),
+    [
+      ['discord:1', 'blocked'],
+      ['slack:1', 'running'],
+    ],
+  );
   assert.throws(() => store.blockLease('missing', 'discord', 'x'), /Lost resource lease ownership/);
 });
 
 test('duplicate requests are idempotent, but changed payloads cannot reuse a key', t => {
-  const store = new Store(':memory:'); t.after(() => store.close());
+  const store = new Store(':memory:');
+  t.after(() => store.close());
   const first = store.enqueue(check, 'local-model', 'request-1', start);
   assert.equal(store.enqueue(check, 'local-model', 'request-1', start + 1).id, first.id);
   assert.throws(() => store.enqueue(check, 'other', 'request-1'), /different task/);
@@ -60,7 +72,11 @@ test('claims share capacity across database connections and blocked work reserve
   const root = await mkdtemp(join(tmpdir(), 'aivi-store-'));
   const a = new Store(join(root, 'queue.sqlite'));
   const b = new Store(join(root, 'queue.sqlite'));
-  t.after(async () => { a.close(); b.close(); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => {
+    a.close();
+    b.close();
+    await rm(root, { recursive: true, force: true });
+  });
   const first = a.enqueue(check, 'local-model', 'a', start);
   const second = a.enqueue(check, 'local-model', 'b', start + 1);
   const third = a.enqueue(check, 'io', 'c', start + 2);
@@ -77,7 +93,8 @@ test('claims share capacity across database connections and blocked work reserve
 });
 
 test('downtime coalesces to one occurrence; outstanding runs suppress subsequent ticks', t => {
-  const store = new Store(':memory:'); t.after(() => store.close());
+  const store = new Store(':memory:');
+  t.after(() => store.close());
   store.syncSchedules([schedule()], start);
   assert.equal(store.materializeDue(start + 10 * 60_000), 1);
   assert.equal(store.materializeDue(start + 11 * 60_000), 0);
@@ -89,7 +106,8 @@ test('downtime coalesces to one occurrence; outstanding runs suppress subsequent
 });
 
 test('reconciling schedules preserves due times but cancels stale queued definitions', t => {
-  const store = new Store(':memory:'); t.after(() => store.close());
+  const store = new Store(':memory:');
+  t.after(() => store.close());
   const original = schedule();
   store.syncSchedules([original], start);
   store.syncSchedules([original], start + 30_000);
@@ -113,7 +131,8 @@ test('restart recovery blocks interrupted work without resubmitting it', async t
   before.claim('old', 1, { 'local-model': 1 });
   before.attachSession(job.id, 'old', 'ses_test');
   before.close();
-  const after = new Store(path); t.after(() => after.close());
+  const after = new Store(path);
+  t.after(() => after.close());
   after.acquireDaemon('new');
   assert.equal(after.get(job.id).state, 'blocked');
   assert.equal(after.get(job.id).sessionId, 'ses_test');

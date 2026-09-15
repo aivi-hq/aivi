@@ -1,18 +1,30 @@
-import { setTimeout } from 'node:timers/promises';
 import { once } from 'node:events';
-import {
-  Client, Events, GatewayIntentBits, Partials, ChannelType, REST, Routes,
-  SlashCommandBuilder, InteractionContextType, MessageFlags, Options,
-} from 'discord.js';
-import type { HostServices, HostModule } from '@aivi/host';
-import { authorized } from './config.ts';
+import { setTimeout } from 'node:timers/promises';
 import { accessEntry } from '@aivi/core';
+import type { HostModule, HostServices } from '@aivi/host';
+import {
+  ChannelType,
+  Client,
+  Events,
+  GatewayIntentBits,
+  InteractionContextType,
+  MessageFlags,
+  Options,
+  Partials,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+} from 'discord.js';
 import type { DiscordConfig, Route } from './config.ts';
-import { DiscordStore } from './store.ts';
+import { authorized } from './config.ts';
 import { DiscordEngine, splitReply } from './engine.ts';
 import { createNativeChat } from './native.ts';
+import { DiscordStore } from './store.ts';
 
-const safeSend = { allowedMentions: { parse: [] as never[], repliedUser: false }, flags: MessageFlags.SuppressEmbeds as const };
+const safeSend = {
+  allowedMentions: { parse: [] as never[], repliedUser: false },
+  flags: MessageFlags.SuppressEmbeds as const,
+};
 const COMMANDS = ['new', 'status', 'search'] as const;
 
 export function bindingFor(config: DiscordConfig): string {
@@ -25,7 +37,9 @@ export async function registerDiscordCommands(config: DiscordConfig): Promise<vo
   const commands = [
     new SlashCommandBuilder().setName('new').setDescription('Start a fresh conversation'),
     new SlashCommandBuilder().setName('status').setDescription('Show this conversation status'),
-    new SlashCommandBuilder().setName('search').setDescription('Search team knowledge')
+    new SlashCommandBuilder()
+      .setName('search')
+      .setDescription('Search team knowledge')
       .addStringOption(o => o.setName('query').setDescription('Search terms').setRequired(true))
       .addStringOption(o => o.setName('project').setDescription('Optional project ID; includes core knowledge')),
   ];
@@ -61,7 +75,9 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
 
   const client = new Client({
     intents: [
-      GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.DirectMessages,
       ...(config.messageContent ? [GatewayIntentBits.MessageContent] : []),
     ],
     partials: [Partials.Channel],
@@ -72,12 +88,19 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
 
   const abort = new AbortController();
   let engine: DiscordEngine | undefined;
-  const stop = () => { abort.abort(); engine?.stop(); };
+  const stop = () => {
+    abort.abort();
+    engine?.stop();
+  };
   services.signal.addEventListener('abort', stop, { once: true });
   const teardown = async () => {
     stop();
-    try { await engine?.drain(); }
-    finally { client.destroy(); services.signal.removeEventListener('abort', stop); }
+    try {
+      await engine?.drain();
+    } finally {
+      client.destroy();
+      services.signal.removeEventListener('abort', stop);
+    }
   };
 
   try {
@@ -94,13 +117,24 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     const askWithTyping: typeof ask = async (turn, signal, ready) => {
       const done = new AbortController();
       void typing(turn.channel, AbortSignal.any([signal, done.signal]));
-      try { return await ask(turn, signal, ready); } finally { done.abort(); }
+      try {
+        return await ask(turn, signal, ready);
+      } finally {
+        done.abort();
+      }
     };
-    engine = new DiscordEngine(store, config, services.loaded.config.scheduler, askWithTyping, async (channelId, content) => {
-      const channel = await client.channels.fetch(channelId);
-      if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
-      await channel.send({ content, ...safeSend });
-    }, services.log);
+    engine = new DiscordEngine(
+      store,
+      config,
+      services.loaded.config.scheduler,
+      askWithTyping,
+      async (channelId, content) => {
+        const channel = await client.channels.fetch(channelId);
+        if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
+        await channel.send({ content, ...safeSend });
+      },
+      services.log,
+    );
 
     // Gateway errors are transient and discord.js reconnects on its own. An optional
     // adapter must never take the knowledge server and scheduler down with it.
@@ -114,7 +148,9 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
         if (message.author.bot || message.webhookId || message.system) return;
         const route: Route = {
-          channelId: message.channelId, userId: message.author.id, guildId: message.guildId,
+          channelId: message.channelId,
+          userId: message.author.id,
+          guildId: message.guildId,
           parentId: message.channel.isThread() ? message.channel.parentId : null,
           isDM: message.channel.type === ChannelType.DM,
           mentioned: message.mentions.users.has(client.user!.id),
@@ -131,7 +167,11 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         if (!route.isDM && !message.channel.isThread() && accessEntry(config.access, route)?.sessions === 'threads') {
           if (!message.channel.isThreadOnly() && 'threads' in message.channel) {
             try {
-              const thread = await message.startThread({ name: threadName(text), autoArchiveDuration: 1440, reason: 'aivi conversation' });
+              const thread = await message.startThread({
+                name: threadName(text),
+                autoArchiveDuration: 1440,
+                reason: 'aivi conversation',
+              });
               conversation = thread.id;
             } catch (error) {
               log.warn('thread.create.failed', { channel: message.channelId, error });
@@ -141,13 +181,22 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           }
         }
         try {
-          store.enqueue({
-            id: message.id, channel: conversation, user: message.author.id,
-            name: message.member?.displayName ?? message.author.displayName, text,
-          }, config.maxPending);
+          store.enqueue(
+            {
+              id: message.id,
+              channel: conversation,
+              user: message.author.id,
+              name: message.member?.displayName ?? message.author.displayName,
+              text,
+            },
+            config.maxPending,
+          );
         } catch (error) {
           log.warn('enqueue.rejected', { channel: message.channelId, error });
-          await message.reply({ content: 'I could not queue this message. The queue may be full; check /status.', ...safeSend });
+          await message.reply({
+            content: 'I could not queue this message. The queue may be full; check /status.',
+            ...safeSend,
+          });
         }
       })().catch(error => log.error('message.failed', { error }));
     });
@@ -155,16 +204,23 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     client.on(Events.InteractionCreate, interaction => {
       void (async () => {
         if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
-        if (!interaction.isChatInputCommand() || !(COMMANDS as readonly string[]).includes(interaction.commandName)) return;
+        if (!interaction.isChatInputCommand() || !(COMMANDS as readonly string[]).includes(interaction.commandName))
+          return;
         const channel = interaction.channel;
         const route: Route = {
-          channelId: interaction.channelId, userId: interaction.user.id, guildId: interaction.guildId,
-          parentId: channel?.isThread() ? channel.parentId : null, isDM: interaction.guildId === null,
+          channelId: interaction.channelId,
+          userId: interaction.user.id,
+          guildId: interaction.guildId,
+          parentId: channel?.isThread() ? channel.parentId : null,
+          isDM: interaction.guildId === null,
           mentioned: true, // a slash command is an explicit address
           knownConversation: store.has(interaction.channelId),
         };
         if (!authorized(config, route)) {
-          await interaction.reply({ content: 'This user or conversation is not enabled for aivi.', flags: MessageFlags.Ephemeral });
+          await interaction.reply({
+            content: 'This user or conversation is not enabled for aivi.',
+            flags: MessageFlags.Ephemeral,
+          });
           return;
         }
         if (interaction.commandName === 'search') {
@@ -172,12 +228,18 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           try {
             const project = interaction.options.getString('project');
             const hits = await services.knowledge.search({
-              query: interaction.options.getString('query', true), limit: 3, ...(project ? { projects: [project] } : {}),
+              query: interaction.options.getString('query', true),
+              limit: 3,
+              ...(project ? { projects: [project] } : {}),
             });
             const content = hits.length
               ? splitReply(hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'))[0]!
               : 'No matching documents.';
-            await interaction.editReply({ content, allowedMentions: safeSend.allowedMentions, flags: MessageFlags.SuppressEmbeds });
+            await interaction.editReply({
+              content,
+              allowedMentions: safeSend.allowedMentions,
+              flags: MessageFlags.SuppressEmbeds,
+            });
           } catch (error) {
             log.warn('search.failed', { error });
             await interaction.editReply('Search is unavailable or the project is unknown.');
@@ -206,13 +268,19 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       once(client, Events.ClientReady, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]) }),
       client.login(token),
     ]);
-    if (client.application?.id !== config.applicationId) throw new Error('Discord token does not match configured application');
-    log.info('ready', { application: config.applicationId, agent: config.agent, reportChannels: config.reportChannels.length });
+    if (client.application?.id !== config.applicationId)
+      throw new Error('Discord token does not match configured application');
+    log.info('ready', {
+      application: config.applicationId,
+      agent: config.agent,
+      reportChannels: config.reportChannels.length,
+    });
 
     // Proactive posts only go where the operator said they may.
     const unregister = services.destinations.register('discord', {
       async deliver(channelId, text) {
-        if (!config.reportChannels.includes(channelId)) throw new Error(`Discord channel ${channelId} is not in reportChannels`);
+        if (!config.reportChannels.includes(channelId))
+          throw new Error(`Discord channel ${channelId} is not in reportChannels`);
         const channel = await client.channels.fetch(channelId);
         if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
         for (const chunk of splitReply(text)) await channel.send({ content: chunk, ...safeSend });
@@ -222,8 +290,11 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     const loop = (async () => {
       while (!abort.signal.aborted && !engine!.stopped) {
         if (client.isReady()) engine!.tick();
-        try { await setTimeout(500, undefined, { signal: abort.signal }); }
-        catch (error) { if (!abort.signal.aborted) throw error; }
+        try {
+          await setTimeout(500, undefined, { signal: abort.signal });
+        } catch (error) {
+          if (!abort.signal.aborted) throw error;
+        }
       }
       if (!abort.signal.aborted) throw new Error('Discord engine stopped unexpectedly');
     })();
@@ -233,7 +304,11 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     return {
       async stop() {
         unregister();
-        try { await loop; } finally { await teardown(); }
+        try {
+          await loop;
+        } finally {
+          await teardown();
+        }
       },
     };
   } catch (error) {

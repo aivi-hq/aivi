@@ -2,9 +2,9 @@
 // `--check` fails when the checked-in files are stale (run by `npm run check`).
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
 import { configSchema, projectSchema } from '@aivi/core';
 import { discordConfigSchema } from '@aivi/discord';
+import { z } from 'zod';
 
 const targets = [
   ['schemas/aivi.schema.json', configSchema],
@@ -12,7 +12,10 @@ const targets = [
   ['schemas/discord.schema.json', discordConfigSchema],
 ];
 const mode = process.argv[2];
-if (!['--write', '--check'].includes(mode)) { console.error('usage: schema.mjs --write | --check'); process.exit(2); }
+if (!['--write', '--check'].includes(mode)) {
+  console.error('usage: schema.mjs --write | --check');
+  process.exit(2);
+}
 
 let stale = 0;
 for (const [relative, schema] of targets) {
@@ -21,8 +24,13 @@ for (const [relative, schema] of targets) {
   const json = `${JSON.stringify(z.toJSONSchema(schema, { target: 'draft-2020-12', io: 'input' }), null, 2)}\n`;
   const current = await readFile(path, 'utf8').catch(() => '');
   if (current === json) continue;
-  if (mode === '--write') { await writeFile(path, json); console.log(`updated ${relative}`); }
-  else { console.error(`stale: ${relative} (run npm run schema)`); stale++; }
+  if (mode === '--write') {
+    await writeFile(path, json);
+    console.log(`updated ${relative}`);
+  } else {
+    console.error(`stale: ${relative} (run npm run schema)`);
+    stale++;
+  }
 }
 if (stale) process.exit(1);
 if (mode === '--check') console.log('schemas are current');

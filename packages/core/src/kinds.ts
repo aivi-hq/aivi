@@ -6,9 +6,17 @@
  */
 export const knowledgeKinds = {
   doc: { description: 'Reference material: handbooks, guides, research notes. Relevant whenever the topic matches.' },
-  decision: { description: 'Recorded decisions (ADRs). Authoritative for why something is the way it is; cite them over inference.' },
-  memory: { description: 'Facts and proposals distilled from conversations by dreaming. Dated and attributed; softer than docs and decisions.' },
-  conversation: { description: 'Indexed conversation transcripts. Useful for recovering details; never authoritative.' },
+  decision: {
+    description:
+      'Recorded decisions (ADRs). Authoritative for why something is the way it is; cite them over inference.',
+  },
+  memory: {
+    description:
+      'Facts and proposals distilled from conversations by dreaming. Dated and attributed; softer than docs and decisions.',
+  },
+  conversation: {
+    description: 'Indexed conversation transcripts. Useful for recovering details; never authoritative.',
+  },
 } as const;
 export type KnowledgeKind = keyof typeof knowledgeKinds;
 export const knowledgeKindNames = Object.keys(knowledgeKinds) as [KnowledgeKind, ...KnowledgeKind[]];

@@ -1,48 +1,113 @@
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Store } from '@aivi/host';
+import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import { discordConfigSchema, authorized } from '../src/config.ts';
-import { DiscordStore } from '../src/store.ts';
+import { Store } from '@aivi/host';
+import { authorized, discordConfigSchema } from '../src/config.ts';
 import { DiscordEngine, splitReply } from '../src/engine.ts';
+import { DiscordStore } from '../src/store.ts';
 
-const config = discordConfigSchema.parse({ version: 1, applicationId: '10000000000000001', directory: '/librarian', messageContent: true,
+const config = discordConfigSchema.parse({
+  version: 1,
+  applicationId: '10000000000000001',
+  directory: '/librarian',
+  messageContent: true,
   access: {
     dm: { users: ['10000000000000002'] },
     channels: [
       { id: '10000000000000004', users: 'anyone', trigger: 'mention-to-start' },
       { id: '10000000000000006', users: ['10000000000000002'], trigger: 'any', sessions: 'channel' },
     ],
-  } });
+  },
+});
 const scheduler = configSchema.parse({ version: 1 }).scheduler;
-const message = (id: string, channel = 'dm-a') => ({ id, channel, user: '10000000000000002', name: 'Speaker', text: `Question ${id}` });
+const message = (id: string, channel = 'dm-a') => ({
+  id,
+  channel,
+  user: '10000000000000002',
+  name: 'Speaker',
+  text: `Question ${id}`,
+});
 
 test('access policy: allow-listed DMs, mention-triggered public channels, restricted always-on channels, nothing else', () => {
-  const dm = { channelId: 'dm', userId: '10000000000000002', guildId: null, parentId: null, isDM: true, mentioned: false, knownConversation: false };
+  const dm = {
+    channelId: 'dm',
+    userId: '10000000000000002',
+    guildId: null,
+    parentId: null,
+    isDM: true,
+    mentioned: false,
+    knownConversation: false,
+  };
   assert.equal(authorized(config, dm), true);
   assert.equal(authorized(config, { ...dm, userId: 'stranger' }), false);
   assert.equal(authorized(config, { ...dm, guildId: 'g' }), false, 'a DM route must not carry a guild');
   assert.equal(authorized({ ...config, access: { channels: [] } }, dm), false, 'no dm block means nobody may DM');
-  const home = { channelId: '10000000000000004', userId: 'stranger', guildId: 'g', parentId: null, isDM: false, mentioned: true, knownConversation: false };
+  const home = {
+    channelId: '10000000000000004',
+    userId: 'stranger',
+    guildId: 'g',
+    parentId: null,
+    isDM: false,
+    mentioned: true,
+    knownConversation: false,
+  };
   assert.equal(authorized(config, home), true, 'anyone may ping the home channel');
   assert.equal(authorized(config, { ...home, mentioned: false }), false, 'home channel requires a mention');
-  assert.equal(authorized(config, { ...home, channelId: 'thread-1', parentId: '10000000000000004' }), true, 'threads inherit their parent channel policy');
+  assert.equal(
+    authorized(config, { ...home, channelId: 'thread-1', parentId: '10000000000000004' }),
+    true,
+    'threads inherit their parent channel policy',
+  );
   const inThread = { ...home, channelId: 'thread-1', parentId: '10000000000000004', mentioned: false };
-  assert.equal(authorized(config, { ...inThread, knownConversation: true }), true, 'mention-to-start: no mention needed once aivi is in the thread');
+  assert.equal(
+    authorized(config, { ...inThread, knownConversation: true }),
+    true,
+    'mention-to-start: no mention needed once aivi is in the thread',
+  );
   assert.equal(authorized(config, inThread), false, 'a thread aivi is not part of still needs a mention');
-  assert.equal(authorized({ ...config, access: { ...config.access, channels: [{ ...config.access.channels[0]!, trigger: 'mention' }] } }, { ...inThread, knownConversation: true }), false, 'plain mention mode always needs a mention');
+  assert.equal(
+    authorized(
+      { ...config, access: { ...config.access, channels: [{ ...config.access.channels[0]!, trigger: 'mention' }] } },
+      { ...inThread, knownConversation: true },
+    ),
+    false,
+    'plain mention mode always needs a mention',
+  );
   const restricted = { ...home, channelId: '10000000000000006', mentioned: false };
-  assert.equal(authorized(config, { ...restricted, userId: '10000000000000002' }), true, 'always-on channel hears listed users without a mention');
+  assert.equal(
+    authorized(config, { ...restricted, userId: '10000000000000002' }),
+    true,
+    'always-on channel hears listed users without a mention',
+  );
   assert.equal(authorized(config, restricted), false, 'strangers are ignored in a restricted channel');
   assert.equal(authorized(config, { ...home, channelId: 'elsewhere', parentId: null }), false);
-  assert.equal(authorized(config, { ...restricted, userId: '10000000000000002', channelId: 'thread-2', parentId: '10000000000000006' }), false, 'channel mode ignores threads');
+  assert.equal(
+    authorized(config, {
+      ...restricted,
+      userId: '10000000000000002',
+      channelId: 'thread-2',
+      parentId: '10000000000000006',
+    }),
+    false,
+    'channel mode ignores threads',
+  );
   assert.equal(config.access.channels[0]!.sessions, 'threads', 'thread mode is the default');
-  assert.throws(() => discordConfigSchema.parse({ version: 1, applicationId: '10000000000000001', directory: '/l', access: { channels: [{ id: '10000000000000004' }] } }), /messageContent/);
+  assert.throws(
+    () =>
+      discordConfigSchema.parse({
+        version: 1,
+        applicationId: '10000000000000001',
+        directory: '/l',
+        access: { channels: [{ id: '10000000000000004' }] },
+      }),
+    /messageContent/,
+  );
   assert.equal(config.access.channels[0]!.trigger, 'mention-to-start', 'natural thread behaviour is the default');
 });
 
 test('deduplicated turns retain channel sessions; reset cannot evade pending work', t => {
-  const core = new Store(':memory:'); t.after(() => core.close());
+  const core = new Store(':memory:');
+  t.after(() => core.close());
   const store = new DiscordStore(core, 'binding');
   assert.equal(store.enqueue(message('one'), 10), true);
   assert.equal(store.enqueue(message('one'), 10), false);
@@ -53,18 +118,21 @@ test('deduplicated turns retain channel sessions; reset cannot evade pending wor
   assert.notEqual(rows[0]!.session, rows[2]!.session);
   assert.throws(() => store.reset('dm-a'), /unresolved/);
   const first = store.claim(scheduler, config.resource)!;
-  store.ready(first.channel); store.sent(first.id);
+  store.ready(first.channel);
+  store.sent(first.id);
   const second = store.claim(scheduler, config.resource)!;
   assert.equal(second.ready, true);
   store.sent(second.id);
-  store.reset('dm-a'); store.enqueue(message('four'), 10);
+  store.reset('dm-a');
+  store.enqueue(message('four'), 10);
   assert.notEqual(store.list().at(-1)!.session, first.session);
   assert.equal(store.list()[0]!.text, ''); // delivered payload is not another transcript archive
   assert.throws(() => new DiscordStore(core, 'different-agent'), /binding changed/);
 });
 
 test('Discord leases and scheduler claims enforce the same global capacity', t => {
-  const core = new Store(':memory:'); t.after(() => core.close());
+  const core = new Store(':memory:');
+  t.after(() => core.close());
   const store = new DiscordStore(core, 'binding');
   core.enqueue({ kind: 'system.check' }, 'local-model', 'scheduled');
   const job = core.claim('host', 1, scheduler.resources)!;
@@ -81,9 +149,11 @@ test('Discord leases and scheduler claims enforce the same global capacity', t =
 });
 
 test('restart blocks both the active turn and its lease; queued work survives', t => {
-  const core = new Store(':memory:'); t.after(() => core.close());
+  const core = new Store(':memory:');
+  t.after(() => core.close());
   const store = new DiscordStore(core, 'binding');
-  store.enqueue(message('one'), 10); store.enqueue(message('two'), 10);
+  store.enqueue(message('one'), 10);
+  store.enqueue(message('two'), 10);
   store.claim(scheduler, config.resource);
   assert.equal(store.recover(), 1);
   assert.equal(store.list()[0]!.state, 'blocked');
@@ -96,22 +166,52 @@ test('restart blocks both the active turn and its lease; queued work survives', 
 });
 
 test('failed inbox transition rolls back the capacity reservation', t => {
-  const core = new Store(':memory:'); t.after(() => core.close());
-  assert.throws(() => core.acquireLease('one', 'discord', 'local-model', 1, scheduler.resources, () => { throw new Error('disk failure'); }), /disk failure/);
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  assert.throws(
+    () =>
+      core.acquireLease('one', 'discord', 'local-model', 1, scheduler.resources, () => {
+        throw new Error('disk failure');
+      }),
+    /disk failure/,
+  );
   assert.equal(core.leases().length, 0);
 });
 
 test('turns queue behind a slow answer; delivery failures retain results and never auto-resend', async t => {
-  const core = new Store(':memory:'); t.after(() => core.close());
+  const core = new Store(':memory:');
+  t.after(() => core.close());
   const store = new DiscordStore(core, 'binding');
-  store.enqueue(message('one'), 10); store.enqueue(message('two'), 10);
+  store.enqueue(message('one'), 10);
+  store.enqueue(message('two'), 10);
   let release!: () => void;
-  const pending = new Promise<void>(resolve => { release = resolve; });
-  let asks = 0; let sends = 0;
-  const engine = new DiscordEngine(store, config, scheduler, async () => { asks++; await pending; return 'Answer'; }, async () => { sends++; throw new Error('Ambiguous Discord response'); });
-  engine.tick(); await Promise.resolve(); engine.tick();
+  const pending = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  let asks = 0;
+  let sends = 0;
+  const engine = new DiscordEngine(
+    store,
+    config,
+    scheduler,
+    async () => {
+      asks++;
+      await pending;
+      return 'Answer';
+    },
+    async () => {
+      sends++;
+      throw new Error('Ambiguous Discord response');
+    },
+  );
+  engine.tick();
+  await Promise.resolve();
+  engine.tick();
   assert.equal(asks, 1);
-  release(); await engine.drain(); engine.tick(); await engine.drain();
+  release();
+  await engine.drain();
+  engine.tick();
+  await engine.drain();
   assert.equal(sends, 1);
   assert.equal(store.list()[0]!.result, 'Answer');
   assert.equal(store.list()[0]!.state, 'blocked');

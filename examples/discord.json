@@ -6,9 +6,7 @@
   "directory": "discord-librarian",
   "access": {
     "dm": {
-      "users": [
-        "10000000000000002"
-      ]
+      "users": ["10000000000000002"]
     },
     "channels": [
       {
@@ -17,9 +15,7 @@
       }
     ]
   },
-  "reportChannels": [
-    "10000000000000005"
-  ],
+  "reportChannels": ["10000000000000005"],
   "messageContent": false,
   "resource": "local-model",
   "maxConcurrent": 1,

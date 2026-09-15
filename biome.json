@@ -1,8 +1,22 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
   "files": {
-    "includes": ["packages/*/src/**", "packages/*/test/**", "scripts/**", "packages/opencode/server.js", "*.json", "examples/**/*.json", "!**/dist/**", "!schemas/**", "!package-lock.json"]
+    "includes": [
+      "packages/*/src/**",
+      "packages/*/test/**",
+      "scripts/**",
+      "packages/opencode/server.js",
+      "*.json",
+      "examples/**/*.json",
+      "!**/dist",
+      "!schemas",
+      "!package-lock.json"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -20,11 +34,21 @@
   },
   "linter": {
     "enabled": true,
+    "preset": "recommended",
     "rules": {
-      "recommended": true,
-      "suspicious": { "noExplicitAny": "warn" },
-      "style": { "noNonNullAssertion": "off" }
+      "suspicious": {
+        "noExplicitAny": "warn"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
+      }
     }
   },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
 }

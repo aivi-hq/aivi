@@ -26,7 +26,15 @@ export function createLogger(options: LoggerOptions = {}, base: LogFields = {}):
   const now = options.now ?? (() => new Date());
   const emit = (lvl: LogLevel, event: string, fields?: LogFields) => {
     if (order[lvl] < order[level]) return;
-    write(JSON.stringify({ time: now().toISOString(), level: lvl, event, ...base, ...(fields ? serializable(fields) : {}) }));
+    write(
+      JSON.stringify({
+        time: now().toISOString(),
+        level: lvl,
+        event,
+        ...base,
+        ...(fields ? serializable(fields) : {}),
+      }),
+    );
   };
   return {
     debug: (event, fields) => emit('debug', event, fields),
@@ -43,7 +51,12 @@ export const silentLogger: Logger = createLogger({ write: () => {} });
 function serializable(fields: LogFields): LogFields {
   const out: LogFields = {};
   for (const [key, value] of Object.entries(fields)) {
-    out[key] = value instanceof Error ? { name: value.name, message: value.message } : key === 'error' ? errorMessage(value) : value;
+    out[key] =
+      value instanceof Error
+        ? { name: value.name, message: value.message }
+        : key === 'error'
+          ? errorMessage(value)
+          : value;
   }
   return out;
 }

@@ -1,13 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { errorMessage, silentLogger } from '@aivi/core';
 import type { Config, Job, Logger } from '@aivi/core';
-import { Store } from './store.ts';
+import { errorMessage, silentLogger } from '@aivi/core';
+import type { Store } from './store.ts';
 
-export interface ExecutionContext { signal: AbortSignal; attachSession(id: string): void }
+export interface ExecutionContext {
+  signal: AbortSignal;
+  attachSession(id: string): void;
+}
 export type ExecutionResult = { state: 'succeeded' | 'failed' | 'blocked'; result: unknown; reason?: string };
 export type Execute = (job: Job, context: ExecutionContext) => Promise<ExecutionResult>;
 /** Observes final states (including blocked-by-exception). Must not throw; used for reporting. */
-export type OnFinished = (job: Job, state: 'succeeded' | 'failed' | 'blocked', result: unknown, reason: string) => Promise<void>;
+export type OnFinished = (
+  job: Job,
+  state: 'succeeded' | 'failed' | 'blocked',
+  result: unknown,
+  reason: string,
+) => Promise<void>;
 
 /**
  * Claims due jobs from the store and runs them. The host drives `tick()` from
@@ -24,7 +32,13 @@ export class Scheduler {
   private readonly log: Logger;
   private readonly onFinished: OnFinished | undefined;
 
-  constructor(store: Store, config: Config['scheduler'], execute: Execute, log: Logger = silentLogger, onFinished?: OnFinished) {
+  constructor(
+    store: Store,
+    config: Config['scheduler'],
+    execute: Execute,
+    log: Logger = silentLogger,
+    onFinished?: OnFinished,
+  ) {
     this.store = store;
     this.config = config;
     this.execute = execute;
@@ -62,7 +76,10 @@ export class Scheduler {
         }
         const reason = outcome.reason ?? 'completed';
         this.store.finish(job.id, this.owner, outcome.state, outcome.result, reason);
-        if (this.onFinished) await this.onFinished(job, outcome.state, outcome.result, reason).catch(error => log.warn('job.report.failed', { error }));
+        if (this.onFinished)
+          await this.onFinished(job, outcome.state, outcome.result, reason).catch(error =>
+            log.warn('job.report.failed', { error }),
+          );
       })
       .catch(error => {
         // Persistence itself failed: the store is unreliable, stop dispatching.
@@ -74,13 +91,19 @@ export class Scheduler {
     this.active.set(job.id, promise);
   }
 
-  get activeCount(): number { return this.active.size; }
+  get activeCount(): number {
+    return this.active.size;
+  }
 
   async drain(): Promise<void> {
     await Promise.all([...this.active.values()]);
     if (this.failure !== undefined) throw this.failure;
   }
 
-  stop(): void { this.abort.abort(); }
-  get stopped(): boolean { return this.abort.signal.aborted; }
+  stop(): void {
+    this.abort.abort();
+  }
+  get stopped(): boolean {
+    return this.abort.signal.aborted;
+  }
 }

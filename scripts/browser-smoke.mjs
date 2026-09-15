@@ -1,26 +1,37 @@
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { browserConfigSchema } from '@aivi/core';
 import { createBrowserService } from '@aivi/browser';
+import { browserConfigSchema } from '@aivi/core';
 
 // Uses a throwaway dedicated profile and local fixture only. No installed user
 // profiles, external websites, credentials, or extensions are read or modified.
 const directory = await mkdtemp(join(tmpdir(), 'aivi-browser-smoke-'));
 const server = createServer((_request, response) => {
   response.setHeader('content-type', 'text/html');
-  response.end('<!doctype html><title>Aivi fixture</title><label>Name <input id="name"></label><button onclick="document.getElementById(\'result\').textContent=\'Hello \'+document.getElementById(\'name\').value">Greet</button><p id="result"></p>');
+  response.end(
+    '<!doctype html><title>Aivi fixture</title><label>Name <input id="name"></label><button onclick="document.getElementById(\'result\').textContent=\'Hello \'+document.getElementById(\'name\').value">Greet</button><p id="result"></p>',
+  );
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const service = createBrowserService(browserConfigSchema.parse({ connection: {
-  mode: 'launch', userDataDir: directory, headless: true,
-  ...(process.env.AIVI_TEST_CHROME ? { executablePath: process.env.AIVI_TEST_CHROME } : {}),
-} }));
+const service = createBrowserService(
+  browserConfigSchema.parse({
+    connection: {
+      mode: 'launch',
+      userDataDir: directory,
+      headless: true,
+      ...(process.env.AIVI_TEST_CHROME ? { executablePath: process.env.AIVI_TEST_CHROME } : {}),
+    },
+  }),
+);
 function find(node, name) {
   if (node?.name === name && node.uid) return node.uid;
-  for (const child of node?.children ?? []) { const result = find(child, name); if (result) return result; }
+  for (const child of node?.children ?? []) {
+    const result = find(child, name);
+    if (result) return result;
+  }
 }
 try {
   const url = `http://127.0.0.1:${server.address().port}`;
@@ -28,7 +39,7 @@ try {
   const b = (await service.execute('smoke-b', { action: 'open', url })).tab;
   assert.ok(a && b);
   const snapshot = (await service.execute('smoke-a', { action: 'snapshot', tabId: a.tabId })).snapshot;
-  const input = find(snapshot, 'Name ' ) ?? find(snapshot, 'Name');
+  const input = find(snapshot, 'Name ') ?? find(snapshot, 'Name');
   const button = find(snapshot, 'Greet');
   assert.ok(input && button, 'Fixture input and button must have snapshot uids');
   await service.execute('smoke-a', { action: 'fill', tabId: a.tabId, uid: input, value: 'Aivi' });

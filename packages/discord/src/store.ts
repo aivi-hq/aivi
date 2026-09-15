@@ -1,17 +1,32 @@
 import { randomUUID } from 'node:crypto';
-import type { Store } from '@aivi/host';
 import type { Config } from '@aivi/core';
+import type { Store } from '@aivi/host';
 
 export interface Turn {
-  id: string; channel: string; user: string; name: string; text: string;
-  session: string; ready: boolean; state: TurnState; result: string | null; error: string | null;
+  id: string;
+  channel: string;
+  user: string;
+  name: string;
+  text: string;
+  session: string;
+  ready: boolean;
+  state: TurnState;
+  result: string | null;
+  error: string | null;
 }
 export type TurnState = 'queued' | 'running' | 'replying' | 'sent' | 'blocked' | 'discarded';
 type Row = Record<string, unknown>;
 const turn = (r: Row): Turn => ({
-  id: String(r.id), channel: String(r.channel), user: String(r.user), name: String(r.name), text: String(r.text),
-  session: String(r.session), ready: Boolean(Number(r.ready)), state: r.state as TurnState,
-  result: r.result === null ? null : String(r.result), error: r.error === null ? null : String(r.error),
+  id: String(r.id),
+  channel: String(r.channel),
+  user: String(r.user),
+  name: String(r.name),
+  text: String(r.text),
+  session: String(r.session),
+  ready: Boolean(Number(r.ready)),
+  state: r.state as TurnState,
+  result: r.result === null ? null : String(r.result),
+  error: r.error === null ? null : String(r.error),
 });
 
 export const LEASE_OWNER = 'discord';
@@ -40,7 +55,9 @@ export class DiscordStore {
     core.transaction(() => {
       const previous = core.db.prepare('SELECT value FROM discord_binding WHERE id=1').get();
       if (previous && previous.value !== binding) {
-        throw new Error('Discord application/agent/directory binding changed; use a separate installation state directory');
+        throw new Error(
+          'Discord application/agent/directory binding changed; use a separate installation state directory',
+        );
       }
       core.db.prepare('INSERT OR IGNORE INTO discord_binding VALUES(1,?)').run(binding);
     });
@@ -49,22 +66,36 @@ export class DiscordStore {
   /** Restart recovery: work that was in flight is unverified and stays reserved until an operator looks. */
   recover(): number {
     return this.core.transaction(() => {
-      const turns = Number(this.core.db.prepare(
-        "UPDATE discord_turns SET state='blocked',error='Adapter interrupted; inspect native session and Discord delivery' WHERE state IN ('running','replying')",
-      ).run().changes);
+      const turns = Number(
+        this.core.db
+          .prepare(
+            "UPDATE discord_turns SET state='blocked',error='Adapter interrupted; inspect native session and Discord delivery' WHERE state IN ('running','replying')",
+          )
+          .run().changes,
+      );
       this.core.blockLeasesOwnedBy(LEASE_OWNER, 'Discord adapter restarted');
       return turns;
     });
   }
 
-  enqueue(input: { id: string; channel: string; user: string; name: string; text: string }, maxPending: number): boolean {
+  enqueue(
+    input: { id: string; channel: string; user: string; name: string; text: string },
+    maxPending: number,
+  ): boolean {
     return this.core.transaction(() => {
       if (this.core.db.prepare('SELECT id FROM discord_turns WHERE id=?').get(input.id)) return false;
-      const pending = Number(this.core.db.prepare("SELECT count(*) AS n FROM discord_turns WHERE state IN ('queued','running','replying','blocked')").get()!.n);
+      const pending = Number(
+        this.core.db
+          .prepare("SELECT count(*) AS n FROM discord_turns WHERE state IN ('queued','running','replying','blocked')")
+          .get()!.n,
+      );
       if (pending >= maxPending) throw new Error('The Discord queue is full. Try again later.');
       this.core.db.prepare('INSERT OR IGNORE INTO discord_sessions VALUES(?,?,0)').run(input.channel, newSession());
-      const session = String(this.core.db.prepare('SELECT session FROM discord_sessions WHERE channel=?').get(input.channel)!.session);
-      this.core.db.prepare("INSERT INTO discord_turns(id,channel,user,name,text,session,state) VALUES(?,?,?,?,?,?,'queued')")
+      const session = String(
+        this.core.db.prepare('SELECT session FROM discord_sessions WHERE channel=?').get(input.channel)!.session,
+      );
+      this.core.db
+        .prepare("INSERT INTO discord_turns(id,channel,user,name,text,session,state) VALUES(?,?,?,?,?,?,'queued')")
         .run(input.id, input.channel, input.user, input.name, input.text, session);
       return true;
     });
@@ -72,33 +103,57 @@ export class DiscordStore {
 
   reset(channel: string): void {
     this.core.transaction(() => {
-      if (this.core.db.prepare("SELECT id FROM discord_turns WHERE channel=? AND state IN ('queued','running','replying','blocked')").get(channel)) {
+      if (
+        this.core.db
+          .prepare(
+            "SELECT id FROM discord_turns WHERE channel=? AND state IN ('queued','running','replying','blocked')",
+          )
+          .get(channel)
+      ) {
         throw new Error('This conversation still has queued or unresolved work. Finish it before starting fresh.');
       }
-      this.core.db.prepare('INSERT INTO discord_sessions VALUES(?,?,0) ON CONFLICT(channel) DO UPDATE SET session=excluded.session,ready=0')
+      this.core.db
+        .prepare(
+          'INSERT INTO discord_sessions VALUES(?,?,0) ON CONFLICT(channel) DO UPDATE SET session=excluded.session,ready=0',
+        )
         .run(channel, newSession());
     });
   }
 
   /** One turn per channel at a time; the lease reserves shared model capacity. */
   claim(config: Config['scheduler'], resource: string): Turn | null {
-    const rows = this.core.db.prepare(`SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel
+    const rows = this.core.db
+      .prepare(`SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel
       WHERE t.state='queued' AND NOT EXISTS (
         SELECT 1 FROM discord_turns busy WHERE busy.channel=t.channel AND busy.state IN ('running','replying','blocked')
-      ) ORDER BY t.seq`).all() as Row[];
+      ) ORDER BY t.seq`)
+      .all() as Row[];
     for (const row of rows) {
-      const acquired = this.core.acquireLease(leaseID(String(row.id)), LEASE_OWNER, resource, config.maxConcurrent, config.resources, () => {
-        this.core.db.prepare("UPDATE discord_turns SET state='running' WHERE id=?").run(String(row.id));
-      });
+      const acquired = this.core.acquireLease(
+        leaseID(String(row.id)),
+        LEASE_OWNER,
+        resource,
+        config.maxConcurrent,
+        config.resources,
+        () => {
+          this.core.db.prepare("UPDATE discord_turns SET state='running' WHERE id=?").run(String(row.id));
+        },
+      );
       if (acquired) return turn({ ...row, state: 'running' });
     }
     return null;
   }
 
   /** aivi already takes part in this conversation. */
-  has(channel: string): boolean { return Boolean(this.core.db.prepare('SELECT 1 FROM discord_sessions WHERE channel=?').get(channel)); }
-  ready(channel: string): void { this.core.db.prepare('UPDATE discord_sessions SET ready=1 WHERE channel=?').run(channel); }
-  result(id: string, result: string): void { this.core.db.prepare("UPDATE discord_turns SET state='replying',result=? WHERE id=?").run(result, id); }
+  has(channel: string): boolean {
+    return Boolean(this.core.db.prepare('SELECT 1 FROM discord_sessions WHERE channel=?').get(channel));
+  }
+  ready(channel: string): void {
+    this.core.db.prepare('UPDATE discord_sessions SET ready=1 WHERE channel=?').run(channel);
+  }
+  result(id: string, result: string): void {
+    this.core.db.prepare("UPDATE discord_turns SET state='replying',result=? WHERE id=?").run(result, id);
+  }
 
   sent(id: string): void {
     this.core.transaction(() => {
@@ -111,7 +166,11 @@ export class DiscordStore {
   block(id: string): void {
     this.core.transaction(() => {
       // Avoid persisting provider/Discord error bodies that may contain credentials or private tool output.
-      this.core.db.prepare("UPDATE discord_turns SET state='blocked',error='Turn or delivery interrupted; operator inspection required' WHERE id=?").run(id);
+      this.core.db
+        .prepare(
+          "UPDATE discord_turns SET state='blocked',error='Turn or delivery interrupted; operator inspection required' WHERE id=?",
+        )
+        .run(id);
       this.core.blockLease(leaseID(id), LEASE_OWNER, 'Turn or delivery interrupted');
     });
   }
@@ -119,7 +178,9 @@ export class DiscordStore {
   resolve(id: string, reason: string): void {
     if (!reason.trim()) throw new Error('A reason is required');
     this.core.transaction(() => {
-      const result = this.core.db.prepare("UPDATE discord_turns SET state='discarded',error=? WHERE id=? AND state='blocked'").run(reason, id);
+      const result = this.core.db
+        .prepare("UPDATE discord_turns SET state='discarded',error=? WHERE id=? AND state='blocked'")
+        .run(reason, id);
       if (!Number(result.changes)) throw new Error('Only a blocked turn can be resolved');
       this.core.releaseLease(leaseID(id), LEASE_OWNER);
     });
@@ -127,8 +188,16 @@ export class DiscordStore {
 
   list(channel?: string): Turn[] {
     const rows = channel
-      ? this.core.db.prepare('SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel WHERE t.channel=? ORDER BY t.seq').all(channel)
-      : this.core.db.prepare('SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel ORDER BY t.seq').all();
+      ? this.core.db
+          .prepare(
+            'SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel WHERE t.channel=? ORDER BY t.seq',
+          )
+          .all(channel)
+      : this.core.db
+          .prepare(
+            'SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel ORDER BY t.seq',
+          )
+          .all();
     return (rows as Row[]).map(turn);
   }
 }

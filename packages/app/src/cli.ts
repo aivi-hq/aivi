@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-import { parseArgs } from 'node:util';
-import { dirname, resolve } from 'node:path';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { createLogger, errorMessage, loadConfig, reportSchema, selectSources, taskSchema } from '@aivi/core';
-import { z } from 'zod';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, resolve } from 'node:path';
+import { parseArgs } from 'node:util';
 import type { LoadedConfig, LogLevel } from '@aivi/core';
-import { Store, connectOpenCode, status, runHost, createHostClient, resolveHostAuth } from '@aivi/host';
+import { createLogger, errorMessage, loadConfig, reportSchema, selectSources, taskSchema } from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
+import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
+import { z } from 'zod';
 
 const usage = `aivi --config aivi.json <command>
 
@@ -44,17 +44,30 @@ async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      config: { type: 'string' }, 'log-level': { type: 'string' }, help: { type: 'boolean', short: 'h' },
-      limit: { type: 'string' }, 'core-only': { type: 'boolean' }, 'no-core': { type: 'boolean' }, project: { type: 'string', multiple: true },
-      key: { type: 'string' }, resource: { type: 'string' }, outcome: { type: 'string' },
-      reason: { type: 'string' }, 'confirm-stopped': { type: 'boolean' },
+      config: { type: 'string' },
+      'log-level': { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
+      limit: { type: 'string' },
+      'core-only': { type: 'boolean' },
+      'no-core': { type: 'boolean' },
+      project: { type: 'string', multiple: true },
+      key: { type: 'string' },
+      resource: { type: 'string' },
+      outcome: { type: 'string' },
+      reason: { type: 'string' },
+      'confirm-stopped': { type: 'boolean' },
     },
   });
-  if (values.help || !positionals.length) { console.log(usage); return; }
+  if (values.help || !positionals.length) {
+    console.log(usage);
+    return;
+  }
   const log = createLogger({ level: (values['log-level'] as LogLevel | undefined) ?? 'info' });
   const configPath = resolve(values.config ?? process.env.AIVI_CONFIG ?? 'aivi.json');
   // Secrets: an explicit file, else .env beside the config, else the per-user ~/.aivi/.env.
-  for (const path of process.env.AIVI_ENV_FILE ? [process.env.AIVI_ENV_FILE] : [resolve(dirname(configPath), '.env'), resolve(homedir(), '.aivi', '.env')]) {
+  for (const path of process.env.AIVI_ENV_FILE
+    ? [process.env.AIVI_ENV_FILE]
+    : [resolve(dirname(configPath), '.env'), resolve(homedir(), '.aivi', '.env')]) {
     loadEnvFile(path, log);
   }
   const loaded = await loadConfig(configPath);
@@ -63,12 +76,18 @@ async function main(): Promise<void> {
 
   const discord = loaded.config.modules.discord ? await import('@aivi/discord') : undefined;
   const discordConfig = discord ? await discord.loadDiscordConfig(loaded.config.modules.discord!.config) : undefined;
-  if (discordConfig && !(discordConfig.resource in loaded.config.scheduler.resources)) throw new Error('Unknown Discord resource pool');
+  if (discordConfig && !(discordConfig.resource in loaded.config.scheduler.resources))
+    throw new Error('Unknown Discord resource pool');
 
   // Commands that need no database.
   switch (`${command} ${subcommand ?? ''}`.trim()) {
     case 'config check':
-      print({ valid: true, projects: loaded.projects.length, sources: loaded.sources.length, host: loaded.config.host });
+      print({
+        valid: true,
+        projects: loaded.projects.length,
+        sources: loaded.sources.length,
+        host: loaded.config.host,
+      });
       return;
     case 'sources':
       print(selectSources(loaded, values.project));
@@ -82,12 +101,14 @@ async function main(): Promise<void> {
       if (!argument) throw new Error('Provide a search query');
       if (values['core-only'] && values.project?.length) throw new Error('Choose --core-only or --project');
       const client = createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN });
-      print(await client.search({
-        query: argument,
-        ...(values.limit ? { limit: Number(values.limit) } : {}),
-        ...(values['core-only'] ? { projects: [] } : values.project ? { projects: values.project } : {}),
-        ...(values['no-core'] ? { includeCore: false } : {}),
-      }));
+      print(
+        await client.search({
+          query: argument,
+          ...(values.limit ? { limit: Number(values.limit) } : {}),
+          ...(values['core-only'] ? { projects: [] } : values.project ? { projects: values.project } : {}),
+          ...(values['no-core'] ? { includeCore: false } : {}),
+        }),
+      );
       return;
     }
   }
@@ -96,18 +117,29 @@ async function main(): Promise<void> {
   try {
     if (command === 'discord') {
       if (!discord || !discordConfig) throw new Error('Discord module is not configured in aivi.json');
-      if (subcommand === 'register') { await discord.registerDiscordCommands(discordConfig); print({ registered: true }); return; }
+      if (subcommand === 'register') {
+        await discord.registerDiscordCommands(discordConfig);
+        print({ registered: true });
+        return;
+      }
       const inbox = new discord.DiscordStore(store, discord.bindingFor(discordConfig));
-      if (subcommand === 'status') { print({ turns: inbox.list(), leases: store.leases() }); return; }
+      if (subcommand === 'status') {
+        print({ turns: inbox.list(), leases: store.leases() });
+        return;
+      }
       if (subcommand === 'resolve') {
-        if (!argument || !values.reason || !values['confirm-stopped']) throw new Error('discord resolve ID --reason TEXT --confirm-stopped');
+        if (!argument || !values.reason || !values['confirm-stopped'])
+          throw new Error('discord resolve ID --reason TEXT --confirm-stopped');
         inbox.resolve(argument, values.reason);
         print({ resolved: true });
         return;
       }
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
     }
-    if (command === 'status') { print(status(store, loaded)); return; }
+    if (command === 'status') {
+      print(status(store, loaded));
+      return;
+    }
     if (command === 'schedules' && subcommand === 'sync') {
       store.syncSchedules(loaded.config.schedules);
       print({ schedules: loaded.config.schedules.length });
@@ -116,20 +148,32 @@ async function main(): Promise<void> {
     if (command === 'knowledge' && subcommand === 'index') {
       if (!loaded.config.search) throw new Error('Knowledge search is not configured');
       const resource = values.resource ?? 'maintenance';
-      if (!(resource in loaded.config.scheduler.resources)) throw new Error('Configure a maintenance resource pool or pass --resource');
+      if (!(resource in loaded.config.scheduler.resources))
+        throw new Error('Configure a maintenance resource pool or pass --resource');
       print(store.enqueue({ kind: 'knowledge.index' }, resource, `index:${randomUUID()}`));
       return;
     }
     if (command === 'jobs') {
       switch (subcommand) {
-        case 'list': print(store.list()); return;
-        case 'show': if (argument) { print({ job: store.get(argument), history: store.history(argument) }); return; } break;
+        case 'list':
+          print(store.list());
+          return;
+        case 'show':
+          if (argument) {
+            print({ job: store.get(argument), history: store.history(argument) });
+            return;
+          }
+          break;
         case 'enqueue': {
           if (!argument) break;
           // A task file is either a bare task or { task, report?, resource? }.
           const raw: unknown = JSON.parse(await readFile(resolve(argument), 'utf8'));
           const wrapped = jobFileSchema.safeParse(raw);
-          const { task, report, resource: fileResource } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
+          const {
+            task,
+            report,
+            resource: fileResource,
+          } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
           if (task.kind === 'opencode.prompt') task.directory = resolve(task.directory);
           if (task.kind === 'shell' && task.cwd) task.cwd = resolve(task.cwd);
           const resource = values.resource ?? fileResource ?? 'local-model';
@@ -137,7 +181,13 @@ async function main(): Promise<void> {
           print(store.enqueue(task, resource, `manual:${values.key ?? randomUUID()}`, Date.now(), report ?? null));
           return;
         }
-        case 'cancel': if (argument) { store.cancelQueued(argument); print(store.get(argument)); return; } break;
+        case 'cancel':
+          if (argument) {
+            store.cancelQueued(argument);
+            print(store.get(argument));
+            return;
+          }
+          break;
         case 'resolve': {
           if (!argument) break;
           if (!values['confirm-stopped'] || !values.reason || !['succeeded', 'failed'].includes(values.outcome ?? '')) {
@@ -152,7 +202,9 @@ async function main(): Promise<void> {
     if (command === 'tick' || command === 'serve') {
       const once = command === 'tick';
       // Fail on a missing token before touching the daemon lock, QMD, or Chrome.
-      const auth = once ? { mode: 'none' as const } : resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
+      const auth = once
+        ? { mode: 'none' as const }
+        : resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
       const modules: HostModule[] = [];
       if (!once && discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
       const abort = new AbortController();
@@ -161,9 +213,18 @@ async function main(): Promise<void> {
       process.once('SIGTERM', stop);
       try {
         await runHost({
-          loaded, store, modules, auth, log, once, signal: abort.signal,
+          loaded,
+          store,
+          modules,
+          auth,
+          log,
+          once,
+          signal: abort.signal,
           resources: () => createResources(loaded, once),
-          onReady: address => console.log(JSON.stringify({ listening: address, modules: modules.map(m => m.id), sources: loaded.sources.length })),
+          onReady: address =>
+            console.log(
+              JSON.stringify({ listening: address, modules: modules.map(m => m.id), sources: loaded.sources.length }),
+            ),
         });
         if (once) print(status(store, loaded));
       } finally {
@@ -185,12 +246,19 @@ function loadEnvFile(path: string, log: { debug(event: string, fields?: Record<s
   log.debug('env.loaded', { path });
 }
 
-const jobFileSchema = z.strictObject({ task: taskSchema, report: reportSchema.optional(), resource: z.string().min(1).optional() });
+const jobFileSchema = z.strictObject({
+  task: taskSchema,
+  report: reportSchema.optional(),
+  resource: z.string().min(1).optional(),
+});
 
 async function createResources(loaded: LoadedConfig, once: boolean): Promise<HostResources> {
   const knowledge = await createKnowledgeService(loaded);
   // Browser construction is lazy; no Chrome launch occurs until a tool call. A one-shot tick never needs it.
-  const browser = !once && loaded.config.browser ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser) : undefined;
+  const browser =
+    !once && loaded.config.browser
+      ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser)
+      : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };
 }
 

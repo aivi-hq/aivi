@@ -1,6 +1,6 @@
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { test } from 'node:test';
 import plugin from '../src/index.ts';
 
 type Editor = { namespace(ns: unknown): void; add(tool: RegisteredTool): void };
@@ -25,16 +25,29 @@ function setupWith(options: Record<string, unknown>, onAdd: (tool: RegisteredToo
 
 function withToken(t: { after(fn: () => void): void }, value: string | undefined) {
   const previous = process.env.AIVI_TOKEN;
-  if (value === undefined) delete process.env.AIVI_TOKEN; else process.env.AIVI_TOKEN = value;
-  t.after(() => { if (previous === undefined) delete process.env.AIVI_TOKEN; else process.env.AIVI_TOKEN = previous; });
+  if (value === undefined) delete process.env.AIVI_TOKEN;
+  else process.env.AIVI_TOKEN = value;
+  t.after(() => {
+    if (previous === undefined) delete process.env.AIVI_TOKEN;
+    else process.env.AIVI_TOKEN = previous;
+  });
 }
 
 test('plugin registers its tools with root object schemas and disposes its registration', async t => {
   withToken(t, 'test-only-token');
   const tools: RegisteredTool[] = [];
   let disposed = false;
-  const cleanup = await setupWith({}, tool => tools.push(tool), () => { disposed = true; });
-  assert.deepEqual(tools.map(tool => tool.name), ['search', 'status', 'sources', 'control']);
+  const cleanup = await setupWith(
+    {},
+    tool => tools.push(tool),
+    () => {
+      disposed = true;
+    },
+  );
+  assert.deepEqual(
+    tools.map(tool => tool.name),
+    ['search', 'status', 'sources', 'control'],
+  );
   for (const tool of tools) assert.equal(tool.input.type, 'object', `${tool.name} must declare a root object schema`);
   assert.equal(typeof cleanup, 'function');
   if (typeof cleanup === 'function') await cleanup();
@@ -53,7 +66,9 @@ test('plugin loads without AIVI_TOKEN and reports a clear error when the host re
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   let status: RegisteredTool | undefined;
-  await setupWith({ url: `http://127.0.0.1:${address.port}` }, tool => { if (tool.name === 'status') status = tool; });
+  await setupWith({ url: `http://127.0.0.1:${address.port}` }, tool => {
+    if (tool.name === 'status') status = tool;
+  });
   assert.ok(status, 'plugin must still register tools without a token');
   await assert.rejects(status.execute({}, { sessionID: 's' }), /401.*AIVI_TOKEN/);
 });
@@ -76,10 +91,14 @@ test('browser tool declares native permission and forwards the runtime session I
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   let browser: RegisteredTool | undefined;
-  const cleanup = await setupWith({ url: `http://127.0.0.1:${address.port}` }, tool => { if (tool.name === 'control') browser = tool; });
+  const cleanup = await setupWith({ url: `http://127.0.0.1:${address.port}` }, tool => {
+    if (tool.name === 'control') browser = tool;
+  });
   assert.ok(browser);
   assert.equal(browser.options.permission, 'browser');
-  assert.deepEqual(await browser.execute({ action: 'tabs' }, { sessionID: 'native-owner' }), { content: '{"tabs":[]}' });
+  assert.deepEqual(await browser.execute({ action: 'tabs' }, { sessionID: 'native-owner' }), {
+    content: '{"tabs":[]}',
+  });
   assert.deepEqual(received, { sessionId: 'native-owner', request: { action: 'tabs' } });
   if (typeof cleanup === 'function') await cleanup();
 });

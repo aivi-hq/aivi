@@ -1,8 +1,7 @@
-import { silentLogger } from '@aivi/core';
 import type { Config, Logger } from '@aivi/core';
+import { silentLogger } from '@aivi/core';
 import type { DiscordConfig } from './config.ts';
-import { DiscordStore } from './store.ts';
-import type { Turn } from './store.ts';
+import type { DiscordStore, Turn } from './store.ts';
 
 /** Split on code points so surrogate pairs survive; the limit counts UTF-16 units like Discord does. */
 export function splitReply(text: string, limit = 1900): string[] {
@@ -10,7 +9,10 @@ export function splitReply(text: string, limit = 1900): string[] {
   const chunks: string[] = [];
   let chunk = '';
   for (const character of text) {
-    if (chunk.length + character.length > limit) { chunks.push(chunk); chunk = ''; }
+    if (chunk.length + character.length > limit) {
+      chunks.push(chunk);
+      chunk = '';
+    }
     chunk += character;
   }
   if (chunk) chunks.push(chunk);
@@ -31,7 +33,14 @@ export class DiscordEngine {
   private readonly scheduler: Config['scheduler'];
   private readonly ask: Ask;
   private readonly send: Send;
-  constructor(store: DiscordStore, config: DiscordConfig, scheduler: Config['scheduler'], ask: Ask, send: Send, log: Logger = silentLogger) {
+  constructor(
+    store: DiscordStore,
+    config: DiscordConfig,
+    scheduler: Config['scheduler'],
+    ask: Ask,
+    send: Send,
+    log: Logger = silentLogger,
+  ) {
     this.store = store;
     this.config = config;
     this.scheduler = scheduler;
@@ -68,13 +77,21 @@ export class DiscordEngine {
           this.store.block(turn.id);
         }
       })
-      .catch(error => { this.log.error('engine.failed', { error }); this.failure = error; this.stop(); })
+      .catch(error => {
+        this.log.error('engine.failed', { error });
+        this.failure = error;
+        this.stop();
+      })
       .finally(() => this.active.delete(turn.id));
     this.active.set(turn.id, work);
   }
 
-  stop(): void { this.abort.abort(); }
-  get stopped(): boolean { return this.abort.signal.aborted; }
+  stop(): void {
+    this.abort.abort();
+  }
+  get stopped(): boolean {
+    return this.abort.signal.aborted;
+  }
   async drain(): Promise<void> {
     await Promise.all([...this.active.values()]);
     if (this.failure !== undefined) throw this.failure;

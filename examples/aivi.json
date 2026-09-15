@@ -58,9 +58,7 @@
         "kind": "dreaming",
         "directory": "librarian",
         "memoryDirectory": "memory",
-        "origins": [
-          "discord"
-        ]
+        "origins": ["discord"]
       }
     }
   ],

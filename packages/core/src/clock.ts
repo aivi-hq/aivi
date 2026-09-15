@@ -6,5 +6,7 @@ export function nextOccurrence(pattern: string, timezone: string, after: number)
     const next = cron.nextRun(new Date(after));
     if (!next) throw new Error(`Schedule has no future occurrence: ${pattern}`);
     return next.getTime();
-  } finally { cron.stop(); }
+  } finally {
+    cron.stop();
+  }
 }

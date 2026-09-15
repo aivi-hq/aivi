@@ -1,6 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
-import { silentLogger } from '@aivi/core';
 import type { Logger } from '@aivi/core';
+import { silentLogger } from '@aivi/core';
 import type { OpenCodeClient } from './opencode.ts';
 
 type NativeMessages = Awaited<ReturnType<OpenCodeClient['session']['context']>>;
@@ -77,12 +77,17 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
   const request = { signal };
 
   if (input.create) {
-    await client.session.create({
-      id: sessionID, agent: input.agent, location: { directory: input.directory },
-      ...(input.title ? { title: input.title } : {}),
-      ...(input.sessionMetadata ? { metadata: input.sessionMetadata } : {}),
-      ...(input.permissions ? { permissions: input.permissions } : {}),
-    }, request);
+    await client.session.create(
+      {
+        id: sessionID,
+        agent: input.agent,
+        location: { directory: input.directory },
+        ...(input.title ? { title: input.title } : {}),
+        ...(input.sessionMetadata ? { metadata: input.sessionMetadata } : {}),
+        ...(input.permissions ? { permissions: input.permissions } : {}),
+      },
+      request,
+    );
     options.onCreated?.();
   }
   const session = await client.session.get({ sessionID }, request);
@@ -96,10 +101,17 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
     ...input.messageMetadata,
     aivi: { ...(aivi && typeof aivi === 'object' && !Array.isArray(aivi) ? aivi : {}), message: input.messageId },
   };
-  await client.session.prompt({
-    sessionID, id: input.messageId, text: input.text, delivery: 'queue', metadata: messageMetadata,
-    ...(input.model ? { model: input.model } : {}),
-  }, request);
+  await client.session.prompt(
+    {
+      sessionID,
+      id: input.messageId,
+      text: input.text,
+      delivery: 'queue',
+      metadata: messageMetadata,
+      ...(input.model ? { model: input.model } : {}),
+    },
+    request,
+  );
 
   const rejected: TurnResult['rejected'] = [];
   let waited = client.session.wait({ sessionID }, request).then(() => true);
@@ -131,10 +143,15 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
  * the turn cannot be trusted.
  */
 export function finalAnswer(messages: NativeMessages, messageId: string, agent: string): string {
-  const start = messages.findLastIndex(m => m.type === 'user' && (m.id === messageId || (m.metadata?.aivi as { message?: string } | undefined)?.message === messageId));
+  const start = messages.findLastIndex(
+    m =>
+      m.type === 'user' &&
+      (m.id === messageId || (m.metadata?.aivi as { message?: string } | undefined)?.message === messageId),
+  );
   if (start < 0) throw new PendingAnswer('Submitted turn is not present in native context');
   const tail = messages.slice(start + 1);
-  if (tail.some(m => m.type === 'user' || m.type === 'agent-switched')) throw new Error('Native session changed outside this turn');
+  if (tail.some(m => m.type === 'user' || m.type === 'agent-switched'))
+    throw new Error('Native session changed outside this turn');
 
   const idle = tail.findLast(m => m.type === 'idle');
   const answer = tail.findLast(m => m.type === 'assistant');
@@ -144,10 +161,20 @@ export function finalAnswer(messages: NativeMessages, messageId: string, agent: 
   if (idle.outcome !== 'succeeded' || answer.agent !== agent || answer.finish !== 'stop' || answer.error) {
     throw new Error(`No confirmed final answer (idle=${idle.outcome}, agent=${answer.agent}, finish=${answer.finish})`);
   }
-  if (tail.some(m => m.type === 'assistant' && m.content.some(p => p.type === 'tool' && !['completed', 'error'].includes(p.state.status)))) {
+  if (
+    tail.some(
+      m =>
+        m.type === 'assistant' &&
+        m.content.some(p => p.type === 'tool' && !['completed', 'error'].includes(p.state.status)),
+    )
+  ) {
     throw new Error('Native turn has unfinished tools');
   }
-  const text = answer.content.filter(p => p.type === 'text').map(p => p.text).join('\n').trim();
+  const text = answer.content
+    .filter(p => p.type === 'text')
+    .map(p => p.text)
+    .join('\n')
+    .trim();
   if (!text) throw new Error('Final answer has no text');
   return text;
 }
