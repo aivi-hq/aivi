@@ -38,7 +38,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
   same pools ([architecture](docs/architecture.md#two-queues-one-capacity)).
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
-  `blocked`, capacity kept, human resolves.
+  `blocked`, capacity kept, human resolves. Exception: a Discord turn
+  interrupted by a *restart* is discarded and the person told, because its
+  only external effect is the reply; jobs still block.
 - **Verified final answer**, never idleness: `finalAnswer` reads the native
   context (`user → assistant(finish: stop) → idle(succeeded)`, no unfinished
   tools).

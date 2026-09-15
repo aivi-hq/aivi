@@ -163,18 +163,27 @@ test('Discord leases and scheduler claims enforce the same global capacity', t =
   assert.ok(core.claim('host', 1, scheduler.resources));
 });
 
-test('restart blocks both the active turn and its lease; queued work survives', t => {
+test('restart discards interrupted turns, releases their capacity, reports who to tell; queued work survives', t => {
   const core = new Store(':memory:');
   t.after(() => core.close());
   const store = new DiscordStore(core, 'binding');
   store.enqueue(message('one'), 10);
   store.enqueue(message('two'), 10);
+  store.enqueue(message('three', 'dm-b'), 10);
   store.claim(scheduler, config.resource);
-  assert.equal(store.recover(), 1);
-  assert.equal(store.list()[0]!.state, 'blocked');
-  assert.equal(store.list()[1]!.state, 'queued');
-  assert.equal(core.leases()[0]!.state, 'blocked');
-  assert.equal(store.claim(scheduler, config.resource), null);
+  const second = store.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, config.resource)!;
+  store.result(second.id, 'half sent');
+  assert.deepEqual(store.recover(), [
+    { id: 'one', channel: 'dm-a', state: 'running' },
+    { id: 'three', channel: 'dm-b', state: 'replying' },
+  ]);
+  assert.equal(store.list()[0]!.state, 'discarded');
+  assert.equal(store.list()[0]!.error, 'Interrupted by a restart');
+  assert.equal(store.list()[1]!.state, 'queued', 'the next message in the conversation is untouched');
+  assert.equal(store.list()[2]!.state, 'discarded');
+  assert.equal(core.leases().length, 0, 'interrupted turns hold no capacity');
+  assert.ok(store.claim(scheduler, config.resource), 'the queued message can start at once');
+  assert.equal(store.claim(scheduler, config.resource), null, 'capacity is one');
   assert.throws(() => store.resolve('two', 'Not blocked'), /Only a blocked/);
   assert.equal(store.list('dm-a').length, 2);
   assert.equal(store.list('other').length, 0);

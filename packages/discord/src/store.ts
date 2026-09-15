@@ -78,18 +78,27 @@ export class DiscordStore {
   /** True when this start replaced a previous binding and rotated every conversation's session. */
   rebound = false;
 
-  /** Restart recovery: work that was in flight is unverified and stays reserved until an operator looks. */
-  recover(): number {
+  /**
+   * Restart recovery. A conversation turn's only external effect is its reply, so an
+   * interrupted turn is discarded and its capacity released; the caller tells the person.
+   * `running` means no reply was sent; `replying` means it may have been partial.
+   */
+  recover(): { id: string; channel: string; state: 'running' | 'replying' }[] {
     return this.core.transaction(() => {
-      const turns = Number(
+      const interrupted = (
+        this.core.db
+          .prepare("SELECT id,channel,state FROM discord_turns WHERE state IN ('running','replying') ORDER BY seq")
+          .all() as Row[]
+      ).map(r => ({ id: String(r.id), channel: String(r.channel), state: r.state as 'running' | 'replying' }));
+      for (const turn of interrupted) {
         this.core.db
           .prepare(
-            "UPDATE discord_turns SET state='blocked',error='Adapter interrupted; inspect native session and Discord delivery' WHERE state IN ('running','replying')",
+            "UPDATE discord_turns SET state='discarded',text='',result=NULL,error='Interrupted by a restart' WHERE id=?",
           )
-          .run().changes,
-      );
-      this.core.blockLeasesOwnedBy(LEASE_OWNER, 'Discord adapter restarted');
-      return turns;
+          .run(turn.id);
+        this.core.releaseLease(leaseID(turn.id), LEASE_OWNER);
+      }
+      return interrupted;
     });
   }
 

@@ -144,8 +144,13 @@ npm run aivi -- discord resolve TURN_ID --confirm-stopped --reason "Inspected na
 
 Resolution discards that blocked turn and releases capacity. It does not stop the
 native session or resend a reply. Inspect/stop native work first. Queued messages
-can then continue in the same session. Restarted adapters block interrupted turns
-instead of resubmitting prompts. The application lock prevents duplicate hosts; a module lock also protects the Discord inbox.
+can then continue in the same session.
+
+A restart needs no operator: a conversation turn's only external effect is its
+reply, so turns interrupted by a restart are discarded, their capacity released,
+and each affected conversation is told once ("please send it again", or "my
+last answer may be incomplete" when delivery had started). Prompts are never
+resubmitted. Jobs, whose effects can be anything, still block on restart. The application lock prevents duplicate hosts; a module lock also protects the Discord inbox.
 Changing the application, agent, or directory against existing state acts as
 `/new` for every conversation: old native sessions stay in OpenCode and each
 channel's next message starts fresh. It is refused while any turn is queued or

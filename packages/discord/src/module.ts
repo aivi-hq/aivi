@@ -74,8 +74,8 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
   const store = new DiscordStore(services.store, bindingFor(config));
   if (store.rebound)
     log.warn('binding.changed', { hint: 'Every conversation starts a fresh session on its next message.' });
-  const recovered = store.recover();
-  if (recovered) log.warn('turns.recovered', { blocked: recovered });
+  const interrupted = store.recover();
+  if (interrupted.length) log.warn('turns.interrupted', { discarded: interrupted.length });
 
   const client = new Client({
     intents: [
@@ -303,6 +303,21 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       agent: config.agent,
       reportChannels: config.reportChannels.length,
     });
+
+    // Nobody waits in silence: each conversation with an interrupted turn hears about it once.
+    for (const channel of new Set(interrupted.map(t => t.channel))) {
+      const partial = interrupted.some(t => t.channel === channel && t.state === 'replying');
+      void (async () => {
+        const c = await client.channels.fetch(channel);
+        if (!c?.isSendable()) return;
+        await c.send({
+          content: partial
+            ? 'I was restarted while replying, so my last answer may be incomplete. Ask again if you need it.'
+            : 'I was restarted while working on your last message. Please send it again.',
+          ...safeSend,
+        });
+      })().catch(error => log.warn('notify.failed', { channel, error }));
+    }
 
     // Proactive posts only go where the operator said they may.
     const unregister = services.destinations.register('discord', {

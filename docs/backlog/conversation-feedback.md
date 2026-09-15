@@ -18,6 +18,8 @@ shutdown.
 - A message with attachments or no text: "text only" reply.
 - Queued behind other work: a ⏳ reaction (a one-line reply where the bot may
   not react), removed when the turn starts.
+- Restart during a turn: the turn is discarded, capacity released, and the
+  conversation told once (resend, or "my last answer may be incomplete").
 
 ## Wanted
 
@@ -29,10 +31,6 @@ shutdown.
 - The same signals for job reports: a blocked job's report should say what
   the operator has to do.
 
-- Restart during a turn: recovery blocks the turn and everything behind it
-  waits for an operator (seen twice on 2026-09-15). When the turn was still
-  `running` (no reply started), discard it and tell the person to resend,
-  like a not-started turn; only a turn in `replying` is truly uncertain.
 - Queued behind *blocked* work: ⏳ promises movement that will not come
   without an operator; say so instead ("waiting on an operator").
 
