@@ -32,7 +32,7 @@ profile with this command (use the same absolute directory as the config):
 ```
 
 Run `aivi serve` normally. In native OpenCode with the aivi plugin, ask the agent
-to open a website. The native `browser` permission controls `browser.control`.
+to open a website. The native `browser` permission controls `browser_control`.
 The tool gets its session ID from OpenCode; the model cannot choose an owner ID.
 Use the `focus` action to bring an owned tab forward for manual login.
 The existing Discord librarian keeps its default-deny policy; this addition does
@@ -66,7 +66,7 @@ The child inherits basic OS environment settings, not aivi/provider tokens.
 
 ## Tools and ownership
 
-`browser.control` provides `tabs`, `open`, `navigate`, `snapshot`, `click`, `fill`,
+`browser_control` provides `tabs`, `open`, `navigate`, `snapshot`, `click`, `fill`,
 `press`, `dialog`, `focus`, and `close`. Snapshot returns the accessibility tree
 and element uids. Read a new snapshot after navigation or significant page changes.
 The initial interface does not expose arbitrary JavaScript, network headers,
@@ -105,9 +105,10 @@ With Chrome installed, run `npm run smoke:browser`. Optionally set
 a local HTML fixture, checks typing/clicking and cross-session rejection, then
 closes it. It does not use your configured browser profile.
 
-The development environment passed the MCP handshake but had no Chrome binary;
-the browser download failed. Actual UI control, manual authentication, extensions,
-and macOS/native OpenCode permission enforcement still need target verification.
+Live Chrome control on the target Mac is not yet verified: run
+`npm run smoke:browser` there. Manual authentication, extensions, and native
+permission enforcement are part of that gate. Until it passes, browser recovery
+behaviour (a failed first `open`, tab identification) stays as built.
 
 ## Why this backend
 

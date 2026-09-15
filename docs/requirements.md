@@ -1,6 +1,6 @@
 # aivi: requirements
 
-Status: v0.8, Discord reduced to one knowledge agent; scheduled dreaming added and QMD model configuration clarified. Updated 2026-09-13. Research findings are recorded separately in opencode-worker-research.md; the clarifications here supersede its earlier proposed decisions.
+Frozen product requirements (v0.8, 2026-09-13). Decisions taken since live in [architecture.md](architecture.md); implementation status in [roadmap.md](roadmap.md). Section 9 (research to do) was completed and removed.
 
 ## 1. Product
 
@@ -166,18 +166,6 @@ The platform does not automatically modify or redeploy its own source code.
 14. A destination with proactive session creation disabled receives no host-initiated conversation. An enabled destination can receive scheduled work under its configured reporting policy.
 15. With configured execution capacity occupied, additional automated work waits in a persistent queue; repeated periodic triggers do not create an uncontrolled backlog, and cleanup signals still reach the active run.
 16. A dreaming task reviews the configured interval of conversation history, reconciles useful durable memories with their sources, and queues when local-model capacity is occupied. Retrying or restarting does not duplicate the same memory writes.
-
-## 9. Research and technical design
-
-First, produce the capability inventory: what OpenCode v2 supplies, what can be reused through SDKs/plugins/MCPs, and what this platform must implement. Validate v2 availability, per-agent tool isolation and switching, native Linear delegation/session behavior, browser/profile options, history access/storage, steering an active agent into cleanup, and full rollback with session retention against primary sources. Distinguish graceful steering from abort and process termination, and verify how to stop only the relevant run and its owned execution.
-
-Then compare technical options and choose the runtime language, process layout, persistence/search/embedding approach, scheduling and recovery mechanisms, credential handling, and packaging. TypeScript and any particular database remain candidates at this stage.
-
-### Retrieval versus automatic memory systems
-
-QMD supplies document retrieval over Markdown collections, including exported conversations. Its model roles are configurable through `models.embed`, `models.rerank` and `models.generate` in `index.yml`, using GGUF model references. The documented defaults are EmbeddingGemma 300M for embeddings, Qwen3 Reranker 0.6B, and a QMD query-expansion model at 1.7B. Keyword-only search avoids these model stages; semantic and full hybrid search use the relevant models. Reusing the main OpenCode inference endpoint is a separate integration question from choosing a QMD model. EmbeddingGemma is a starting candidate; measure the selected retrieval mode's memory and latency rather than assuming all three models must always run. [QMD](https://github.com/tobi/qmd)
-
-Hermes's external providers add varying combinations of capture, fact extraction, recall and synthesis alongside its built-in memory. Examples include Honcho's user modeling, Mem0's extracted facts and deduplication, Hindsight's reflection, and OpenViking's hierarchical context and session extraction. They are not interchangeable embedding providers. Investigate such a system only if aivi needs its additional behavior enough to justify the model work, dependencies and extra state; no external automatic memory provider is selected. [Hermes memory providers](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers/)
 
 ## 10. Future ideas: memory decay
 

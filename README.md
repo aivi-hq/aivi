@@ -36,7 +36,8 @@ To use the tools from OpenCode, open `examples/librarian` in OpenCode v2 with
 running service, `npm run live:opencode -- --plugin "$PWD/examples/librarian"`
 verifies the real boundary.
 
-For Discord, fill in `examples/discord.json`, put `DISCORD_BOT_TOKEN` in a `.env` next to the config, use
+For Discord, fill in `examples/discord.json`, put `DISCORD_BOT_TOKEN` in a
+`.env` beside the config (see [secrets](docs/configuration.md#secrets)), use
 `examples/aivi-discord.json`, register commands once with `aivi ... discord register`,
 and run the same `serve` command. See [Discord setup](docs/discord.md).
 
@@ -45,11 +46,11 @@ and run the same `serve` command. See [Discord setup](docs/discord.md).
 | Package | Responsibility |
 | --- | --- |
 | `@aivi/app` | `aivi` CLI; composes configured modules and launches the host |
-| `@aivi/core` | Config schemas, source scopes, contracts, logger |
-| `@aivi/host` | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection |
+| `@aivi/core` | Config and access-policy schemas, knowledge kinds, contracts, logger |
+| `@aivi/host` | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection, session driver, dreaming, report destinations |
 | `@aivi/knowledge` | QMD-backed document indexing and scoped keyword search |
 | `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
-| `@aivi/discord` | Discord module: DM/thread routing, durable inbox, librarian chat |
+| `@aivi/discord` | Discord module: DM/thread routing, durable inbox, librarian chat, slash commands, report destination |
 | `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `aivi_sources`, `aivi_status`, `browser_control` |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
@@ -58,35 +59,30 @@ module with webhook routes on the same listener.
 
 ## Status
 
-Working and verified against OpenCode 2.0.3 on the target Mac:
+- Live-verified against OpenCode 2.0.3 and a Discord test server on the target
+  Mac: discovery and auth, plugin tools, the session driver (jobs, dreaming,
+  Discord turns all end in a verified final answer), Discord DMs/channels/
+  threads with slash commands and job reports.
+- Built and unit-tested, live check still open: browser control
+  (`npm run smoke:browser`).
+- Knowledge: core and per-project sources with kinds (`doc`, `decision`,
+  `memory`, `conversation`); scope never widens on unknown IDs.
+- Jobs: SQLite + Croner schedules, `shell`/`opencode.prompt`/`dreaming`/
+  maintenance tasks, dedupe, pools and leases, restart recovery, reports.
+- Dreaming: a scheduled agent maintains `facts.md` and proposals from
+  conversations since its last run ([docs/dreaming.md](docs/dreaming.md)).
 
-- Configuration with core and per-project knowledge sources; scope never widens on unknown IDs.
-- Host API with `host.bind`/`host.port` and auth modes `token` and `none`; public `/health`.
-- OpenCode discovery through the SDK service registration (random port, basic auth).
-- Plugin loads in OpenCode v2 and its tools reach the host; librarian round trip with Gemini Flash.
-- Session driver: scheduled `opencode.prompt` jobs run an agent turn to a verified answer, auto-handling permission prompts; Discord turns use the same driver.
-- Discord live: DMs and channels with a shared access policy (allow-lists, mention rules, thread-per-conversation), typing indicator, slash commands, job reports to allowed channels.
-- Jobs: `shell` tasks, `report` destinations, `.env` secrets (`~/.aivi/.env`).
-- Dreaming: a scheduled agent reviews conversations since the last run and maintains `facts.md` plus rule/skill proposals inside a knowledge source ([docs/dreaming.md](docs/dreaming.md)).
-- SQLite + Croner scheduling with dedupe, concurrency limits, restart recovery, adapter migrations.
-- QMD document indexing and scoped keyword search.
-- Browser control service and Discord module (built and unit-tested; live verification still open).
+Next, in order: jobs from chat and one-off runs, projects as capacity pools
+with quiet-time maintenance, project-scoped memory, installation on other
+machines, Linear. Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
+unscheduled ideas: `docs/backlog/`.
 
-Not yet built, in order of intent:
+`npm run agentic:verify` runs Biome and `npm run check` (build, tests against
+real SQLite, real QMD and the real v2 client on a mock server, schema check,
+CLI and daemon smoke). Live gates: `npm run live:opencode`, `npm run smoke:browser`.
 
-1. Knowledge `kind` labels (doc, decision, memory, conversation) and people.
-2. Installation and updates for other machines (`docs/backlog/installation.md`).
-3. Remote access hardening (per-device tokens, SSO via reverse proxy), Linear
-   with worker steering/cleanup.
-4. Open design tickets in `docs/backlog/`: jobs, chat commands, identity linking.
-
-`npm run check` builds, type-checks tests, runs the test suite (real SQLite,
-real QMD, real v2 client against a mock server), verifies generated schemas, and
-smoke-tests the CLI and daemon. Live checks: `npm run live:opencode`,
-`npm run smoke:browser`.
-
-Read [configuration](docs/configuration.md), [application lifecycle](docs/application.md),
-[knowledge search](docs/knowledge.md), [dreaming](docs/dreaming.md),
-[OpenCode integration](docs/opencode.md), [Discord](docs/discord.md), and
-[architecture decisions](docs/architecture.md). Requirements and roadmap are
-in `docs/`; `docs/backlog/` holds ideas not yet scheduled.
+New here? Start with [CONTEXT.md](CONTEXT.md). Then [configuration](docs/configuration.md),
+[application lifecycle](docs/application.md), [knowledge search](docs/knowledge.md),
+[dreaming](docs/dreaming.md), [OpenCode integration](docs/opencode.md),
+[Discord](docs/discord.md), [architecture decisions](docs/architecture.md),
+and [roadmap](docs/roadmap.md).

@@ -76,6 +76,12 @@ otherwise). `directory` is the OpenCode location that defines the `dreamer`
 agent; set `agent` to use another name. The dreamer picks its model in its own
 frontmatter.
 
+The dreamer is meant to run through this job: the job appends the session rules
+that allow its two write targets. Opened interactively, the example agent can
+read but not write (`examples/librarian/.opencode/agents/dreamer.md`). The
+example configs schedule it next to Discord (`examples/aivi-discord.json`),
+which is where its default `origins` come from.
+
 ## Later
 
 Project-scoped memory (facts that belong to one project's repository;

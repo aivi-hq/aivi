@@ -5,19 +5,12 @@ configured modules together. Discord is a package boundary, not a deployment
 boundary. A future Linear module will receive webhooks through the same host
 listener and use the same services.
 
-| Component | Owns |
-| --- | --- |
-| `@aivi/app` | Command entry point and explicit module composition |
-| `@aivi/host` | Application lifecycle, API, queue, leases, scheduler, native client |
-| `@aivi/knowledge` | One QMD SDK store, source collections, indexing, search queue |
-| `@aivi/browser` | Lazy Chrome DevTools MCP child and session tab ownership |
-| `@aivi/discord` | Discord connection/events, channel mappings, conversation policy |
-| `@aivi/opencode` | Native tools that call the host API |
-| OpenCode | Agent execution, native sessions, permissions, providers, tools |
+The package table is in the [README](../README.md#packages).
 
 Modules receive a `HostServices` object containing the loaded installation
-config, store, knowledge service, optional browser service, a lazy `opencode()`
-client factory, a structured logger, the shutdown signal, and `fail()`. They
+config, store, knowledge service, optional browser service, an `opencode()`
+client factory, a structured logger, the shutdown signal, a `destinations`
+registry for `report.to`, and `fail()`. They
 return an asynchronous `stop` function. They call shared services directly,
 rather than calling the host over HTTP from inside the same application.
 
@@ -32,7 +25,7 @@ independently of the host schema. Host tables are only reached through `Store`
 methods; shared capacity uses `acquireLease`/`releaseLease`/`blockLease`.
 
 OpenCode plugins live inside the native runtime, so they use the host's
-authenticated API. `knowledge.search` reaches the same service used by Discord's
+authenticated API. `knowledge_search` reaches the same service used by Discord's
 `/search` command and scheduled indexing jobs. A future permission-checked Discord
 job command can similarly use host job operations.
 
@@ -42,7 +35,7 @@ shared services, refreshes the search index when configured, opens the API on
 `host.bind:host.port`, then starts modules. Only after configured modules start
 does it announce readiness and dispatch scheduled work. Startup failure unwinds
 already-started modules. `aivi tick` runs the same lifecycle in one-shot mode:
-no API, no modules, one dispatch round, drain, exit.
+no API, no modules (and no token needed), one dispatch round, drain, exit.
 
 Shutdown stops dispatch and aborts running jobs at once: a shell command gets
 `SIGTERM`, an agent turn stops waiting. Each interrupted job ends `blocked` with

@@ -30,12 +30,12 @@ Every source declares what it contains, from a registry in
 
 Hits carry `kind`, `scope`, and `projectId`, so an answer can say what kind of
 material it rests on. `knowledge_search`, `/v1/knowledge/search?kind=…`, and
-`aivi sources` accept a kind filter. The librarian's agent file explains the
+`/v1/sources?kind=…` accept a kind filter (the `aivi sources` CLI does not yet). The librarian's agent file explains the
 kinds to the model; adding a kind means one entry in the registry.
 
 ## Use it
 
-With `AIVI_TOKEN` supplied by fnox:
+With `AIVI_TOKEN` set (or `host.auth.mode: "none"`):
 
 ```sh
 npm run aivi -- --config examples/aivi.json serve
@@ -51,8 +51,8 @@ npm run aivi -- --config examples/aivi.json knowledge search "agreements" --core
 ```
 
 The CLI sends searches to the running host. It does not open another index.
-In OpenCode, the plugin exposes `knowledge.search` with `query`, optional
-`projects`, `includeCore`, and `limit`. Discord's `/search query [project]` calls
+In OpenCode, the plugin exposes `knowledge_search` with `query`, optional
+`projects`, `includeCore`, `kinds`, and `limit`. Discord's `/search query [project]` calls
 the service directly without starting a model turn. The librarian can also use
 the native tool while answering normal conversations.
 
@@ -80,7 +80,10 @@ npm run aivi -- --config examples/aivi.json knowledge index
 ```
 
 That queues a job; the host executes it against the same service. Search and
-indexing serialize through a bounded queue. Keyword search does not acquire
+indexing serialize through one bounded queue, so a large refresh delays searches
+behind it (the plugin's client gives up after 10 s). Sources are small today;
+letting searches run concurrently and only queue behind `index()` is planned
+work, not a knob. Keyword search does not acquire
 another inference slot, so a librarian holding a model slot can search without
 deadlocking itself. Semantic search will need explicit model-resource accounting.
 
@@ -90,8 +93,9 @@ The rebuildable index is separate from durable job/session metadata.
 
 ## Follow-up work
 
-Conversation export, embeddings, reranking, model configuration, and dreaming
-extend this service later. They will not require one memory server per integration.
+Conversation export, embeddings, reranking, and model configuration extend this
+service later; see [roadmap](roadmap.md). They will not require one memory
+server per integration.
 
 Tests use the real SDK to index temporary core/project documents, retrieve scoped
 hits, preserve filenames, and refresh changes/deletions, without model downloads.

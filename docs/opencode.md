@@ -15,11 +15,12 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | How is the server found? | `opencode service` registers `~/.local/state/opencode/service.json` with a random loopback port and a password. `Service.discover()` from `@opencode/client/service` returns it. aivi uses that; `opencode.url` is only an override. |
 | Authentication | HTTP basic (`opencode:<password>`). Anonymous and bearer requests get 401. |
 | Client-chosen IDs | `session.create({ id: "ses_aivi_…" })` and `session.prompt({ id: "msg_aivi_…" })` are accepted; nested `metadata` objects are stored and returned. |
-| Turn completion | After `session.prompt` (`delivery: "queue"`), `session.wait` returns when the turn ends (about 2 s for a trivial prompt). `session.context` then shows `user → assistant(finish: "stop", time.completed) → idle(outcome: "succeeded")`. This is what the Discord adapter's `finalAnswer` checks. |
+| Turn completion | After `session.prompt` (`delivery: "queue"`), `session.wait` returns when the turn ends (about 2 s for a trivial prompt). `session.context` then shows `user → assistant(finish: "stop", time.completed) → idle(outcome: "succeeded")`. This is what the host's `finalAnswer` checks (jobs, dreaming and Discord). |
 | Permission prompts | A tool that needs approval (for example `external_directory` when reading a knowledge source outside the project) parks the turn; `session.wait` blocks until a human replies. `permission.list({ sessionID })` exposes the pending request and `permission.reply` answers it. Any unattended driver must check this. |
 | Plugin loading | A directory entry in `plugins` resolves `<dir>/server.*` or `<dir>/index.*`, not `package.json#main`. `packages/opencode/server.js` re-exports the build for that reason. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
 | Plugin failure mode | An exception in `setup()` marks the plugin `failed` and registers no tools. The plugin therefore never throws for a missing token; the tool call reports the 401. |
-| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `knowledge_search`, `browser_control`. |
+| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `knowledge_search`, `browser_control`; tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion }`. |
+| Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the defaults, so a broad `read *` allow must be followed by an explicit `*.env` deny to keep OpenCode's default guard. |
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
 | Changes to a local plugin | The server caches the resolved entrypoint; run `opencode service restart` after changing the plugin package layout. |
 
@@ -57,13 +58,17 @@ The running host dispatches queued jobs through the session driver
 pin agent and directory, prompt, wait, answer permission prompts per policy, and
 verify the final answer (`assistant.finish === "stop"`, `idle.outcome ===
 "succeeded"`, no unfinished tools, text present). The job then succeeds with
-`{ sessionId, text, rejectedPermissions }`.
+`{ sessionId, text, rejectedPermissions }`. An `opencode.prompt` job sends no
+session-level permission rules: the agent's own frontmatter is its only
+boundary. Discord and dreaming pin a session policy in addition.
 
 Task options: `timeoutMs` (default 30 min) and `onPermission`: `reject`
 (default; deny and let the agent continue, recorded in the result) or `fail`
-(leave the prompt pending for a human and block the job). A timeout, a failed
-turn, a changed agent/directory, or a host shutdown mid-turn also block the job,
-because none of those prove the session stopped doing things. Blocked jobs keep
+(leave the prompt pending for a human and block the job). A failure before the
+prompt is accepted (OpenCode unreachable, session create/get rejected) ends the
+job `failed`; the next occurrence retries. A timeout, a failed turn, a changed
+agent/directory, or a host shutdown mid-turn block the job, because none of
+those prove the session stopped doing things. Blocked jobs keep
 their capacity until an operator has looked at the session:
 
 ```sh

@@ -28,7 +28,7 @@ directories resolve relative to `aivi.json`.
 | `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.pollMs` | `1000`; polling interval, no model call |
-| `schedules` | Empty; named cron/timezone/resource/task entries, each with an optional `report` |
+| `schedules` | Empty; named cron/timezone/resource/task entries, each with optional `report` and `enabled` (default `true`) |
 
 ## Tasks
 
@@ -91,12 +91,20 @@ Use `jobs show ID` for the task, session ID, result, and transition history.
 `jobs cancel ID` only cancels queued work. Resolving a blocked job is an explicit
 operator action described in [OpenCode setup](opencode.md).
 
+## Secrets
+
+Secrets never live in JSON files. They come from the process environment, and
+the CLI loads dotenv-style files without overriding variables that are already
+set: `AIVI_ENV_FILE` if set, else `.env` beside the config, then `~/.aivi/.env`.
+`fnox exec` works the same way. Variables: `AIVI_TOKEN`, `DISCORD_BOT_TOKEN`,
+`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`).
+
 With `host.auth.mode: "token"`, `AIVI_TOKEN` (at least 24 characters) must be
 present in the host environment and in the OpenCode server's environment for the
 plugin. With `mode: "none"` no token is needed anywhere; the host logs a warning
 when it binds beyond loopback without auth. Per-device tokens and SSO (via a
-reverse proxy) are planned as further modes. Keep secret values in fnox, not
-these JSON files. The plugin never receives an API for reading host secrets.
+reverse proxy) are planned as further modes. The plugin never receives an API
+for reading host secrets.
 
 The host discovers OpenCode through the SDK's service registration
 (`~/.local/state/opencode/service.json`), so the random service port and its

@@ -1,7 +1,7 @@
 # Discord adapter
 
 `@aivi/discord` is an optional module inside the host application. It connects
-to Discord through discord.js and uses the host's shared OpenCode client,
+to Discord through discord.js and uses the host's OpenCode connection,
 knowledge service, database, and capacity limits. `aivi serve` starts and stops it;
 there is no separate Discord server or daemon command.
 
@@ -10,7 +10,7 @@ there is no separate Discord server or daemon command.
 - One configured OpenCode agent and fixed librarian directory for the installation.
 - Each conversation maps to its own native session. A DM is one conversation.
   A configured channel is either `sessions: "threads"` (default: a top-level
-  message addressing aivi opens a thread named after it, and each thread is a
+  message addressing aivi opens a thread named after its first line, and each thread is a
   conversation; the channel itself never is) or `sessions: "channel"` (the
   channel is one shared conversation and its threads are ignored). Speakers
   share a conversation's history; prompts carry their Discord IDs.
@@ -42,8 +42,12 @@ there is no separate Discord server or daemon command.
   refuses while that conversation has queued, running, or blocked turns.
 - `/status` shows only that conversation's pending states.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
-- The bot shows a typing indicator while the agent works.
-- Input is text-only. Attachments are not downloaded or silently omitted.
+- People always get a signal: a typing indicator while the agent works, a
+  short message when a turn could not start (please resend) or could not be
+  finished (an operator has been notified). See
+  [conversation feedback](backlog/conversation-feedback.md) for what is still wanted.
+- Input is text-only. A message with attachments or without text gets a
+  "text only" reply.
 - Replies are split below Discord's message limit, with mentions and link embeds
   suppressed. Reasoning and tool output are excluded.
 
@@ -63,11 +67,12 @@ the installation config. It enables the module with:
 ```
 
 That path resolves relative to `aivi.json`; the librarian directory resolves
-relative to the Discord config. The example librarian loads the native aivi
-plugin, including `knowledge_search`.
+relative to the Discord config. The example points at `examples/librarian`,
+the same agent used in native chat; its config loads the aivi plugin.
 
-Put `DISCORD_BOT_TOKEN` in a `.env` next to `aivi.json` (or inject it with fnox) and, with `host.auth.mode: "token"`,
-`AIVI_TOKEN` (host API). Make `AIVI_TOKEN` available to the native OpenCode
+`DISCORD_BOT_TOKEN` comes from the environment (see
+[secrets](configuration.md#secrets); a `.env` beside `aivi.json` is the usual
+place) and, with `host.auth.mode: "token"`, so does `AIVI_TOKEN` (host API). Make `AIVI_TOKEN` available to the native OpenCode
 server process as well so its plugin can call the host. The host discovers the
 running `opencode service` on its own. Configure your provider/model in native
 OpenCode for the librarian location.
@@ -90,14 +95,15 @@ npm run aivi -- --config examples/aivi-discord.json serve
 `discord register` upserts `/new`, `/status`, and `/search`. Startup does not change
 Discord commands. Only the final command is a long-running aivi process: it starts
 the host HTTP API, scheduler, knowledge service, and Discord together. OpenCode
-remains its native execution service. No live Discord registration was performed
-during development.
+remains its native execution service.
 
-By default, guild messages must mention the bot; DMs need no mention. For natural
-follow-ups throughout allowed threads, set `messageContent: true` **and** enable
-Message Content Intent in the Discord developer portal. The module requests no
-member or presence intents. Discord documents the
-[message-content exceptions](https://docs.discord.com/developers/host/you-might-not-need-a-privileged-intent)
+Channel entries default to `trigger: "mention-to-start"`, which needs
+`messageContent: true` **and** the Message Content intent enabled in the
+Discord developer portal (the example config has it on). Set
+`trigger: "mention"` on a channel to run without that intent; DMs and bot
+mentions are delivered regardless. The module requests no member or presence
+intents. Discord documents the
+[message-content exceptions](https://discord.com/developers/docs/topics/gateway#message-content-intent)
 for DMs and bot mentions.
 
 ## Queue and recovery
@@ -134,27 +140,32 @@ npm run aivi -- --config examples/aivi-discord.json discord resolve TURN_ID --co
 Resolution discards that blocked turn and releases capacity. It does not stop the
 native session or resend a reply. Inspect/stop native work first. Queued messages
 can then continue in the same session. Restarted adapters block interrupted turns
-instead of resubmitting prompts. The application lock prevents duplicate host hosts; a module lock also protects the Discord inbox.
+instead of resubmitting prompts. The application lock prevents duplicate hosts; a module lock also protects the Discord inbox.
 Changing application, agent, or directory against existing state is rejected;
 deliberate rebinding/migration is future work.
 
-## Boundaries and verification
+## Boundaries
 
-Every native Discord session receives a session-level deny-by-default policy,
-with reads, search within files, and Code Mode enabled. Configured source
-directories receive external-read access. Shell, edits, subagents, MCP actions,
-and other unspecified actions remain denied. This first adapter uses local
-documents; specialist delegation and web/browser tools are future additions.
-Use trusted native plugins in the librarian location: plugins remain executable
-OpenCode extensions. The native permission model is documented
-[here](https://opencode.ai/v2/docs/permissions).
-
-No agent/project switching, ticket control, proactive messages, Discord permission
-approval UI, attachment ingestion, typing/streaming UI, or automatic cleanup is
-included. Host scheduled-task completion remains operator-confirmed; Discord
-has a separate read-only chat completion path.
+The session policy is the one under Behavior; web fetch/search are allowed,
+browser stays denied. Out of scope for now: agent or project switching, ticket
+control, streaming replies, attachment ingestion, a permission-approval UI,
+automatic cleanup. Both jobs and Discord turns use the same verified-final-answer
+driver; only blocked work needs an operator. Use trusted native plugins in the
+librarian location: plugins remain executable OpenCode extensions.
 
 Tests cover routing, session isolation/reset, deduplication, queueing, shared
 capacity, restart recovery, failed delivery, Unicode splitting, and final-answer
-filtering. The actual OpenCode client is exercised against a mock server. Live
-Discord and native OpenCode integration still require your configured installation.
+filtering, with the real OpenCode client against a mock server. Live status is
+in the [README](../README.md#status).
+
+## Later
+
+- `/steer`: submit a message with `delivery: "steer"` into the running turn
+  instead of queueing behind it (OpenCode supports both).
+- Jobs re-entering a conversation: a job's outcome submitted as a prompt into
+  the thread's session, so the librarian reacts in the thread instead of aivi
+  posting raw text ([jobs](backlog/jobs.md)).
+- Several Discord agents per installation (per channel or several module
+  instances); the config already carries `agent` and `directory`.
+- See [chat commands](backlog/chat-commands.md) and
+  [conversation feedback](backlog/conversation-feedback.md).

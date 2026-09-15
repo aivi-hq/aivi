@@ -25,10 +25,10 @@ Modules are explicit packages with a small start/stop contract. See
 ## SQLite and Croner
 
 SQLite stores schedules, job payloads, ownership, results, and audit history.
-Schema version 2 adds resource leases; version 3 adds an audit index and a
-`migrations` table so adapters can version their own namespaced tables. Discord
-stores its inbox and session mappings in the same database through
-`Store.migrate('discord', …)`; its turn claim and lease are atomic.
+The host schema is versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 4)
+and adapters version their own namespaced tables through `Store.migrate`.
+Discord stores its inbox and session mappings in the same database that way;
+its turn claim and lease are atomic.
 Croner is only a timezone-aware date calculator. A short polling loop checks due
 schedules; it does not invoke a model unless a queued task requests one.
 
@@ -60,12 +60,25 @@ The request carries stable session/message IDs and job metadata. If a response
 is lost, the operator has a reconciliation target. This does not promise
 exactly-once external effects and there are no automatic dispatch retries.
 
-One session driver (`runTurn`) serves jobs and Discord: it verifies a final
-answer from the native context rather than trusting idleness. Unattended turns
-auto-reject permission prompts by default, so a read-only agent keeps going and
-the denial is recorded. Anything unverifiable (timeout, failed turn, changed
-agent, host shutdown mid-turn) blocks the job; `jobs resolve` records the
-operator's decision and neither stops OpenCode nor undoes side effects.
+One session driver (`runTurn`) serves jobs, dreaming and Discord: it verifies
+a final answer from the native context rather than trusting idleness.
+Unattended turns auto-reject permission prompts by default, so a read-only
+agent keeps going and the denial is recorded. A failure before the prompt is
+accepted (`TurnNotStarted`) means nothing ran: jobs end `failed`, Discord
+turns are discarded and their capacity released. Anything after that which
+cannot be verified (timeout, failed turn, changed agent, host shutdown
+mid-turn) blocks; `jobs resolve` records the operator's decision and neither
+stops OpenCode nor undoes side effects.
+
+### Two queues, one capacity
+
+Discord turns are not host jobs, and this is deliberate. Jobs run in any order
+in fresh sessions and report to a configured destination. Conversation turns
+run in order within one thread, continue that thread's session, reply into the
+thread, and must start within seconds. Folding them into the job table would
+teach the scheduler what a conversation is. What the two share is capacity:
+every turn takes a resource lease from the same pools as jobs
+(`Store.acquireLease`), so the `local-model` limit holds across both.
 
 Future worker cleanup must steer the agent first, retain the tools it needs to
 undo its effects, then perform orchestrator cleanup and verify it. Configurable
@@ -102,40 +115,18 @@ The operator CLI can inspect prompts and operates directly on local state.
 Secrets come from the process environment, preferably resolved with existing
 fnox configuration. aivi does not implement a vault.
 
-## Deferred work
-
-- QMD follow-up: conversation exports, query-time embeddings, optional
-  reranking/expansion, and shared model-resource accounting. Scoped document
-  indexing and keyword search are implemented.
-- Shared resource accounting: native child/background work and indexing must
-  eventually acquire appropriate resource leases; job-count limits are insufficient.
-- Dreaming: review recent conversation deltas, reconcile durable facts with
-  existing documents, preserve provenance, and propose skill changes for approval.
-- Memory decay: record last use/review and consider lowering retrieval priority;
-  deletion candidates require a deliberate policy. No automatic deletion yet.
-- Browser follow-ups: automatic popup ownership, restart reconciliation, screenshots,
-  and secret entry. The MCP-backed profile/tab service is implemented; see [browser control](browser.md).
-- Discord follow-up: verify the implemented single-librarian adapter on the live
-  installation; then consider streaming, attachments, and proactive delivery.
-- Linear: separate installation app-to-agent and project lane-to-app configs,
-  native AgentSessions, idempotent webhooks, delegate ownership and human-needed gates.
-
 ## OpenCode connection
 
 Verified against OpenCode 2.0.3 (see [opencode.md](opencode.md)): the background
 service lives on a random port with basic auth, so the host uses the SDK's
-`Service.discover()` instead of a configured URL. Bearer tokens are rejected.
-Every session aivi creates carries `metadata.aivi = { origin, … }` so future
-conversation indexing and dreaming can select sessions by origin (`discord`,
-`job`, later `linear`) without inspecting content.
+`Service.discover()` instead of a configured URL, once per job or conversation
+turn. Bearer tokens are rejected. Every session aivi creates carries
+`metadata.aivi = { origin, … }` so dreaming and future conversation indexing
+select sessions by origin (`discord`, `job`, `dreaming`, later `linear`)
+without inspecting content.
 
-## Verification
+## Open work
 
-Built and tested on Node 26 on macOS and (CI) Linux. Tests are type-checked and
-exercise real SQLite files/connections, real loopback HTTP, the published v2
-client against a mock server, and plugin registration through a mock host. QMD
-indexing/search run against the real SDK without loading inference models. The
-CLI smoke launches the actual host in both auth modes and checks graceful
-shutdown/reopening. `npm run live:opencode` checks the real OpenCode boundary
-(discovery, auth, plugin activation, prompt round trip) and has passed on the
-target Mac. Live Discord and Chrome verification are still open.
+Status and order live in [roadmap.md](roadmap.md); unscheduled ideas in
+[backlog/](backlog/). Findings from code reviews are in [review/](review/);
+they are findings, not specifications.
