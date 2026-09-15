@@ -4,7 +4,7 @@ aivi uses the published `@opencode/client` and `@opencode/plugin` 2.0.3 packages
 the v2 `Plugin.define` API and native session operations. It does not patch
 OpenCode or read its private storage.
 
-## Verified boundary (OpenCode 2.0.3, macOS, 2026-09-14)
+## Verified boundary (OpenCode 2.0.3, macOS, 2026-09-15)
 
 Milestone 0 of the roadmap, run against a real `opencode service` with
 `github-copilot/gemini-3.8-flash`. Repeat it any time with
@@ -22,7 +22,9 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `knowledge_search`, `browser_control`; tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion }`. |
 | Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the defaults, so a broad `read *` allow must be followed by an explicit `*.env` deny to keep OpenCode's default guard. |
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
-| Changes to a local plugin | The server caches the resolved entrypoint; run `opencode service restart` after changing the plugin package layout. |
+| Changes to a local plugin | The server caches module resolution; run `opencode service restart` after changing the plugin package layout **or after `npm install` rewrites `node_modules`** (the plugin otherwise fails with "Cannot find package"). The restart also reloads every client of that service, including an open TUI. |
+| `session.list` order | `order: "desc"` sorts by `time.updated`, not creation: a prompted older session moves to the top. Dreaming's cursor relies on this. |
+| `.env` under aivi's session policy | With `read *` allow followed by `*.env` deny, a read of `.env` ends as a tool error (no permission prompt); a sibling file reads fine; the content never enters the transcript. |
 
 ## Librarian in native chat
 

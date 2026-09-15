@@ -88,6 +88,4 @@ Project-scoped memory (facts that belong to one project's repository;
 [project-memory](backlog/project-memory.md)), per-person
 memory once identities are linked, memory decay, and a queue-aware schedule that
 waits for quiet hours instead of a fixed cron
-([projects-and-capacity](backlog/projects-and-capacity.md)). Open verification:
-`collectSessions` assumes `session.list` with `order: 'desc'` sorts by
-`time.updated`; confirm at the live boundary (`npm run live:opencode`).
+([projects-and-capacity](backlog/projects-and-capacity.md)).

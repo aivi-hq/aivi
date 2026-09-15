@@ -20,9 +20,8 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 
 Mock tests do not establish these; each has its own command.
 
-- OpenCode: `npm run live:opencode -- --plugin "$PWD/examples/librarian"`.
-  Open items to add to it: `session.list` ordering by `time.updated`
-  (dreaming's cursor assumes it), a `.env` read against the librarian rules.
+- OpenCode: `npm run live:opencode -- --plugin "$PWD/examples/librarian"`
+  (passed 2026-09-15, including `session.list` ordering and the `.env` guard).
 - Browser: `npm run smoke:browser` with Chrome installed.
 - Discord: `aivi … discord register` then `serve` against a test server.
 
