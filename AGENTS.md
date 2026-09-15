@@ -16,6 +16,10 @@ changing runtime behavior.
 - Agents are ordinary OpenCode agents in `<home>/.opencode/agents/`; their
   file is the whole boundary. aivi adds session rules only for paths it
   knows, never a deny.
+- No polling, no periodic timers. React to events: OpenCode's stream, a wake
+  from whoever changed state, a promise that resolves. A timer is acceptable
+  only to wait for a known instant (a due job, a retry backoff) or to satisfy
+  a protocol keep-alive. A "safety net" interval is a poll with a better name.
 
 Design rules for the worker/Linear lifecycle (not built; only config validation
 exists):
