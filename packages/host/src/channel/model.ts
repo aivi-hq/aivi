@@ -51,7 +51,7 @@ export function matchModels(choices: ModelChoice[], query: string, limit: number
           ? 3
           : `${m.modelID}${m.variant ? `@${m.variant}` : ''}`.toLowerCase().startsWith(q)
             ? 2
-            : id.includes(q) || m.name.toLowerCase().includes(q)
+            : id.includes(q) || normalize(m.name).includes(q)
               ? 1
               : 0;
       return { m, score };
@@ -76,7 +76,7 @@ export function resolveModel(
   const exact = choices.find(m => formatModel(m).toLowerCase() === wanted);
   if (exact) return { model: exact };
   const byName = choices.filter(
-    m => `${m.modelID}${m.variant ? `@${m.variant}` : ''}`.toLowerCase() === wanted || m.name.toLowerCase() === wanted,
+    m => `${m.modelID}${m.variant ? `@${m.variant}` : ''}`.toLowerCase() === wanted || normalize(m.name) === wanted,
   );
   if (byName.length === 1) return { model: byName[0]! };
   return { candidates: byName.length ? byName : matchModels(choices, text, 5) };
