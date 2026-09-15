@@ -1,13 +1,21 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Run } from '@aivi/core';
 import { configSchema, silentLogger } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
-import { Channels, connectOpenCode, Store } from '@aivi/host';
+import { CHAT_COMMANDS, Channels, connectOpenCode, Store } from '@aivi/host';
 import { slackConfigSchema } from '../src/config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
-import { conversationParts, createSlackModule, openSlackStore, routeMessage, SLACK } from '../src/module.ts';
+import {
+  conversationParts,
+  createSlackModule,
+  openSlackStore,
+  routeMessage,
+  SLACK,
+  slackManifestCommands,
+} from '../src/module.ts';
 
 const BOT = 'U0000000BOT';
 const ME = 'U0000000001';
@@ -104,24 +112,53 @@ async function fakeOpenCode(
   /** Holds `session.wait` so a test can act while the turn is running. */
   gate: () => Promise<void> = async () => {},
 ) {
-  const prompts: { id: string; text: string; metadata: any }[] = [];
-  const sessions = new Map<string, { agent: string; directory: string }>();
+  const prompts: { id: string; text: string; metadata: any; delivery: string }[] = [];
+  const sessions = new Map<string, { agent: string; directory: string; model?: unknown }>();
+  const interrupted: string[] = [];
   const server = createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
-    const url = req.url!;
+    const url = new URL(req.url!, 'http://x').pathname;
     res.setHeader('content-type', 'application/json');
     if (url.endsWith('/wait')) await gate();
     if (url.startsWith('/api/agent')) return void res.end('{"data":[{"id":"librarian","name":"librarian"}]}');
-    if (url.endsWith('/permission/rules') || url.endsWith('/wait')) return void res.writeHead(204).end();
+    if (url === '/api/model')
+      return void res.end(
+        JSON.stringify({
+          location: {},
+          data: [
+            {
+              id: 'github-copilot/gpt-5.2',
+              providerID: 'github-copilot',
+              modelID: 'gpt-5.2',
+              name: 'GPT 5.2',
+              enabled: true,
+              variants: [{ id: 'high' }],
+              limit: { context: 128_000, output: 16_000 },
+            },
+          ],
+        }),
+      );
+    if (url === '/api/model/default') return void res.end('{"location":{},"data":null}');
+    if (url.endsWith('/message')) return void res.end('{"data":[],"cursor":{"next":null}}');
+    if (url.endsWith('/interrupt')) {
+      interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
+      return void res.end('{"interrupted":true}');
+    }
+    if (url.endsWith('/permission/rules') || url.endsWith('/wait') || url.endsWith('/model'))
+      return void res.writeHead(204).end();
     if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (url === '/api/session' && req.method === 'POST') {
-      sessions.set(body.id, { agent: body.agent, directory: body.location.directory });
+      sessions.set(body.id, {
+        agent: body.agent,
+        directory: body.location.directory,
+        ...(body.model ? { model: body.model } : {}),
+      });
       return void res.end(JSON.stringify({ data: { id: body.id } }));
     }
     if (url.endsWith('/prompt')) {
-      prompts.push({ id: body.id, text: body.text, metadata: body.metadata });
+      prompts.push({ id: body.id, text: body.text, metadata: body.metadata, delivery: body.delivery });
       return void res.end(JSON.stringify({ data: { id: body.id } }));
     }
     if (url.endsWith('/context')) {
@@ -151,7 +188,7 @@ async function fakeOpenCode(
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  return { url: `http://127.0.0.1:${address.port}`, prompts, sessions };
+  return { url: `http://127.0.0.1:${address.port}`, prompts, sessions, interrupted };
 }
 
 function fakeConnection() {
@@ -336,6 +373,49 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.deepEqual(searches.at(-1), { query: 'demo', limit: 3 }, 'a lone word is the query');
   await slack.command({ command: '/spider-search', text: '' });
   assert.match(slack.ephemerals.at(-1)!, /Usage/);
+  // The new commands: help and jobs anywhere; the conversation ones refuse a threads channel and act in a DM.
+  await slack.command({ command: '/spider-help' });
+  assert.match(slack.ephemerals.at(-1)!, /^`\/spider-new` — Start a fresh conversation\n/);
+  assert.equal(slack.ephemerals.at(-1)!.split('\n').length, CHAT_COMMANDS.length);
+  await slack.command({ command: '/spider-jobs' });
+  assert.match(slack.ephemerals.at(-1)!, /^\*\*Next occurrences\*\*\nNo jobs are due\.\n\n\*\*Last runs\*\*\n/);
+  for (const name of ['model', 'stop', 'steer']) {
+    await slack.command({ command: `/spider-${name}`, text: 'x' });
+    assert.match(slack.ephemerals.at(-1)!, /cannot tell which one you mean/, name);
+  }
+  await slack.command({ command: '/spider-stop', channel_id: DM });
+  assert.equal(slack.ephemerals.at(-1), 'Nothing is running in this conversation.');
+  await slack.command({ command: '/spider-steer', channel_id: DM });
+  assert.equal(slack.ephemerals.at(-1), 'Usage: /spider-steer TEXT');
+  await slack.command({ command: '/spider-steer', channel_id: DM, text: 'hey' });
+  assert.match(slack.ephemerals.at(-1)!, /^Nothing is running in this conversation\. Send it as a message instead\.$/);
+  assert.ok(!opencode.prompts.some(p => p.delivery === 'steer'), 'nothing was queued or steered');
+  await slack.command({ command: '/spider-model', channel_id: DM });
+  assert.deepEqual(slack.ephemerals.at(-1)!.split('\n'), [
+    '🧠 **Model**',
+    'This conversation: the agent’s default.',
+    'Last answer: none yet.',
+    'Agent `librarian`: unknown (the agent file pins none and OpenCode reports no default).',
+  ]);
+  await slack.command({ command: '/spider-model', channel_id: DM, text: 'nope' });
+  assert.match(slack.ephemerals.at(-1)!, /^No model is called `nope`\. Nothing in the catalogue matches/);
+  await slack.command({ command: '/spider-model', channel_id: DM, text: 'GPT 5.2 (high)' });
+  assert.equal(
+    slack.ephemerals.at(-1),
+    'This conversation answers with `github-copilot/gpt-5.2@high` from its next message on, until /new.',
+  );
+  await slack.command({ command: '/spider-model', channel_id: DM });
+  assert.match(slack.ephemerals.at(-1)!, /This conversation: `github-copilot\/gpt-5\.2@high` \(pinned with \/model/);
+  await slack.event(message({ channel: DM, ts: '16.0', text: 'with the pinned model' }));
+  await until(() => slack.posts.length === 8, 'answered in the DM');
+  const dmSession = inbox.sessionOf(DM)!.session;
+  assert.deepEqual(opencode.sessions.get(dmSession)!.model, {
+    providerID: 'github-copilot',
+    id: 'gpt-5.2',
+    variant: 'high',
+  });
+  await slack.command({ command: '/spider-new', channel_id: DM });
+  assert.equal(inbox.sessionOf(DM)!.model, null, '/new clears the pin');
 
   assert.ok(
     !slack.reactions.some(r => r.startsWith('+hourglass')),
@@ -457,4 +537,81 @@ test('progress: the placeholder goes into the thread, is updated through chat.up
   assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'Answer', threadTs: '30.0' });
   assert.equal(slack.edits[1], `${HOME}:1001.0 deleted`);
   assert.ok(!listeners.has(session), 'the watch is released with the turn');
+});
+
+test('the manifest in docs/slack.md carries the shared command table, so the doc and the handlers cannot drift', async () => {
+  const doc = await readFile(new URL('../../../docs/slack.md', import.meta.url), 'utf8');
+  const block = `  slash_commands:\n${slackManifestCommands()}\noauth_config:`;
+  assert.ok(doc.includes(block), `docs/slack.md must contain:\n${block}`);
+  assert.match(
+    slackManifestCommands('spider'),
+    /^ {4}- command: \/spider-new\n {6}description: Start a fresh conversation\n {6}should_escape: false\n/,
+  );
+  assert.match(slackManifestCommands(), /usage_hint: "\[model\]"/, 'a hint that YAML would read as a list is quoted');
+});
+
+test('-steer and -stop act on the running turn; -model is refused while it runs', async t => {
+  const store = new Store(':memory:');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const opencode = await fakeOpenCode(t, 'Answer', () => gate);
+  const loaded = {
+    config: configSchema.parse({ version: 1, opencode: { url: opencode.url } }),
+    path: '/aivi.json',
+    projects: [],
+    sources: [],
+  };
+  const slack = fakeConnection();
+  const abort = new AbortController();
+  const services: HostServices = {
+    loaded,
+    store,
+    knowledge: { search: async () => [], index: async () => ({}), close: async () => {} },
+    opencode: () => connectOpenCode(loaded.config.opencode, {}),
+    events: noEvents,
+    signal: abort.signal,
+    log: silentLogger,
+    channels: new Channels(),
+    wake: () => {},
+    onWake: () => () => {},
+    fail: error => assert.fail(String(error)),
+  };
+  const running = await createSlackModule(config, slack.connection).start(services);
+  t.after(async () => {
+    release();
+    await running.stop();
+    store.close();
+  });
+  const inbox = openSlackStore(store, config);
+  await slack.event(message({ channel: DM, ts: '40.0', text: 'take your time' }));
+  await until(() => opencode.prompts.length === 1 && inbox.sessionOf(DM)?.ready === true, 'the turn is running');
+  const session = inbox.sessionOf(DM)!.session;
+
+  await slack.command({ command: '/spider-steer', channel_id: DM, text: 'also the appendix' });
+  assert.equal(slack.ephemerals.at(-1), 'Passed on to the agent mid-turn.');
+  assert.deepEqual(opencode.prompts.at(-1), {
+    id: undefined,
+    text: `[Slack message from Me (user ${ME})]\nalso the appendix`,
+    delivery: 'steer',
+    metadata: { aivi: { origin: 'slack', channel: DM, user: ME, steer: `msg_slack_${DM}_40_0` } },
+  });
+  assert.equal(inbox.list().length, 1, 'a steer is not a queued turn');
+
+  await slack.command({ command: '/spider-model', channel_id: DM, text: 'github-copilot/gpt-5.2' });
+  assert.match(slack.ephemerals.at(-1)!, /^A turn is running in this conversation\./);
+  assert.equal(inbox.sessionOf(DM)!.model, null);
+
+  await slack.command({ command: '/spider-stop', channel_id: DM });
+  assert.equal(slack.ephemerals.at(-1), 'Stopped.');
+  assert.deepEqual(opencode.interrupted, [session]);
+  await until(() => slack.posts.length === 1, 'the DM hears it in place of the answer');
+  assert.deepEqual(slack.posts[0], { channel: DM, text: 'Stopped at your request.' });
+  const [turn] = inbox.list();
+  assert.deepEqual([turn!.state, turn!.error], ['discarded', 'Stopped at the person’s request']);
+  assert.equal(store.leases().length, 0, 'capacity is released');
+  await until(() => slack.reactions.at(-1) === `-eyes@${DM}:40.0`, 'the working reaction is cleared');
+  await slack.command({ command: '/spider-stop', channel_id: DM });
+  assert.equal(slack.ephemerals.at(-1), 'Nothing is running in this conversation.');
 });

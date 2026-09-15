@@ -2,12 +2,21 @@ import type { AccessRoute } from '@aivi/core';
 import { accessEntry } from '@aivi/core';
 import type { ChannelDelivery, ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
 import {
+  CHAT_COMMANDS,
   ChannelEngine,
   ConversationStore,
   createTurnRunner,
   describeConversation,
+  describeJobs,
+  describeModel,
+  helpText,
+  isChatCommand,
   splitReply,
   status,
+  steerTurn,
+  stopTurn,
+  switchModel,
+  usageHint,
 } from '@aivi/host';
 import type { SlackConfig } from './config.ts';
 import { authorized, isDMChannelId } from './config.ts';
@@ -19,7 +28,6 @@ export const SLACK: ChannelPlatform = { id: 'slack', label: 'Slack', replyLimit:
 const WAITING = 'hourglass_flowing_sand';
 /** Slack has no typing indicator for bots; 👀 on the message says the agent is on it. */
 const WORKING = 'eyes';
-const COMMANDS = ['new', 'status', 'search', 'context'] as const;
 
 export function bindingFor(config: SlackConfig): string {
   return JSON.stringify({ agent: config.agent, directory: config.directory });
@@ -27,6 +35,24 @@ export function bindingFor(config: SlackConfig): string {
 /** The Slack inbox in the host database; the CLI and the module open the same one. */
 export function openSlackStore(store: Store, config: SlackConfig): ConversationStore {
   return new ConversationStore(store, SLACK, bindingFor(config));
+}
+
+/**
+ * The `slash_commands` block of the app manifest, from the shared command table. Slack has
+ * no API for slash commands, so docs/slack.md carries this text and a test keeps it current.
+ */
+export function slackManifestCommands(prefix = '{prefix}'): string {
+  // A plain YAML scalar cannot start with an indicator (`[model]`) or contain `: `, `#` or quotes.
+  const scalar = (text: string) => (/^[[\]{}&*!|>'"%@`]|[:#"]/.test(text) ? JSON.stringify(text) : text);
+  return CHAT_COMMANDS.map(command => {
+    const usage = usageHint(command);
+    return [
+      `    - command: /${prefix}-${command.name}`,
+      `      description: ${scalar(command.description)}`,
+      ...(usage ? [`      usage_hint: ${scalar(usage)}`] : []),
+      '      should_escape: false',
+    ].join('\n');
+  }).join('\n');
 }
 
 /** A conversation is a DM channel, a whole channel, or a thread as `channel:thread_ts`. */
@@ -208,8 +234,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
     const onCommand = async (command: SlackCommand) => {
       if (abort.signal.aborted) return;
       const name = command.command.replace(/^\//, '').slice(config.commandPrefix.length + 1);
-      if (!command.command.startsWith(`/${config.commandPrefix}-`) || !(COMMANDS as readonly string[]).includes(name))
-        return;
+      if (!command.command.startsWith(`/${config.commandPrefix}-`) || !isChatCommand(name)) return;
       const channel = command.channel_id;
       const route: AccessRoute = {
         channelId: channel,
@@ -220,14 +245,17 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         knownConversation: store.has(channel),
       };
       const reply = (text: string) => slack.ephemeral(command.response_url, text);
+      const spell = (n: string) => `/${config.commandPrefix}-${n}`;
       if (!authorized(config, route)) return reply('This user or conversation is not enabled for aivi.');
+      if (name === 'help') return reply(helpText(spell));
+      if (name === 'jobs') return reply(describeJobs(services.store));
       if (name === 'search') {
         // `QUERY [project]`: the last word is a project only when it names a configured one.
         const words = command.text.trim().split(/\s+/).filter(Boolean);
         const last = words.at(-1);
         const project = words.length > 1 && services.loaded.projects.some(p => p.id === last) ? words.pop() : undefined;
         const query = words.join(' ');
-        if (!query) return reply(`Usage: /${config.commandPrefix}-search QUERY [project]`);
+        if (!query) return reply(`Usage: ${spell('search')} QUERY [project]`);
         try {
           const hits = await services.knowledge.search({
             query,
@@ -249,18 +277,45 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       }
       // Slash commands carry no thread, so in thread mode they speak for the channel: every new
       // top-level message is already a fresh conversation, and status covers all its threads.
+      // Anything that acts on one conversation cannot tell which thread is meant.
       const threads = !route.isDM && accessEntry(config.access, route)?.sessions === 'threads';
+      if (threads && ['context', 'model', 'stop', 'steer'].includes(name))
+        return reply(
+          'In this channel every thread is its own conversation; slash commands cannot tell which one you mean.',
+        );
       if (name === 'context') {
-        if (threads)
-          return reply(
-            'In this channel every thread is its own conversation; slash commands cannot tell which one you mean.',
-          );
         try {
           return reply(await describeConversation(store, channel, config, services.loaded, services.opencode));
         } catch (error) {
           log.warn('context.failed', { error });
           return reply('I could not read this session from OpenCode just now.');
         }
+      }
+      if (name === 'model') {
+        const wanted = command.text.trim();
+        try {
+          return reply(
+            wanted
+              ? await switchModel(store, channel, config, services.opencode, wanted)
+              : await describeModel(store, channel, config, services.opencode),
+          );
+        } catch (error) {
+          log.warn('model.failed', { error });
+          return reply('I could not read the model catalogue from OpenCode just now.');
+        }
+      }
+      if (name === 'stop') {
+        const result = await stopTurn(engine!, services.opencode, channel);
+        if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
+        return reply(result.text);
+      }
+      if (name === 'steer') {
+        const text = command.text.trim();
+        if (!text) return reply(`Usage: ${spell('steer')} TEXT`);
+        const speaker = { name: await nameOf(command.user_id), user: command.user_id };
+        const result = await steerTurn(store, SLACK, services.opencode, channel, speaker, text);
+        if (result.error) log.warn('steer.failed', { error: result.error });
+        return reply(result.text);
       }
       if (name === 'new') {
         if (threads)

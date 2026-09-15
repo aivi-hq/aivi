@@ -48,18 +48,26 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   [channels](channels.md#progress-while-a-turn-runs). `chat:write` covers
   editing and deleting the bot's own messages; no new scope is needed.
 - Slash commands are predefined in the app manifest with a configurable
-  prefix (`commandPrefix`, default `aivi`): `/<prefix>-new`,
-  `/<prefix>-status`, `/<prefix>-context`, `/<prefix>-search QUERY [project]`;
-  replies are ephemeral through the command's `response_url`. Slack commands
+  prefix (`commandPrefix`, default `aivi`), one per entry of the shared
+  command table ([channels](channels.md#chat-commands)): `/<prefix>-new`,
+  `/<prefix>-status`, `/<prefix>-context`, `/<prefix>-search QUERY [project]`,
+  `/<prefix>-model [model]`, `/<prefix>-stop`, `/<prefix>-steer TEXT`,
+  `/<prefix>-jobs`, `/<prefix>-help`; replies are ephemeral through the
+  command's `response_url`. Slack commands
   carry no thread, so in a `threads` channel they speak for the channel:
   `-new` says that every new top-level message already starts a fresh
   conversation, `-status` counts the pending turns of all its threads, and
-  `-context` says it cannot tell which thread is meant (Slack itself refuses
-  slash commands inside threads; ask the agent for the context there). In a DM or a
-  `channel`-mode channel they behave like Discord's `/new`, `/status` and
-  `/context` ([discord](discord.md#behavior)).
+  `-context`, `-model`, `-stop` and `-steer` say they cannot tell which
+  thread is meant (Slack itself refuses slash commands inside threads; ask the
+  agent for the context there). In a DM or a `channel`-mode channel they
+  behave like Discord's commands ([discord](discord.md#behavior)).
   `-search` treats the last word as a project only when it names a
-  configured one.
+  configured one. `-model` takes free text (`provider/model`,
+  `provider/model@variant`, a unique model id or display name, or `default`),
+  validated against OpenCode's catalogue; an unknown name gets the closest
+  matches. The manifest's `slash_commands` block below is generated from the
+  same table (`slackManifestCommands`) and a test keeps the two equal;
+  re-apply the manifest in Slack's app settings when it changes.
 - Sessions carry `metadata.aivi = { origin: "slack", channel }` and each
   prompt the Slack `channel:ts` as `sourceMessage`
   ([identifiers](channels.md#identifiers-and-prefixes)).
@@ -84,11 +92,28 @@ features:
       description: Show this conversation status
       should_escape: false
     - command: /{prefix}-context
-      description: What this conversation's session knows
+      description: "What this conversation’s session knows: model, window, tokens, knowledge in scope"
       should_escape: false
     - command: /{prefix}-search
       description: Search team knowledge
       usage_hint: QUERY [project]
+      should_escape: false
+    - command: /{prefix}-model
+      description: Show or switch this conversation’s model (until /new)
+      usage_hint: "[model]"
+      should_escape: false
+    - command: /{prefix}-stop
+      description: Stop the turn running in this conversation
+      should_escape: false
+    - command: /{prefix}-steer
+      description: Tell the agent something while it works on this conversation
+      usage_hint: TEXT
+      should_escape: false
+    - command: /{prefix}-jobs
+      description: Upcoming job occurrences and recent runs
+      should_escape: false
+    - command: /{prefix}-help
+      description: List aivi’s commands
       should_escape: false
 oauth_config:
   scopes:
@@ -187,9 +212,11 @@ Block Kit beyond the `markdown` block (layouts, interactive components),
 multi-workspace (org) installs.
 
 Tests mirror Discord's: routing and access with Slack ids, the example
-config, and the module against a fake connection and the real OpenCode client
+config, the manifest snippet above against the shared command table, and the
+module against a fake connection and the real OpenCode client
 on a mock server (mention → thread reply, dedupe, files, report thread
-adoption, re-entry, slash commands, waiting reaction, not-started turns, the
+adoption, re-entry, slash commands including `-model`, `-stop` and `-steer`
+against a running turn, waiting reaction, not-started turns, the
 progress placeholder through `chat.update`/`chat.delete`). The
 Socket Mode client itself is only exercised live.
 
@@ -205,4 +232,3 @@ Socket Mode client itself is only exercised live.
   assistant threads (the app's DM in the AI side panel), not in channel
   threads, and it changes the DM UX (suggested prompts, split view). An option
   for DM-heavy use; the 👀 reaction covers channels either way.
-- See [chat commands](backlog/chat-commands.md).
