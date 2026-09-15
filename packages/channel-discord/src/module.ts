@@ -1,15 +1,27 @@
 import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
 import { accessEntry, errorMessage } from '@aivi/core';
-import type { ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
+import type { ChannelPlatform, ChatCommand, ChatCommandName, HostModule, HostServices, Store, Turn } from '@aivi/host';
 import {
+  CHAT_COMMANDS,
   ChannelEngine,
   ConfigurationError,
   ConversationStore,
+  chatCommand,
   createTurnRunner,
   describeConversation,
+  describeJobs,
+  describeModel,
+  formatModel,
+  helpText,
+  isChatCommand,
+  listModels,
+  matchModels,
   splitReply,
   status,
+  steerTurn,
+  stopTurn,
+  switchModel,
 } from '@aivi/host';
 import {
   ChannelType,
@@ -32,7 +44,6 @@ const safeSend = {
   allowedMentions: { parse: [] as never[], repliedUser: false },
   flags: MessageFlags.SuppressEmbeds as const,
 };
-const COMMANDS = ['new', 'status', 'context', 'search'] as const;
 /** Discord's message limit is 2000 UTF-16 units; stay below it with room for formatting. */
 export const DISCORD: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 
@@ -44,6 +55,22 @@ export function openDiscordStore(store: Store, config: DiscordConfig): Conversat
   return new ConversationStore(store, DISCORD, bindingFor(config));
 }
 
+/** The slash commands as Discord wants them, one per entry of the shared command table. */
+export function discordCommands(): SlashCommandBuilder[] {
+  return (CHAT_COMMANDS as readonly ChatCommand[]).map(command => {
+    const builder = new SlashCommandBuilder().setName(command.name).setDescription(command.description);
+    for (const argument of command.arguments)
+      builder.addStringOption(option =>
+        option
+          .setName(argument.name)
+          .setDescription(argument.description)
+          .setRequired(argument.required)
+          .setAutocomplete(Boolean(argument.autocomplete)),
+      );
+    return builder;
+  });
+}
+
 /**
  * Tell Discord which slash commands exist. One bulk overwrite, so it is idempotent
  * and removes commands aivi no longer has. Runs at every module start (after the
@@ -53,23 +80,10 @@ export function openDiscordStore(store: Store, config: DiscordConfig): Conversat
 export async function registerDiscordCommands(config: DiscordConfig): Promise<void> {
   const token = requireToken();
   const rest = new REST({ version: '10', timeout: 15000, retries: 0 }).setToken(token);
-  const commands = [
-    new SlashCommandBuilder().setName('new').setDescription('Start a fresh conversation'),
-    new SlashCommandBuilder().setName('status').setDescription('Show this conversation status'),
-    new SlashCommandBuilder()
-      .setName('context')
-      .setDescription('What this conversation’s session knows: agent, model, messages, tokens, knowledge in scope'),
-    new SlashCommandBuilder()
-      .setName('search')
-      .setDescription('Search team knowledge')
-      .addStringOption(o => o.setName('query').setDescription('Search terms').setRequired(true))
-      .addStringOption(o => o.setName('project').setDescription('Optional project ID; includes core knowledge')),
-  ];
-  for (const command of commands)
-    if (!(COMMANDS as readonly string[]).includes(command.name))
-      throw new Error(`Registered Discord command ${command.name} has no handler`);
   await rest.put(Routes.applicationCommands(config.applicationId), {
-    body: commands.map(c => c.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).toJSON()),
+    body: discordCommands().map(c =>
+      c.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM).toJSON(),
+    ),
   });
 }
 
@@ -276,8 +290,9 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     client.on(Events.InteractionCreate, interaction => {
       void (async () => {
         if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
-        if (!interaction.isChatInputCommand() || !(COMMANDS as readonly string[]).includes(interaction.commandName))
-          return;
+        if (!interaction.isChatInputCommand() && !interaction.isAutocomplete()) return;
+        if (!isChatCommand(interaction.commandName)) return;
+        const name: ChatCommandName = interaction.commandName;
         const channel = interaction.channel;
         const route: Route = {
           channelId: interaction.channelId,
@@ -288,6 +303,25 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           mentioned: true, // a slash command is an explicit address
           knownConversation: store.has(interaction.channelId),
         };
+        if (interaction.isAutocomplete()) {
+          // Choices for /model come from OpenCode's catalogue for the conversation's directory; Discord takes 25.
+          if (name !== 'model' || !authorized(config, route)) return void (await interaction.respond([]));
+          try {
+            const directory = store.sessionOf(interaction.channelId)?.directory ?? config.directory;
+            const choices = matchModels(
+              await listModels(await services.opencode(), directory, AbortSignal.timeout(2500)),
+              interaction.options.getFocused(),
+              25,
+            );
+            await interaction.respond(
+              choices.map(m => ({ name: formatModel(m).slice(0, 100), value: formatModel(m) })),
+            );
+          } catch (error) {
+            log.warn('autocomplete.failed', { error });
+            await interaction.respond([]).catch(() => {});
+          }
+          return;
+        }
         if (!authorized(config, route)) {
           await interaction.reply({
             content: 'This user or conversation is not enabled for aivi.',
@@ -295,7 +329,13 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           });
           return;
         }
-        if (interaction.commandName === 'search') {
+        const reply = (content: string) =>
+          interaction.deferred
+            ? interaction.editReply({ content, allowedMentions: safeSend.allowedMentions })
+            : interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
+        if (name === 'help') return void (await reply(helpText(n => `/${n}`)));
+        if (name === 'jobs') return void (await reply(describeJobs(services.store)));
+        if (name === 'search') {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           try {
             const project = interaction.options.getString('project');
@@ -321,51 +361,90 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           }
           return;
         }
-        let content: string;
-        // In thread mode the channel itself is never a conversation; /new, /status and /context belong in a thread.
-        if (!route.isDM && route.parentId === null && accessEntry(config.access, route)?.sessions === 'threads') {
-          content = 'Run this inside a thread. In this channel every conversation is its own thread.';
-        } else if (interaction.commandName === 'context') {
+        // In thread mode the channel itself is never a conversation; the conversation commands belong in a thread.
+        if (
+          chatCommand(name).conversation &&
+          !route.isDM &&
+          route.parentId === null &&
+          accessEntry(config.access, route)?.sessions === 'threads'
+        )
+          return void (await reply('Run this inside a thread. In this channel every conversation is its own thread.'));
+        const conversation = interaction.channelId;
+        if (name === 'context') {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           try {
-            content = await describeConversation(
-              store,
-              interaction.channelId,
-              config,
-              services.loaded,
-              services.opencode,
-            );
+            await reply(await describeConversation(store, conversation, config, services.loaded, services.opencode));
           } catch (error) {
             log.warn('context.failed', { error });
-            content = 'I could not read this session from OpenCode just now.';
+            await reply('I could not read this session from OpenCode just now.');
           }
-          await interaction.editReply({ content, allowedMentions: safeSend.allowedMentions });
           return;
-        } else if (interaction.commandName === 'new') {
+        }
+        if (name === 'model') {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          const wanted = interaction.options.getString('model');
           try {
-            store.reset(interaction.channelId);
-            content = 'The next message starts a fresh session. Previous sessions remain in OpenCode.';
-          } catch {
-            content = 'This conversation has queued or unresolved work. Finish or resolve it before starting fresh.';
+            await reply(
+              wanted
+                ? await switchModel(store, conversation, config, services.opencode, wanted)
+                : await describeModel(store, conversation, config, services.opencode),
+            );
+          } catch (error) {
+            log.warn('model.failed', { error });
+            await reply('I could not read the model catalogue from OpenCode just now.');
           }
-        } else {
-          const pending = store.list(interaction.channelId).filter(t => !['sent', 'discarded'].includes(t.state));
-          const host = status(services.store, services.loaded);
-          const upcoming = host.upcoming
-            .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
-            .join(', ');
-          const tally = new Map<string, number>();
-          for (const r of host.recent) tally.set(r.state, (tally.get(r.state) ?? 0) + 1);
-          const recent = [...tally].map(([state, n]) => `${n} ${state}`).join(', ');
-          content = [
+          return;
+        }
+        if (name === 'stop') {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          const result = await stopTurn(engine!, services.opencode, conversation);
+          if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
+          return void (await reply(result.text));
+        }
+        if (name === 'steer') {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          const member = interaction.member;
+          const speaker = {
+            name: member && 'displayName' in member ? member.displayName : interaction.user.displayName,
+            user: interaction.user.id,
+          };
+          const result = await steerTurn(
+            store,
+            DISCORD,
+            services.opencode,
+            conversation,
+            speaker,
+            interaction.options.getString('text', true),
+          );
+          if (result.error) log.warn('steer.failed', { error: result.error });
+          return void (await reply(result.text));
+        }
+        if (name === 'new') {
+          try {
+            store.reset(conversation);
+            await reply('The next message starts a fresh session. Previous sessions remain in OpenCode.');
+          } catch {
+            await reply('This conversation has queued or unresolved work. Finish or resolve it before starting fresh.');
+          }
+          return;
+        }
+        const pending = store.list(conversation).filter(t => !['sent', 'discarded'].includes(t.state));
+        const host = status(services.store, services.loaded);
+        const upcoming = host.upcoming
+          .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
+          .join(', ');
+        const tally = new Map<string, number>();
+        for (const r of host.recent) tally.set(r.state, (tally.get(r.state) ?? 0) + 1);
+        const recent = [...tally].map(([state, n]) => `${n} ${state}`).join(', ');
+        await reply(
+          [
             pending.length
               ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
               : 'Ready for your next message.',
             upcoming ? `Next jobs: ${upcoming}.` : 'No jobs are due.',
             recent ? `Runs in the last 24 h: ${recent}.` : 'No runs finished in the last 24 h.',
-          ].join('\n');
-        }
-        await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
+          ].join('\n'),
+        );
       })().catch(error => log.error('command.failed', { error }));
     });
 
@@ -389,7 +468,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     // Commands follow the code: register at every start so a new command needs no manual step.
     // Best effort; Discord's API being slow is no reason to keep the conversations waiting.
     registerDiscordCommands(config).then(
-      () => log.info('commands.registered', { commands: COMMANDS }),
+      () => log.info('commands.registered', { commands: CHAT_COMMANDS.map(c => c.name) }),
       error => log.warn('commands.register_failed', { error }),
     );
 

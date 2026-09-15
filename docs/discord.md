@@ -56,6 +56,23 @@ the host's. This page has what is Discord's.
   one would start. Asking the agent in prose gives the same text through
   `aivi_context`.
 - `/search query [project]` calls the shared knowledge service directly; no model turn is needed.
+- `/model` shows what this conversation is pinned to (if anything), the
+  model its session last answered with, and the agent file's own model.
+  `/model <model>` pins the conversation to a catalogue model for its next
+  turns until `/new` (`provider/model` or `provider/model@variant`; the option
+  autocompletes from OpenCode's catalogue for the agent's directory; a model
+  id or display name that names exactly one entry works too, anything else
+  gets the closest matches); `/model default` unpins. Refused while a turn is
+  running here. Shared behaviour: [channels](channels.md#chat-commands).
+- `/stop` aborts the turn running in this conversation: the thread hears
+  "Stopped at your request." in place of the answer, the turn is discarded
+  (not blocked), its capacity released, OpenCode's session interrupted, and
+  queued messages follow. Nothing running: it says so.
+- `/steer text` passes text into the running turn (`delivery: "steer"`)
+  instead of queueing it behind; with no turn running it says so and queues
+  nothing.
+- `/jobs` lists the next five job occurrences and the last ten runs.
+- `/help` lists the commands, one line each.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
   grant Add Reactions), a typing indicator while the agent works, a
@@ -131,7 +148,8 @@ npm run aivi -- serve
 ```
 
 Commands follow the code: at every start the module overwrites the application's
-command list with `/new`, `/status`, `/context` and `/search` (best effort,
+command list with the shared command table (`/new`, `/status`, `/context`,
+`/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/help`; best effort,
 logged); `discord register` does the same on demand without a restart. Global
 commands can take up to an hour to appear in clients. Only the final command is a long-running aivi process: it starts
 the host HTTP API, scheduler, knowledge service, and Discord together. OpenCode
@@ -184,14 +202,14 @@ automatic cleanup. Both jobs and Discord turns use the same verified-final-answe
 driver; only blocked work needs an operator. Use trusted native plugins in the
 librarian location: plugins remain executable OpenCode extensions.
 
-Tests in this package cover Discord routing and the example config; the shared
+Tests in this package cover Discord routing, the slash command definitions
+against the shared table, and the example config; the shared
 inbox, engine and turn runner are tested in the host with the real OpenCode
 client against a mock server. Live status is in the [README](../README.md#status).
 
 ## Later
 
-- `/steer`: submit a message with `delivery: "steer"` into the running turn
-  instead of queueing behind it (OpenCode supports both).
 - Several Discord agents per installation (per channel or several module
-  instances); the config already carries `agent` and `directory`.
-- See [chat commands](backlog/chat-commands.md).
+  instances); the config already carries `agent` and `directory`. `/agent` is
+  deliberately not a command: one librarian per bot, personalities by
+  configuration.

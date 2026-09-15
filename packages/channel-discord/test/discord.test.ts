@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { CHAT_COMMANDS } from '@aivi/host';
+import { ApplicationCommandOptionType } from 'discord.js';
 import { authorized, discordConfigSchema } from '../src/config.ts';
-import { DISCORD } from '../src/module.ts';
+import { DISCORD, discordCommands } from '../src/module.ts';
 
 const config = discordConfigSchema.parse({
   version: 1,
@@ -93,4 +95,32 @@ test('access policy: allow-listed DMs, mention-triggered public channels, restri
   );
   assert.equal(config.access.channels[0]!.trigger, 'mention-to-start', 'natural thread behaviour is the default');
   assert.deepEqual(DISCORD, { id: 'discord', label: 'Discord', replyLimit: 1900 });
+});
+
+test('slash commands are the shared table, so a command cannot exist without a handler or vice versa', () => {
+  const commands = discordCommands().map(c => c.toJSON());
+  assert.deepEqual(
+    commands.map(c => c.name),
+    CHAT_COMMANDS.map(c => c.name),
+  );
+  const byName = new Map(commands.map(c => [c.name, c]));
+  assert.equal(byName.get('new')!.options?.length ?? 0, 0);
+  assert.deepEqual(
+    byName.get('search')!.options!.map(o => [o.name, o.type, o.required]),
+    [
+      ['query', ApplicationCommandOptionType.String, true],
+      ['project', ApplicationCommandOptionType.String, false],
+    ],
+  );
+  const model = byName.get('model')!.options![0]!;
+  assert.deepEqual(
+    [model.name, model.required, (model as { autocomplete?: boolean }).autocomplete],
+    ['model', false, true],
+  );
+  const steer = byName.get('steer')!.options![0]!;
+  assert.deepEqual(
+    [steer.name, steer.required, (steer as { autocomplete?: boolean }).autocomplete],
+    ['text', true, false],
+  );
+  assert.ok(commands.every(c => c.description.length <= 100));
 });
