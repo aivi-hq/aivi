@@ -36,8 +36,10 @@ there is no separate Discord server or daemon command.
 - The librarian session is read-only: deny-all, then allow read/glob/grep, Code
   Mode, skills, web fetch/search, and the aivi tools (`knowledge_search`,
   `aivi_sources`, `aivi_status`) plus reads inside configured knowledge
-  sources. Never shell, edit, subagents, or browser. Permission prompts are
-  auto-rejected because nobody is at the server to approve them.
+  sources. Never shell, edit, or subagents. The browser is off unless the
+  Discord config sets `"browser": true`, which adds `browser_control` to the
+  allow-list (aivi's own Chrome, see [browser](browser.md)). Permission
+  prompts are auto-rejected because nobody is at the server to approve them.
 - `/new` starts fresh on the next message, preserving old native sessions. It
   refuses while that conversation has queued, running, or blocked turns.
 - `/status` shows only that conversation's pending states.

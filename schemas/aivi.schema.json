@@ -158,103 +158,118 @@
       "additionalProperties": false
     },
     "browser": {
-      "type": "object",
-      "properties": {
+      "description": "Chrome for browser_control. Default: aivi launches its own Chrome with a profile under state/chrome on first use. `false` disables the browser service.",
+      "default": {
         "connection": {
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "const": "launch"
-                },
-                "userDataDir": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "executablePath": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "headless": {
-                  "default": false,
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "mode",
-                "userDataDir"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "const": "existing"
-                },
-                "userDataDir": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "mode",
-                "userDataDir"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "const": "attach"
-                },
-                "browserUrl": {
-                  "type": "string",
-                  "format": "uri"
-                }
-              },
-              "required": [
-                "mode",
-                "browserUrl"
-              ],
-              "additionalProperties": false
-            }
-          ]
-        },
-        "maxTabsPerSession": {
-          "default": 5,
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 50
-        },
-        "maxTabs": {
-          "default": 20,
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 100
-        },
-        "maxPending": {
-          "default": 16,
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 100
-        },
-        "timeoutMs": {
-          "default": 30000,
-          "type": "integer",
-          "minimum": 1000,
-          "maximum": 60000
+          "mode": "launch",
+          "userDataDir": "state/chrome"
         }
       },
-      "required": [
-        "connection"
-      ],
-      "additionalProperties": false
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "connection": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "const": "launch"
+                    },
+                    "userDataDir": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "executablePath": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "headless": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "userDataDir"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "const": "existing"
+                    },
+                    "userDataDir": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "userDataDir"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "const": "attach"
+                    },
+                    "browserUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "browserUrl"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "maxTabsPerSession": {
+              "default": 5,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "maxTabs": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "maxPending": {
+              "default": 16,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "timeoutMs": {
+              "default": 30000,
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 60000
+            }
+          },
+          "required": [
+            "connection"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "boolean",
+          "const": false
+        }
+      ]
     },
     "search": {
       "type": "object",

@@ -5,6 +5,15 @@ There is no aivi Playwright dependency or replacement automation engine. One
 stdio MCP child belongs to the host; native OpenCode tools call it through aivi.
 Chrome and the MCP child start lazily on the first browser operation.
 
+## Default: aivi's own Chrome
+
+Nothing to configure. With no `browser` entry aivi launches Chrome itself on the
+first browser call, visible (not headless), with a dedicated profile under
+`<home>/state/chrome`. Logins made in that window persist in that profile.
+Set `"browser": false` to disable the service; then `browser_control` reports
+that the browser is not configured. The sections below are for pointing aivi
+at a Chrome you manage yourself.
+
 ## Use an existing Chrome profile
 
 For the normal Chrome experience, start your dedicated aivi Chrome profile yourself,

@@ -152,7 +152,12 @@ export const configSchema = z
     knowledge: z.array(source).default([]),
     projects: z.array(z.strictObject({ id, directory: z.string().min(1) })).default([]),
     modules: z.strictObject({ discord: z.strictObject({ config: z.string().min(1) }).optional() }).default({}),
-    browser: browserConfigSchema.optional(),
+    browser: z
+      .union([browserConfigSchema, z.literal(false)])
+      .prefault({ connection: { mode: 'launch', userDataDir: 'state/chrome' } })
+      .describe(
+        'Chrome for browser_control. Default: aivi launches its own Chrome with a profile under state/chrome on first use. `false` disables the browser service.',
+      ),
     search: z
       .strictObject({
         provider: z.literal('qmd'),
@@ -302,7 +307,7 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
   const base = dirname(path);
   config.stateDirectory = absolute(base, config.stateDirectory);
   if (config.modules.discord) config.modules.discord.config = absolute(base, config.modules.discord.config);
-  const browser = config.browser?.connection;
+  const browser = config.browser ? config.browser.connection : undefined;
   if (browser && browser.mode !== 'attach') {
     browser.userDataDir = absolute(base, browser.userDataDir);
     if (browser.mode === 'launch' && browser.executablePath)

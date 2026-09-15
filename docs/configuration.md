@@ -34,7 +34,7 @@ directories resolve relative to `aivi.json`.
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation` |
 | `projects` | Project registry, each `{id, directory}` |
 | `modules.discord.config` | Optional path to Discord module settings |
-| `browser` | Optional Chrome MCP connection and tab/queue limits; see [browser setup](browser.md) |
+| `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked jobs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |

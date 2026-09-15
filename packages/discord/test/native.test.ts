@@ -149,3 +149,49 @@ test('an unreachable OpenCode is a turn that never started, not a blocked one', 
     (error: unknown) => error instanceof TurnNotStarted && /No running OpenCode/.test(error.message),
   );
 });
+
+test('browser: true adds the browser permission to the Discord session policy; the default denies it', async () => {
+  const base = { version: 1, applicationId: '10000000000000001', directory: '/librarian', access: {} };
+  const rules = async (browser: boolean) => {
+    const config = discordConfigSchema.parse({ ...base, browser });
+    const loaded = { config: configSchema.parse({ version: 1 }), path: '/config', projects: [], sources: [] };
+    let sent: { action: string; effect: string }[] = [];
+    const ask = await createNativeChat(config, loaded, async () => {
+      return {
+        session: {
+          async create() {},
+          async get() {
+            return { agent: 'librarian', location: { directory: '/librarian' } };
+          },
+          async prompt() {
+            throw new Error('stop here');
+          },
+        },
+        permission: {
+          async rules(input: { permissions: { action: string; effect: string }[] }) {
+            sent = input.permissions;
+          },
+        },
+      } as never;
+    });
+    await ask(
+      {
+        id: 'x',
+        channel: 'dm',
+        user: 'u',
+        name: 'n',
+        text: 't',
+        session: 's',
+        ready: false,
+        state: 'running',
+        result: null,
+        error: null,
+      },
+      AbortSignal.timeout(1000),
+      () => {},
+    ).catch(() => {});
+    return sent.filter(p => p.action === 'browser').map(p => p.effect);
+  };
+  assert.deepEqual(await rules(false), []);
+  assert.deepEqual(await rules(true), ['allow']);
+});

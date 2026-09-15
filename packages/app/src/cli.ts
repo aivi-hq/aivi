@@ -257,7 +257,7 @@ async function createResources(loaded: LoadedConfig, once: boolean, log: Logger)
   const knowledge = await createKnowledgeService(loaded, undefined, log);
   // Browser construction is lazy; no Chrome launch occurs until a tool call. A one-shot tick never needs it.
   const browser =
-    !once && loaded.config.browser
+    !once && loaded.config.browser !== false
       ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser)
       : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };

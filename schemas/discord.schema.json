@@ -120,6 +120,10 @@
       "default": false,
       "type": "boolean"
     },
+    "browser": {
+      "default": false,
+      "type": "boolean"
+    },
     "maxConcurrent": {
       "default": 1,
       "type": "integer",

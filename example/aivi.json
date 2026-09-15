@@ -21,12 +21,6 @@
       "directory": "project"
     }
   ],
-  "browser": {
-    "connection": {
-      "mode": "launch",
-      "userDataDir": "state/chrome"
-    }
-  },
   "scheduler": {
     "maxConcurrent": 1,
     "resources": {

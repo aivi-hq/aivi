@@ -33,6 +33,7 @@ export async function createNativeChat(
     'knowledge_search',
     'aivi_sources',
     'aivi_status',
+    ...(config.browser ? ['browser'] : []),
   ];
   const permissions: { action: string; resource: string; effect: 'allow' | 'deny' }[] = [
     { action: '*', resource: '*', effect: 'deny' },

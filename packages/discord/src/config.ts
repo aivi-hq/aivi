@@ -17,8 +17,10 @@ export const discordConfigSchema = z
     access: accessPolicySchema,
     /** Channels aivi may post scheduled job outcomes to (`report.to: "discord"`). Empty: never post proactively. */
     reportChannels: z.array(snowflake).default([]),
-    /** Requires the Message Content intent in the developer portal; needed for `trigger: "any"` in channels. */
+    /** Requires the Message Content intent in the developer portal; needed for any trigger other than "mention". */
     messageContent: z.boolean().default(false),
+    /** Let the librarian use aivi's browser (`browser_control`) in Discord conversations. Off: the session policy denies it. */
+    browser: z.boolean().default(false),
     maxConcurrent: z.number().int().min(1).max(32).default(1),
     maxPending: z.number().int().min(1).max(1000).default(100),
     turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
