@@ -148,7 +148,9 @@ the tests load it.
   today's changes (the lift into the host, the report union, `{ run }` in the
   delivery context): librarian directory, feedback messages, job outcomes
   re-entering threads, report threads adopting run sessions, `/status` lists.
-  Slack has never run live ([slack.md](docs/slack.md)).
+  Slack passed live on 2026-09-15 after the jobs/runs split: DM, mention →
+  thread, `/spider-status`, reactions, outcomes re-entering a thread, report
+  threads adopting the run's session, `aivi_jobs` through the plugin.
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - The docs restructure proposed in `docs/review/docs-consistency.md` §3 is
   deferred until the projects work settles.

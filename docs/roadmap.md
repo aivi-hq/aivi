@@ -13,7 +13,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_jobs`), one-offs, outcomes re-entering conversations, per-run abort added 2026-09-15; definitions vs runs, the misfire grace and retention as a system job the same day; Discord parts await their live gate ([backlog/jobs.md](backlog/jobs.md)). |
 | 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. Lifted onto the channel contract 2026-09-15; live re-check pending. |
-| 5b. Slack adapter | **Built, mock-tested only** ([slack.md](slack.md)); live gate pending. |
+| 5b. Slack adapter | **Done, live-verified** on the owner's workspace 2026-09-15: DMs, mention → thread, `/spider-status`, ⏳/👀 reactions, job outcomes re-entering a thread, report threads adopting the job session ([slack.md](slack.md)). |
 | 6. Worker lifecycle without Linear | Not started. |
 | 7. Native Linear AgentSessions | Not started; configuration validation exists. |
 
@@ -33,9 +33,12 @@ Mock tests do not establish these; each has its own command.
 ## Next, in order of intent
 
 1. Live Discord gate for the jobs work and the channel lift (re-entry turns,
-   report threads, `/status`).
-2. Live Slack gate on the owner's workspace; then Signal and Telegram against
-   the same contract ([backlog/channel-adapters.md](backlog/channel-adapters.md)).
+   report threads, `/status`); Discord's API was down (HTTP 500) during the
+   first attempt on 2026-09-15.
+2. Channel startup resilience and the plugin/type-stripping build changes
+   ([backlog/channel-adapters.md](backlog/channel-adapters.md),
+   [backlog/installation.md](backlog/installation.md)); then Signal and
+   Telegram against the same contract.
 3. Projects as pools and maintenance only when idle
    ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 4. Project-scoped memory and a per-project dreamer boundary
