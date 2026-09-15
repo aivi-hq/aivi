@@ -20,3 +20,7 @@ Use Node 26 (`engines` in `package.json`), pinned dependencies, and npm workspac
 runs focused tests plus the CLI smoke test. Test lifecycle, persistence, and
 configuration changes at the actual boundaries they affect. Live OpenCode and
 macOS verification are separate gates; mock tests do not establish those.
+
+Commits follow Conventional Commits (`type(scope): subject`; lefthook enforces
+it). Run `npm run agentic:verify` (Biome fixes + `npm run check`) before
+committing.

@@ -22,11 +22,14 @@
     "live:opencode": "node scripts/live-opencode.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "agentic:verify": "biome check --write . && npm run check",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
     "@types/node": "26.5.1",
+    "lefthook": "2.1.14",
     "typescript": "5.9.3"
   }
 }

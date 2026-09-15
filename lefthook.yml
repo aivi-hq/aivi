@@ -1,0 +1,18 @@
+# Git hooks. Installed by `npm ci` through the `prepare` script.
+# Hooks stay fast: formatting and the commit message only. Tests run in `npm run agentic:verify`.
+
+output:
+  - failure
+  - summary
+
+pre-commit:
+  commands:
+    biome:
+      glob: '*.{js,mjs,ts,json}'
+      run: npx biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  commands:
+    conventional:
+      run: node scripts/commit-msg.mjs {1}
