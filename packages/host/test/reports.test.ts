@@ -12,6 +12,7 @@ const module = (id: string, overrides: Partial<ChannelModule> = {}): ChannelModu
   id,
   accepts: () => true,
   ownsSession: () => false,
+  channelOf: async () => undefined,
   reenter: async () => {},
   post: async () => {},
   ...overrides,

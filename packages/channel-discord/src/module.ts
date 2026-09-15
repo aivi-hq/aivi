@@ -346,6 +346,13 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       id: DISCORD.id,
       accepts: channelId => config.reportChannels.includes(channelId),
       ownsSession: session => store.channelOf(session) !== null,
+      async channelOf(session) {
+        // A thread's reports go to its parent channel; a channel-mode conversation or a DM is its own.
+        const conversation = store.channelOf(session);
+        if (!conversation) return undefined;
+        const channel = await client.channels.fetch(conversation).catch(() => null);
+        return channel?.isThread() ? (channel.parentId ?? undefined) : conversation;
+      },
       async reenter(session, text, context) {
         store.enqueueJobResult(context.job.id, session, text, config.maxPending);
         engine?.tick();

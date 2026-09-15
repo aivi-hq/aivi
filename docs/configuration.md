@@ -107,10 +107,13 @@ default the host's).
 
 Results default to `report: "session"`: the outcome comes back into the asking
 session as a turn (see Reporting), so the agent tells the person in the thread.
-`channel` posts to `channel` on the platform `module`, which defaults to the
-platform the asking conversation is on and must be named from a native
-session; the channel must be in that module's `reportChannels`. `none` keeps
-quiet. Only failures with `on: "failure"`.
+`channel` posts a new thread to `channel` on the platform `module`. Both
+default to the asking conversation: its platform, and the channel it lives in
+(a thread's parent, a DM itself), so "post it to this channel" needs no ids;
+from a native session both must be named. The channel must be in that module's
+`reportChannels`. `none` keeps quiet. Only failures with `on: "failure"`
+(live finding 2026-09-15: the model never sees channel ids, so a required
+`channel` made "post it here" impossible).
 
 Authority is whoever may talk to the agent (Discord's access policy, or the
 operator in a native session). Jobs do not create jobs: a session whose origin

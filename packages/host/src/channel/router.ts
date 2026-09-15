@@ -34,6 +34,12 @@ export class Channels {
   ownerOf(sessionId: string): string | undefined {
     return [...this.modules.values()].find(m => m.ownsSession(sessionId))?.id;
   }
+  /** The platform channel of the conversation bound to a session, through the module that owns it. */
+  async channelOf(sessionId: string): Promise<{ module: string; channel: string } | undefined> {
+    const owner = [...this.modules.values()].find(m => m.ownsSession(sessionId));
+    const channel = await owner?.channelOf(sessionId);
+    return owner && channel ? { module: owner.id, channel } : undefined;
+  }
   /** Validate a report before a job is created. Returns a reason when it could never be delivered. */
   refuse(report: Report): string | undefined {
     if (report.to === SESSION_DESTINATION)

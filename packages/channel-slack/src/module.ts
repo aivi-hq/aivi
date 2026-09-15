@@ -281,6 +281,10 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       id: SLACK.id,
       accepts: channel => config.reportChannels.includes(channel),
       ownsSession: session => store.channelOf(session) !== null,
+      async channelOf(session) {
+        const conversation = store.channelOf(session);
+        return conversation ? conversationParts(conversation).channel : undefined;
+      },
       async reenter(session, text, context) {
         store.enqueueJobResult(context.job.id, session, text, config.maxPending);
         engine?.tick();

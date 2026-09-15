@@ -101,8 +101,8 @@ The plugin registers `aivi_schedule` (namespace `aivi`, permission action
 `aivi_schedule` like the other aivi tools). Its input is flat: `action`, and for
 `create` one of `prompt`/`command`, one of `at`/`cron` (+ `timezone`), optional
 `title`, `agent`, `directory`, `cwd`, `env`, `timeoutMs`, `report`
-(`session` default; `channel` + `channel` and optionally `module`, which
-defaults to the platform of the calling conversation; `none`) and `on`. The tool adds the
+(`session` default; `channel`, with `channel` and `module` defaulting to the
+calling conversation's own channel and platform; `none`) and `on`. The tool adds the
 calling `sessionID` and `messageID` from the native tool context; the host
 reads the session's agent, directory and `metadata.aivi.origin` from OpenCode
 and refuses sessions with origin `job` or `dreaming` (a job's own session

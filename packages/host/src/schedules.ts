@@ -90,8 +90,6 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
       throw new ScheduleRefused('Give exactly one of prompt (an agent job) or command (a script job).');
     if ((input.at === undefined) === (input.cron === undefined))
       throw new ScheduleRefused('Give exactly one of at (one-off) or cron (recurring).');
-    if (input.report === 'channel' && !input.channel)
-      throw new ScheduleRefused('report "channel" needs the channel id.');
 
     const client = await deps.opencode().catch(error => {
       throw new ScheduleRefused(
@@ -134,7 +132,15 @@ export function createScheduleHandler(deps: ScheduleHandlerDeps): ScheduleHandle
     }
 
     let report: Report | null = null;
-    if (input.report === 'channel') {
+    if (input.report === 'channel' && !input.channel) {
+      // "Post it to this channel": the channel the asking conversation lives in.
+      const here = await channels.channelOf(input.sessionId);
+      if (!here)
+        throw new ScheduleRefused(
+          'report "channel" needs the channel id when the asking session is not a chat conversation.',
+        );
+      report = { to: 'channel', module: input.module ?? here.module, channel: here.channel, on: input.on };
+    } else if (input.report === 'channel') {
       // A conversation asking for a post defaults to its own platform; a native session must say which.
       const module = input.module ?? channels.ownerOf(input.sessionId);
       if (!module)

@@ -70,6 +70,7 @@ export const scheduleRequestSchema = z.discriminatedUnion('action', [
     report: z.enum(['session', 'channel', 'none']).default('session'),
     /** Channel module for `report: "channel"`; defaults to the module that owns the calling session. */
     module: z.string().min(1).optional(),
+    /** Platform channel for `report: "channel"`; defaults to the channel the calling conversation lives in. */
     channel: z.string().min(1).optional(),
     on: z.enum(['always', 'failure']).default('always'),
   }),

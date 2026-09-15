@@ -66,6 +66,7 @@ function setup(store: Store, url: string, enabled = true) {
     accepts: c => c === '42',
     post: async () => {},
     ownsSession: id => ['ses_discord_adopted', 'ses_discord_1'].includes(id),
+    channelOf: async id => (id === 'ses_discord_1' ? '42' : undefined),
     reenter: async () => {},
   });
   const handler = createScheduleHandler({
@@ -145,6 +146,12 @@ test('an agent creates a recurring agent job for its own agent and directory; re
     'a conversation defaults to its own platform',
   );
   assert.match(posted.summary, /posted to discord 42/);
+  const here = await handler({ ...base(), report: 'channel', at: '1h' });
+  assert.deepEqual(
+    store.agentOneOffs().find(j => j.id === here.items[0]!.id)!.report,
+    { to: 'channel', module: 'discord', channel: '42', on: 'always' },
+    '"post it to this channel": the channel the conversation lives in',
+  );
 });
 
 test('one-offs, script jobs, overrides and the report checks', async t => {
@@ -202,7 +209,7 @@ test('one-offs, script jobs, overrides and the report checks', async t => {
   );
   await assert.rejects(
     handler({ ...base, prompt: 'x', at: '1h', report: 'channel', module: 'discord' }),
-    refused(400, /needs the channel/),
+    refused(400, /needs the channel id when the asking session is not a chat conversation/),
   );
   await assert.rejects(
     handler({ ...base, prompt: 'x', at: '1h', report: 'channel', module: 'discord', channel: '7' }),

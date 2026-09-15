@@ -22,6 +22,8 @@ export interface ChannelModule {
   post(channel: string, text: string, context: DeliveryContext): Promise<void>;
   /** Whether a report to `channel` could be delivered; refuses a job before it spends anything. */
   accepts(channel: string): boolean;
+  /** The platform channel a conversation lives in (a thread's parent, a DM itself), for "post it to this channel". */
+  channelOf(sessionId: string): Promise<string | undefined>;
 }
 
 /**

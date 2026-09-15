@@ -20,6 +20,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 | `reenter(sessionId, text, context)` | Bring a job outcome into the conversation bound to that session as a turn of kind `job` |
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
 | `accepts(channel)` | Whether a report to that channel could be delivered; refuses a job before it spends anything |
+| `channelOf(sessionId)` | The platform channel the conversation bound to that session lives in (a thread's parent, a DM itself); "post it to this channel" resolves through it |
 
 Registering is the whole integration with reports: `Channels` (the router on
 `HostServices.channels`) sends `{ to: "channel", module }` reports to the

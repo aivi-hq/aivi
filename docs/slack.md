@@ -177,5 +177,10 @@ Socket Mode client itself is only exercised live.
   started one.
 - Several Slack agents per installation; the config already carries `agent`
   and `directory`.
+- Slack's "Agents & AI Apps" feature (`assistant:write`,
+  `assistant.threads.setStatus`) would add a "thinking…" status, but only in
+  assistant threads (the app's DM in the AI side panel), not in channel
+  threads, and it changes the DM UX (suggested prompts, split view). An option
+  for DM-heavy use; the 👀 reaction covers channels either way.
 - See [chat commands](backlog/chat-commands.md) and
   [conversation feedback](backlog/conversation-feedback.md).

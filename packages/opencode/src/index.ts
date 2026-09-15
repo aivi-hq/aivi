@@ -66,14 +66,17 @@ const scheduleInput = {
       type: 'string',
       enum: ['session', 'channel', 'none'],
       description:
-        'Where results go. session (default): back into this conversation, you will read and relay them. channel: posted to the chat channel named in `channel`. none: nowhere.',
+        'Where results go. session (default): back into this conversation, you will read and relay them. channel: posted as a new thread in a chat channel, by default the channel this conversation is in ("post it here/to this channel"), or the one named in `channel`. none: nowhere.',
     },
     module: {
       type: 'string',
       description:
         'Chat platform for report channel (discord, slack). Default: the platform this conversation is on; required from a native session.',
     },
-    channel: { type: 'string', description: 'Platform channel id when report is channel.' },
+    channel: {
+      type: 'string',
+      description: 'Platform channel id when report is channel; omit for the current channel.',
+    },
     on: {
       type: 'string',
       enum: ['always', 'failure'],
