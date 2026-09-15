@@ -15,6 +15,11 @@ export interface Turn {
   error: string | null;
   /** `message`: a person wrote it. `job`: aivi brings a job's outcome back into the conversation. */
   kind: TurnKind;
+  /** Set when the thread adopted a job's session: that session runs this agent in this directory, not the module's. */
+  agent: string | null;
+  directory: string | null;
+  /** Text posted in the thread before any session existed (a script's output); context for the first turn. */
+  seed: string | null;
 }
 export type TurnState = 'queued' | 'running' | 'replying' | 'sent' | 'blocked' | 'discarded';
 export type TurnKind = 'message' | 'job';
@@ -31,6 +36,9 @@ const turn = (r: Row): Turn => ({
   result: r.result === null ? null : String(r.result),
   error: r.error === null ? null : String(r.error),
   kind: (r.kind as TurnKind | undefined) ?? 'message',
+  agent: r.agent == null ? null : String(r.agent),
+  directory: r.directory == null ? null : String(r.directory),
+  seed: r.seed == null ? null : String(r.seed),
 });
 
 export const LEASE_OWNER = 'discord';
@@ -46,6 +54,9 @@ const migrations = [
    CREATE INDEX discord_pending ON discord_turns(state,seq);`,
   `ALTER TABLE discord_turns ADD COLUMN kind TEXT NOT NULL DEFAULT 'message' CHECK(kind IN ('message','job'));
    CREATE INDEX discord_session_lookup ON discord_sessions(session);`,
+  `ALTER TABLE discord_sessions ADD COLUMN agent TEXT;
+   ALTER TABLE discord_sessions ADD COLUMN directory TEXT;
+   ALTER TABLE discord_sessions ADD COLUMN seed TEXT;`,
 ];
 
 /**
@@ -72,7 +83,9 @@ export class DiscordStore {
           );
         for (const row of core.db.prepare('SELECT channel FROM discord_sessions').all())
           core.db
-            .prepare('UPDATE discord_sessions SET session=?,ready=0 WHERE channel=?')
+            .prepare(
+              'UPDATE discord_sessions SET session=?,ready=0,agent=NULL,directory=NULL,seed=NULL WHERE channel=?',
+            )
             .run(newSession(), String(row.channel));
         core.db.prepare('UPDATE discord_binding SET value=? WHERE id=1').run(binding);
         this.rebound = true;
@@ -120,7 +133,9 @@ export class DiscordStore {
           .get()!.n,
       );
       if (pending >= maxPending) throw new Error('The Discord queue is full. Try again later.');
-      this.core.db.prepare('INSERT OR IGNORE INTO discord_sessions VALUES(?,?,0)').run(input.channel, newSession());
+      this.core.db
+        .prepare('INSERT OR IGNORE INTO discord_sessions(channel,session,ready) VALUES(?,?,0)')
+        .run(input.channel, newSession());
       const session = String(
         this.core.db.prepare('SELECT session FROM discord_sessions WHERE channel=?').get(input.channel)!.session,
       );
@@ -159,7 +174,8 @@ export class DiscordStore {
       }
       this.core.db
         .prepare(
-          'INSERT INTO discord_sessions VALUES(?,?,0) ON CONFLICT(channel) DO UPDATE SET session=excluded.session,ready=0',
+          `INSERT INTO discord_sessions(channel,session,ready) VALUES(?,?,0)
+           ON CONFLICT(channel) DO UPDATE SET session=excluded.session,ready=0,agent=NULL,directory=NULL,seed=NULL`,
         )
         .run(channel, newSession());
     });
@@ -168,7 +184,7 @@ export class DiscordStore {
   /** One turn per channel at a time; the lease reserves shared model capacity. */
   claim(config: Config['scheduler'], resource: string): Turn | null {
     const rows = this.core.db
-      .prepare(`SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel
+      .prepare(`SELECT t.*,s.ready,s.agent,s.directory,s.seed FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel
       WHERE t.state='queued' AND NOT EXISTS (
         SELECT 1 FROM discord_turns busy WHERE busy.channel=t.channel AND busy.state IN ('running','replying','blocked')
       ) ORDER BY t.seq`)
@@ -199,8 +215,29 @@ export class DiscordStore {
   has(channel: string): boolean {
     return Boolean(this.core.db.prepare('SELECT 1 FROM discord_sessions WHERE channel=?').get(channel));
   }
+  /** The native session exists; a seed has been read into its first turn and is no longer needed. */
   ready(channel: string): void {
-    this.core.db.prepare('UPDATE discord_sessions SET ready=1 WHERE channel=?').run(channel);
+    this.core.db.prepare('UPDATE discord_sessions SET ready=1,seed=NULL WHERE channel=?').run(channel);
+  }
+
+  /**
+   * A new thread that shows a job's outcome becomes a conversation. An agent job's
+   * thread continues the job's own session (the agent remembers what it did); a
+   * script job's thread gets a fresh session whose first turn is seeded with the output.
+   */
+  adopt(channel: string, binding: { session: string; agent: string; directory: string } | { seed: string }): void {
+    this.core.transaction(() => {
+      if (this.core.db.prepare('SELECT 1 FROM discord_sessions WHERE channel=?').get(channel))
+        throw new Error(`Discord conversation ${channel} already has a session`);
+      if ('seed' in binding)
+        this.core.db
+          .prepare('INSERT INTO discord_sessions(channel,session,ready,seed) VALUES(?,?,0,?)')
+          .run(channel, newSession(), binding.seed);
+      else
+        this.core.db
+          .prepare('INSERT INTO discord_sessions(channel,session,ready,agent,directory) VALUES(?,?,1,?,?)')
+          .run(channel, binding.session, binding.agent, binding.directory);
+    });
   }
   result(id: string, result: string): void {
     this.core.db.prepare("UPDATE discord_turns SET state='replying',result=? WHERE id=?").run(result, id);
@@ -253,12 +290,12 @@ export class DiscordStore {
     const rows = channel
       ? this.core.db
           .prepare(
-            'SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel WHERE t.channel=? ORDER BY t.seq',
+            'SELECT t.*,s.ready,s.agent,s.directory,s.seed FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel WHERE t.channel=? ORDER BY t.seq',
           )
           .all(channel)
       : this.core.db
           .prepare(
-            'SELECT t.*,s.ready FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel ORDER BY t.seq',
+            'SELECT t.*,s.ready,s.agent,s.directory,s.seed FROM discord_turns t JOIN discord_sessions s ON s.channel=t.channel ORDER BY t.seq',
           )
           .all();
     return (rows as Row[]).map(turn);

@@ -312,3 +312,39 @@ test('a job result re-enters the thread bound to its session as a turn of kind j
   assert.equal(result.kind, 'job');
   assert.equal(result.session, session, 'the result continues the same session');
 });
+
+test('a report thread adopts the job session (agent jobs) or seeds a fresh one (script jobs); /new and rebinds undo it', t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new DiscordStore(core, 'binding');
+  store.adopt('thread-agent', { session: 'ses_aivi_job1', agent: 'coder', directory: '/other' });
+  store.adopt('thread-script', { seed: 'exit 0\nremoved 3 logs' });
+  assert.throws(() => store.adopt('thread-agent', { seed: 'x' }), /already has a session/);
+  assert.equal(store.channelOf('ses_aivi_job1'), 'thread-agent', 'a job result may re-enter the adopted thread');
+  assert.equal(store.has('thread-agent'), true, 'the thread counts as a known conversation for access rules');
+
+  store.enqueue(message('reply-a', 'thread-agent'), 10);
+  store.enqueue(message('reply-s', 'thread-script'), 10);
+  const a = store.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, config.resource)!;
+  assert.deepEqual(
+    [a.session, a.ready, a.agent, a.directory, a.seed],
+    ['ses_aivi_job1', true, 'coder', '/other', null],
+  );
+  store.sent(a.id);
+  const s = store.claim(scheduler, config.resource)!;
+  assert.deepEqual([s.ready, s.agent, s.seed], [false, null, 'exit 0\nremoved 3 logs']);
+  assert.match(s.session, /^ses_discord_/);
+  store.ready(s.channel);
+  store.sent(s.id);
+  assert.equal(store.list('thread-script')[0]!.seed, null, 'the seed is consumed by the first turn');
+
+  store.reset('thread-agent');
+  store.enqueue(message('fresh', 'thread-agent'), 10);
+  const fresh = store.list('thread-agent').at(-1)!;
+  assert.deepEqual(
+    [fresh.agent, fresh.directory, fresh.ready],
+    [null, null, false],
+    '/new returns to the module agent',
+  );
+  assert.notEqual(fresh.session, 'ses_aivi_job1');
+});

@@ -35,22 +35,29 @@ export async function createNativeChat(
 
   return async (turn, signal, ready) => {
     const client = await connectForTurn(opencode);
+    // A thread that adopted a job's session keeps that session's agent and directory.
+    const agent = turn.agent ?? config.agent;
+    const directory = turn.directory ?? config.directory;
+    const said = `[Discord message from ${turn.name} (user ${turn.user})]\n${turn.text}`;
+    const text =
+      turn.kind === 'job'
+        ? reentryPrompt(turn.text)
+        : !turn.ready && turn.seed
+          ? `[Earlier in this thread aivi posted this outcome of a scheduled job:]\n${turn.seed}\n\n${said}`
+          : said;
     const result = await runTurn(
       client,
       {
         sessionId: turn.session,
-        agent: config.agent,
-        directory: config.directory,
+        agent,
+        directory,
         create: !turn.ready,
         title: `Discord ${turn.channel}`,
         sessionMetadata: { aivi: { origin: 'discord', channel: turn.channel } },
         permissions,
         messageId: `msg_discord_${turn.id.replaceAll(':', '_')}`,
         // Role behaviour lives in the agent definition; the prompt only carries who said what.
-        text:
-          turn.kind === 'job'
-            ? reentryPrompt(turn.text)
-            : `[Discord message from ${turn.name} (user ${turn.user})]\n${turn.text}`,
+        text,
         messageMetadata: {
           aivi:
             turn.kind === 'job'

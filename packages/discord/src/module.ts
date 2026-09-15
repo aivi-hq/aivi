@@ -332,15 +332,40 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       })().catch(error => log.warn('notify.failed', { channel, error }));
     }
 
-    // Proactive posts only go where the operator said they may.
+    // Proactive posts only go where the operator said they may. A post opens a thread that is a
+    // conversation: replying continues the job's own session (agent jobs) or a fresh one seeded with
+    // the output (script jobs), so "what is this about?" never happens.
     const unregister = services.destinations.register('discord', {
       accepts: channelId => config.reportChannels.includes(channelId),
-      async deliver(channelId, text) {
+      async deliver(channelId, text, context) {
         if (!config.reportChannels.includes(channelId))
           throw new Error(`Discord channel ${channelId} is not in reportChannels`);
         const channel = await client.channels.fetch(channelId);
         if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
-        for (const chunk of splitReply(text)) await channel.send({ content: chunk, ...safeSend });
+        const [first, ...rest] = splitReply(text);
+        const opener = await channel.send({ content: first!, ...safeSend });
+        let target = channel;
+        if (!channel.isThread() && !channel.isDMBased() && 'threads' in channel && !channel.isThreadOnly()) {
+          try {
+            const { job } = context;
+            const title = job.scheduleId ? services.store.schedule(job.scheduleId).spec.title : undefined;
+            const thread = await opener.startThread({
+              name: title ?? threadName(text),
+              autoArchiveDuration: 1440,
+              reason: `aivi job ${job.id}`,
+            });
+            target = thread;
+            store.adopt(
+              thread.id,
+              job.task.kind === 'opencode.prompt' && job.sessionId
+                ? { session: job.sessionId, agent: job.task.agent, directory: job.task.directory }
+                : { seed: text },
+            );
+          } catch (error) {
+            log.warn('report.thread.failed', { channel: channelId, error });
+          }
+        }
+        for (const chunk of rest) await target.send({ content: chunk, ...safeSend });
       },
     });
     // A job's outcome comes back into the thread that asked for it as a turn: the librarian reads it

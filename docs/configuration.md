@@ -60,7 +60,9 @@ changes the job's outcome. Two kinds of destination exist:
 
 - **A channel**: `to` names a destination a running module registered
   (`"discord"`), `channel` is that destination's own identifier. The module
-  decides whether aivi may post there (Discord: `reportChannels` in its config).
+  decides whether aivi may post there (Discord: `reportChannels` in its config)
+  and how: Discord opens a thread that continues the job's session, so replying
+  to an outcome talks to the agent that produced it ([discord](discord.md#setup)).
   See `example/tasks/shell.json`.
 - **A session**: `to: "session"`, `channel` is an OpenCode session id. The
   outcome is not posted as text; it is submitted as a prompt into that session

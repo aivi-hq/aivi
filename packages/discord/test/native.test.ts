@@ -82,6 +82,9 @@ test('native chat creates one fixed-agent session and reapplies only the source-
     result: null,
     error: null,
     kind: 'message' as const,
+    agent: null,
+    directory: null,
+    seed: null,
   };
   assert.equal(
     await ask(turn, AbortSignal.timeout(3000), () => {
@@ -111,6 +114,38 @@ test('native chat creates one fixed-agent session and reapplies only the source-
     requests.some(r => r.path.endsWith('/permission') && r.method === 'GET'),
     'pending permissions are checked',
   );
+
+  // A script job's thread: the first turn carries the posted output as context, later ones do not.
+  await ask({ ...turn, id: 'seeded', seed: 'exit 0\ncleaned 12 files' }, AbortSignal.timeout(3000), () => {});
+  const seeded = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
+  assert.match(
+    seeded.text,
+    /^\[Earlier in this thread aivi posted this outcome of a scheduled job:\]\nexit 0\ncleaned 12 files\n\n\[Discord message from Name/,
+  );
+  await ask({ ...turn, id: 'unseeded', ready: true, seed: 'stale' }, AbortSignal.timeout(3000), () => {});
+  assert.doesNotMatch(requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body.text, /Earlier in this thread/);
+
+  // A job outcome re-entering the thread is marked as such, with the job id in its metadata.
+  await ask({ ...turn, id: 'job:abc', kind: 'job', ready: true, text: '✅ done' }, AbortSignal.timeout(3000), () => {});
+  const reentry = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
+  assert.match(reentry.text, /^\[aivi delivers the outcome of a scheduled job[^\]]*\]\n✅ done$/);
+  assert.equal(reentry.id, 'msg_discord_job_abc');
+  assert.deepEqual(reentry.metadata.aivi, {
+    origin: 'job-result',
+    channel: 'dm',
+    job: 'abc',
+    message: 'msg_discord_job_abc',
+  });
+
+  // A thread that adopted an agent job's session is checked against that job's agent and directory.
+  await assert.rejects(
+    ask(
+      { ...turn, id: 'adopted', ready: true, agent: 'coder', directory: '/other' },
+      AbortSignal.timeout(3000),
+      () => {},
+    ),
+    /no longer runs agent coder in \/other/,
+  );
 });
 
 test('an unreachable OpenCode is a turn that never started, not a blocked one', async () => {
@@ -137,6 +172,9 @@ test('an unreachable OpenCode is a turn that never started, not a blocked one', 
     result: null,
     error: null,
     kind: 'message' as const,
+    agent: null,
+    directory: null,
+    seed: null,
   };
   await assert.rejects(
     ask(turn, AbortSignal.timeout(3000), () => {}),

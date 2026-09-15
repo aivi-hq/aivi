@@ -84,7 +84,15 @@ running `opencode service` on its own. Configure your provider/model in native
 OpenCode for the librarian location.
 
 `reportChannels` lists channel IDs where scheduled job outcomes may be posted
-(`report.to: "discord"`); with an empty list aivi never posts on its own.
+(`report.to: "discord"`); with an empty list aivi never posts on its own. A
+posted outcome opens a thread (named after the schedule's `title`, else the
+first line) and the thread is a conversation: for an agent job it continues
+the job's own OpenCode session, so a reply lands with the agent that did the
+work and it remembers everything; for a script job the thread gets a fresh
+session whose first turn carries the posted output as context, and no model
+call happens until someone replies. `/new` in such a thread returns it to the
+module's own agent. Where a thread cannot be opened (a DM, a forum channel,
+missing permission) the text is posted alone.
 
 A Discord gateway error is logged and left to discord.js's reconnect logic; it
 does not stop the host. Sessions created for Discord carry
