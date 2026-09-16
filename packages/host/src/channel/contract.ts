@@ -32,10 +32,14 @@ export interface ChannelModule {
  * to silent, without `delete` the placeholder is edited into the reply.
  */
 export interface ChannelDelivery {
-  /** Post text; return the platform's message id when it has one. */
+  /** Post the answer (or a chunk of it); return the platform's message id when it has one. */
   send(conversation: string, text: string): Promise<string | undefined>;
   edit?(conversation: string, messageId: string, text: string): Promise<void>;
   delete?(conversation: string, messageId: string): Promise<void>;
+  /** Post the progress placeholder when it is not an ordinary message on this platform (Linear: an ephemeral thought); default `send`. */
+  placeholder?(conversation: string, text: string): Promise<string | undefined>;
+  /** Post a notice that is not an answer (a stop, a failure, going offline); default: edit the placeholder, else `send`. */
+  notice?(conversation: string, text: string): Promise<void>;
 }
 
 /**

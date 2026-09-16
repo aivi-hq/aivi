@@ -57,6 +57,8 @@ const usage = `aivi <command>
   discord resolve ID           Release a blocked turn --reason TEXT --confirm-stopped
   slack status                 Inspect Slack turns and leases
   slack resolve ID             Release a blocked turn --reason TEXT --confirm-stopped
+  linear status                Inspect Linear worker turns and leases
+  linear resolve ID            Release a blocked worker --reason TEXT --confirm-stopped
   opencode check               Probe the OpenCode v2 service the host would use
 
 Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/;
@@ -129,6 +131,7 @@ async function main(): Promise<void> {
   const slackConfig = slack ? await slack.loadSlackConfig(loaded.config.modules.slack!.config) : undefined;
   if (slackConfig && !(slackConfig.resource in loaded.config.scheduler.resources))
     throw new Error('Unknown Slack resource pool');
+  const linear = loaded.config.linear ? await import('@aivi/linear') : undefined;
 
   // Commands that need no database.
   switch (`${command} ${subcommand ?? ''}`.trim()) {
@@ -234,6 +237,22 @@ async function main(): Promise<void> {
       throw new Error(
         'Slack runs inside `aivi serve`; slash commands come from the app manifest; commands: status, resolve',
       );
+    }
+    if (command === 'linear') {
+      if (!linear || !loaded.config.linear) throw new Error('Linear is not configured in aivi.json');
+      const inbox = linear.openLinearStore(store);
+      if (subcommand === 'status') {
+        print({ workers: linear.describeWorkers(inbox), leases: store.leases() });
+        return;
+      }
+      if (subcommand === 'resolve') {
+        if (!argument || !values.reason || !values['confirm-stopped'])
+          throw new Error('linear resolve ID --reason TEXT --confirm-stopped');
+        inbox.resolve(argument, values.reason);
+        print({ resolved: true });
+        return;
+      }
+      throw new Error('Linear runs inside `aivi serve`; commands: status, resolve');
     }
     if (command === 'status') {
       print(status(store, loaded));
@@ -367,6 +386,7 @@ async function main(): Promise<void> {
       const modules: HostModule[] = [];
       if (!once && discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
       if (!once && slack && slackConfig) modules.push(slack.createSlackModule(slackConfig));
+      if (!once && linear && loaded.config.linear) modules.push(linear.createLinearModule(loaded.config.linear));
       const abort = new AbortController();
       const stop = () => abort.abort();
       process.once('SIGINT', stop);

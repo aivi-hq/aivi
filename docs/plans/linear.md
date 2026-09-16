@@ -1,6 +1,7 @@
 # Linear module: plan
 
-Status: agreed scope 2026-09-16, nothing built. This is a working checklist,
+Status: scope agreed 2026-09-16; steps 0b–5 built the same day (behaviour in
+[linear.md](../linear.md)); step 0 (live checks), 6 and the live gate are open. This is a working checklist,
 not the behaviour document; when a step lands, tick it here and write the
 behaviour into the owning page ([linear.md](../linear.md) once it exists,
 [configuration.md](../configuration.md) for fields and secrets). Items marked
@@ -58,7 +59,9 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
   `issue` columns): a turn is claimable only when no other conversation of
   that project has a `running`/`replying`/`blocked` turn. The limit is one
   today; worktrees make it a number later. A second `created` for an issue
-  that already has a pending worker gets an `error` activity naming it.
+  that already has a pending worker is queued behind it and told so in its
+  acknowledging thought (changed 2026-09-16 from "refused": queuing is what the
+  lock does anyway).
   Scope: Linear workers only; jobs and channels do not take the lock yet
   ([projects-and-capacity](../backlog/projects-and-capacity.md)).
 - **Each worker runs in its own git worktree**, never in the project's
@@ -96,6 +99,9 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
 - **The HITL label** (default `needs-human`, configurable) blocks the
   listener and is refused even on a hand delegation (an `error` activity
   explains). It is a label, not a state, so it composes with any lane.
+- **A hand delegation runs the delegated app whatever the lane.** The person
+  chose the app; the lane is passed as context. Lane → app matters for the
+  listener only (2026-09-16).
 - **aivi does not move issues between lanes.** Completion is the `response`;
   the agent file may move the issue through its own tools, or a person does.
   Linear's "move to the first `started` state on delegation" recommendation is
@@ -235,39 +241,40 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
       `interrupt`, recorded as `discarded` with the reason) and per-platform
       `notices`, all behind `ChannelPlatform`; Discord and Slack unchanged.
       Tested at the store.
-- [ ] Worktree: `git fetch origin`, `git worktree add <project>/worktrees/<agent-session> -B <branchName> origin/<default>`
-      at claim (reuse an existing branch); failure → `error` activity and a
-      `failed` turn, lock released. `worktrees` pruning by age in `runs.prune`
-      or a sibling, never while the turn is pending.
-- [ ] `created`: resolve project (`issue.projectId`), lane → app → agent;
-      refuse with an `error` activity when the app's webhook does not match
-      the lane's app, the project is unknown, or the agent is missing from
-      `agent.list` for the worktree; otherwise the acknowledging `thought`,
+- [x] Worktree: `git fetch origin`, `git worktree add <project>/worktrees/<agent-session> -B <branchName> origin/<default>`
+      at `created` (before the turn is queued; an existing worktree holding
+      the branch is continued); failure → `error` activity, nothing queued.
+      **Left:** worktree pruning by age, never while a turn is pending.
+- [x] `created`: resolve project (`issue.projectId`), lane → app → agent;
+      refuse with an `error` activity when the project is unknown or the HITL
+      label is present (the lane is context, not a gate; an unknown agent
+      surfaces as a not-started turn); otherwise the acknowledging `thought`,
       then enqueue the first turn with a prompt built from `promptContext`,
       `guidance`, lane and project names and the worktree path.
-- [ ] `prompted`: enqueue as a turn (turn id = activity id); with
+- [x] `prompted`: enqueue as a turn (turn id = activity id); with
       `signal: "stop"` → the stop path above instead.
-- [ ] Delivery: `send` = `response` (split at Linear's body limit if there is
-      one, **verify**); `edit` = ephemeral `thought`/`action` from the progress
-      model (throttle as today); `delete` = no-op (the response supersedes);
-      failure notices = `error` activities.
-- [ ] Turn runner: `external_directory` allows for the home's knowledge and
+- [x] Delivery: `send` = `response` (`replyLimit` 60 000, Linear's real body
+      limit **verify**); `placeholder`/`edit` = ephemeral `thought` from the
+      progress model (throttle as today; `action` activities later); `delete`
+      = no-op (the response supersedes); notices = `error` activities.
+- [x] Turn runner: `external_directory` allows for the home's knowledge and
       memory sources as for channels; permission prompts rejected
-      (`elicitation` is later); `metadata.aivi = { origin: "linear", app,
-      issue, agentSession }`; session title `<identifier> <title>`.
-- [ ] CLI: `linear status`, `linear resolve ID --reason … --confirm-stopped`
+      (`elicitation` is later); `metadata.aivi = { origin: "linear", channel:
+      "<app>:<agent session>" }`. **Left:** session title `<identifier> <title>`
+      and richer metadata.
+- [x] CLI: `linear status`, `linear resolve ID --reason … --confirm-stopped`
       (the unverifiable case only), same shape as Discord/Slack.
-- [ ] Module `start`: `ConfigurationError` for missing secrets or a rejected
+- [x] Module `start`: `ConfigurationError` for missing secrets or a rejected
       token; everything else degraded with retry. `stop`: interrupt running
       workers, one `error` activity each ("aivi is going offline; the
       worktree is at …"), turns end `stopped`, locks released.
-- [ ] Dreaming `origins` may include `linear`.
+- [x] Dreaming `origins` may include `linear` (origins are free-form; sessions carry `origin: linear`).
 
 ### 5. Locks
 
-- [ ] Project lock and one-worker-per-issue in the claim transaction; a
+- [x] Project lock and one-worker-per-issue in the claim transaction; a
       queued worker's acknowledging `thought` says it is waiting and for what.
-- [ ] Tests: two sessions in one project serialize; a stopped worker
+- [x] Tests: two sessions in one project serialize; a stopped worker
       releases the lock and the next claims; a blocked (unverifiable) worker
       keeps it until `resolve`.
 
@@ -284,13 +291,9 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 
 ### 7. Documentation and live gate
 
-- [ ] `docs/linear.md` (owner: behaviour, setup of an app in Linear with the
-      exact webhook categories and scopes, the tunnel note, recovery); rows in
-      CONTEXT.md, [roadmap.md](../roadmap.md) milestone 7, `docs/channels.md`
-      for the machinery extensions, `docs/projects.md` for verify 3;
-      AGENTS.md and [requirements.md](../requirements.md) §4-5 note the
-      2026-09-16 decision (stop releases; blocked only when unverifiable;
-      graceful cleanup deferred).
+- [x] `docs/linear.md`, CONTEXT.md, roadmap, channels.md, projects.md,
+      AGENTS.md, requirements §4-5 (2026-09-16). **Left:** projects.md gets the
+      verify 3 result.
 - [ ] Live gate: delegate an issue by hand → acknowledging thought → progress
       activities → response; a follow-up prompt; a stop request → error
       activity, `stopped` turn, lock released, worktree present; two issues

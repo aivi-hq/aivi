@@ -15,7 +15,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. Lifted onto the channel contract 2026-09-15; live re-check pending. |
 | 5b. Slack adapter | **Done, live-verified** on the owner's workspace 2026-09-15: DMs, mention → thread, `/spider-status`, ⏳/👀 reactions, job outcomes re-entering a thread, report threads adopting the job session ([slack.md](slack.md)). |
 | 6. Worker lifecycle without Linear | Not started. |
-| 7. Native Linear AgentSessions | Not started; configuration validation exists. Scope and order agreed 2026-09-16: [plans/linear.md](plans/linear.md). |
+| 7. Native Linear AgentSessions | **Built, not live-verified** (2026-09-16): delegation → worker in a worktree → activities → response, follow-ups, stop, HITL refusal, project/issue locks ([linear.md](linear.md)). Listener and the rest: [plans/linear.md](plans/linear.md). |
 
 ## Live gates
 
@@ -31,6 +31,7 @@ Mock tests do not establish these; each has its own command.
   with `"tools"` the tool calls are listed beneath; a failing turn leaves the
   notice in the placeholder's place. Not yet seen live: `/model` (autocomplete
   and a pinned answer), `/stop` on a running turn, `/steer`, `/jobs`, `/help`.
+- Linear: not yet run live; the gate is listed in [plans/linear.md](plans/linear.md#7-documentation-and-live-gate).
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
   the thread, a report into `reportChannels`, a reply in that thread,

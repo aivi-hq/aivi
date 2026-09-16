@@ -66,9 +66,9 @@ only overrides:
   is `decision`, the rest of `docs/` is `doc`; nothing is indexed twice or under
   two kinds. This is resolved once, when the index is configured: the outer
   collection ignores the inner one's subtree.
-- `projects.<id>.linear` (`projectId`, `lanes`, optional `workspaceId`) is
-  validated ahead of the Linear module; nothing reads it yet
-  ([configuration](configuration.md#linear-validation-only)).
+- `projects.<id>.linear` (`projectId`, `lanes`, optional `workspaceId`) ties
+  the project to a Linear project for the [Linear module](linear.md)
+  ([configuration](configuration.md#linear)).
 
 ## Who works in a project
 
@@ -76,10 +76,10 @@ only overrides:
   conversation runs the module's agent in the home; it reads projects through
   `knowledge_search` and `aivi_sources`, and learns which projects exist on
   demand through `knowledge_projects`. It never claims or edits a checkout.
-- **Workers work in a project.** Linear's worker agents (milestone 7) run in
-  a worktree under `<home>/projects/<id>/worktrees/` with the lane's mapped agent ([plans/linear.md](plans/linear.md)). One active agent per
-  project and maintenance-when-idle are designed but not built
-  ([projects-and-capacity](backlog/projects-and-capacity.md)).
+- **Workers work in a project.** Linear's workers run in a worktree under
+  `<home>/projects/<id>/worktrees/` with the app's mapped agent, one per
+  project at a time ([linear](linear.md)); maintenance-when-idle is designed
+  but not built ([projects-and-capacity](backlog/projects-and-capacity.md)).
 - A checkout is an OpenCode location of its own: a session in
   `projects/acme` does not see `<home>/.opencode/agents/`. Where worker agents
   are defined is settled with the Linear module.

@@ -21,8 +21,8 @@ changing runtime behavior.
   only to wait for a known instant (a due job, a retry backoff) or to satisfy
   a protocol keep-alive. A "safety net" interval is a poll with a better name.
 
-Design rules for the worker/Linear lifecycle (not built; only config validation
-exists; the agreed plan and order are in `docs/plans/linear.md`):
+Rules for the worker/Linear lifecycle (built: `docs/linear.md`; what is left:
+`docs/plans/linear.md`):
 
 - Never release a worker's resources merely because its caller disconnected.
 - A worker runs in its own git worktree, never in the project's `source/`.

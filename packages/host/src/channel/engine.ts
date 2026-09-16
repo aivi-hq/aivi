@@ -99,8 +99,9 @@ export class ChannelEngine {
     const startedAt = Date.now();
     log.info('turn.started', { newSession: !turn.ready });
     const reporter = this.reporter(turn, log);
+    const notice = this.delivery.notice ?? ((c: string, t: string) => this.delivery.send(c, t).then(() => {}));
     const tell = (text: string) =>
-      (reporter ? reporter.fail(text) : this.delivery.send(turn.channel, text)).catch(error =>
+      (reporter ? reporter.fail(text) : notice(turn.channel, text)).catch(error =>
         log.warn('notify.failed', { error }),
       );
     let delivering = false;
@@ -199,9 +200,10 @@ export class ChannelEngine {
       this.store
         .queuedChannels()
         .map(channel =>
-          this.delivery
-            .send(channel, this.notices.offlineQueued)
-            .catch(error => this.log.warn('notify.failed', { channel, error })),
+          (this.delivery.notice
+            ? this.delivery.notice(channel, this.notices.offlineQueued)
+            : this.delivery.send(channel, this.notices.offlineQueued)
+          ).catch(error => this.log.warn('notify.failed', { channel, error })),
         ),
     );
     await this.drain();

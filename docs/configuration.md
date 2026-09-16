@@ -166,11 +166,10 @@ and the `max` limit; a failing check is refused with the reason and nothing is
 spent. Agent-created jobs have ids `agent-…` and source `agent`; `aivi jobs
 list` shows them beside the configured ones.
 
-## Linear (validation only)
+## Linear
 
-The module is not built yet ([plans/linear.md](plans/linear.md) has the design
-and order); its configuration is validated so the routing invariant is recorded.
-Presence of `linear` will enable the module.
+Presence of `linear` enables the module ([linear](linear.md)); `listener` is
+not built yet ([plans/linear.md](plans/linear.md)).
 
 ```json
 {

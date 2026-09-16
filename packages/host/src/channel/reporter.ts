@@ -63,7 +63,7 @@ export class ProgressReporter {
     this.state = startProgress(now);
     this.shown = renderProgress(this.state, this.mode, now, this.clock);
     this.lastEditAt = now;
-    this.placeholder = delivery.send(conversation, this.shown).catch(error => {
+    this.placeholder = (delivery.placeholder ?? delivery.send)(conversation, this.shown).catch(error => {
       log.warn('progress.placeholder.failed', { error });
       return undefined;
     });
@@ -136,9 +136,13 @@ export class ProgressReporter {
       );
   }
 
-  /** The turn ended without an answer: the placeholder becomes the notice. */
+  /** The turn ended without an answer: the placeholder becomes the notice, or the platform's notice replaces it. */
   async fail(text: string): Promise<void> {
     const id = await this.stop();
+    if (this.delivery.notice) {
+      await this.delivery.notice(this.conversation, text);
+      return;
+    }
     if (id) {
       try {
         await this.delivery.edit(this.conversation, id, text);

@@ -34,7 +34,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`; a file belongs to its most specific source |
 | project | a repository the team works on: one directory `<home>/projects/<id>` holding the clean git checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `aivi.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project directory with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`) |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
-| origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`), `job`, `dreaming`; on messages also `job-result` |
+| origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`, `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
 | model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
 | chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/help`): one shared table in the host, each platform only translates |
@@ -152,10 +152,14 @@ runs in one process; adapters are optional modules with a start/stop contract.
   ([installation](docs/backlog/installation.md#decision-2026-09-15-the-installation-is-a-git-checkout)).
 - **Blocked runs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
-- **Linear config exists ahead of the module** to record the lane → app →
-  agent invariant; nothing reads it yet. The module's design (an agent session
-  is a conversation; a worker runs in its own worktree; stop releases, only an
-  unverifiable stop blocks) is in [plans/linear.md](docs/plans/linear.md).
+- **An agent session is a conversation.** The Linear module runs on the
+  channel machinery: a delegation is a `created` webhook → one bound
+  conversation → one worker turn of the app's agent in its own git worktree
+  (`projects/<id>/worktrees/<session>`, on Linear's branch name), progress as
+  ephemeral thoughts, the answer as a response. Stop means stop: the turn is
+  discarded, the lock released, worktree and session kept; only an
+  unverifiable stop is `blocked`. One worker per project and per issue
+  ([linear](docs/linear.md); what is left: [plans/linear.md](docs/plans/linear.md)).
 
 ## Where each fact lives
 
@@ -172,6 +176,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |
 | Discord behavior, setup, recovery | [docs/discord.md](docs/discord.md) |
 | Slack behavior, app manifest, setup | [docs/slack.md](docs/slack.md) |
+| Linear behavior (agent sessions as conversations, worktrees, stops), setup | [docs/linear.md](docs/linear.md) |
 | Browser service | [docs/browser.md](docs/browser.md) |
 | Decisions | [docs/architecture.md](docs/architecture.md) |
 | Status per milestone, live gates, next steps | [docs/roadmap.md](docs/roadmap.md) |
