@@ -149,7 +149,7 @@ test('failed inbox transition rolls back the capacity reservation', t => {
   assert.equal(core.leases().length, 0);
 });
 
-test('turns queue behind a slow answer; delivery failures retain results and never auto-resend', async t => {
+test('turns queue behind a slow answer; a delivery failure fails the turn (its answer stays recorded), never resends, never blocks a chat', async t => {
   const core = new Store(':memory:');
   t.after(() => core.close());
   const store = new ConversationStore(core, platform, 'binding');
@@ -172,8 +172,13 @@ test('turns queue behind a slow answer; delivery failures retain results and nev
     },
     {
       async send(_channel, text) {
+        // Fail only on the answer itself; the failure notice is allowed through.
+        if (text === 'Answer') {
+          sends.push(text);
+          throw new Error('Ambiguous Discord response');
+        }
         sends.push(text);
-        throw new Error('Ambiguous Discord response');
+        return undefined;
       },
     },
   );
@@ -185,15 +190,22 @@ test('turns queue behind a slow answer; delivery failures retain results and nev
   await engine.drain();
   engine.tick();
   await engine.drain();
-  assert.equal(sends.filter(s => s === 'Answer').length, 1, 'the answer is delivered once and never resent');
-  assert.match(sends[1]!, /operator has been notified/, 'the person is told, even if that send fails too');
-  assert.equal(store.list()[0]!.result, 'Answer');
-  assert.equal(store.list()[0]!.state, 'blocked');
-  assert.equal(store.list()[1]!.state, 'queued');
-  assert.equal(core.leases().length, 1);
+  // Both turns ran; each answer's send threw once and was never retried; each person got the
+  // failure notice; both turns failed with capacity released. No resend, no block.
+  assert.equal(sends.filter(x => x === 'Answer').length, 2, 'each answer was attempted exactly once');
+  assert.equal(sends.filter(x => x.startsWith('Something went wrong')).length, 2, 'each person was told');
+  assert.deepEqual(
+    store.list().map(x => x.state),
+    ['discarded', 'discarded'],
+  );
+  assert.deepEqual(
+    store.list().map(x => x.result),
+    ['Answer', 'Answer'],
+  );
+  assert.equal(core.leases().length, 0, 'failed chat turns hold no capacity');
 });
 
-test('a turn that never reached the agent is discarded with its capacity released; a blocked one keeps it; both tell the user', async t => {
+test('a chat turn that never reached the agent, and one lost after its prompt, both fail with capacity released; only workers block', async t => {
   const core = new Store(':memory:');
   t.after(() => core.close());
   const store = new ConversationStore(core, platform, 'binding');
@@ -215,15 +227,12 @@ test('a turn that never reached the agent is discarded with its capacity release
   const [one, two] = store.list();
   assert.equal(one!.state, 'discarded');
   assert.match(one!.error ?? '', /^Not started/);
-  assert.equal(two!.state, 'blocked');
-  assert.deepEqual(
-    core.leases().map(l => l.id),
-    ['discord:two'],
-    'only the blocked turn still holds capacity',
-  );
+  assert.equal(two!.state, 'discarded', 'a post-prompt error is a known end for a chat, not a block');
+  assert.match(two!.error ?? '', /lost after prompt/);
+  assert.equal(core.leases().length, 0, 'neither holds capacity');
   assert.equal(sent.length, 2);
   assert.match(sent[0]!, /send that again/);
-  assert.match(sent[1]!, /operator has been notified/);
+  assert.match(sent[1]!, /Something went wrong \(lost after prompt\)/);
 });
 
 test('shutdown discards the running turn instead of blocking it, warns queued conversations, and leaves no lease behind', async t => {

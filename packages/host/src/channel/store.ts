@@ -400,14 +400,19 @@ export class ConversationStore {
     });
   }
 
-  /** The turn never reached the agent: nothing to inspect, so capacity is released at once. */
-  fail(id: string): void {
+  /**
+   * The turn ended knowably: the prompt never reached the agent, or it came back with a clean
+   * terminal state (a provider/auth error, a timeout). Nothing external is in doubt, so
+   * capacity is released at once; the caller says why. Never persist provider/platform error
+   * bodies verbatim (they can carry credentials): a short reason only.
+   */
+  fail(id: string, reason = 'Not started: agent runtime unreachable or session setup failed'): void {
     this.core.transaction(() => {
       this.core.db
         .prepare(
-          `UPDATE ${this.n.turns} SET state='discarded',text='',error='Not started: agent runtime unreachable or session setup failed' WHERE id=? AND state='running'`,
+          `UPDATE ${this.n.turns} SET state='discarded',text='',error=? WHERE id=? AND state IN ('running','replying')`,
         )
-        .run(id);
+        .run(reason, id);
       this.core.releaseLease(this.n.leaseID(id), this.n.leaseOwner);
     });
   }

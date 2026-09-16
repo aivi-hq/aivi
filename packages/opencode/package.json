@@ -12,10 +12,10 @@
     "@aivi/core": "0.1.0"
   },
   "peerDependencies": {
-    "@opencode/plugin": "2.0.3"
+    "@opencode/plugin": "2.0.4"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.3"
+    "@opencode/plugin": "2.0.4"
   },
   "main": "./src/index.ts"
 }

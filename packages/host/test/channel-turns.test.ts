@@ -38,7 +38,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
     requests.push({ path: req.url!, method: req.method!, body });
-    if (req.url!.endsWith('/permission/rules') || req.url!.endsWith('/wait') || req.url!.endsWith('/model')) {
+    if (req.method === 'PATCH' || req.url!.endsWith('/wait') || req.url!.endsWith('/model')) {
       res.writeHead(204);
       res.end();
       return;
@@ -104,7 +104,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
   );
   assert.equal(ready, 1);
   assert.equal(requests.filter(r => r.path === '/api/session' && r.method === 'POST').length, 1);
-  const rules = requests.filter(r => r.path.endsWith('/permission/rules'));
+  const rules = requests.filter(r => r.method === 'PATCH' && r.path.startsWith('/api/session/'));
   assert.equal(rules.length, 2);
   // The agent file is the boundary: aivi sends nothing but external_directory allows for sources.
   assert.ok(

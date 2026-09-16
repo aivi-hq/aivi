@@ -31,6 +31,7 @@ export const LINEAR: ChannelPlatform = {
   effects: 'work',
   describeSpeaker: turn => `[Linear follow-up from ${turn.name}]`,
   notices: {
+    failed: 'This worker hit an error',
     stopped: 'Stopped at your request. The worktree and the OpenCode session are left as they are for inspection.',
     notStarted: 'I could not reach my agent runtime, so nothing was started. Send another message to try again.',
     offline:

@@ -135,7 +135,10 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
     if (session.agent !== input.agent || session.location.directory !== input.directory) {
       throw new Error(`Session ${sessionID} no longer runs agent ${input.agent} in ${input.directory}`);
     }
-    if (input.permissions) await client.permission.rules({ sessionID, permissions: input.permissions }, request);
+    if (input.permissions) await client.session.update({ sessionID, permissions: input.permissions }, request);
+    // The model is chosen at session create (the agent file's pin, or the conversation's `/model`
+    // pin) and only ever changes when a `/model` pin says so — never re-read per turn. A pin that
+    // differs from the session is applied here; no pin means the session is left alone.
     if (wanted && !sameModel(session.model, wanted))
       await client.session.switchModel({ sessionID, model: wanted }, request);
   } catch (error) {
@@ -156,7 +159,7 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
     asks.add(id);
     const summary = { action, resources: [...resources] };
     if (onPermission === 'fail') return failWith([summary]);
-    await client.permission.reply({ sessionID, requestID: id, reply: 'reject' }, request);
+    await client.permission.reply({ sessionID, requestID: id, decision: 'reject' }, request);
     rejected.push(summary);
     log.warn('permission.rejected', { requests: [summary] });
   };

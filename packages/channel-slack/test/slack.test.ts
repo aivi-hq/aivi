@@ -146,8 +146,7 @@ async function fakeOpenCode(
       interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
       return void res.end('{"interrupted":true}');
     }
-    if (url.endsWith('/permission/rules') || url.endsWith('/wait') || url.endsWith('/model'))
-      return void res.writeHead(204).end();
+    if (req.method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) return void res.writeHead(204).end();
     if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (url === '/api/session' && req.method === 'POST') {
       sessions.set(body.id, {

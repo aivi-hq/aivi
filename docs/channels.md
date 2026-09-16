@@ -44,7 +44,7 @@ describeSpeaker? }`.
   a DM channel); each has one session at a time, `ready` once created. It
   provides: `enqueue` (dedupe by turn id, `maxPending`), `claim` (one turn per
   conversation, a lease on the module's pool in the same transaction),
-  `ready`, `result`/`sent`, `block`, `fail`, `resolve`, `recover` (restart:
+  `ready`, `result`/`sent`, `block` (workers only), `fail`, `resolve`, `recover` (restart:
   interrupted turns are discarded, capacity released, the callers told),
   `interrupt` (a turn ended by choice, a shutdown or a `/stop`: discarded with
   the reason, lease released), `reset` (`/new`; refused while work is

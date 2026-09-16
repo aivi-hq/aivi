@@ -101,7 +101,7 @@ function mockOpenCode(
       );
       return;
     }
-    if (url.endsWith('/permission/rules') || url.endsWith('/wait') || url.endsWith('/model')) {
+    if (req.method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) {
       res.writeHead(204);
       res.end();
       return;
@@ -224,17 +224,11 @@ test('runTurn creates, pins permissions, prompts, and returns the verified answe
       'create',
     ),
   );
-  assert.deepEqual(order.slice(0, 5), [
-    'GET /api/agent',
-    'POST create',
-    'GET ',
-    'PUT /permission/rules',
-    'POST /prompt',
-  ]);
+  assert.deepEqual(order.slice(0, 5), ['GET /api/agent', 'POST create', 'GET ', 'PATCH ', 'POST /prompt']);
   assert.deepEqual(mock.requests[4]!.body.metadata, { aivi: { message: 'msg_t1' } });
-  // The API does not apply the agent file's model on its own; the session is created with it.
+  // The create-time model is read back; the mock created the session on it, so no switch is needed.
   assert.deepEqual(mock.requests[1]!.body.model, { id: 'gemini-3.8-flash', providerID: 'github-copilot' });
-  assert.ok(!order.includes('POST /model'), 'a session created with the model needs no switch');
+  assert.ok(!mock.requests.some(r => r.path.endsWith('/model')), 'a session created with the model needs no switch');
 });
 
 test('runTurn keeps the session on the agent file’s model, or on the pinned one', async t => {
@@ -277,7 +271,7 @@ test('runTurn auto-rejects permission prompts by default and reports them', asyn
   );
   assert.deepEqual(result.rejected, [{ action: 'external_directory', resources: ['/secret/**'] }]);
   const reply = mock.requests.find(r => r.path.endsWith('/permission/per_1/reply'));
-  assert.deepEqual(reply?.body, { reply: 'reject' });
+  assert.deepEqual(reply?.body, { decision: 'reject' });
 });
 
 test('runTurn with onPermission fail leaves the prompt pending and throws PermissionRequired', async t => {
@@ -336,7 +330,7 @@ test('a permission asked mid-turn arrives as an event and is answered by the pol
     runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events }),
   );
   assert.deepEqual(result.rejected, [{ action: 'shell', resources: ['ls'] }]);
-  assert.deepEqual(mock.requests.find(r => r.path.endsWith('/permission/per_9/reply'))?.body, { reply: 'reject' });
+  assert.deepEqual(mock.requests.find(r => r.path.endsWith('/permission/per_9/reply'))?.body, { decision: 'reject' });
   assert.equal(listed, 1, 'permission.list is read once after the prompt, never in a loop');
   assert.equal(events.watchers, 1, 'the turn watched its session once and unwatched');
 });

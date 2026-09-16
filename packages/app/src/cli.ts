@@ -178,7 +178,7 @@ async function main(): Promise<void> {
     }
     case 'opencode check': {
       const client = await connectOpenCode(loaded.config.opencode);
-      print(await client.health.get({ signal: AbortSignal.timeout(10000) }));
+      print(await client.server.status({ signal: AbortSignal.timeout(10000) }));
       return;
     }
     case 'knowledge search': {
@@ -216,6 +216,7 @@ async function main(): Promise<void> {
           throw new Error('discord resolve ID --reason TEXT --confirm-stopped');
         inbox.resolve(argument, values.reason);
         print({ resolved: true });
+        await poke();
         return;
       }
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
@@ -232,6 +233,7 @@ async function main(): Promise<void> {
           throw new Error('slack resolve ID --reason TEXT --confirm-stopped');
         inbox.resolve(argument, values.reason);
         print({ resolved: true });
+        await poke();
         return;
       }
       throw new Error(
@@ -250,6 +252,7 @@ async function main(): Promise<void> {
           throw new Error('linear resolve ID --reason TEXT --confirm-stopped');
         inbox.resolve(argument, values.reason);
         print({ resolved: true });
+        await poke();
         return;
       }
       throw new Error('Linear runs inside `aivi serve`; commands: status, resolve');
@@ -373,6 +376,7 @@ async function main(): Promise<void> {
           }
           store.resolveBlocked(argument, values.outcome as 'succeeded' | 'failed', values.reason);
           print(store.run(argument));
+          await poke();
           return;
         }
       }

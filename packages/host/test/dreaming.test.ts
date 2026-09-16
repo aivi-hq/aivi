@@ -74,7 +74,7 @@ function mockOpenCode(agent = 'dreamer') {
     }
     if (url.pathname === '/api/agent')
       return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
-    if (url.pathname.endsWith('/permission/rules') || url.pathname.endsWith('/wait')) {
+    if (req.method === 'PATCH' || url.pathname.endsWith('/wait')) {
       res.writeHead(204);
       res.end();
       return;

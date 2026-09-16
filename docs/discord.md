@@ -79,7 +79,7 @@ the host's. This page has what is Discord's.
   placeholder message in the conversation that says what the agent is doing
   (`progress`, below), a short
   message when a turn could not start (please resend) or could not be finished
-  (an operator has been notified), and a goodbye when aivi goes offline
+  ("Something went wrong (…)" with the short reason), and a goodbye when aivi goes offline
   mid-turn or with messages waiting. `reportChannels` see aivi come online
   and go offline ([channels](channels.md#feedback-and-recovery-shared)).
 - `progress` (`silent` | `status` | `tools`, default `status`) chooses what
@@ -177,12 +177,13 @@ prevents duplicate hosts; a module lock also protects the Discord inbox.
 
 ```sh
 npm run aivi -- discord status
-npm run aivi -- discord resolve TURN_ID --confirm-stopped --reason "Inspected native session and Discord delivery; no owned work remains"
 ```
 
-Resolution discards that blocked turn and releases capacity. It does not stop the
-native session or resend a reply. Inspect/stop native work first. Queued messages
-can then continue in the same session.
+A conversation turn never ends `blocked`: its only effect is the reply, so a
+failed or interrupted turn is discarded and the person told. `resolve` exists on
+the same CLI shape for the day a platform carries work, but Discord turns have
+nothing to resolve. Queued messages continue in the same session after a
+failure.
 
 ### Job outcomes in a thread
 

@@ -1,5 +1,5 @@
 import type { Config, Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { errorMessage, silentLogger } from '@aivi/core';
 import { TurnNotStarted } from '../session.ts';
 import type { ChannelDelivery, EngineNotices } from './contract.ts';
 import { type ProgressOptions, ProgressReporter } from './reporter.ts';
@@ -146,10 +146,19 @@ export class ChannelEngine {
             await tell(delivering ? this.notices.offlineMidReply : this.notices.offline);
             return;
           }
-          // No automatic resend: delivery may already have succeeded before a response was lost.
-          log.warn('turn.blocked', { error });
-          this.store.block(turn.id);
-          await tell(this.notices.blocked);
+          // A chat turn's only effect is its reply, so a known end (provider/auth error,
+          // timeout, delivery failure) is just a failure: release capacity and say why.
+          // Only a worker (`effects: 'work'`) blocks, because its checkout may still be moving.
+          const reason = shortReason(error);
+          if (this.store.platform.effects === 'work') {
+            log.warn('turn.blocked', { error });
+            this.store.block(turn.id);
+            await tell(this.notices.blocked);
+          } else {
+            log.warn('turn.failed', { error });
+            this.store.fail(turn.id, reason);
+            await tell(`${this.notices.failed} (${reason})`);
+          }
         }
       })
       .catch(error => {
@@ -218,8 +227,11 @@ export const OFFLINE_MID_REPLY =
 export const STOPPED_REASON = 'Stopped at the person’s request';
 /** What the conversation hears in place of the answer. */
 export const STOPPED_NOTICE = 'Stopped at your request.';
+/** One short line for a failure notice; never the raw error object (it can carry provider detail or credentials). */
+const shortReason = (error: unknown) => errorMessage(error).split('\n')[0]!.slice(0, 140);
 /** The chat wording; a platform overrides what it must through `ChannelPlatform.notices`. */
 export const CHAT_NOTICES: EngineNotices = {
+  failed: 'Something went wrong',
   stopped: STOPPED_NOTICE,
   notStarted: 'I could not reach my agent runtime just now. Please send that again in a moment.',
   offline:

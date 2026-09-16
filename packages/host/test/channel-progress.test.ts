@@ -338,13 +338,13 @@ test('progress: a turn that cannot finish edits the placeholder into the notice 
   await engine.drain();
   assert.equal(log.length, 2);
   assert.equal(log[0], 'send:⏳ thinking…');
-  assert.match(log[1]!, /^edit:m1:I could not finish that\. An operator has been notified/);
-  assert.equal(store.list()[0]!.state, 'blocked');
+  assert.match(log[1]!, /^edit:m1:Something went wrong \(/);
+  assert.equal(store.list()[0]!.state, 'discarded', 'a chat turn that cannot finish fails and is told');
 
   // Without any event the text still moves at the known instants: the suffix, then the idle notice.
   const slow = fakeDelivery();
   enqueue(store, 'two', 'dm-b');
-  store.resolve('one', 'inspected');
+  // The failed first turn released its capacity and the channel is free; nothing to resolve.
   let release!: () => void;
   const answer = new Promise<string>(resolve => {
     release = () => resolve('done');

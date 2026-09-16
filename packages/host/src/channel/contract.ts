@@ -67,6 +67,8 @@ export interface ChannelPlatform {
 
 /** The texts the shared engine posts into a conversation when a turn does not end with an answer. */
 export interface EngineNotices {
+  /** A chat turn ended knowably (the engine appends the short reason); Linear overrides via `notices` and never uses it. */
+  failed: string;
   stopped: string;
   notStarted: string;
   offline: string;
