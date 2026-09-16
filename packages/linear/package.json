@@ -1,0 +1,14 @@
+{
+  "name": "@aivi/linear",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aivi/core": "0.1.0",
+    "@aivi/host": "0.1.0",
+    "zod": "4.1.13"
+  }
+}

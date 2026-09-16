@@ -207,13 +207,13 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 
 ### 2. Linear client
 
-- [ ] `packages/linear/src/client.ts`: token by `client_credentials`
+- [x] `packages/linear/src/client.ts`: token by `client_credentials`
       (in-memory, refetch on 401, one in-flight refresh), GraphQL over `fetch`.
-- [ ] Operations: `viewer { id }` (the app user id, at start), `agentActivityCreate`
+- [x] Operations: `viewer { id }` (the app user id, at start), `agentActivityCreate`
       (all five types, `ephemeral`), `agentSession(id)` (issue, state,
       activities for reconstruction), `issue(id)` (state, labels, delegate,
       project), `agentSessionCreateOnIssue`, `issueUpdate` (delegate).
-- [ ] Tests against a mock GraphQL server: token refresh, 401 path, error
+- [x] Tests against a mock GraphQL server: token refresh, 401 path, error
       envelopes.
 
 ### 3. Webhook route on the host listener

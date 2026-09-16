@@ -182,7 +182,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 ## Where things are
 
-`packages/{core,host,knowledge,browser,channel-discord,channel-slack,opencode,app}` with tests in
+`packages/{core,host,knowledge,browser,channel-discord,channel-slack,linear,opencode,app}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). No `dist/`: sources run as they are.
 `scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
