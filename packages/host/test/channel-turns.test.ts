@@ -26,6 +26,8 @@ const turn = {
   directory: null,
   seed: null,
   model: null,
+  project: null,
+  issue: null,
 };
 
 test('a turn runner creates one fixed-agent session and reapplies only the source-directory allows before each prompt', async t => {

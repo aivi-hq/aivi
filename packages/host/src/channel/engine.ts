@@ -1,7 +1,7 @@
 import type { Config, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
 import { TurnNotStarted } from '../session.ts';
-import type { ChannelDelivery } from './contract.ts';
+import type { ChannelDelivery, EngineNotices } from './contract.ts';
 import { type ProgressOptions, ProgressReporter } from './reporter.ts';
 import type { ConversationStore, Turn } from './store.ts';
 
@@ -52,6 +52,7 @@ export class ChannelEngine {
   private readonly progress: ProgressOptions | undefined;
   private readonly onRelease: () => void;
   private readonly onFailure: (error: unknown) => void;
+  private readonly notices: EngineNotices;
   constructor(
     store: ConversationStore,
     limits: EngineLimits,
@@ -69,6 +70,7 @@ export class ChannelEngine {
     this.log = (options.log ?? silentLogger).child({ component: store.platform.id });
     this.onRelease = options.onRelease ?? (() => {});
     this.onFailure = options.onFailure ?? (() => {});
+    this.notices = { ...CHAT_NOTICES, ...store.platform.notices };
   }
 
   tick(): void {
@@ -125,14 +127,14 @@ export class ChannelEngine {
             // Someone in the conversation asked (`/stop`): discarded like a shutdown, but said so.
             log.info('turn.stopped');
             this.store.interrupt(turn.id, STOPPED_REASON);
-            await tell(STOPPED_NOTICE);
+            await tell(this.notices.stopped);
             return;
           }
           if (error instanceof TurnNotStarted) {
             // Nothing reached the agent: release capacity and let the person try again.
             log.warn('turn.not_started', { error });
             this.store.fail(turn.id);
-            await tell('I could not reach my agent runtime just now. Please send that again in a moment.');
+            await tell(this.notices.notStarted);
             return;
           }
           if (this.abort.signal.aborted) {
@@ -140,19 +142,13 @@ export class ChannelEngine {
             // effect, so the turn is discarded rather than blocked, and the person hears why.
             log.info('turn.interrupted', { delivering });
             this.store.interrupt(turn.id);
-            await tell(
-              delivering
-                ? OFFLINE_MID_REPLY
-                : 'I am going offline for a moment (a restart or shutdown) and could not finish this. Please send it again when I am back.',
-            );
+            await tell(delivering ? this.notices.offlineMidReply : this.notices.offline);
             return;
           }
           // No automatic resend: delivery may already have succeeded before a response was lost.
           log.warn('turn.blocked', { error });
           this.store.block(turn.id);
-          await tell(
-            'I could not finish that. An operator has been notified; this conversation waits until it is resolved.',
-          );
+          await tell(this.notices.blocked);
         }
       })
       .catch(error => {
@@ -204,7 +200,7 @@ export class ChannelEngine {
         .queuedChannels()
         .map(channel =>
           this.delivery
-            .send(channel, OFFLINE_QUEUED)
+            .send(channel, this.notices.offlineQueued)
             .catch(error => this.log.warn('notify.failed', { channel, error })),
         ),
     );
@@ -220,3 +216,13 @@ export const OFFLINE_MID_REPLY =
 export const STOPPED_REASON = 'Stopped at the person’s request';
 /** What the conversation hears in place of the answer. */
 export const STOPPED_NOTICE = 'Stopped at your request.';
+/** The chat wording; a platform overrides what it must through `ChannelPlatform.notices`. */
+export const CHAT_NOTICES: EngineNotices = {
+  stopped: STOPPED_NOTICE,
+  notStarted: 'I could not reach my agent runtime just now. Please send that again in a moment.',
+  offline:
+    'I am going offline for a moment (a restart or shutdown) and could not finish this. Please send it again when I am back.',
+  offlineMidReply: OFFLINE_MID_REPLY,
+  offlineQueued: OFFLINE_QUEUED,
+  blocked: 'I could not finish that. An operator has been notified; this conversation waits until it is resolved.',
+};

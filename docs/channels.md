@@ -49,7 +49,11 @@ describeSpeaker? }`.
   `interrupt` (a turn ended by choice, a shutdown or a `/stop`: discarded with
   the reason, lease released), `reset` (`/new`; refused while work is
   pending), `adopt` (a report thread continues a job's session, or is seeded
-  with a script's output), `setModel` (the conversation's model pin, see
+  with a script's output), `bind` (a worker conversation: a fresh session
+  with its own agent and directory, keyed by `project` and `issue`; `claim`
+  then admits one turn per project and per issue across conversations, a
+  blocked one holding that lock until resolved, and `waitingOn` names what a
+  queued turn waits for), `setModel` (the conversation's model pin, see
   [commands](#chat-commands)), `running` (the turn the agent is working on in
   a conversation), `channelOf`, `enqueueJobResult`, `has`, `list`,
   `sessionOf`, and the binding rotation: constructing the store with a

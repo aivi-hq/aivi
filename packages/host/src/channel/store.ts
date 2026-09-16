@@ -23,6 +23,9 @@ export interface Turn {
   seed: string | null;
   /** The conversation's model override (`/model`), applied to the session before each prompt; null means the agent's default. */
   model: ModelRef | null;
+  /** Set by `bind` for workers: one turn at a time per project and per issue across the module's conversations. */
+  project: string | null;
+  issue: string | null;
 }
 export type TurnState = 'queued' | 'running' | 'replying' | 'sent' | 'blocked' | 'discarded';
 export type TurnKind = 'message' | 'job';
@@ -64,6 +67,8 @@ const turn = (r: Row): Turn => ({
   directory: r.directory == null ? null : String(r.directory),
   seed: r.seed == null ? null : String(r.seed),
   model: modelRef(r.model),
+  project: r.project == null ? null : String(r.project),
+  issue: r.issue == null ? null : String(r.issue),
 });
 
 const PENDING = "('queued','running','replying','blocked')";
@@ -91,6 +96,8 @@ const migrations = (n: ReturnType<typeof namesFor>, id: string) => [
    ALTER TABLE ${n.sessions} ADD COLUMN directory TEXT;
    ALTER TABLE ${n.sessions} ADD COLUMN seed TEXT;`,
   `ALTER TABLE ${n.sessions} ADD COLUMN model TEXT;`,
+  `ALTER TABLE ${n.sessions} ADD COLUMN project TEXT;
+   ALTER TABLE ${n.sessions} ADD COLUMN issue TEXT;`,
 ];
 
 /**
@@ -109,7 +116,7 @@ export class ConversationStore {
     this.platform = platform;
     const n = namesFor(platform.id);
     this.n = n;
-    this.select = `SELECT t.*,s.ready,s.agent,s.directory,s.seed,s.model FROM ${n.turns} t JOIN ${n.sessions} s ON s.channel=t.channel`;
+    this.select = `SELECT t.*,s.ready,s.agent,s.directory,s.seed,s.model,s.project,s.issue FROM ${n.turns} t JOIN ${n.sessions} s ON s.channel=t.channel`;
     core.migrate(platform.id, migrations(n, platform.id));
     core.transaction(() => {
       const previous = core.db.prepare(`SELECT value FROM ${n.binding} WHERE id=1`).get();
@@ -147,9 +154,11 @@ export class ConversationStore {
   }
 
   /**
-   * Restart recovery. A conversation turn's only external effect is its reply, so an
-   * interrupted turn is discarded and its capacity released; the caller tells the person.
-   * `running` means no reply was sent; `replying` means it may have been partial.
+   * Restart recovery. A chat turn's only external effect is its reply, so an interrupted
+   * turn is discarded and its capacity released; the caller tells the person. `running`
+   * means no reply was sent; `replying` means it may have been partial. A platform whose
+   * turns have effects of their own (`effects: 'work'`) cannot know whether the agent is
+   * still at it, so those turns end `blocked` for an operator to inspect and resolve.
    */
   recover(): { id: string; channel: string; state: 'running' | 'replying' }[] {
     return this.core.transaction(() => {
@@ -159,6 +168,15 @@ export class ConversationStore {
           .all() as Row[]
       ).map(r => ({ id: String(r.id), channel: String(r.channel), state: r.state as 'running' | 'replying' }));
       for (const turn of interrupted) {
+        if (this.platform.effects === 'work') {
+          this.core.db
+            .prepare(
+              `UPDATE ${this.n.turns} SET state='blocked',error='Interrupted by a restart while working; inspect the session, then resolve' WHERE id=?`,
+            )
+            .run(turn.id);
+          this.core.blockLease(this.n.leaseID(turn.id), this.n.leaseOwner, 'Interrupted by a restart while working');
+          continue;
+        }
         this.core.db
           .prepare(
             `UPDATE ${this.n.turns} SET state='discarded',text='',result=NULL,error='Interrupted by a restart' WHERE id=?`,
@@ -239,12 +257,21 @@ export class ConversationStore {
     return row ? turn(row as Row) : null;
   }
 
-  /** One turn per channel at a time; the lease reserves shared model capacity. */
+  /**
+   * One turn per channel at a time, and for bound workers one per project and per issue
+   * across channels (the project lock; a blocked worker keeps it until resolved). The
+   * lease reserves shared model capacity in the same transaction.
+   */
   claim(config: Config['scheduler'], resource: string): Turn | null {
     const rows = this.core.db
       .prepare(`${this.select}
       WHERE t.state='queued' AND NOT EXISTS (
-        SELECT 1 FROM ${this.n.turns} busy WHERE busy.channel=t.channel AND busy.state IN ('running','replying','blocked')
+        SELECT 1 FROM ${this.n.turns} busy JOIN ${this.n.sessions} bs ON bs.channel=busy.channel
+        WHERE busy.state IN ('running','replying','blocked') AND (
+          busy.channel=t.channel
+          OR (s.project IS NOT NULL AND bs.project=s.project)
+          OR (s.issue IS NOT NULL AND bs.issue=s.issue)
+        )
       ) ORDER BY t.seq`)
       .all() as Row[];
     for (const row of rows) {
@@ -276,6 +303,39 @@ export class ConversationStore {
   /** The native session exists; a seed has been read into its first turn and is no longer needed. */
   ready(channel: string): void {
     this.core.db.prepare(`UPDATE ${this.n.sessions} SET ready=1,seed=NULL WHERE channel=?`).run(channel);
+  }
+
+  /**
+   * Bind a new conversation to a fresh session that runs `agent` in `directory` (a
+   * worker in its worktree), keyed for the locks by `project` and `issue`. Refused when
+   * the conversation already exists.
+   */
+  bind(channel: string, binding: { agent: string; directory: string; project: string; issue: string }): void {
+    this.core.transaction(() => {
+      if (this.has(channel)) throw new Error(`${this.platform.label} conversation ${channel} already has a session`);
+      this.core.db
+        .prepare(
+          `INSERT INTO ${this.n.sessions}(channel,session,ready,agent,directory,project,issue) VALUES(?,?,0,?,?,?,?)`,
+        )
+        .run(channel, this.n.newSession(), binding.agent, binding.directory, binding.project, binding.issue);
+    });
+  }
+
+  /**
+   * The conversation whose pending turn keeps `channel`'s next turn waiting: the same
+   * issue or project busy elsewhere; null when nothing stands in the way.
+   */
+  waitingOn(channel: string): { channel: string; issue: string | null } | null {
+    const row = this.core.db
+      .prepare(
+        `SELECT bs.channel AS channel, bs.issue AS issue FROM ${this.n.sessions} s
+         JOIN ${this.n.sessions} bs ON bs.channel<>s.channel AND (
+           (s.project IS NOT NULL AND bs.project=s.project) OR (s.issue IS NOT NULL AND bs.issue=s.issue))
+         JOIN ${this.n.turns} busy ON busy.channel=bs.channel AND busy.state IN ('running','replying','blocked')
+         WHERE s.channel=? LIMIT 1`,
+      )
+      .get(channel);
+    return row ? { channel: String(row.channel), issue: row.issue == null ? null : String(row.issue) } : null;
   }
 
   /**
@@ -362,9 +422,11 @@ export class ConversationStore {
     agent: string | null;
     directory: string | null;
     model: ModelRef | null;
+    project: string | null;
+    issue: string | null;
   } | null {
     const row = this.core.db
-      .prepare(`SELECT session,ready,agent,directory,model FROM ${this.n.sessions} WHERE channel=?`)
+      .prepare(`SELECT session,ready,agent,directory,model,project,issue FROM ${this.n.sessions} WHERE channel=?`)
       .get(channel);
     if (!row) return null;
     return {
@@ -373,6 +435,8 @@ export class ConversationStore {
       agent: row.agent == null ? null : String(row.agent),
       directory: row.directory == null ? null : String(row.directory),
       model: modelRef(row.model),
+      project: row.project == null ? null : String(row.project),
+      issue: row.issue == null ? null : String(row.issue),
     };
   }
 

@@ -229,12 +229,12 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 
 ### 4. The worker loop (agent session = conversation)
 
-- [ ] Shared machinery: per-conversation binding on `ConversationStore`
-      (`bind(channel, {agent, directory, project, issue})`), interruption
-      policy `block` for `recover` (a worker's effects are real; a chat
-      reply's are not) and a `stopped` outcome that releases the lease for
-      `stopTurn`/`shutdown`, both behind the `ChannelPlatform` so Discord and
-      Slack are unchanged. Tests at the store.
+- [x] Shared machinery: `bind(channel, {agent, directory, project, issue})`,
+      the project/issue lock in `claim` plus `waitingOn`, `effects: 'work'`
+      (restart → `blocked`; stops by choice still release through
+      `interrupt`, recorded as `discarded` with the reason) and per-platform
+      `notices`, all behind `ChannelPlatform`; Discord and Slack unchanged.
+      Tested at the store.
 - [ ] Worktree: `git fetch origin`, `git worktree add <project>/worktrees/<agent-session> -B <branchName> origin/<default>`
       at claim (reuse an existing branch); failure → `error` activity and a
       `failed` turn, lock released. `worktrees` pruning by age in `runs.prune`

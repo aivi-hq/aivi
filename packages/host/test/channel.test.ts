@@ -424,3 +424,58 @@ test('a report thread adopts the job session (agent jobs) or seeds a fresh one (
   );
   assert.notEqual(fresh.session, 'ses_aivi_job1');
 });
+
+test('bound workers: one turn per project and per issue across conversations; a blocked worker keeps the lock; restart blocks instead of discarding', t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const workers: ChannelPlatform = { id: 'linear', label: 'Linear', replyLimit: 60_000, effects: 'work' };
+  const store = new ConversationStore(core, workers, 'binding');
+  const wide = { ...scheduler, maxConcurrent: 4, resources: { 'local-model': 4 } };
+  const bind = (channel: string, project: string, issue: string) =>
+    store.bind(channel, {
+      agent: 'developer',
+      directory: `/home/projects/${project}/worktrees/${channel}`,
+      project,
+      issue,
+    });
+  bind('as-1', 'website', 'ENG-1');
+  bind('as-2', 'website', 'ENG-2');
+  bind('as-3', 'api', 'API-1');
+  bind('as-4', 'api', 'API-1');
+  assert.throws(() => bind('as-1', 'website', 'ENG-1'), /already has a session/);
+  for (const channel of ['as-1', 'as-2', 'as-3', 'as-4']) store.enqueue(message(`m-${channel}`, channel), 10);
+
+  const first = store.claim(wide, 'local-model')!;
+  assert.equal(first.channel, 'as-1');
+  assert.deepEqual([first.project, first.issue, first.agent], ['website', 'ENG-1', 'developer']);
+  assert.deepEqual(store.waitingOn('as-2'), { channel: 'as-1', issue: 'ENG-1' }, 'same project, waiting');
+  const second = store.claim(wide, 'local-model')!;
+  assert.equal(second.channel, 'as-3', 'as-2 waits for the website lock; api is free');
+  assert.equal(store.claim(wide, 'local-model'), null, 'as-4 waits: same issue as as-3');
+  assert.deepEqual(store.waitingOn('as-4'), { channel: 'as-3', issue: 'API-1' });
+
+  store.result(first.id, 'done');
+  store.sent(first.id);
+  assert.equal(store.waitingOn('as-2'), null);
+  const third = store.claim(wide, 'local-model')!;
+  assert.equal(third.channel, 'as-2', 'the website lock passed on');
+  store.block(third.id);
+  assert.equal(store.claim(wide, 'local-model'), null, 'as-4 still waits on as-3');
+  store.enqueue(message('m-as-1-again', 'as-1'), 10);
+  assert.equal(store.claim(wide, 'local-model'), null, 'a blocked worker holds the project lock');
+  store.resolve(third.id, 'Inspected; the worker had stopped');
+  assert.equal(store.claim(wide, 'local-model')!.channel, 'as-1', 'released by resolve');
+
+  // A restart with a worker mid-turn: nobody knows whether it stopped, so it is blocked, not discarded.
+  assert.deepEqual(
+    store.recover().map(r => [r.id, r.state]),
+    [
+      ['m-as-3', 'running'],
+      ['m-as-1-again', 'running'],
+    ],
+  );
+  assert.equal(store.state('m-as-3'), 'blocked');
+  assert.match(store.list('as-3')[0]!.error!, /restart while working/);
+  assert.equal(core.leases().filter(l => l.state === 'blocked').length, 2);
+  assert.equal(store.sessionOf('as-3')!.project, 'api');
+});

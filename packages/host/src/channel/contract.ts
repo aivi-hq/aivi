@@ -51,4 +51,22 @@ export interface ChannelPlatform {
   replyLimit: number;
   /** How a person's message is introduced to the agent; default `[<label> message from <name> (user <id>)]`. */
   describeSpeaker?: (turn: { name: string; user: string }) => string;
+  /**
+   * What a turn changes besides its reply. `reply` (default, chat): an interrupted turn is
+   * discarded. `work` (workers editing a checkout): a turn interrupted by a restart ends
+   * `blocked` because nobody can tell whether the agent stopped; stops by choice still release.
+   */
+  effects?: 'reply' | 'work';
+  /** Platform wording for the engine's notices; the chat defaults otherwise. */
+  notices?: Partial<EngineNotices>;
+}
+
+/** The texts the shared engine posts into a conversation when a turn does not end with an answer. */
+export interface EngineNotices {
+  stopped: string;
+  notStarted: string;
+  offline: string;
+  offlineMidReply: string;
+  offlineQueued: string;
+  blocked: string;
 }
