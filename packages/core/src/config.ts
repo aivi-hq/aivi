@@ -182,12 +182,70 @@ export const projectSchema = z.strictObject({
     .describe('Replaces projectDefaults.knowledge for this project; paths relative to the checkout.'),
   linear: z
     .strictObject({
-      workspaceId: z.string().min(1),
-      projectId: z.string().min(1),
-      lanes: z.record(z.string().min(1), id),
+      workspaceId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Linear organization id; only needed with more than one workspace.'),
+      projectId: z.string().min(1).describe('The Linear project whose issues belong to this project.'),
+      lanes: z
+        .record(z.string().min(1), id)
+        .describe('Workflow state name → app id: issues entering that state are worked by that app.'),
     })
     .optional(),
 });
+/**
+ * The Linear module (nothing reads it yet beyond validation; the plan is in
+ * `docs/plans/linear.md`). Each *app* is one Linear OAuth application acting
+ * as an app user, mapped to exactly one OpenCode agent; its client id, client
+ * secret and webhook signing secret come from the environment as
+ * `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET` and
+ * `LINEAR_<APP>_WEBHOOK_SECRET` (`<APP>` = the id upper-cased, `-` → `_`).
+ * Presence of this block enables the module.
+ */
+export const linearSchema = z.strictObject({
+  apps: z
+    .record(
+      id,
+      z.strictObject({ agent: z.string().min(1).describe('The OpenCode agent this app runs as; unique across apps.') }),
+    )
+    .describe('Linear apps by id; lanes in projects.<id>.linear.lanes refer to these ids.'),
+  listener: z
+    .boolean()
+    .default(false)
+    .describe(
+      'React to issue lane changes by delegating eligible issues to the lane’s app. Off: only delegations and mentions made in Linear start a worker.',
+    ),
+  humanLabel: z
+    .string()
+    .min(1)
+    .default('needs-human')
+    .describe(
+      'Issues carrying this label are never worked automatically; a hand delegation is refused with an explanation.',
+    ),
+  resource: id.default('local-model').describe('Pool a worker turn takes a slot in.'),
+  progress: z
+    .enum(['silent', 'status', 'tools'])
+    .default('tools')
+    .describe('What the ephemeral activities in the agent session show while a worker runs.'),
+  turnTimeoutMs: z
+    .number()
+    .int()
+    .min(60_000)
+    .max(24 * 3_600_000)
+    .default(2 * 3_600_000)
+    .describe('A worker turn longer than this is interrupted and ends stopped.'),
+});
+export type LinearConfig = z.infer<typeof linearSchema>;
+/** Environment variable names one Linear app's credentials are read from. */
+export const linearSecretNames = (app: string) => {
+  const key = app.toUpperCase().replaceAll('-', '_');
+  return {
+    clientId: `LINEAR_${key}_CLIENT_ID`,
+    clientSecret: `LINEAR_${key}_CLIENT_SECRET`,
+    webhookSecret: `LINEAR_${key}_WEBHOOK_SECRET`,
+  };
+};
 /**
  * Where the host API listens and how callers authenticate.
  * `bind` defaults to loopback; use a LAN/tailnet address or `0.0.0.0` to let
@@ -268,7 +326,7 @@ export const configSchema = z
         maxPending: z.number().int().min(1).max(100).default(32),
       })
       .optional(),
-    linear: z.strictObject({ applications: z.record(id, z.strictObject({ agent: z.string().min(1) })) }).optional(),
+    linear: linearSchema.optional(),
     scheduler: z
       .strictObject({
         maxConcurrent: z.number().int().min(1).max(64).default(1),
@@ -368,15 +426,17 @@ export const configSchema = z
             message: 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically',
           });
     const agents = new Set<string>();
-    for (const [app, value] of Object.entries(config.linear?.applications ?? {})) {
+    for (const [app, value] of Object.entries(config.linear?.apps ?? {})) {
       if (agents.has(value.agent))
         ctx.addIssue({
           code: 'custom',
-          path: ['linear', 'applications', app],
-          message: 'An OpenCode agent can be mapped to only one Linear application',
+          path: ['linear', 'apps', app],
+          message: 'An OpenCode agent can be mapped to only one Linear app',
         });
       agents.add(value.agent);
     }
+    if (config.linear && !(config.linear.resource in config.scheduler.resources))
+      ctx.addIssue({ code: 'custom', path: ['linear', 'resource'], message: 'Unknown resource pool' });
     for (const [i, job] of config.jobs.entries()) {
       if (!(job.resource in config.scheduler.resources))
         ctx.addIssue({ code: 'custom', path: ['jobs', i, 'resource'], message: 'Unknown resource pool' });
@@ -659,8 +719,7 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
         sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
     sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
     for (const app of Object.values(entry.linear?.lanes ?? {})) {
-      if (!config.linear?.applications[app])
-        throw new Error(`Project ${projectId} refers to unknown Linear application ${app}`);
+      if (!config.linear?.apps[app]) throw new Error(`Project ${projectId} refers to unknown Linear app ${app}`);
     }
     projects.push({
       id: projectId,

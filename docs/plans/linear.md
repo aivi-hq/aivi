@@ -198,13 +198,12 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 
 ### 1. Configuration and vocabulary
 
-- [ ] `linear.applications` → `linear.apps`; add `listener`, `humanLabel`,
+- [x] `linear.applications` → `linear.apps`; add `listener`, `humanLabel`,
       `resource`, `progress`, `turnTimeoutMs`; `workspaceId` optional.
-- [ ] Secret names resolved from app ids; missing secrets are a
-      `ConfigurationError` at start, never a log line with a value.
-- [ ] `npm run schema`; [configuration.md](../configuration.md) fields, secrets,
-      `.env` order; AGENTS.md wording ("only config validation exists" →
-      what is built).
+- [x] Secret names resolved from app ids (`linearSecretNames`); missing
+      secrets become a `ConfigurationError` at module start (step 4).
+- [x] `npm run schema`; [configuration.md](../configuration.md) fields and
+      secrets. AGENTS.md wording changes when step 4 lands.
 
 ### 2. Linear client
 

@@ -66,9 +66,9 @@ only overrides:
   is `decision`, the rest of `docs/` is `doc`; nothing is indexed twice or under
   two kinds. This is resolved once, when the index is configured: the outer
   collection ignores the inner one's subtree.
-- `projects.<id>.linear` (`workspaceId`, `projectId`, `lanes`) is validated
-  ahead of the Linear module; nothing reads it yet
-  ([configuration](configuration.md#linear-mapping-validation-only)).
+- `projects.<id>.linear` (`projectId`, `lanes`, optional `workspaceId`) is
+  validated ahead of the Linear module; nothing reads it yet
+  ([configuration](configuration.md#linear-validation-only)).
 
 ## Who works in a project
 

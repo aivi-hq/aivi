@@ -247,14 +247,17 @@
             "type": "object",
             "properties": {
               "workspaceId": {
+                "description": "Linear organization id; only needed with more than one workspace.",
                 "type": "string",
                 "minLength": 1
               },
               "projectId": {
+                "description": "The Linear project whose issues belong to this project.",
                 "type": "string",
                 "minLength": 1
               },
               "lanes": {
+                "description": "Workflow state name → app id: issues entering that state are worked by that app.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string",
@@ -267,7 +270,6 @@
               }
             },
             "required": [
-              "workspaceId",
               "projectId",
               "lanes"
             ],
@@ -450,7 +452,8 @@
     "linear": {
       "type": "object",
       "properties": {
-        "applications": {
+        "apps": {
+          "description": "Linear apps by id; lanes in projects.<id>.linear.lanes refer to these ids.",
           "type": "object",
           "propertyNames": {
             "type": "string",
@@ -460,6 +463,7 @@
             "type": "object",
             "properties": {
               "agent": {
+                "description": "The OpenCode agent this app runs as; unique across apps.",
                 "type": "string",
                 "minLength": 1
               }
@@ -469,10 +473,44 @@
             ],
             "additionalProperties": false
           }
+        },
+        "listener": {
+          "description": "React to issue lane changes by delegating eligible issues to the lane’s app. Off: only delegations and mentions made in Linear start a worker.",
+          "default": false,
+          "type": "boolean"
+        },
+        "humanLabel": {
+          "description": "Issues carrying this label are never worked automatically; a hand delegation is refused with an explanation.",
+          "default": "needs-human",
+          "type": "string",
+          "minLength": 1
+        },
+        "resource": {
+          "description": "Pool a worker turn takes a slot in.",
+          "default": "local-model",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$"
+        },
+        "progress": {
+          "description": "What the ephemeral activities in the agent session show while a worker runs.",
+          "default": "tools",
+          "type": "string",
+          "enum": [
+            "silent",
+            "status",
+            "tools"
+          ]
+        },
+        "turnTimeoutMs": {
+          "description": "A worker turn longer than this is interrupted and ends stopped.",
+          "default": 7200000,
+          "type": "integer",
+          "minimum": 60000,
+          "maximum": 86400000
         }
       },
       "required": [
-        "applications"
+        "apps"
       ],
       "additionalProperties": false
     },

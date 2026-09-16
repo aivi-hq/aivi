@@ -7,6 +7,7 @@ import { nextOccurrence } from '../src/clock.ts';
 import {
   configSchema,
   jobSchema,
+  linearSecretNames,
   loadConfig,
   projectsSyncJob,
   retentionJob,
@@ -14,12 +15,29 @@ import {
   systemJobs,
 } from '../src/config.ts';
 
+test('linear settings: defaults, secret names, reserved pool', () => {
+  const linear = configSchema.parse({ version: 1, linear: { apps: { dev: { agent: 'developer' } } } }).linear!;
+  assert.deepEqual(
+    [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs],
+    [false, 'needs-human', 'local-model', 'tools', 7_200_000],
+  );
+  assert.deepEqual(linearSecretNames('dev-app'), {
+    clientId: 'LINEAR_DEV_APP_CLIENT_ID',
+    clientSecret: 'LINEAR_DEV_APP_CLIENT_SECRET',
+    webhookSecret: 'LINEAR_DEV_APP_WEBHOOK_SECRET',
+  });
+  assert.match(
+    JSON.stringify(configSchema.safeParse({ version: 1, linear: { apps: {}, resource: 'gpu' } }).error?.issues),
+    /Unknown resource pool/,
+  );
+});
+
 test('config rejects ambiguous Linear app ownership and invalid job resources', () => {
   assert.equal(
     configSchema.safeParse({
       version: 1,
       linear: {
-        applications: {
+        apps: {
           developer: { agent: 'dev' },
           reviewer: { agent: 'dev' },
         },
@@ -162,7 +180,7 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
         version: 1,
         knowledge: [{ id: 'company', path: 'handbook' }],
         projects,
-        linear: { applications: { worker: { agent: 'dev' } } },
+        linear: { apps: { worker: { agent: 'dev' } } },
       }),
     );
   await write({

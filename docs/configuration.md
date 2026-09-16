@@ -166,34 +166,58 @@ and the `max` limit; a failing check is refused with the reason and nothing is
 spent. Agent-created jobs have ids `agent-…` and source `agent`; `aivi jobs
 list` shows them beside the configured ones.
 
-## Linear mapping (validation only)
+## Linear (validation only)
 
-Installation config maps each application key to one unique OpenCode agent:
+The module is not built yet ([plans/linear.md](plans/linear.md) has the design
+and order); its configuration is validated so the routing invariant is recorded.
+Presence of `linear` will enable the module.
 
 ```json
-{ "linear": { "applications": { "dev-app": { "agent": "dev" } } } }
+{
+  "linear": {
+    "apps": { "dev": { "agent": "developer" }, "review": { "agent": "reviewer" } },
+    "listener": false,
+    "humanLabel": "needs-human",
+    "resource": "local-model",
+    "progress": "tools",
+    "turnTimeoutMs": 7200000
+  }
+}
 ```
 
-The project entry selects applications by lane:
+| Field | Meaning |
+| --- | --- |
+| `apps.<id>.agent` | Each Linear *app* (one OAuth application acting as an app user) runs as exactly one OpenCode agent; an agent can belong to one app only |
+| `listener` | `false`: only delegations and mentions made in Linear start a worker. `true`: an issue entering a mapped lane is delegated to that lane's app by aivi |
+| `humanLabel` | Issues with this label are never worked automatically; a hand delegation is refused with an explanation in the agent session |
+| `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
+| `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
+| `turnTimeoutMs` | A worker turn longer than this is interrupted and ends `stopped` (default two hours) |
+
+The project entry selects apps by lane (a lane is a team workflow state, by
+name):
 
 ```json
 {
   "projects": {
     "website": {
       "linear": {
-        "workspaceId": "linear-workspace-id",
         "projectId": "linear-project-id",
-        "lanes": { "Development": "dev-app", "Review": "dev-app" }
+        "lanes": { "In Progress": "dev", "Review": "review" }
       }
     }
   }
 }
 ```
 
-Multiple lanes can reuse `dev-app`. Another application cannot also map to `dev`.
-Global/project OpenCode configuration still resolves the agent named `dev`.
-These application keys are configuration references; OAuth credentials and native
-application installation details belong to the future Linear adapter.
+Several lanes may select the same app. `workspaceId` is optional and only
+needed when the installation spans Linear workspaces. The mapped agent is
+resolved by OpenCode's ordinary discovery for the worker's directory.
+
+Credentials are never in JSON: each app reads `LINEAR_<APP>_CLIENT_ID`,
+`LINEAR_<APP>_CLIENT_SECRET` and `LINEAR_<APP>_WEBHOOK_SECRET` from the
+environment (`<APP>` is the app id upper-cased with `-` as `_`, so `dev-app`
+reads `LINEAR_DEV_APP_CLIENT_ID`).
 
 ## Operator commands
 
@@ -206,7 +230,9 @@ Secrets never live in JSON files. They come from the process environment, and
 the CLI loads dotenv-style files without overriding variables that are already
 set: `<home>/.env`. `fnox exec` works the same way. Variables: `AIVI_TOKEN`, `DISCORD_BOT_TOKEN`,
 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` (Slack's bot and app-level tokens),
-`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`).
+`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), and per
+Linear app `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET`,
+`LINEAR_<APP>_WEBHOOK_SECRET` ([Linear](#linear-validation-only)).
 
 With `host.auth.mode: "token"`, `AIVI_TOKEN` (at least 24 characters) must be
 present in the host environment and in the OpenCode server's environment for the
@@ -229,7 +255,7 @@ fails when they are stale. Point your editor at them for autocompletion and
 field descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
 config file) in `aivi.json` and the Discord and Slack configs. Runtime validation additionally checks cron
 expressions, timezones, uniqueness, that every project override has a
-checkout, and Linear application references.
+checkout, and Linear app references.
 
 `aivi serve` is the single application command. See [operations](operations.md)
 for ownership and [knowledge search](knowledge.md) for indexing and retrieval.
