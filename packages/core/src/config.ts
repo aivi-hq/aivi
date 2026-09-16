@@ -19,6 +19,8 @@ const source = z.strictObject({
 export const taskSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('system.check') }),
   z.strictObject({ kind: z.literal('knowledge.index') }),
+  /** Fast-forward every project's `source/` to its upstream, then reindex what changed. */
+  z.strictObject({ kind: z.literal('projects.sync') }),
   z.strictObject({
     kind: z.literal('runs.prune'),
     /** Finished runs (and the finished one-off jobs they belonged to) older than this are deleted; blocked and active work never is. */
@@ -313,6 +315,23 @@ export const configSchema = z
           .describe(
             'The system job `retention` (task runs.prune) that deletes finished runs and finished one-off jobs older than olderThanDays. `false` removes it.',
           ),
+        projectsSync: z
+          .union([
+            z.strictObject({
+              cron: z.string().min(1).default('0 * * * *'),
+              timezone: z.string().optional().describe('IANA timezone; default the host’s.'),
+              resource: id
+                .optional()
+                .describe(
+                  'Pool the sync run takes a slot in; default local-model, or the first pool when that does not exist.',
+                ),
+            }),
+            z.literal(false),
+          ])
+          .default({ cron: '0 * * * *' })
+          .describe(
+            'The system job `projects-sync` (task projects.sync) that fast-forwards every project’s source/ to its upstream and reindexes what changed, so merges reach what is searched. `false` removes it.',
+          ),
       })
       .default({
         maxConcurrent: 1,
@@ -320,6 +339,7 @@ export const configSchema = z
         agentSchedules: { resource: 'local-model', max: 50 },
         misfire: { graceSeconds: 60 },
         retention: { cron: '0 4 * * *', olderThanDays: 30 },
+        projectsSync: { cron: '0 * * * *' },
       }),
     jobs: z.array(jobSchema).default([]),
   })
@@ -366,6 +386,13 @@ export const configSchema = z
           path: ['jobs', i, 'id'],
           message: 'Reserved for the system retention job; choose another id or set scheduler.retention to false',
         });
+      if (job.id === PROJECTS_SYNC_JOB_ID && config.scheduler.projectsSync)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['jobs', i, 'id'],
+          message:
+            'Reserved for the system projects-sync job; choose another id or set scheduler.projectsSync to false',
+        });
     }
     if (config.scheduler.agentSchedules && !(config.scheduler.agentSchedules.resource in config.scheduler.resources))
       ctx.addIssue({
@@ -373,25 +400,28 @@ export const configSchema = z
         path: ['scheduler', 'agentSchedules', 'resource'],
         message: 'Unknown resource pool; name one of scheduler.resources or set agentSchedules to false',
       });
-    const retention = config.scheduler.retention;
-    if (retention) {
-      if (retention.resource !== undefined && !(retention.resource in config.scheduler.resources))
+    for (const [name, system] of [
+      ['retention', config.scheduler.retention],
+      ['projectsSync', config.scheduler.projectsSync],
+    ] as const) {
+      if (!system) continue;
+      if (system.resource !== undefined && !(system.resource in config.scheduler.resources))
         ctx.addIssue({
           code: 'custom',
-          path: ['scheduler', 'retention', 'resource'],
-          message: 'Unknown resource pool; name one of scheduler.resources or set retention to false',
+          path: ['scheduler', name, 'resource'],
+          message: `Unknown resource pool; name one of scheduler.resources or set ${name} to false`,
         });
       if (
         !jobSchema.safeParse({
-          id: RETENTION_JOB_ID,
-          cron: retention.cron,
-          timezone: retention.timezone,
+          id: 'system',
+          cron: system.cron,
+          timezone: system.timezone,
           task: { kind: 'system.check' },
         }).success
       )
         ctx.addIssue({
           code: 'custom',
-          path: ['scheduler', 'retention', 'cron'],
+          path: ['scheduler', name, 'cron'],
           message: 'Invalid cron expression or timezone',
         });
     }
@@ -400,6 +430,14 @@ export type Config = z.infer<typeof configSchema>;
 
 /** Id of the job the host seeds from `scheduler.retention`. */
 export const RETENTION_JOB_ID = 'retention';
+/** Id of the job the host seeds from `scheduler.projectsSync`. */
+export const PROJECTS_SYNC_JOB_ID = 'projects-sync';
+
+const systemPool = (config: Config, resource: string | undefined) => {
+  const pools = Object.keys(config.scheduler.resources);
+  return resource ?? (pools.includes('local-model') ? 'local-model' : pools[0]);
+};
+
 /** The system job `scheduler.retention` describes, or null when retention is off. */
 export function retentionJob(
   config: Config,
@@ -407,15 +445,38 @@ export function retentionJob(
 ): Job | null {
   const retention = config.scheduler.retention;
   if (!retention) return null;
-  const pools = Object.keys(config.scheduler.resources);
   return jobSchema.parse({
     id: RETENTION_JOB_ID,
     title: 'Prune finished runs',
     cron: retention.cron,
     timezone: retention.timezone ?? hostTimezone,
-    resource: retention.resource ?? (pools.includes('local-model') ? 'local-model' : pools[0]),
+    resource: systemPool(config, retention.resource),
     task: { kind: 'runs.prune', olderThanDays: retention.olderThanDays },
   });
+}
+
+/** The system job `scheduler.projectsSync` describes, or null when it is off. */
+export function projectsSyncJob(
+  config: Config,
+  hostTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): Job | null {
+  const sync = config.scheduler.projectsSync;
+  if (!sync) return null;
+  return jobSchema.parse({
+    id: PROJECTS_SYNC_JOB_ID,
+    title: 'Sync project checkouts',
+    cron: sync.cron,
+    timezone: sync.timezone ?? hostTimezone,
+    resource: systemPool(config, sync.resource),
+    task: { kind: 'projects.sync' },
+  });
+}
+
+/** The system jobs the host seeds beside the configured ones. */
+export function systemJobs(config: Config, hostTimezone?: string): Job[] {
+  return [retentionJob(config, hostTimezone), projectsSyncJob(config, hostTimezone)].filter(
+    (j): j is Job => j !== null,
+  );
 }
 
 /**

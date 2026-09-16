@@ -57,6 +57,16 @@ export function describeOutcome(
     body = missing.length
       ? `Missing sources: ${missing.join(', ')}`
       : `All ${(r.sources as unknown[]).length} knowledge sources available.`;
+  } else if (run.task.kind === 'projects.sync' && r && Array.isArray(r.projects)) {
+    const outcomes = r.projects as { id: string; state: string; reason?: string }[];
+    const updated = outcomes.filter(o => o.state === 'updated').map(o => o.id);
+    const skipped = outcomes.filter(o => o.state === 'skipped').map(o => `${o.id} (${o.reason})`);
+    body = [
+      updated.length ? `Updated: ${updated.join(', ')}.` : `All ${outcomes.length} project checkout(s) current.`,
+      skipped.length ? `Skipped: ${skipped.join(', ')}.` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
   } else if (run.task.kind === 'runs.prune' && r)
     body = `Deleted ${String(r.runs)} run(s) and ${String(r.jobs)} finished one-off job(s).`;
   else body = result === null || result === undefined ? '' : JSON.stringify(result);

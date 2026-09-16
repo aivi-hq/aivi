@@ -45,7 +45,8 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
 | `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/aivi.json` writes the default out explicitly, in its `maintenance` pool |
-| `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). The id `retention` is reserved while `scheduler.retention` is on |
+| `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that fast-forwards every project's `source/` to its upstream and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
+| `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
 
 ## Tasks
 
@@ -53,6 +54,7 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 | --- | --- | --- |
 | `system.check` | – | Reports whether every knowledge source path exists |
 | `knowledge.index` | – | Refreshes the search index |
+| `projects.sync` | – | For every project with a checkout: `git fetch`, then fast-forward the checked-out branch to its upstream; skipped (logged `projects.sync.skipped`, listed in the report) when `source/` has local changes, a detached HEAD, no upstream or diverged history, so nothing is ever forced. Reindexes when any project moved. The host seeds one such job from `scheduler.projectsSync` |
 | `runs.prune` | `olderThanDays` (≥ 1) | Deletes runs that ended `succeeded`, `failed`, `cancelled` or `missed` before that, with their audit rows, then the `done`/`missed` one-off jobs that have no runs left. Blocked and active runs and recurring jobs are never touched. The host seeds one such job from `scheduler.retention` |
 | `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
 | `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
@@ -70,7 +72,7 @@ the job's task when it is created, so editing a definition never changes a
 queued run.
 
 Every job has a `source`: `config` (this file), `system` (seeded by the host
-from `scheduler.retention`), `agent` (created through `aivi_jobs`) or
+from `scheduler.retention` and `scheduler.projectsSync`), `agent` (created through `aivi_jobs`) or
 `operator` (created with `aivi jobs add`). Startup reconciles `config` and
 `system` jobs against the settings: unchanged definitions keep their next
 occurrence, changed ones cancel their queued run and start from the next

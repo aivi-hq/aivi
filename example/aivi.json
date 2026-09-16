@@ -19,11 +19,18 @@
       "local-model": 1,
       "maintenance": 1
     },
-    "misfire": { "graceSeconds": 60 },
+    "misfire": {
+      "graceSeconds": 60
+    },
     "retention": {
       "cron": "0 4 * * *",
       "timezone": "UTC",
       "olderThanDays": 30,
+      "resource": "maintenance"
+    },
+    "projectsSync": {
+      "cron": "30 * * * *",
+      "timezone": "UTC",
       "resource": "maintenance"
     }
   },
@@ -55,7 +62,12 @@
         "kind": "dreaming",
         "origins": ["discord", "slack"]
       },
-      "report": { "to": "channel", "module": "discord", "channel": "10000000000000005", "on": "always" }
+      "report": {
+        "to": "channel",
+        "module": "discord",
+        "channel": "10000000000000005",
+        "on": "always"
+      }
     }
   ],
   "search": {

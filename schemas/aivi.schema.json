@@ -492,6 +492,9 @@
         "retention": {
           "cron": "0 4 * * *",
           "olderThanDays": 30
+        },
+        "projectsSync": {
+          "cron": "0 * * * *"
         }
       },
       "type": "object",
@@ -604,6 +607,38 @@
               "const": false
             }
           ]
+        },
+        "projectsSync": {
+          "description": "The system job `projects-sync` (task projects.sync) that fast-forwards every project’s source/ to its upstream and reindexes what changed, so merges reach what is searched. `false` removes it.",
+          "default": {
+            "cron": "0 * * * *"
+          },
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "cron": {
+                  "default": "0 * * * *",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timezone": {
+                  "description": "IANA timezone; default the host’s.",
+                  "type": "string"
+                },
+                "resource": {
+                  "description": "Pool the sync run takes a slot in; default local-model, or the first pool when that does not exist.",
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]*$"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "boolean",
+              "const": false
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -665,6 +700,19 @@
                   "kind": {
                     "type": "string",
                     "const": "knowledge.index"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "projects.sync"
                   }
                 },
                 "required": [

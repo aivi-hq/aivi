@@ -188,13 +188,13 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 - [x] CLI: `projects add` clones into `source/`; `remove` deletes `source/`
       (and `worktrees/`); `purge` deletes the directory; `list` shows what
       each has.
-- [ ] System job `projects.sync` (task kind; seeded like `retention`,
+- [x] System job `projects.sync` (task kind; seeded like `retention`,
       `scheduler.projectsSync`, `false` removes it): per project `git fetch`
-      and fast-forward of the default branch in `source/`, never with local
+      and fast-forward of the checked-out branch in `source/`, never with local
       changes, then `knowledge.index`.
 - [x] Docs: [projects.md](../projects.md), [configuration.md](../configuration.md),
       [dreaming.md](../dreaming.md), CONTEXT vocabulary row `project`, `example/`
-      (landed 2026-09-16 with the layout; `projects.sync` is the one step left).
+      (landed 2026-09-16; step 0b is complete).
 
 ### 1. Configuration and vocabulary
 

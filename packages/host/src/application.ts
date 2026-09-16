@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { retentionJob, silentLogger } from '@aivi/core';
+import { silentLogger, systemJobs } from '@aivi/core';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { EventStream, type SessionEvents } from './events.ts';
@@ -239,9 +239,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         }
       },
     );
-    // The retention job is the host's own definition: seeded here, listed and run like any other.
-    const retention = retentionJob(loaded.config);
-    store.syncJobs(loaded.config.jobs, retention ? [retention] : []);
+    // Retention and projects-sync are the host's own definitions: seeded here, listed and run like any other.
+    store.syncJobs(loaded.config.jobs, systemJobs(loaded.config));
     if (loaded.config.search?.indexOnStart) {
       const startedAt = Date.now();
       await knowledge.index();

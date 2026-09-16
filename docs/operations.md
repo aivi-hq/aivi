@@ -10,7 +10,7 @@ behaviour are in [architecture](architecture.md).
 Startup validates the auth mode and token first (so a missing `AIVI_TOKEN`
 never launches QMD or Chrome), acquires installation ownership, initializes
 shared services, reconciles the job definitions it owns (`jobs[]` from
-`aivi.json` and the system job `retention` seeded from `scheduler.retention`;
+`aivi.json` and the system jobs `retention` and `projects-sync` seeded from `scheduler.*`;
 `Store.syncJobs`), refreshes the search index when configured, opens the API on
 `host.bind:host.port`, then starts modules in order and announces readiness
 once each has had its first attempt. From then on the loop sleeps until the
@@ -81,7 +81,10 @@ Retention is a job like any other: `retention` (source `system`, task
 and `/status`, and deletes finished runs with their audit rows and finished
 one-off definitions older than `olderThanDays`; blocked runs, active work and
 recurring definitions are never pruned. `scheduler.retention: false` removes
-the job at the next startup.
+the job at the next startup. `projects-sync` (task `projects.sync`) is the
+other system job: it keeps every project's `source/` at its upstream by
+fast-forward only, reports what it updated and what it skipped and why, and
+reindexes when something moved ([projects](projects.md)).
 
 ## Shutdown
 

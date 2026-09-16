@@ -4,7 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { nextOccurrence } from '../src/clock.ts';
-import { configSchema, jobSchema, loadConfig, retentionJob, selectSources } from '../src/config.ts';
+import {
+  configSchema,
+  jobSchema,
+  loadConfig,
+  projectsSyncJob,
+  retentionJob,
+  selectSources,
+  systemJobs,
+} from '../src/config.ts';
 
 test('config rejects ambiguous Linear app ownership and invalid job resources', () => {
   assert.equal(
@@ -105,6 +113,34 @@ test('retention is a system job derived from config: default pool, host timezone
       jobs: [{ id: 'retention', cron: '* * * * *', task: { kind: 'system.check' } }],
     }).success,
     true,
+  );
+});
+
+test('projects-sync is a system job too: hourly by default, same pool rule, reserved id, off with false', () => {
+  const job = projectsSyncJob(configSchema.parse({ version: 1 }), 'UTC')!;
+  assert.deepEqual(
+    [job.id, job.cron, job.timezone, job.resource, job.task],
+    ['projects-sync', '0 * * * *', 'UTC', 'local-model', { kind: 'projects.sync' }],
+  );
+  assert.deepEqual(
+    systemJobs(configSchema.parse({ version: 1, scheduler: { retention: false } }), 'UTC').map(j => j.id),
+    ['projects-sync'],
+  );
+  assert.equal(projectsSyncJob(configSchema.parse({ version: 1, scheduler: { projectsSync: false } })), null);
+  assert.match(
+    JSON.stringify(
+      configSchema.safeParse({ version: 1, scheduler: { projectsSync: { resource: 'nope' } } }).error?.issues,
+    ),
+    /set projectsSync to false/,
+  );
+  assert.match(
+    JSON.stringify(
+      configSchema.safeParse({
+        version: 1,
+        jobs: [{ id: 'projects-sync', cron: '* * * * *', task: { kind: 'system.check' } }],
+      }).error?.issues,
+    ),
+    /Reserved for the system projects-sync job/,
   );
 });
 

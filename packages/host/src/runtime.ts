@@ -5,6 +5,7 @@ import { errorMessage, MEMORY_SOURCE_ID, silentLogger } from '@aivi/core';
 import { dream } from './dreaming.ts';
 import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
+import { syncProjects } from './projects.ts';
 import type { Execute, ExecutionResult } from './scheduler.ts';
 import { connectForTurn, PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
@@ -56,6 +57,14 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       case 'knowledge.index': {
         if (!deps.knowledge) throw new Error('Knowledge service is not available');
         return { state: 'succeeded', result: await deps.knowledge.index() };
+      }
+      case 'projects.sync': {
+        const projects = await syncProjects(loaded.projects, context.signal);
+        const updated = projects.filter(p => p.state === 'updated').map(p => p.id);
+        for (const p of projects)
+          if (p.state === 'skipped') log.warn('projects.sync.skipped', { project: p.id, reason: p.reason });
+        const indexed = updated.length && deps.knowledge ? await deps.knowledge.index() : undefined;
+        return { state: 'succeeded', result: { projects, ...(indexed !== undefined ? { indexed } : {}) } };
       }
       case 'runs.prune': {
         const cutoff = Date.now() - run.task.olderThanDays * 86_400_000;

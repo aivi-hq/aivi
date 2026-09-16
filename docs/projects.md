@@ -106,6 +106,12 @@ aivi projects purge website           # shows what would go, deletes nothing
 aivi projects purge website --confirm # deletes projects/website entirely
 ```
 
+`source/` is kept at its upstream by the system job `projects-sync` (hourly by
+default, `scheduler.projectsSync`): fetch and fast-forward only, so a merge on
+GitHub reaches what is indexed within the hour and nothing is ever forced;
+local changes, a detached HEAD or a diverged branch are reported and left
+alone ([configuration](configuration.md#tasks)).
+
 `add` is `git clone` plus an id check (the id is the repository name,
 lower-cased, unless `--id` says otherwise); it prints the sources the project
 will have. The host reads the projects directory at startup, so restart
