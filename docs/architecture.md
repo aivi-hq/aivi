@@ -33,8 +33,10 @@ only enabled search loads QMD.
 Modules receive a `HostServices` object containing the loaded installation
 config, store, knowledge service, optional browser service, an `opencode()`
 client factory, a structured logger, the shutdown signal, the `channels`
-registry where chat modules register ([channels](channels.md)), `wake()` and
-`fail()`. They return an asynchronous `stop` function. They call shared
+registry where chat modules register ([channels](channels.md)), `routes`
+(webhook paths under `/v1/` a module exposes on the host listener outside
+bearer auth, the platform's signature being the auth; one handler per path,
+the raw body passed for signing), `wake()` and `fail()`. They return an asynchronous `stop` function. They call shared
 services directly, rather than calling the host over HTTP from inside the same
 application.
 
@@ -158,8 +160,9 @@ The API listens on `host.bind` (loopback by default; a tailnet or LAN address
 for a shared knowledge server) and exposes status, source discovery, scoped
 knowledge search, optional permission-gated browser operations, and one job
 mutation: `POST /v1/jobs`, the back end of the `aivi_jobs` tool.
-`/health` is public; everything else requires the bearer token unless
-`host.auth.mode` is `none`. The jobs route is a deliberate revision of the
+`/health` and module webhook routes (`HostServices.routes`, verified by the
+platform's own signature) are public; everything else requires the bearer
+token unless `host.auth.mode` is `none`. The jobs route is a deliberate revision of the
 earlier "no job mutations over the API" rule (2026-09-15): it is limited to what
 an agent may do for a person who asked (its own agent and directory by default,
 a report the destination accepts, no other task kinds, refused from job

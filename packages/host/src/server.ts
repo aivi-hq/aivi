@@ -67,6 +67,35 @@ export function status(store: Store, loaded: LoadedConfig, now = Date.now(), mod
   };
 }
 
+/** What a public route sees: the request and its raw body (signatures are computed over bytes, never re-serialized JSON). */
+export interface PublicRequest {
+  method: string;
+  headers: IncomingMessage['headers'];
+  body: Buffer;
+}
+export type PublicRouteHandler = (request: PublicRequest) => Promise<{ status: number; body?: unknown }>;
+
+/**
+ * Routes a module exposes without the bearer token: webhooks from platforms
+ * that authenticate with their own signature. A path is owned by one handler;
+ * registering it twice is a programming error. `/health` is the only other
+ * unauthenticated route.
+ */
+export class PublicRoutes {
+  private readonly handlers = new Map<string, PublicRouteHandler>();
+  register(path: string, handler: PublicRouteHandler): () => void {
+    if (!path.startsWith('/v1/')) throw new Error(`Public route ${path} must be under /v1/`);
+    if (this.handlers.has(path)) throw new Error(`Public route ${path} is registered twice`);
+    this.handlers.set(path, handler);
+    return () => {
+      if (this.handlers.get(path) === handler) this.handlers.delete(path);
+    };
+  }
+  get(path: string): PublicRouteHandler | undefined {
+    return this.handlers.get(path);
+  }
+}
+
 export interface HostServerOptions {
   store: Store;
   loaded: LoadedConfig;
@@ -81,11 +110,14 @@ export interface HostServerOptions {
   health?: (() => ModuleHealth[]) | undefined;
   /** `GET /v1/context?session=`: describe an OpenCode session for the agent running in it; absent without OpenCode. */
   context?: ((sessionID: string, signal: AbortSignal) => Promise<string>) | undefined;
+  /** Module webhooks, outside bearer auth; absent from the CLI. */
+  routes?: PublicRoutes | undefined;
   log?: Logger | undefined;
 }
 
 const MAX_BROWSER_BODY = 32 * 1024;
 const MAX_JOB_BODY = 64 * 1024;
+const MAX_PUBLIC_BODY = 1024 * 1024;
 
 export function createHostServer({
   store,
@@ -97,6 +129,7 @@ export function createHostServer({
   wake,
   health,
   context,
+  routes,
   log = silentLogger,
 }: HostServerOptions) {
   const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
@@ -118,6 +151,11 @@ export function createHostServer({
     // Liveness is public so process supervisors can probe without credentials.
     if (url.pathname === '/health') {
       send(200, { ok: true });
+      return;
+    }
+    const publicRoute = routes?.get(url.pathname);
+    if (publicRoute) {
+      handlePublic(request, publicRoute, send);
       return;
     }
     if (!authorized(request)) {
@@ -335,6 +373,33 @@ export function createHostServer({
       if (!response.headersSent) send(400, { error: 'Job request interrupted' });
     });
   }
+
+  async function handlePublic(request: IncomingMessage, handler: PublicRouteHandler, send: Send) {
+    const body = await readRaw(request, MAX_PUBLIC_BODY);
+    if (body === null) {
+      send(413, { error: 'Body too large' });
+      return;
+    }
+    try {
+      const outcome = await handler({ method: request.method ?? 'GET', headers: request.headers, body });
+      send(outcome.status, outcome.body ?? {});
+    } catch (error) {
+      log.warn('api.public.failed', { path: request.url, error });
+      send(500, { error: 'Internal error' });
+    }
+  }
+}
+
+/** The raw body up to `max` bytes, or null when larger. */
+async function readRaw(request: IncomingMessage, max: number): Promise<Buffer | null> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request as AsyncIterable<Buffer>) {
+    bytes += chunk.length;
+    if (bytes > max) return null;
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
 
 /** The parsed JSON body, or a short reason it was not read (`too large`, `Expected JSON`). */

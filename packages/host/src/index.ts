@@ -57,8 +57,8 @@ export type { ExecutorDeps } from './runtime.ts';
 export { createExecutor, SECRET_ENV, shellEnvironment } from './runtime.ts';
 export type { Execute, ExecutionContext, ExecutionResult, OnFinished } from './scheduler.ts';
 export { Scheduler } from './scheduler.ts';
-export type { HostAuth, HostServerOptions } from './server.ts';
-export { createHostServer, MIN_TOKEN_LENGTH, resolveHostAuth, status } from './server.ts';
+export type { HostAuth, HostServerOptions, PublicRequest, PublicRouteHandler } from './server.ts';
+export { createHostServer, MIN_TOKEN_LENGTH, PublicRoutes, resolveHostAuth, status } from './server.ts';
 export type { TurnInput, TurnOptions, TurnResult } from './session.ts';
 export {
   connectForTurn,

@@ -218,13 +218,14 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 
 ### 3. Webhook route on the host listener
 
-- [ ] Host: modules can register a public route (`HostServices.routes`), the
+- [x] Host: modules can register a public route (`HostServices.routes`), the
       only routes outside bearer auth besides `/health`; raw body captured.
-- [ ] `POST /v1/linear/webhooks/<app>`: signature (timing-safe) + timestamp
-      window, 200 at once, then dispatch; unknown app → 404; bad signature → 401
-      (logged without the body).
-- [ ] Tests: signed fixture accepted, tampered body refused, stale timestamp
-      refused, delivery id logged.
+- [x] `POST /v1/linear/webhooks/<app>`: signature (timing-safe) + timestamp
+      window, 200 at once, then dispatch (`registerWebhookRoutes`); unknown
+      app → no route (401 from the host); bad signature → 401 (logged with
+      the delivery id, never the body).
+- [x] Tests: signed fixture accepted, tampered body refused, stale timestamp
+      refused, wrong app's secret refused, acknowledged before dispatch.
 
 ### 4. The worker loop (agent session = conversation)
 

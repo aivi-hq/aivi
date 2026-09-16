@@ -4,7 +4,7 @@ import type { LoadedConfig } from '@aivi/core';
 import { configSchema } from '@aivi/core';
 import { createHostClient } from '../src/client.ts';
 import { JobRefused } from '../src/jobs.ts';
-import { createHostServer } from '../src/server.ts';
+import { createHostServer, PublicRoutes } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 
 test('read API authenticates callers, scopes sources, and refuses job operations without a handler', async t => {
@@ -234,4 +234,50 @@ test('jobs API validates the body, maps refusals to their status, and status lis
   assert.equal(created, 200);
   assert.deepEqual((requests.at(-1) as { report: string; on: string }).report, 'session');
   assert.deepEqual((requests.at(-1) as { report: string; on: string }).on, 'always');
+});
+
+test('public routes bypass bearer auth, see the raw body, and are owned by one handler', async t => {
+  const store = new Store(':memory:');
+  const routes = new PublicRoutes();
+  const seen: { method: string; body: string; header: string | undefined }[] = [];
+  const unregister = routes.register('/v1/linear/webhooks/dev', async request => {
+    seen.push({
+      method: request.method,
+      body: request.body.toString('utf8'),
+      header: String(request.headers['linear-signature']),
+    });
+    return { status: 202, body: { accepted: true } };
+  });
+  assert.throws(() => routes.register('/v1/linear/webhooks/dev', async () => ({ status: 200 })), /registered twice/);
+  assert.throws(() => routes.register('/hooks', async () => ({ status: 200 })), /under \/v1\//);
+  const server = createHostServer({
+    store,
+    loaded: { path: '/aivi.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] },
+    auth: { mode: 'token', token: 'test-only-token-never-for-deployment' },
+    routes,
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  const raw = '{"a":1,  "b": "spacing kept"}';
+  const response = await fetch(`${base}/v1/linear/webhooks/dev`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'linear-signature': 'abc' },
+    body: raw,
+  });
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { accepted: true });
+  assert.deepEqual(seen, [{ method: 'POST', body: raw, header: 'abc' }], 'the body arrives byte for byte');
+  assert.equal(
+    (await fetch(`${base}/v1/linear/webhooks/other`, { method: 'POST' })).status,
+    401,
+    'unknown paths still need the token',
+  );
+  unregister();
+  assert.equal((await fetch(`${base}/v1/linear/webhooks/dev`, { method: 'POST' })).status, 401, 'unregistered is gone');
 });

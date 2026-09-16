@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import type { KnowledgeService, Run } from '@aivi/core';
 import { configSchema, silentLogger } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
-import { CHAT_COMMANDS, Channels, connectOpenCode, Store } from '@aivi/host';
+import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store } from '@aivi/host';
 import { slackConfigSchema } from '../src/config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import {
@@ -273,6 +273,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     signal: abort.signal,
     log: silentLogger,
     channels,
+    routes: new PublicRoutes(),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -460,6 +461,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     signal: abort.signal,
     log: silentLogger,
     channels: new Channels(),
+    routes: new PublicRoutes(),
     wake: () => {
       for (const l of woken) l();
     },
@@ -528,6 +530,7 @@ test('progress: the placeholder goes into the thread, is updated through chat.up
     signal: abort.signal,
     log: silentLogger,
     channels: new Channels(),
+    routes: new PublicRoutes(),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -590,6 +593,7 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
     signal: abort.signal,
     log: silentLogger,
     channels: new Channels(),
+    routes: new PublicRoutes(),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),

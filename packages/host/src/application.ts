@@ -11,7 +11,7 @@ import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencod
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
-import { createHostServer, type HostAuth } from './server.ts';
+import { createHostServer, type HostAuth, PublicRoutes } from './server.ts';
 import type { Store } from './store.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
@@ -62,6 +62,8 @@ export interface HostServices {
   log: Logger;
   /** Chat platform modules register here once; that makes them report destinations and session owners. */
   channels: Channels;
+  /** Webhook routes a module exposes on the host listener, outside bearer auth; the platform's signature is the auth. */
+  routes: PublicRoutes;
   /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
   wake(): void;
   /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
@@ -137,12 +139,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     } catch (error) {
       log.warn('opencode.restart.failed', { error });
     }
+    const routes = new PublicRoutes();
     const http = createHostServer({
       store,
       loaded,
       auth,
       knowledge,
       browser,
+      routes,
       jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
       health: () => supervisor?.health() ?? [],
@@ -173,6 +177,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       signal: abort.signal,
       log,
       channels,
+      routes,
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
       fail,
