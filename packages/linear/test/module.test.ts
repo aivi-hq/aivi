@@ -21,18 +21,27 @@ const git = (cwd: string, ...args: string[]) =>
   run('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
 
 /** A tiny OpenCode: any session exists, every prompt gets the same answer. */
-async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer: string) {
+async function fakeOpenCode(
+  t: { after(fn: () => Promise<void>): void },
+  answer: string,
+  gate: () => Promise<void> = async () => {},
+) {
   const prompts: { id: string; text: string; metadata: unknown }[] = [];
   const sessions = new Map<string, { agent: string; directory: string }>();
+  const interrupted: string[] = [];
   const server = createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
     const url = new URL(req.url!, 'http://x').pathname;
     res.setHeader('content-type', 'application/json');
+    if (url.endsWith('/wait')) await gate();
+    if (url.endsWith('/interrupt')) {
+      interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
+      return void res.end('{"interrupted":true}');
+    }
     if (url.startsWith('/api/agent')) return void res.end('{"data":[{"id":"developer","name":"developer"}]}');
     if (url.endsWith('/message')) return void res.end('{"data":[],"cursor":{"next":null}}');
-    if (url.endsWith('/interrupt')) return void res.end('{"interrupted":true}');
     if (url.endsWith('/permission/rules') || url.endsWith('/wait') || url.endsWith('/model'))
       return void res.writeHead(204).end();
     if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
@@ -71,13 +80,15 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  return { url: `http://127.0.0.1:${address.port}`, prompts, sessions };
+  return { url: `http://127.0.0.1:${address.port}`, prompts, sessions, interrupted };
 }
 
 /** A Linear that records activities and serves one issue. */
 class FakeLinear extends LinearClient {
   activities: AgentActivityInput[] = [];
   issues = new Map<string, LinearIssue>();
+  delegated: [string, string | null][] = [];
+  sessionsCreated: string[] = [];
   constructor() {
     super({ clientId: 'x', clientSecret: 'y' }, { baseUrl: 'http://127.0.0.1:1' });
   }
@@ -92,6 +103,15 @@ class FakeLinear extends LinearClient {
     const issue = this.issues.get(id);
     if (!issue) throw new Error(`no issue ${id}`);
     return issue;
+  }
+  override async createSessionOnIssue(issueId: string) {
+    this.sessionsCreated.push(issueId);
+    return `as-auto-${this.sessionsCreated.length}`;
+  }
+  override async setDelegate(issueId: string, delegateId: string | null) {
+    this.delegated.push([issueId, delegateId]);
+    const issue = this.issues.get(issueId);
+    if (issue) issue.delegate = delegateId ? { id: delegateId } : null;
   }
 }
 
@@ -267,4 +287,153 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   );
   assert.equal(inbox.list().length, 2, 'refused sessions never became turns');
   assert.equal(store.leases().length, 0, 'no capacity held');
+});
+
+test('the listener delegates an issue entering a mapped lane and starts the worker; the HITL label or a lane change mid-run stops it', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-listener-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = join(root, 'upstream');
+  await mkdir(upstream, { recursive: true });
+  await writeFile(join(upstream, 'README.md'), 'r');
+  await run('git', ['init', '-q', '-b', 'main', upstream]);
+  await git(upstream, 'add', '.');
+  await git(upstream, 'commit', '-q', '-m', 'init');
+  const source = join(root, 'home/projects/api/source');
+  await mkdir(join(root, 'home/projects/api'), { recursive: true });
+  await run('git', ['clone', '-q', upstream, source]);
+  process.env.LINEAR_DEV_CLIENT_ID = 'cid';
+  process.env.LINEAR_DEV_CLIENT_SECRET = 'sec';
+  process.env.LINEAR_DEV_WEBHOOK_SECRET = 'whsec';
+
+  let release: () => void = () => {};
+  let gated = false;
+  const gate = () => (gated ? new Promise<void>(r => (release = r)) : Promise.resolve());
+  const opencode = await fakeOpenCode(t, 'Shipped.', gate);
+  const lanes = { 'In Progress': 'dev', Review: 'dev' };
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: opencode.url },
+    linear: { apps: { dev: { agent: 'developer' } }, listener: true },
+    projects: { api: { linear: { projectId: 'lp-api', lanes } } },
+  });
+  const loaded = {
+    config,
+    path: join(root, 'home/aivi.json'),
+    projects: [{ id: 'api', directory: source, linear: { projectId: 'lp-api', lanes } }],
+    sources: [],
+  };
+  const linear = new FakeLinear();
+  const issue: LinearIssue = {
+    id: 'api-7',
+    identifier: 'API-7',
+    title: 'Add rate limits',
+    description: null,
+    branchName: 'me/api-7-rate-limits',
+    url: 'https://linear.app/x/issue/API-7',
+    state: { id: 'todo', name: 'Todo', type: 'unstarted' },
+    team: { id: 't', key: 'API' },
+    project: { id: 'lp-api', name: 'API' },
+    labels: [],
+    delegate: null,
+    assignee: { id: 'u', name: 'Me' },
+  };
+  linear.issues.set('api-7', issue);
+  const store = new Store(':memory:');
+  const routes = new PublicRoutes();
+  const abort = new AbortController();
+  const services: HostServices = {
+    loaded,
+    store,
+    knowledge,
+    opencode: () => connectOpenCode(loaded.config.opencode, {}),
+    events: noEvents,
+    signal: abort.signal,
+    log: silentLogger,
+    channels: new Channels(),
+    routes,
+    wake: () => {},
+    onWake: () => () => {},
+    fail: error => assert.fail(String(error)),
+  };
+  const running = await createLinearModule(config.linear!, new Map([['dev', linear]])).start(services);
+  t.after(async () => {
+    release();
+    await running.stop();
+    store.close();
+  });
+  const issueUpdate = async (updatedFrom: Record<string, unknown>) => {
+    const body = Buffer.from(
+      JSON.stringify({
+        type: 'Issue',
+        action: 'update',
+        organizationId: 'org',
+        webhookTimestamp: Date.now(),
+        data: { id: issue.id, identifier: issue.identifier, stateId: issue.state.id },
+        updatedFrom,
+      }),
+    );
+    return routes.get(webhookPath('dev'))!({
+      method: 'POST',
+      headers: { 'linear-signature': signWebhook(body, 'whsec') },
+      body,
+    });
+  };
+
+  // A title edit is not a routing change: nothing happens.
+  await issueUpdate({ title: 'old' });
+  await new Promise(r => setTimeout(r, 50));
+  assert.deepEqual(linear.sessionsCreated, []);
+
+  // Todo → In Progress with no delegate: the listener delegates the lane's app and the worker runs to an answer.
+  issue.state = { id: 'prog', name: 'In Progress', type: 'started' };
+  await issueUpdate({ stateId: 'todo' });
+  await until(() => linear.activities.some(a => a.content.type === 'response'), 'the worker answered');
+  assert.deepEqual(linear.sessionsCreated, ['api-7']);
+  assert.deepEqual(linear.delegated, [['api-7', 'app-user-dev']]);
+  assert.equal(opencode.sessions.size, 1);
+  const inbox = openLinearStore(store);
+  assert.equal(inbox.list()[0]!.channel, conversationFor('dev', 'as-auto-1'));
+  // The same change delivered again (or the created webhook for a session we opened): already delegated, nothing new.
+  await issueUpdate({ stateId: 'todo' });
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(linear.sessionsCreated.length, 1);
+
+  // In Progress → Review keeps the same app: a running worker is left alone. A move out of the mapping stops it.
+  gated = true;
+  const body = Buffer.from(
+    JSON.stringify({
+      type: 'AgentSessionEvent',
+      action: 'prompted',
+      organizationId: 'org',
+      webhookTimestamp: Date.now(),
+      agentSession: { id: 'as-auto-1', issue: { id: 'api-7' } },
+      agentActivity: { id: 'act-2', content: { type: 'prompt', body: 'Now the docs' } },
+    }),
+  );
+  await routes.get(webhookPath('dev'))!({
+    method: 'POST',
+    headers: { 'linear-signature': signWebhook(body, 'whsec') },
+    body,
+  });
+  await until(() => inbox.list().some(t => t.state === 'running'), 'a worker is running');
+  issue.state = { id: 'rev', name: 'Review', type: 'started' };
+  await issueUpdate({ stateId: 'prog' });
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(inbox.list().filter(t => t.state === 'running').length, 1, 'same app, still running');
+  issue.labels = [{ id: 'l', name: 'needs-human' }];
+  await issueUpdate({ labelIds: [] });
+  await until(() => inbox.list().every(t => t.state !== 'running'), 'the worker was stopped');
+  assert.deepEqual(opencode.interrupted, [inbox.list()[0]!.session], 'the OpenCode session was interrupted');
+  assert.equal(inbox.list().at(-1)!.state, 'discarded');
+  assert.match(inbox.list().at(-1)!.error!, /Stopped at the person/);
+  assert.ok(
+    linear.activities.some(a => a.content.type === 'error' && /Stopped at your request/.test(a.content.body)),
+    'Linear was told',
+  );
+  assert.ok(
+    linear.activities.some(a => a.content.type === 'thought' && /needs-human.*was added/.test(a.content.body)),
+    'and why',
+  );
+  assert.equal(store.leases().length, 0, 'the lock is released');
+  release();
 });

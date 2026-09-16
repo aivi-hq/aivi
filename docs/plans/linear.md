@@ -1,7 +1,7 @@
 # Linear module: plan
 
-Status: scope agreed 2026-09-16; steps 0b–5 built the same day (behaviour in
-[linear.md](../linear.md)); step 0 (live checks), 6 and the live gate are open. This is a working checklist,
+Status: scope agreed 2026-09-16; steps 0b–6 built the same day (behaviour in
+[linear.md](../linear.md)); step 0 (live checks) and the live gate are open. This is a working checklist,
 not the behaviour document; when a step lands, tick it here and write the
 behaviour into the owning page ([linear.md](../linear.md) once it exists,
 [configuration.md](../configuration.md) for fields and secrets). Items marked
@@ -280,14 +280,16 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 
 ### 6. HITL label and the listener
 
-- [ ] HITL: label by name on `created` (refuse) and on issue `update`
+- [x] HITL: label by name on `created` (refuse) and on issue `update`
       (`labelIds` gained the label while a worker is pending → stop path).
-- [ ] Listener (`linear.listener: true`): issue `update` with `stateId`
+- [x] Listener (`linear.listener: true`): issue `update` with `stateId`
       changed → eligibility → `agentSessionCreateOnIssue` + `issueUpdate`
-      (delegate); lane left the mapping or the delegate removed while a
-      worker is pending → stop path. Repeated deliveries are idempotent
-      through the pending-worker check.
-- [ ] Tests at the eligibility function (pure) and the store.
+      (delegate) → the worker starts from the mutation; lane left the mapping
+      or the delegate removed while a worker is pending → stop path. Repeated
+      deliveries are idempotent through the delegate and pending-worker checks.
+- [x] Tests: module test drives issue updates through the signed route (title
+      edit ignored, lane entry delegates and runs, same-app lane change keeps
+      running, HITL mid-run stops and interrupts).
 
 ### 7. Documentation and live gate
 

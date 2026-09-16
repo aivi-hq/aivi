@@ -321,6 +321,18 @@ export class ConversationStore {
     });
   }
 
+  /** Conversations bound to `issue` that still have work queued, running or blocked. */
+  pendingForIssue(issue: string): string[] {
+    return (
+      this.core.db
+        .prepare(
+          `SELECT DISTINCT s.channel AS channel FROM ${this.n.sessions} s JOIN ${this.n.turns} t ON t.channel=s.channel
+           WHERE s.issue=? AND t.state IN ${PENDING}`,
+        )
+        .all(issue) as Row[]
+    ).map(r => String(r.channel));
+  }
+
   /** Move a bound conversation's directory before its session exists (the worktree ended up elsewhere). */
   rebind(channel: string, binding: { directory: string }): void {
     const result = this.core.db

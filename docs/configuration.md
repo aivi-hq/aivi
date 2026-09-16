@@ -168,8 +168,7 @@ list` shows them beside the configured ones.
 
 ## Linear
 
-Presence of `linear` enables the module ([linear](linear.md)); `listener` is
-not built yet ([plans/linear.md](plans/linear.md)).
+Presence of `linear` enables the module ([linear](linear.md)).
 
 ```json
 {

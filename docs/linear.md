@@ -16,7 +16,8 @@ behaviour and setup; the plan and what is still to come are in
 | delegate | `Issue.delegate`: the app working the issue while the human assignee stays responsible |
 | agent session | Linear's unit of agent work on an issue; aivi treats each as one conversation, id `<app>:<agent session id>` |
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `response` (the answer) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
-| lane | A team workflow state by name; `projects.<id>.linear.lanes` maps lane → app for the listener (not built yet) |
+| lane | A team workflow state by name; `projects.<id>.linear.lanes` maps lane → app for the listener |
+| listener | `linear.listener: true`: aivi delegates an issue that enters a mapped lane to that lane's app and starts its session; off, only what people do in Linear starts a worker |
 | worker | The OpenCode session for one agent session: the app's agent, in `<home>/projects/<id>/worktrees/<agent session>`, kept for the whole run |
 
 ## What happens
@@ -58,6 +59,18 @@ behaviour and setup; the plan and what is still to come are in
 7. **Locks.** One running worker per project and one per issue at a time,
    enforced when a turn is claimed; queued ones wait and said so at step 3.
    Capacity comes from the pool `linear.resource` like every other turn.
+8. **Issue changes** (the **Issues** webhook category, on one app). When an
+   issue with a pending worker gains the HITL label, moves to a lane that is
+   not mapped to that worker's app, or loses the app as delegate, the worker
+   is stopped as in step 6 with a `thought` saying why. A lane change between
+   two lanes of the same app changes nothing. With the listener on, an issue
+   entering a mapped lane with no delegate, no HITL label and no pending
+   worker is delegated to the lane's app (`agentSessionCreateOnIssue`, then
+   `issueUpdate` with the app as delegate) and its worker starts at once from
+   the mutation; a `created` webhook arriving for that session afterwards is
+   a redelivery. The issue is re-read from the API for every such change, so
+   label and state names are current, and a change delivered twice finds the
+   delegate already set.
 
 ## When it does not end with an answer
 
@@ -78,9 +91,10 @@ For each app (a developer app and a reviewer app are two apps):
 1. In Linear, **Settings → API → Applications → New**. Name and icon are how
    the agent appears. Enable **Client credentials**. Under **Webhooks**,
    set the URL to `<public base>/v1/linear/webhooks/<app id>` and enable the
-   **Agent session events** category (later also **Issues** for the
-   listener, on one app only). Copy the client id, client secret and webhook
-   signing secret.
+   **Agent session events** category; on exactly one app also the **Issues**
+   data-change category (that is where lane and label changes arrive; a second
+   app's copy would only make the same change twice). Copy the client id,
+   client secret and webhook signing secret.
 2. In `<home>/.env`: `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET`,
    `LINEAR_<APP>_WEBHOOK_SECRET` (`<APP>` = the id upper-cased, `-` → `_`).
    Tokens are requested with `grant_type=client_credentials` and the scopes
@@ -101,7 +115,7 @@ module `degraded` and retried.
 
 ## Not yet
 
-The listener (aivi delegating on lane changes), the HITL label added
-mid-run, one app carrying issue events, worktree pruning, permission prompts
-as `elicitation`, agent plans, `externalUrls`: all in
-[plans/linear.md](plans/linear.md).
+Worktree pruning, permission prompts as `elicitation`, agent plans,
+`externalUrls`, graceful agent-first cleanup, more than one worker per
+project: all in [plans/linear.md](plans/linear.md). Nothing here has run
+against a real Linear workspace yet; the live gate is listed there too.

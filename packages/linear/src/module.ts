@@ -10,7 +10,13 @@ import {
 } from '@aivi/host';
 import { LinearApiError, LinearClient } from './client.ts';
 import { registerWebhookRoutes } from './routes.ts';
-import { type AgentSessionEventPayload, isAgentSessionEvent, isIssueEvent, type LinearWebhook } from './webhook.ts';
+import {
+  type AgentSessionEventPayload,
+  type IssueEventPayload,
+  isAgentSessionEvent,
+  isIssueEvent,
+  type LinearWebhook,
+} from './webhook.ts';
 import { ensureWorktree, worktreePathFor } from './worktree.ts';
 
 /**
@@ -185,6 +191,16 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       await activity(conversation, { type: 'error', body: why }).catch(error => log.warn('notify.failed', { error }));
     };
 
+    /** End the worker in `conversation` because Linear says it must not continue; the worktree stays. */
+    const stopWorker = async (conversation: string, why: string) => {
+      const result = await stopRunningTurn(engine!, services.opencode, conversation);
+      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
+      // The engine's stopped notice follows for a running turn; queued-only conversations hear this one.
+      if (!result.stopped) await activity(conversation, { type: 'error', body: why }).catch(() => {});
+      else await activity(conversation, { type: 'thought', body: why }).catch(() => {});
+      log.info('worker.stopped', { conversation, why });
+    };
+
     const onCreated = async (app: LinearAppRuntime, payload: AgentSessionEventPayload) => {
       const conversation = conversationFor(app.id, payload.agentSession.id);
       if (store.has(conversation)) return; // a redelivery
@@ -264,6 +280,60 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       engine?.tick();
     };
 
+    /**
+     * An issue changed. Three things matter, all read from the API rather than the payload so
+     * label names, state names and the delegate are current: the HITL label appearing, the
+     * lane leaving its mapping, or the delegate being taken away while a worker is pending
+     * (stop it); and, with the listener on, an issue entering a mapped lane with nobody on it
+     * (delegate the lane's app and start its session).
+     */
+    const onIssue = async (app: LinearAppRuntime, payload: IssueEventPayload) => {
+      if (payload.action !== 'update') return;
+      const changed = Object.keys(payload.updatedFrom ?? {});
+      if (!changed.some(k => ['stateId', 'labelIds', 'delegateId'].includes(k))) return;
+      const issue = await app.client.issue(payload.data.id);
+      const project = projectForIssue(services.loaded.projects, {
+        projectId: issue.project?.id ?? null,
+        organizationId: payload.organizationId,
+      });
+      if (!project) return;
+      const lanes = project.linear?.lanes ?? {};
+      const laneApp = lanes[issue.state.name];
+      const human = issue.labels.some(l => l.name === config.humanLabel);
+      const pending = store.pendingForIssue(issue.id);
+      for (const conversation of pending) {
+        const { app: workerApp } = conversationParts(conversation);
+        if (human && changed.includes('labelIds'))
+          await stopWorker(
+            conversation,
+            `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
+          );
+        else if (changed.includes('stateId') && laneApp !== workerApp)
+          await stopWorker(
+            conversation,
+            `Stopped: ${issue.identifier} moved to "${issue.state.name}", which is not my lane.`,
+          );
+        else if (changed.includes('delegateId') && issue.delegate?.id !== apps.get(workerApp)?.userId)
+          await stopWorker(conversation, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
+      }
+      if (!config.listener || !changed.includes('stateId') || !laneApp || human || pending.length) return;
+      if (issue.delegate) return;
+      const target = apps.get(laneApp);
+      if (!target) return;
+      const agentSession = await target.client.createSessionOnIssue(issue.id);
+      await target.client.setDelegate(issue.id, target.userId);
+      log.info('listener.delegated', { issue: issue.identifier, lane: issue.state.name, app: laneApp, agentSession });
+      // Whether Linear also sends a `created` for a session we opened ourselves is open (plan, verify 2);
+      // starting from the mutation is right either way, the later webhook being a redelivery.
+      await onCreated(target, {
+        type: 'AgentSessionEvent',
+        action: 'created',
+        organizationId: payload.organizationId,
+        webhookTimestamp: Date.now(),
+        agentSession: { id: agentSession, issue: { id: issue.id, identifier: issue.identifier } },
+      });
+    };
+
     const dispatch = async (appId: string, payload: LinearWebhook) => {
       if (abort.signal.aborted) return;
       const app = apps.get(appId)!;
@@ -273,8 +343,8 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
         return;
       }
       if (isIssueEvent(payload)) {
-        log.debug('issue.event', { app: appId, action: payload.action, issue: payload.data.identifier });
-        return; // the listener and the HITL-mid-run stop come with step 6 of docs/plans/linear.md
+        await onIssue(app, payload);
+        return;
       }
       log.debug('webhook.ignored', { app: appId, type: payload.type, action: payload.action });
     };
