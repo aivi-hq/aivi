@@ -72,7 +72,7 @@ session ([opencode](opencode.md)). With a running service,
 npm run aivi -- projects add https://github.com/acme/website.git
 ```
 
-That clones into `example/projects/website`; restart `serve` and its `docs/`
+That clones into `example/projects/website/source`; restart `serve` and its `docs/`
 is searchable with `--project website`. What a project is and how it is
 described: [projects](projects.md).
 

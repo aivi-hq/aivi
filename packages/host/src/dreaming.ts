@@ -15,7 +15,7 @@ export interface DreamingDeps {
   client: OpenCodeClient;
   events: SessionEvents;
   stateDirectory: string;
-  /** Each project's memory home (`<home>/memory/<id>`); the dreamer may write there too. */
+  /** Each project's memory home (`<home>/projects/<id>/memory`); the dreamer may write there too. */
   projects?: { id: string; memory: string }[];
   signal: AbortSignal;
   log?: Logger | undefined;

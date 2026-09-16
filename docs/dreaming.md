@@ -3,7 +3,7 @@
 Dreaming is aivi's memory consolidation: a scheduled agent turn that reads the
 conversations people had with aivi since the last run and distils what should be
 remembered into plain markdown files. Those files sit in `<home>/memory` (the
-org) and `<home>/memory/<project>` (one per project), which are always `memory`
+org) and `<home>/projects/<id>/memory` (one per project), which are always `memory`
 knowledge sources, so they are indexed and searchable like any other document,
 and the librarian retrieves them through `knowledge_search` when relevant.
 Memory never goes into a system prompt, so prompt caches stay warm and the
@@ -48,7 +48,7 @@ enforces the boundary. Files:
 
 | File | Written by | Purpose |
 | --- | --- | --- |
-| `facts.md` | dreaming | Dated, attributed bullets grouped by topic. Superseded facts are struck through, never deleted. The org's in `memory/`, each project's in `memory/<id>/` |
+| `facts.md` | dreaming | Dated, attributed bullets grouped by topic. Superseded facts are struck through, never deleted. The org's in `memory/`, each project's in `projects/<id>/memory/` |
 | `proposals/rules.md` | dreaming | Red lines and conventions people stated, quoted with date and speaker. Not in force until a human moves them. Per memory home, like `facts.md` |
 | `proposals/skills.md` | dreaming | Repeatable tasks worth turning into skills. |
 | `rules.md`, agent files, skills | humans | The soul. Dreaming cannot write here. |

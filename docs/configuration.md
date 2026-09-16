@@ -19,7 +19,7 @@ Unknown fields and invalid combinations fail validation; nothing silently falls
 back to another project or resource pool.
 
 Paths in installation config and in task files resolve relative to the home.
-Project source paths resolve relative to the checkout, `<home>/projects/<id>`.
+Project source paths resolve relative to the checkout, `<home>/projects/<id>/source`.
 The home is also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 
 ## Fields
@@ -35,7 +35,7 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, always with `AIVI_TOKEN` in its environment, so a new plugin build is live and the plugin can authenticate. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
-| `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a missing checkout fails. `<home>/memory/<id>` is each project's `memory` source |
+| `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a project that is neither checked out nor remembered fails. `<home>/projects/<id>/memory` is each project's `memory` source |
 | `modules.discord.config` | Optional path to Discord module settings ([discord](discord.md)) |
 | `modules.slack.config` | Optional path to Slack module settings ([slack](slack.md)) |
 | `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |

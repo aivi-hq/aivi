@@ -111,16 +111,14 @@ test('retention is a system job derived from config: default pool, host timezone
 test('projects are the directories of <home>/projects; aivi.json only overrides; selection never falls back on an unknown project', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, 'projects/website'), { recursive: true });
-  await mkdir(join(root, 'projects/wiki'), { recursive: true });
-  await mkdir(join(root, 'projects/paused'), { recursive: true });
+  await mkdir(join(root, 'projects/website/source'), { recursive: true });
+  await mkdir(join(root, 'projects/wiki/source'), { recursive: true });
+  await mkdir(join(root, 'projects/paused/source'), { recursive: true });
   await mkdir(join(root, 'projects/.hidden'), { recursive: true });
   await writeFile(join(root, 'projects/README.md'), 'files are not projects');
-  await mkdir(join(root, 'memory/gone'), { recursive: true });
-  await writeFile(join(root, 'memory/gone/facts.md'), '# Facts: gone');
+  await mkdir(join(root, 'projects/gone/memory'), { recursive: true });
+  await writeFile(join(root, 'projects/gone/memory/facts.md'), '# Facts: gone');
   await mkdir(join(root, 'memory/proposals'), { recursive: true });
-  await mkdir(join(root, 'memory/paused'), { recursive: true });
-  await writeFile(join(root, 'memory/paused/facts.md'), '# Facts: paused');
   const write = (projects: Record<string, unknown>) =>
     writeFile(
       join(root, 'aivi.json'),
@@ -143,33 +141,33 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
   assert.deepEqual(
     loaded.projects.map(p => [p.id, p.removed ?? false]),
     [
+      ['gone', true],
       ['website', false],
       ['wiki', false],
-      ['gone', true],
     ],
-    'discovered and sorted; disabled, hidden and plain files left out; a memory home without a checkout is a removed project, the org proposals/ is not',
+    'discovered and sorted; disabled, hidden and plain files left out; a project with memory/ but no source/ is removed',
   );
   assert.deepEqual(
     selectSources(loaded, ['gone'], false).map(s => [s.id, s.path]),
-    [['memory', join(root, 'memory/gone')]],
+    [['memory', join(root, 'projects/gone/memory')]],
     'a removed project keeps only its memory',
   );
-  assert.equal(loaded.projects[0]!.directory, join(root, 'projects/website'));
-  assert.equal(loaded.projects[0]!.linear!.lanes.Review, 'worker');
+  assert.equal(loaded.projects[1]!.directory, join(root, 'projects/website/source'));
+  assert.equal(loaded.projects[1]!.linear!.lanes.Review, 'worker');
   // The convention (docs as doc, docs/adr as decision) plus the project's memory, or the project's own list plus memory.
   assert.deepEqual(
     selectSources(loaded, ['website'], false).map(s => [s.id, s.kind, s.path]),
     [
-      ['docs', 'doc', join(root, 'projects/website/docs')],
-      ['adr', 'decision', join(root, 'projects/website/docs/adr')],
-      ['memory', 'memory', join(root, 'memory/website')],
+      ['docs', 'doc', join(root, 'projects/website/source/docs')],
+      ['adr', 'decision', join(root, 'projects/website/source/docs/adr')],
+      ['memory', 'memory', join(root, 'projects/website/memory')],
     ],
   );
   assert.deepEqual(
     selectSources(loaded, ['wiki'], false).map(s => [s.id, s.path]),
     [
-      ['pages', join(root, 'projects/wiki/pages')],
-      ['memory', join(root, 'memory/wiki')],
+      ['pages', join(root, 'projects/wiki/source/pages')],
+      ['memory', join(root, 'projects/wiki/memory')],
     ],
   );
   // Core is the configured sources plus the org memory.
@@ -184,11 +182,18 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
   assert.throws(() => selectSources(loaded, ['typo']), /Unknown project/);
   // An override for a project that is not checked out is a mistake; a directory that is not a valid id must be renamed.
   await write({ missing: {} });
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /Project missing: no checkout/);
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /Project missing: nothing at/);
   await write({});
   await mkdir(join(root, 'projects/Bad Name'));
   await assert.rejects(loadConfig(join(root, 'aivi.json')), /must be named like/);
   await rm(join(root, 'projects/Bad Name'), { recursive: true });
+  // A repository cloned straight into projects/<id> is told where it belongs; an empty directory is not a project.
+  await mkdir(join(root, 'projects/flat/.git'), { recursive: true });
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /holds its checkout in source\//);
+  await rm(join(root, 'projects/flat'), { recursive: true });
+  await mkdir(join(root, 'projects/empty'));
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /not a project/);
+  await rm(join(root, 'projects/empty'), { recursive: true });
   // The id `memory` is reserved for aivi's own sources.
   assert.equal(
     configSchema.safeParse({ version: 1, knowledge: [{ id: 'memory', path: 'memory', kind: 'memory' }] }).success,

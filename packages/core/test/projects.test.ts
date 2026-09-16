@@ -16,7 +16,7 @@ test('project ids follow from the repository URL', () => {
   assert.equal(projectIdFromUrl('/srv/git/legacy-app/'), 'legacy-app');
 });
 
-test('projects add clones into <home>/projects/<id>, which is the whole registration', async t => {
+test('projects add clones into <home>/projects/<id>/source, which is the whole registration', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-projects-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = join(root, 'upstream/Acme-Site');
@@ -32,7 +32,7 @@ test('projects add clones into <home>/projects/<id>, which is the whole registra
   const added = await addProject(join(home, 'aivi.json'), upstream);
   assert.deepEqual(added, {
     id: 'acme-site',
-    directory: join(home, 'projects/acme-site'),
+    directory: join(home, 'projects/acme-site/source'),
     sources: ['docs', 'adr', 'memory'],
   });
   await assert.rejects(addProject(join(home, 'aivi.json'), upstream), /already exists/);
@@ -58,11 +58,17 @@ test('remove deletes the checkout and keeps memory; purge shows first and delete
   t.after(() => rm(root, { recursive: true, force: true }));
   const config = join(root, 'aivi.json');
   await writeFile(config, JSON.stringify({ version: 1 }));
-  await mkdir(join(root, 'projects/site/docs'), { recursive: true });
-  await mkdir(join(root, 'memory/site'), { recursive: true });
-  await writeFile(join(root, 'memory/site/facts.md'), '# Facts: site\n\n- 2026-09-15: site used pnpm.');
+  await mkdir(join(root, 'projects/site/source/docs'), { recursive: true });
+  await mkdir(join(root, 'projects/site/worktrees/eng-1'), { recursive: true });
+  await mkdir(join(root, 'projects/site/memory'), { recursive: true });
+  await writeFile(join(root, 'projects/site/memory/facts.md'), '# Facts: site\n\n- 2026-09-15: site used pnpm.');
 
-  assert.deepEqual(await removeProject(config, 'site'), { id: 'site', removed: join(root, 'projects/site') });
+  assert.deepEqual(await removeProject(config, 'site'), { id: 'site', removed: join(root, 'projects/site/source') });
+  assert.equal(
+    await stat(join(root, 'projects/site/worktrees')).catch(() => null),
+    null,
+    'worktrees go with the checkout',
+  );
   await assert.rejects(removeProject(config, 'site'), /No checkout/);
   const loaded = await loadConfig(config);
   assert.deepEqual(
@@ -74,11 +80,11 @@ test('remove deletes the checkout and keeps memory; purge shows first and delete
   ]);
 
   const dry = await purgeProject(config, 'site');
-  assert.deepEqual(dry, { id: 'site', paths: [join(root, 'memory/site')], purged: false });
-  assert.ok(await stat(join(root, 'memory/site/facts.md')), 'nothing deleted without confirm');
+  assert.deepEqual(dry, { id: 'site', paths: [join(root, 'projects/site')], purged: false });
+  assert.ok(await stat(join(root, 'projects/site/memory/facts.md')), 'nothing deleted without confirm');
   const wet = await purgeProject(config, 'site', { confirm: true });
   assert.equal(wet.purged, true);
-  assert.equal(await stat(join(root, 'memory/site')).catch(() => null), null);
+  assert.equal(await stat(join(root, 'projects/site')).catch(() => null), null);
   assert.deepEqual((await loadConfig(config)).projects, []);
   await assert.rejects(purgeProject(config, 'site', { confirm: true }), /Nothing to purge/);
 });

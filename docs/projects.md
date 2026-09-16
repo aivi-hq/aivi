@@ -12,20 +12,25 @@ that project's memory in the home.
 ```
 <home>/
   aivi.json                 org config; projects and the docs convention
-  projects/<id>/            one clean git checkout per project
   memory/facts.md           org memory
-  memory/<id>/facts.md      that project's memory
+  projects/<id>/            everything about one project:
+    source/                   the clean git checkout
+    memory/facts.md           that project's memory
+    worktrees/                one worktree per Linear worker (later)
 ```
 
-The checkout is always `<home>/projects/<id>`; the directory name is the id
-(`^[a-z][a-z0-9_-]*$`; anything else must be renamed). **A clone is a
-registration**: aivi discovers projects as the directories of
-`<home>/projects` (symlinks to directories count, dotfiles and plain files do
-not) when it loads its config. aivi writes nothing inside a checkout: a
-repository needs no aivi file and works the same outside aivi. `<home>/memory`
-and `<home>/memory/<id>` are created when the knowledge service starts and are
-always registered as `memory` sources (core and per project, both with source
-id `memory`, which is reserved).
+Everything about a project sits in `<home>/projects/<id>`; the directory name
+is the id (`^[a-z][a-z0-9_-]*$`; anything else must be renamed). The checkout
+is its `source/`. **A clone is a registration**: aivi discovers projects as the
+directories of `<home>/projects` (symlinks to directories count, dotfiles and
+plain files do not) when it loads its config; `aivi projects add` is the
+convenient way to clone into the right place. A repository cloned straight
+into `projects/<id>` (a `.git` there) fails `config check` with the `mv` to
+run, and an empty project directory is an error too. aivi writes nothing
+inside a checkout: a repository needs no aivi file and works the same outside
+aivi. `<home>/memory` and each `projects/<id>/memory` are created when the
+knowledge service starts and are always registered as `memory` sources (core
+and per project, both with source id `memory`, which is reserved).
 
 ## Configuration
 
@@ -72,7 +77,7 @@ only overrides:
   `knowledge_search` and `aivi_sources`, and learns which projects exist on
   demand through `knowledge_projects`. It never claims or edits a checkout.
 - **Workers work in a project.** Linear's worker agents (milestone 7) run in
-  `<home>/projects/<id>` with the lane's mapped agent. One active agent per
+  a worktree under `<home>/projects/<id>/worktrees/` with the lane's mapped agent ([plans/linear.md](plans/linear.md)). One active agent per
   project and maintenance-when-idle are designed but not built
   ([projects-and-capacity](backlog/projects-and-capacity.md)).
 - A checkout is an OpenCode location of its own: a session in
@@ -84,7 +89,7 @@ only overrides:
 One dreaming run reviews every conversation since the last run; there is one
 bag of conversations, not one per project, because channels carry no project.
 The dreamer decides where a fact belongs: the org (`memory/facts.md`) or a
-project (`memory/<id>/facts.md`). The host makes every memory home exist,
+project (`projects/<id>/memory/facts.md`). The host makes every memory home exist,
 allows `facts.md` and `proposals/*` in each, and names them in the prompt
 ([dreaming](dreaming.md)). Project memory is a project source, so it is found
 with that project's scope and, like every project source, when no scope is
@@ -93,19 +98,19 @@ given.
 ## Adding, listing, renaming, removing
 
 ```sh
-aivi projects add https://github.com/acme/website.git   # clones into projects/website
+aivi projects add https://github.com/acme/website.git   # clones into projects/website/source
 aivi projects add git@github.com:acme/api.git --id backend
 aivi projects list
-aivi projects remove website          # checkout gone, memory stays
+aivi projects remove website          # source/ and worktrees/ gone, memory stays
 aivi projects purge website           # shows what would go, deletes nothing
-aivi projects purge website --confirm # deletes memory/website (and a lingering checkout)
+aivi projects purge website --confirm # deletes projects/website entirely
 ```
 
 `add` is `git clone` plus an id check (the id is the repository name,
 lower-cased, unless `--id` says otherwise); it prints the sources the project
 will have. The host reads the projects directory at startup, so restart
 `aivi serve` after adding or removing. To rename a project, rename its
-directory (and `memory/<id>` if the memory should follow). Old collections in
+directory; memory and worktrees move with it. Old collections in
 the search index are dropped by QMD at the next start and never searched, since
 queries name their collections; the index is a rebuildable derivative, so
 deleting `state/knowledge` reclaims the space.

@@ -39,8 +39,8 @@ git-ignored, as is `.env`.
 | `.opencode/agents/` | The `librarian` and `dreamer` agents; the home is the OpenCode location |
 | `opencode.jsonc` | Loads the aivi plugin and selects `librarian` when you open this directory in OpenCode |
 | `knowledge/` | Company-wide documents (`doc`) |
-| `memory/` | Org memory: dreaming's `facts.md` and proposals; `memory/demo/` is the project's ([projects](../docs/projects.md)) |
-| `projects/demo/` | The project `demo`, discovered from this directory: a plain checkout whose `docs/adr` is indexed as `decision` by convention |
+| `memory/` | Org memory: dreaming's `facts.md` and proposals; `projects/demo/memory/` is the project's ([projects](../docs/projects.md)) |
+| `projects/demo/` | The project `demo`, discovered from this directory: `source/` is the checkout (its `docs/adr` is indexed as `decision` by convention), `memory/` its memory |
 | `tasks/` | Task files for `aivi jobs add` |
 | `state/` | Created on first run: SQLite, search index, dreaming transcripts, Chrome profile |
 

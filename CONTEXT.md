@@ -32,7 +32,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | channel module | a chat platform adapter (`discord`, `slack`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
 | conversation | what a channel module binds to one OpenCode session: a thread, a DM, or a whole channel |
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`; a file belongs to its most specific source |
-| project | a repository the team works on: a clean git checkout at `<home>/projects/<id>`, discovered from that directory (`projects.<id>` in `aivi.json` only overrides), indexed by the docs convention (`projectDefaults`), with its memory at `<home>/memory/<id>`; channels talk *about* projects, workers (Linear, later) work *in* them; a memory home without a checkout is a *removed* project (still listed and searchable until `projects purge --confirm`) |
+| project | a repository the team works on: one directory `<home>/projects/<id>` holding the clean git checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `aivi.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project directory with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`) |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
@@ -115,14 +115,14 @@ runs in one process; adapters are optional modules with a start/stop contract.
   one runs; `/agent` is deliberately absent (personalities by configuration)
   ([channels](docs/channels.md#chat-commands)).
 - **Memory is files** inside a knowledge source, never system-prompt state.
-  `<home>/memory` (org) and `<home>/memory/<project>` are always `memory`
+  `<home>/memory` (org) and `<home>/projects/<id>/memory` are always `memory`
   sources; one dreaming run decides where a fact belongs, because channels
   carry no project and there is one bag of conversations.
 - **The repository is a clean checkout; the home describes the project.**
-  `projects.<id>` in `aivi.json`, checkout at `<home>/projects/<id>`, a
+  `projects.<id>` in `aivi.json`, checkout at `<home>/projects/<id>/source`, a
   company-wide `docs/` convention (`docs` as `doc`, `docs/adr` as `decision`)
   with per-project override, and projects discovered as the directories of
-  `<home>/projects`, so adding a project is a `git clone` and a repository
+  `<home>/projects`, so adding a project is a `git clone` into `source/` and a repository
   works the same outside aivi. No `aivi.project.json`
   ([projects](docs/projects.md)).
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
@@ -185,7 +185,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 client against a mock server). No `dist/`: sources run as they are.
 `scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
 `AIVI_HOME`): `aivi.json` (or a git-ignored `aivi.local.json`), `.env`,
-`projects/<id>/` checkouts, `memory/` (org, and `memory/<id>/` per project), and
+`projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
 `state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
 `example/` is a home with everything enabled (`npm run aivi` points there);
 the tests load it.

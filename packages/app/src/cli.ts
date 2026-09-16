@@ -33,7 +33,7 @@ const usage = `aivi <command>
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
   projects list                Projects: the directories of <home>/projects, with their sources; removed ones keep their memory
-  projects add URL [--id ID]   git clone into <home>/projects/<id>; that is the whole registration
+  projects add URL [--id ID]   git clone into <home>/projects/<id>/source; that is the whole registration
   projects remove ID           Delete the checkout; memory stays and the project is listed as removed
   projects purge ID --confirm  Delete the project's memory (and checkout); without --confirm only shows what would go
   knowledge search QUERY       Search via the running host [--project ID --core-only --no-core --limit N]

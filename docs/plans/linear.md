@@ -111,7 +111,7 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
   own step before the module): `<home>/projects/<id>/source` (the clean
   checkout), `<home>/projects/<id>/memory` (was `<home>/memory/<id>`),
   `<home>/projects/<id>/worktrees/` (workers). `<home>/memory` is org memory
-  only, which removes the nested-collection special case in knowledge. A
+  only (the knowledge rule that a directory source ignores nested sources stays; it is general). A
   project is discovered as a directory of `<home>/projects` with a `source/`
   or a `memory/`; one with only `memory/` is *removed*. `source/` is kept
   current by a system job `projects.sync` (`git fetch` + fast-forward of the
@@ -178,23 +178,23 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 
 ### 0b. Home layout: one directory per project
 
-- [ ] Discovery: `<home>/projects/<id>/{source,memory,worktrees}`; a
+- [x] Discovery: `<home>/projects/<id>/{source,memory,worktrees}`; a
       project with `memory/` but no `source/` is *removed*; a bare
       `projects/<id>/.git` is a `ConfigurationError` with the two `mv`s.
-- [ ] Knowledge: project sources relative to `source/`; the project `memory`
+- [x] Knowledge: project sources relative to `source/`; the project `memory`
       source is `projects/<id>/memory`; `<home>/memory` is org only; drop the
       nested-collection exclusion.
-- [ ] Dreaming: memory homes and the prompt's list of them follow.
-- [ ] CLI: `projects add` clones into `source/`; `remove` deletes `source/`
+- [x] Dreaming: memory homes and the prompt's list of them follow.
+- [x] CLI: `projects add` clones into `source/`; `remove` deletes `source/`
       (and `worktrees/`); `purge` deletes the directory; `list` shows what
       each has.
 - [ ] System job `projects.sync` (task kind; seeded like `retention`,
       `scheduler.projectsSync`, `false` removes it): per project `git fetch`
       and fast-forward of the default branch in `source/`, never with local
       changes, then `knowledge.index`.
-- [ ] Docs: [projects.md](../projects.md), [configuration.md](../configuration.md),
-      [knowledge.md](../knowledge.md), [dreaming.md](../dreaming.md), CONTEXT
-      vocabulary row `project`, `example/`.
+- [x] Docs: [projects.md](../projects.md), [configuration.md](../configuration.md),
+      [dreaming.md](../dreaming.md), CONTEXT vocabulary row `project`, `example/`
+      (landed 2026-09-16 with the layout; `projects.sync` is the one step left).
 
 ### 1. Configuration and vocabulary
 

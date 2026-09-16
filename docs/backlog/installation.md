@@ -18,7 +18,7 @@ Owner's requirements (2026-09-14):
   should install it; if declined, exit with "OpenCode v2 is a hard requirement
   and must be on your PATH".
 - Projects are git repositories checked out on the server, at
-  `<home>/projects/<id>`. aivi's config describes them (knowledge sources,
+  `<home>/projects/<id>/source`. aivi's config describes them (knowledge sources,
   later Linear mapping) from the home; the checkout carries nothing of aivi's
   and plugins must not need their own copies of that config. Worker agents
   work inside those checkouts ([projects](../projects.md)).
@@ -289,8 +289,8 @@ work; npm downloads the N-API prebuilds.
   versions/0.2.1/      previous release kept for rollback
   versions/0.3.0/node_modules/aivi/...
   .opencode/agents/    librarian, dreamer (the home is the OpenCode location)
-  projects/<id>/       clean git checkouts; a clone is a registration (docs/projects.md)
-  memory/              org facts.md; memory/<id>/ per project
+  projects/<id>/       source/ (clean checkout), memory/, worktrees/ (docs/projects.md)
+  memory/              org facts.md
   state/               SQLite queue/knowledge indexes, host.json (url + token, 0600)
   logs/                serve.log, update.log, receipts/
 ```
