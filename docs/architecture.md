@@ -131,11 +131,10 @@ teach the scheduler what a conversation is. What the two share is capacity:
 every turn takes a resource lease from the same pools as jobs
 (`Store.acquireLease`), so the `local-model` limit holds across both.
 
-Future worker cleanup must steer the agent first, retain the tools it needs to
-undo its effects, then perform orchestrator cleanup and verify it. Configurable
-timeouts/hard kill cannot imply a clean state. Failed cleanup blocks reassignment;
-the native transcript remains inspectable. Native Linear Stop mapping is still
-an integration decision, not implemented by this scaffold.
+Linear workers (not built) will be conversations of the same machinery, one per
+agent session, each in its own git worktree; a stop ends the worker and
+releases the project lock, and only an unverifiable stop is `blocked`
+([plans/linear.md](plans/linear.md)).
 
 ## Knowledge and permissions
 

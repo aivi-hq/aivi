@@ -78,8 +78,8 @@ Task options: `timeoutMs` (default 30 min) and `onPermission`: `reject`
 (leave the prompt pending for a human and block the run). Which failures end
 `failed` and which `blocked`, and how an operator releases a blocked run, is in
 [operations](operations.md#how-runs-end). Channel turns use the same driver.
-Steering an active worker into cleanup (the Linear lifecycle) is not part of
-the driver yet.
+Interrupting a worker at Linear's request will reuse `session.interrupt` as
+`/stop` does.
 
 ## Jobs tool
 

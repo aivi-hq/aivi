@@ -1,6 +1,6 @@
 # aivi: requirements
 
-Frozen product requirements (v0.8, 2026-09-13). Decisions taken since live in [architecture.md](architecture.md); implementation status in [roadmap.md](roadmap.md). Section 9 (research to do) was completed and removed.
+Product requirements (v0.9; 2026-09-13, worker lifecycle revised 2026-09-16). Decisions taken since live in [architecture.md](architecture.md); implementation status in [roadmap.md](roadmap.md).
 
 ## 1. Product
 
@@ -8,7 +8,7 @@ An always-on OpenCode installation acts as an employee with several roles, share
 
 The product name is aivi. Keep its core small and close to ordinary OpenCode: favor focused dependencies, low memory use, fast operation and native extension mechanisms. Reuse is selective, not an aim to support every possible backend or integration. A thin core integration, with a working package name such as `@aivi/host`, can expose knowledge and aivi-specific capabilities to OpenCode plugins/tools. Exact package boundaries remain a technical-design choice; do not create a separate general-purpose plugin framework.
 
-OpenCode owns sessions, message history, and agent execution. The host connects external inputs to those sessions and coordinates work through OpenCode's existing interfaces. It adds channel/ticket associations, delegation and cleanup state, and searchable indexes derived from OpenCode history. OpenCode also supplies subagents, providers, permissions, skills, tools, and project configuration. The runtime target is OpenCode v2. Its official installation and integration documentation is available; a specific build must be pinned and its required behavior validated before implementation depends on it.
+OpenCode owns sessions, message history, and agent execution. The host connects external inputs to those sessions and coordinates work through OpenCode's existing interfaces. It adds channel/ticket associations, delegation and worker state, and searchable indexes derived from OpenCode history. OpenCode also supplies subagents, providers, permissions, skills, tools, and project configuration. The runtime target is OpenCode v2. Its official installation and integration documentation is available; a specific build must be pinned and its required behavior validated before implementation depends on it.
 
 The initial host is a Mac server. Platform-specific dependencies should be identified during technical design. Humans continue using ordinary OpenCode on their own development machines with the same company and project agent definitions.
 
@@ -24,9 +24,9 @@ Linear automation is an optional capability. An installation can provide chat, m
 | Worker eligibility | Only explicitly configured worker agents participate in automatic Linear delegation. Other agents can be available through direct conversation or agent delegation. |
 | Lane mapping | Each configured lane selects one Linear application. These mappings belong to project configuration. Many lanes may select the same application. A lane does not independently select an OpenCode agent. |
 | Application mapping | Separate installation configuration links each configured Linear application to exactly one OpenCode agent identifier. Each OpenCode agent identifier may be linked to at most one Linear application. Resolve the agent's definition using the target project's normal OpenCode configuration. |
-| Session | An ordinary OpenCode session. Direct native OpenCode conversations retain native agent switching. Discord conversations use one installation-configured OpenCode agent and have no agent switching, project-work context or aivi ticket ownership. An automated worker keeps its assigned OpenCode agent for its entire run, including cleanup. It may invoke configured subagents without switching its own agent. |
-| Work ownership | A ticket has at most one owning worker run, including during agent-led cleanup, orchestrator cleanup, and handoff. That worker can use its configured subagents. |
-| Linear ownership | The human assignee remains responsible for the issue. The Linear application acts as its delegate. A new automatic assignment requires the issue to have no existing delegate and no unresolved worker/cleanup ownership. |
+| Session | An ordinary OpenCode session. Direct native OpenCode conversations retain native agent switching. Discord conversations use one installation-configured OpenCode agent and have no agent switching, project-work context or aivi ticket ownership. An automated worker keeps its assigned OpenCode agent for its entire run. It may invoke configured subagents without switching its own agent. |
+| Work ownership | A ticket has at most one owning worker run at a time, and a project has one active worker at a time (a lock, later a limit). That worker can use its configured subagents. |
+| Linear ownership | The human assignee remains responsible for the issue. The Linear application acts as its delegate. A new automatic assignment requires the issue to have no existing delegate and no pending worker. |
 | Human identity | Incoming messages retain sender identity for attribution, replies, and configured access. The current scope has shared installation knowledge, without separate personal memory profiles. |
 
 Discord uses one installation-configured OpenCode agent, initially the librarian. Users cannot switch agents in Discord. The librarian answers questions and researches across accessible core and project knowledge; it does not perform project work or launch workers on behalf of a Discord conversation. It may consult specialists such as Linear and GitHub agents for information, but delegated tool access must preserve this project-read-only boundary. Each specialist owns its configured MCP/tool access; consultation does not require giving the librarian every specialist's tools. Native OpenCode remains the interface for direct manual work and native agent selection.
@@ -80,7 +80,7 @@ In addition to the confirmed session/work limits, evaluate limits per inference 
 
 1. An issue webhook reaches the host.
 2. The host resolves the registered project and reads its configuration and the issue's current state.
-3. It resolves the lane's Linear application and that application's uniquely mapped OpenCode agent. It checks worker eligibility, human-intervention markers, the current delegate and any active or unresolved worker/cleanup state.
+3. It resolves the lane's Linear application and that application's uniquely mapped OpenCode agent. It checks worker eligibility, human-intervention markers, the current delegate and any pending worker.
 4. If eligible and without a delegate, it sets that Linear application as delegate. The human assignee remains responsible for the issue.
 5. A native Linear Agent Session is created. Its webhook starts the corresponding OpenCode session with the application's mapped agent, the project directory and lane-specific task context. That automated worker keeps the same agent until its run ends.
 6. Progress, questions, outcomes, and failures are reported through the native Agent Session. Human follow-up messages can reach the corresponding active conversation.
@@ -88,52 +88,35 @@ In addition to the confirmed session/work limits, evaluate limits per inference 
 
 For example, both a development lane and a review lane may select the same Linear application. That application maps to one OpenCode agent in the separate application configuration. Lane and ticket context determine the job. The implementation must establish the appropriate stage session even when the application and agent are reused; the exact Linear API sequence remains to be validated.
 
-### Changes while work is active
+### Changes while work is active (revised 2026-09-16)
 
-When a lane change requires replacing active work:
+Every worker runs in its own git worktree of the project, on the branch name Linear computes for the issue; the project's clean checkout is never a working directory. That isolation is what makes stopping cheap.
 
-1. Steer the existing working agent with a graceful cleanup request. Give it time to receive and respond to the request. It transitions from doing the task to undoing its work; the orchestrator does not kill it or tear down its resources first.
-2. Allow the agent to perform its own rollback using the context and tools it still holds. This includes side effects the orchestrator may not know about, such as a database migration it ran while testing. The agent also coordinates cleanup by its run-owned subagents and processes.
-3. Wait for an explicit cleanup-complete report and for the agent's rollback operations to finish. An acknowledgement, normal task completion, or silence is not a cleanup-complete report. Any unresolved effects mean cleanup has failed.
-4. Only after agent-led cleanup succeeds may the orchestrator perform its own cleanup, such as undoing remaining managed workspace changes, removing temporary resources, closing owned tabs, and verifying the configured clean-state conditions. Tools and resources required by the agent must remain available until it finishes its phase.
-5. Retain the delegate and work ownership until both phases have succeeded and the run can no longer mutate resources. Then remove the Linear delegate.
-6. Re-read the current issue state and configuration.
-7. Assign the currently applicable delegate if the issue is still eligible.
+Stop means stop, as for a cancelled CI job. A stop request from Linear, the human-needed marker added during execution, the issue leaving its mapped lane, or the delegate being removed all end the worker the same way: the running turn is interrupted, one final activity in the agent session says what happened and where the OpenCode session and the worktree are, the worker ends `stopped` and the project lock is released. The worktree and the native transcript stay for inspection; nothing is silently discarded and nothing is rolled back automatically.
 
-Repeated or rapidly changing events must not launch overlapping owning workers. Once cleanup finishes, routing uses the current ticket state rather than blindly replaying each intermediate lane.
+`blocked` (the lock held until an operator resolves it) is reserved for a stop that cannot be verified: OpenCode unreachable while interrupting, or a restart finding a worker whose session still shows work in progress. Local host state decides that, regardless of what the delegate or the visible agent session state says.
 
-Cleanup is an exceptional abort path. It means undoing the interrupted run's changes and removing its produced work and resources. There is no saved partial result or handoff artifact. The OpenCode session remains available for inspection, including investigation of stuck or killed runs. Rollback targets the interrupted run's effects; it must not erase pre-existing work, other actors' changes, or the lane/HITL change that triggered cleanup. Normal successful lane completion retains its intended results and follows the configured workflow.
+Repeated or rapidly changing events must not launch overlapping owning workers. After a stop, routing uses the current issue state rather than replaying intermediate lanes.
 
-A configurable human-needed/HITL marker blocks new automatic delegation. If added during execution, it triggers the same agent-first cleanup sequence. A developer can take over once cleanup is verified, work using plain OpenCode or a directly selected agent, and later return the ticket to automation. Removing the marker does not override an unresolved cleanup failure.
+A configurable human-needed marker (a label) blocks automatic delegation and is refused even when a person delegates the issue by hand; the refusal is explained in the agent session. A developer can take over with plain OpenCode and later remove the label.
 
-### Timeouts and forced termination
-
-Cleanup deadlines are configurable, with installation defaults and project overrides. Configuration covers time to respond to the steering request, time for agent-led rollback, time for orchestrator cleanup, and an optional overall deadline. A 15-minute cleanup allowance is an example setting, not a fixed product limit. Repeated events must not silently restart the deadline or cause duplicate cleanup work.
-
-Support timeout escalation to a hard kill. Project configuration may also map a separate Linear status or label to an explicit hard kill, so an operator can bypass the graceful wait. The names and mappings are configurable. Forced termination must target the relevant run and its owned execution rather than unrelated sessions.
-
-A hard kill does not count as successful cleanup. Mark the run/ticket as broken, retain the session for inspection, and block reassignment for human repair. Do not automatically proceed with the normal orchestrator cleanup phase after an unsuccessful or skipped agent cleanup phase. Human recovery must establish a clean state before releasing ownership and allowing another worker. Clearing a kill/HITL marker or observing that a process has exited does not by itself satisfy that condition.
-
-Local host state is authoritative for withholding reassignment while cleanup is pending or broken, regardless of the delegate or visible AgentSession state. This is a host implementation responsibility. Separately, execution tracking must establish which processes and resources still belong to the run; a blocked-state record does not itself terminate them. The research report's proposed mapping of Linear's native Stop signal to the hard-kill path is not an accepted requirement. Native Stop permits a final status activity and does not prescribe an OS-level kill. Whether its disengagement semantics permit agent-led rollback remains an interpretation to resolve during integration design; the agreed graceful cleanup protocol is unchanged.
+Graceful agent-first cleanup (steering the worker to undo effects a worktree does not contain, such as a test database migration, before releasing) is a later upgrade, not a precondition; its design lives in [plans/linear.md](plans/linear.md). Linear's native stop signal is honoured as described above; there is no separate kill status or label.
 
 ## 5. Lifecycle rules
 
 | Situation | Behavior |
 | --- | --- |
 | New-session command | Archive the old conversation and retain its searchability. Memory persists. Explicit deletion is a separate action. |
-| HITL marker added during execution | Steer the active agent to clean up, wait for its rollback, then perform orchestrator cleanup and release the delegate only after success. Keep automation disabled until the marker is removed. |
-| Graceful cleanup | The working agent undoes its side effects first. After explicit completion, the orchestrator finishes managed cleanup and verifies cleanliness. Retain the OpenCode session for inspection. |
-| Configured cleanup deadline expires | Escalate to a hard kill when configured. Mark the run as broken and require human repair; a kill never substitutes for a clean-state check. |
-| Explicit kill status/label | Bypass the graceful wait, terminate the relevant run, retain its session, and block automatic reassignment for human repair. The trigger is optional and configurable. |
-| Cleanup fails or never completes | Treat the ticket's execution state as broken. Block reassignment until a human repairs it and confirms a clean state. A timeout or a stopped process alone does not establish successful rollback. |
+| Stop request, HITL label added, lane left its mapping, delegate removed | Interrupt the worker, post one final activity, end `stopped`, release the project lock. Worktree and session stay for inspection. |
+| Stop cannot be verified | End `blocked`; the lock is held until an operator resolves it after inspecting the session. |
+| HITL label present | No automatic delegation; a hand delegation is refused with an explanation. |
 
 ## 6. Operational requirements
 
 - Reuse OpenCode's persisted sessions and retain the host's external associations and orchestration state needed to recover after a restart and explain what ran, why it ran, and its result.
 - Handle repeated deliveries and retries without creating duplicate worker runs or blindly repeating completed external actions.
 - Make blocked, failed, and interrupted work visible through the configured interfaces.
-- An interrupted run's cleanup must cover its allowed mutations. Any effect that cannot be undone or verified leaves the run in broken state for human repair. Preserve the inspectable session even when using native file-revert mechanisms.
-- Persist the cleanup phase and deadline across host restarts. Agent-led rollback must finish before orchestrator teardown; timeout handling and explicit kills must preserve the same ordering and blocked-state rules.
+- An interrupted worker leaves its worktree and session inspectable; only an unverifiable stop holds the project lock.
 - Provide housekeeping for completed runs, stale resources, history/index retention, and backups. Detailed policies belong to technical design.
 - Keep credentials out of ordinary prompts and logs. Preserve configured OpenCode permissions and agent tool boundaries across direct and delegated execution.
 - Allow chat, browser, memory, and scheduling capabilities to operate when the Linear/project integration is unconfigured.
@@ -151,20 +134,20 @@ The platform does not automatically modify or redeploy its own source code.
 ## 8. Acceptance scenarios
 
 1. A developer checks out company and project agent definitions and runs a project task using ordinary OpenCode.
-2. OpenCode provides the native chat interface and Discord the first shared knowledge interface. Every Discord conversation uses one configured agent without switching or project execution; separate DMs/threads retain separate sessions. Native OpenCode retains agent switching, while automated workers keep their assigned agent throughout execution and cleanup.
+2. OpenCode provides the native chat interface and Discord the first shared knowledge interface. Every Discord conversation uses one configured agent without switching or project execution; separate DMs/threads retain separate sessions. Native OpenCode retains agent switching, while automated workers keep their assigned agent throughout execution.
 3. The Discord librarian consults a GitHub or Linear specialist for information without acquiring project-write or worker-launch capabilities through delegation.
 4. Old conversations are retrieved from OpenCode history through a derived index without promoting all their contents into durable memory or maintaining another authoritative transcript store.
 5. An actionable Linear issue without a delegate or unresolved worker state selects an application through the project's lane mapping, then starts the unique OpenCode agent linked to that application. Its human assignee remains responsible. A direct-only agent is not automatically selected as a worker.
 6. Two lanes reuse the same Linear application, and therefore the same mapped OpenCode agent, while running the appropriate lane-specific jobs. Configuration linking a second application to that agent is rejected.
-7. A lane changes during execution: the working agent receives a cleanup request and can undo a test database migration before the orchestrator removes its workspace or other resources. Both cleanup phases finish before delegate replacement, its session remains inspectable, and repeated events never create overlapping owning workers.
+7. A lane changes during execution: the worker is stopped, its agent session shows why and where its worktree and OpenCode session are, the project lock is released, and repeated events never create overlapping owning workers.
 8. A HITL-marked issue receives no new automatic delegation while a developer handles it interactively.
 9. Separate sessions manage their own browser tabs while retaining the installation's browser profile and installed extensions.
 10. An installation without Linear configuration still supports conversations, knowledge retrieval, browser tasks, and recurring work.
-11. Cleanup fails: the ticket remains blocked for human repair, even if the process has stopped or the HITL marker is removed.
-12. A configured cleanup timeout or explicit kill status/label terminates the relevant run. Normal cleanup/reassignment does not continue automatically, other sessions remain unaffected, and the interrupted session remains inspectable.
+11. A HITL-labelled issue delegated by hand is refused with an explanation in the agent session.
+12. A stop request from Linear ends the relevant worker only; other sessions remain unaffected and the interrupted session remains inspectable. A stop that cannot be verified leaves the worker blocked until an operator resolves it.
 13. A project query can retrieve relevant company-wide guidance and that project's configured documents, with each result's source and scope retained.
 14. A destination with proactive session creation disabled receives no host-initiated conversation. An enabled destination can receive scheduled work under its configured reporting policy.
-15. With configured execution capacity occupied, additional automated work waits in a persistent queue; repeated periodic triggers do not create an uncontrolled backlog, and cleanup signals still reach the active run.
+15. With configured execution capacity occupied, additional automated work waits in a persistent queue; repeated periodic triggers do not create an uncontrolled backlog, and stop signals still reach the active run.
 16. A dreaming task reviews the configured interval of conversation history, reconciles useful durable memories with their sources, and queues when local-model capacity is occupied. Retrying or restarting does not duplicate the same memory writes.
 
 ## 10. Future ideas: memory decay

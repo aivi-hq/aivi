@@ -22,11 +22,14 @@ changing runtime behavior.
   a protocol keep-alive. A "safety net" interval is a poll with a better name.
 
 Design rules for the worker/Linear lifecycle (not built; only config validation
-exists):
+exists; the agreed plan and order are in `docs/plans/linear.md`):
 
 - Never release a worker's resources merely because its caller disconnected.
-- Cleanup is agent-first undo, followed by orchestrator cleanup and verification.
-- Failed cleanup stays blocked for human repair. Preserve the native transcript.
+- A worker runs in its own git worktree, never in the project's `source/`.
+- Stop means stop: a stop request, the HITL label or a lane change ends the
+  worker and releases the project lock; the worktree and the native
+  transcript stay for inspection. `blocked` is only for a stop that cannot be
+  verified. Graceful agent-first cleanup is a later upgrade, not a precondition.
 - Linear project lanes select apps; each app maps to one unique OpenCode agent.
 
 When behavior changes, update the one document that owns that fact (the map is

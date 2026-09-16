@@ -15,7 +15,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. Lifted onto the channel contract 2026-09-15; live re-check pending. |
 | 5b. Slack adapter | **Done, live-verified** on the owner's workspace 2026-09-15: DMs, mention → thread, `/spider-status`, ⏳/👀 reactions, job outcomes re-entering a thread, report threads adopting the job session ([slack.md](slack.md)). |
 | 6. Worker lifecycle without Linear | Not started. |
-| 7. Native Linear AgentSessions | Not started; configuration validation exists. |
+| 7. Native Linear AgentSessions | Not started; configuration validation exists. Scope and order agreed 2026-09-16: [plans/linear.md](plans/linear.md). |
 
 ## Live gates
 

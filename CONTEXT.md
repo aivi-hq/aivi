@@ -151,7 +151,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Blocked runs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
 - **Linear config exists ahead of the module** to record the lane → app →
-  agent invariant; nothing reads it yet.
+  agent invariant; nothing reads it yet. The module's design (an agent session
+  is a conversation; a worker runs in its own worktree; stop releases, only an
+  unverifiable stop blocks) is in [plans/linear.md](docs/plans/linear.md).
 
 ## Where each fact lives
 
@@ -171,8 +173,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Browser service | [docs/browser.md](docs/browser.md) |
 | Decisions | [docs/architecture.md](docs/architecture.md) |
 | Status per milestone, live gates, next steps | [docs/roadmap.md](docs/roadmap.md) |
-| Frozen product requirements | [docs/requirements.md](docs/requirements.md) |
+| Product requirements | [docs/requirements.md](docs/requirements.md) |
 | Unscheduled ideas | `docs/backlog/` (one file per topic) |
+| Scheduled work in progress, as checklists that shrink as steps land | `docs/plans/` ([linear](docs/plans/linear.md)) |
 | Review findings (not specs; each has a disposition section) | `docs/review/` |
 
 ## Where things are

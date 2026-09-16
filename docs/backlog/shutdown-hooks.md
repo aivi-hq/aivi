@@ -14,9 +14,9 @@ aborted `signal`; nothing tells the outside world.
 - Discord: announce in every conversation with an active or queued turn that
   aivi is going down (and, on restart, that it is back / that a turn was
   interrupted). Quiet conversations get nothing.
-- Linear: steer active workers into graceful cleanup, wait within the configured
-  deadline, then mark what could not be verified as blocked (the agreed
-  cleanup protocol; a shutdown is just another trigger for it).
+- Linear: stop active workers with a final `error` activity naming the
+  worktree and session; what could not be verified stopped ends blocked
+  ([plans/linear.md](../plans/linear.md)).
 - Jobs: an `opencode.prompt` or `dreaming` turn interrupted by shutdown is
   already blocked; reporting could say so to its destination.
 - A `--reason` on stop (maintenance, update, crash) so announcements can say why.
