@@ -1,8 +1,8 @@
 import type { Report } from '@aivi/core';
 import { SESSION_DESTINATION } from '../reports.ts';
-import type { ChannelModule, DeliveryContext } from './contract.ts';
+import type { ChannelModule, DeliveryContext, ReentryContext } from './contract.ts';
 
-export type NativeReentry = (sessionId: string, text: string, context: DeliveryContext) => Promise<void>;
+export type NativeReentry = (sessionId: string, text: string, context: ReentryContext) => Promise<void>;
 
 /**
  * Routes job outcomes: a `channel` report goes to the module with that id; a
@@ -51,10 +51,12 @@ export class Channels {
   }
   async deliver(report: Report, text: string, context: DeliveryContext): Promise<void> {
     if (report.to === SESSION_DESTINATION) {
+      if (!context.run) throw new Error('A session re-entry needs the run whose result it is');
+      const reentry: ReentryContext = { ...context, run: context.run };
       const owner = [...this.modules.values()].find(m => m.ownsSession(report.session));
-      if (owner) return owner.reenter(report.session, text, context);
+      if (owner) return owner.reenter(report.session, text, reentry);
       if (!this.native) throw new Error('No session delivery is available');
-      return this.native(report.session, text, context);
+      return this.native(report.session, text, reentry);
     }
     const module = this.modules.get(report.module);
     if (!module) throw new Error(`No channel module "${report.module}" is running`);

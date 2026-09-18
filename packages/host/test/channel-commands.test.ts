@@ -160,14 +160,14 @@ test('/jobs lists the next five occurrences and the last ten runs from the host 
         cron: '0 9 * * *',
         timezone: 'UTC',
         resource: 'local-model',
-        task: { kind: 'system.check' },
+        task: { kind: 'invocation', name: 'system.check' },
       }),
     ],
     [],
     now,
   );
   for (let i = 0; i < 12; i++) {
-    const run = core.enqueue({ kind: 'system.check' }, 'local-model', `k${i}`, now + i);
+    const run = core.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', `k${i}`, now + i);
     const claimed = core.claim('host', 1, scheduler.resources, now + i)!;
     core.finish(claimed.id, 'host', i % 2 ? 'failed' : 'succeeded', {}, 'boom', now + 1000 + i);
     assert.equal(claimed.id, run.id);

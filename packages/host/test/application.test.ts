@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { configSchema } from '@aivi/core';
+import { configSchema, jobSchema, taskSchema } from '@aivi/core';
 import type { HostModule, HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
 import { ConfigurationError } from '../src/modules.ts';
 import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
+import { TaskRegistry } from '../src/tasks.ts';
 
 const loaded = () => ({
   path: '/config',
@@ -136,6 +137,109 @@ test('a configuration error at module start unwinds earlier modules and releases
   store.releaseDaemon('another');
 });
 
+const sweepJob = () =>
+  jobSchema.parse({
+    id: 'linear-sweep',
+    cron: '0 4 * * *',
+    task: { kind: 'invocation', name: 'linear.sweep' },
+  });
+
+test('a composed module seeds its system jobs and claims operations under its own id', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const resources = async (): Promise<HostResources> => ({
+    knowledge: {
+      async search() {
+        return [];
+      },
+      async index() {},
+      async close() {},
+    },
+  });
+  const modules: HostModule[] = [
+    {
+      id: 'linear',
+      jobs: () => [sweepJob()],
+      async start(services) {
+        services.tasks.claim('linear.sweep', async () => ({ state: 'succeeded', result: null }));
+        // The door carries this module's id: a host operation is not its name to claim.
+        assert.throws(
+          () => services.tasks.claim('dreaming', async () => ({ state: 'succeeded', result: null })),
+          ConfigurationError,
+        );
+        return { async stop() {} };
+      },
+    },
+  ];
+  const abort = new AbortController();
+  await runHost({
+    loaded: loaded(),
+    store,
+    resources,
+    modules,
+    auth,
+    signal: abort.signal,
+    onReady: () => abort.abort(),
+  });
+  const seeded = store.job('linear-sweep');
+  assert.equal(seeded.source, 'system');
+  assert.equal(seeded.spec.task.kind, 'invocation');
+});
+
+test('two system job definitions sharing an id is fatal, not a silent overwrite', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const resources = async () => ({
+    knowledge: {
+      async search() {
+        return [];
+      },
+      async index() {},
+      async close() {},
+    },
+  });
+  const modules: HostModule[] = ['first', 'second'].map(id => ({
+    id,
+    jobs: () => [sweepJob()],
+    async start() {
+      return { async stop() {} };
+    },
+  }));
+  await assert.rejects(
+    runHost({ loaded: loaded(), store, resources, modules, auth, signal: new AbortController().signal }),
+    /Two system job definitions claim job id linear-sweep/,
+  );
+  store.acquireDaemon('another');
+  store.releaseDaemon('another');
+});
+
+test('two modules claiming one operation name take the host down with the clash in the message', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const resources = async () => ({
+    knowledge: {
+      async search() {
+        return [];
+      },
+      async index() {},
+      async close() {},
+    },
+  });
+  const modules: HostModule[] = ['first', 'second'].map(id => ({
+    id,
+    async start(services) {
+      services.tasks.claim('shared.thing', async () => ({ state: 'succeeded', result: null }));
+      return { async stop() {} };
+    },
+  }));
+  await assert.rejects(
+    runHost({ loaded: loaded(), store, resources, modules, auth, signal: new AbortController().signal }),
+    /Operation "shared.thing" is already claimed by first/,
+  );
+  store.acquireDaemon('another');
+  store.releaseDaemon('another');
+});
+
 test('the failure that ended the host survives a failing cleanup step', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
@@ -201,7 +305,7 @@ test('once mode dispatches due work without opening the API or starting modules'
   };
   const config = loaded();
   config.config.search!.indexOnStart = false;
-  const job = store.enqueue({ kind: 'knowledge.index' }, 'local-model', 'index');
+  const job = store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, 'local-model', 'index');
   let moduleStarted = false;
   const modules: HostModule[] = [
     {
@@ -243,11 +347,17 @@ test('scheduled knowledge indexing uses the same injected service', async t => {
     async close() {},
   };
   const config = loaded();
-  const job = store.enqueue({ kind: 'knowledge.index' }, 'local-model', 'index');
+  const job = store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, 'local-model', 'index');
   const scheduler = new Scheduler(
     store,
     config.config.scheduler,
-    createExecutor(config, { store, knowledge, events: { watch: () => () => {} }, opencode: noOpenCode }),
+    createExecutor(config, {
+      store,
+      knowledge,
+      events: { watch: () => () => {} },
+      opencode: noOpenCode,
+      tasks: new TaskRegistry(),
+    }),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -290,7 +400,7 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
     signal: abort.signal,
     onReady: () => {
       // Created after the loop went to sleep: only a wake makes it run before the safety-net tick.
-      store.enqueue({ kind: 'system.check' }, 'local-model', 'while-asleep');
+      store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'while-asleep');
       woke!();
     },
   });

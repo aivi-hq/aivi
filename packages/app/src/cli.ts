@@ -22,6 +22,7 @@ import {
   reportSchema,
   selectSources,
   silentLogger,
+  taskLabel,
   taskSchema,
   writeProjectLinear,
 } from '@aivi/core';
@@ -494,7 +495,7 @@ async function main(): Promise<void> {
               state: j.state,
               when: j.spec.at !== undefined ? `at ${j.spec.at}` : `cron ${j.spec.cron} (${j.spec.timezone})`,
               nextAt: j.nextAt === null ? null : new Date(j.nextAt).toISOString(),
-              kind: j.spec.task.kind,
+              kind: taskLabel(j.spec.task),
               resource: j.spec.resource,
               lastRun: store.lastRun(j.spec.id)?.state ?? null,
             })),
@@ -515,9 +516,8 @@ async function main(): Promise<void> {
             resource: fileResource,
           } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
           // Paths in task files resolve against the home, like paths in aivi.json.
-          if (task.kind === 'opencode.prompt' || task.kind === 'dreaming')
-            task.directory = resolve(home, task.directory);
-          if (task.kind === 'dreaming') task.memoryDirectory = resolve(home, task.memoryDirectory);
+          // Invocation args belong to the claimant: they resolve when the operation runs.
+          if (task.kind === 'prompt') task.directory = resolve(home, task.directory);
           if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home, task.cwd);
           const resource = values.resource ?? fileResource ?? 'local-model';
           if (!(resource in loaded.config.scheduler.resources)) throw new Error(`Unknown resource pool: ${resource}`);
@@ -561,7 +561,7 @@ async function main(): Promise<void> {
       const resource = values.resource ?? 'maintenance';
       if (!(resource in loaded.config.scheduler.resources))
         throw new Error('Configure a maintenance resource pool or pass --resource');
-      print(store.enqueue({ kind: 'knowledge.index' }, resource, `index:${randomUUID()}`));
+      print(store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, resource, `index:${randomUUID()}`));
       await poke();
       return;
     }

@@ -13,6 +13,9 @@ import {
   retentionJob,
   selectSources,
   systemJobs,
+  taskLabel,
+  taskSchema,
+  userTaskSchema,
 } from '../src/config.ts';
 
 test('linear settings: defaults, secret names, reserved pool', () => {
@@ -104,7 +107,7 @@ test('config rejects ambiguous Linear app ownership and invalid job resources', 
           id: 'check',
           cron: '* * * * *',
           resource: 'missing',
-          task: { kind: 'system.check' },
+          task: { kind: 'invocation', name: 'system.check' },
         },
       ],
     }).success,
@@ -118,7 +121,7 @@ test('config rejects ambiguous Linear app ownership and invalid job resources', 
           id: 'check',
           cron: '* * * * *',
           timezone: 'Mars/Olympus',
-          task: { kind: 'system.check' },
+          task: { kind: 'invocation', name: 'system.check' },
         },
       ],
     }).success,
@@ -128,7 +131,7 @@ test('config rejects ambiguous Linear app ownership and invalid job resources', 
 });
 
 test('a job is recurring (cron) or one-off (at), never both or neither; misfire is one grace knob', () => {
-  const check = { kind: 'system.check' } as const;
+  const check = { kind: 'invocation', name: 'system.check' } as const;
   assert.equal(jobSchema.safeParse({ id: 'x', task: check }).success, false);
   assert.equal(
     jobSchema.safeParse({ id: 'x', cron: '* * * * *', at: '2026-09-16T09:00:00Z', task: check }).success,
@@ -151,7 +154,13 @@ test('retention is a system job derived from config: default pool, host timezone
   const job = retentionJob(configSchema.parse({ version: 1 }), 'Europe/Amsterdam')!;
   assert.deepEqual(
     [job.id, job.cron, job.timezone, job.resource, job.task],
-    ['retention', '0 4 * * *', 'Europe/Amsterdam', 'local-model', { kind: 'runs.prune', olderThanDays: 30 }],
+    [
+      'retention',
+      '0 4 * * *',
+      'Europe/Amsterdam',
+      'local-model',
+      { kind: 'invocation', name: 'runs.prune', args: { olderThanDays: 30 } },
+    ],
   );
   const custom = configSchema.parse({
     version: 1,
@@ -170,7 +179,7 @@ test('retention is a system job derived from config: default pool, host timezone
     JSON.stringify(
       configSchema.safeParse({
         version: 1,
-        jobs: [{ id: 'retention', cron: '* * * * *', task: { kind: 'system.check' } }],
+        jobs: [{ id: 'retention', cron: '* * * * *', task: { kind: 'invocation', name: 'system.check' } }],
       }).error?.issues,
     ),
     /Reserved for the system retention job/,
@@ -179,7 +188,7 @@ test('retention is a system job derived from config: default pool, host timezone
     configSchema.safeParse({
       version: 1,
       scheduler: { retention: false },
-      jobs: [{ id: 'retention', cron: '* * * * *', task: { kind: 'system.check' } }],
+      jobs: [{ id: 'retention', cron: '* * * * *', task: { kind: 'invocation', name: 'system.check' } }],
     }).success,
     true,
   );
@@ -189,7 +198,7 @@ test('projects-sync is a system job too: hourly by default, same pool rule, rese
   const job = projectsSyncJob(configSchema.parse({ version: 1 }), 'UTC')!;
   assert.deepEqual(
     [job.id, job.cron, job.timezone, job.resource, job.task],
-    ['projects-sync', '0 * * * *', 'UTC', 'local-model', { kind: 'projects.sync' }],
+    ['projects-sync', '0 * * * *', 'UTC', 'local-model', { kind: 'invocation', name: 'projects.sync' }],
   );
   assert.deepEqual(
     systemJobs(configSchema.parse({ version: 1, scheduler: { retention: false } }), 'UTC').map(j => j.id),
@@ -206,7 +215,7 @@ test('projects-sync is a system job too: hourly by default, same pool rule, rese
     JSON.stringify(
       configSchema.safeParse({
         version: 1,
-        jobs: [{ id: 'projects-sync', cron: '* * * * *', task: { kind: 'system.check' } }],
+        jobs: [{ id: 'projects-sync', cron: '* * * * *', task: { kind: 'invocation', name: 'system.check' } }],
       }).error?.issues,
     ),
     /Reserved for the system projects-sync job/,
@@ -381,4 +390,23 @@ test('agent scheduling is on by default in local-model, can be disabled, and mus
       .scheduler.agentSchedules,
     { resource: 'gpu', max: 50 },
   );
+});
+
+test('tasks are prompt, shell or invocation; only prompt and shell are tasks anyone can author', () => {
+  assert.equal(taskSchema.safeParse({ kind: 'prompt', agent: 'a', directory: '/d', prompt: 'p' }).success, true);
+  assert.equal(
+    taskSchema.safeParse({ kind: 'opencode.prompt', agent: 'a', directory: '/d', prompt: 'p' }).success,
+    false,
+  );
+  assert.equal(taskSchema.safeParse({ kind: 'invocation', name: 'linear.sweep' }).success, true);
+  assert.equal(taskSchema.safeParse({ kind: 'invocation', name: 'linear.sweep', args: { days: 7 } }).success, true);
+  assert.equal(taskSchema.safeParse({ kind: 'invocation' }).success, false, 'name is required');
+  assert.equal(taskSchema.safeParse({ kind: 'dreaming' }).success, false, 'dreaming is an operation, not a kind');
+  // What aivi_jobs and a task file accept: no invocations, so an agent cannot schedule host capabilities.
+  assert.equal(userTaskSchema.safeParse({ kind: 'shell', command: ['ls'] }).success, true);
+  assert.equal(userTaskSchema.safeParse({ kind: 'prompt', agent: 'a', directory: '/d', prompt: 'p' }).success, true);
+  assert.equal(userTaskSchema.safeParse({ kind: 'invocation', name: 'dreaming' }).success, false);
+  // Views show what a job actually does: the operation name, not the word "invocation".
+  assert.equal(taskLabel(taskSchema.parse({ kind: 'invocation', name: 'dreaming', args: {} })), 'dreaming');
+  assert.equal(taskLabel(taskSchema.parse({ kind: 'shell', command: ['ls'] })), 'shell');
 });

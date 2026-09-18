@@ -47,11 +47,11 @@ test('outcome text prefers the agent answer or shell output and stays bounded', 
   } as const;
   const prompt: Run = {
     ...base,
-    task: taskSchema.parse({ kind: 'opencode.prompt', agent: 'a', directory: '/d', prompt: 'p' }),
+    task: taskSchema.parse({ kind: 'prompt', agent: 'a', directory: '/d', prompt: 'p' }),
   };
   assert.equal(
     describeOutcome(prompt, 'succeeded', { text: 'All good' }, 'completed'),
-    '✅ daily (opencode.prompt) succeeded\nAll good',
+    '✅ daily (prompt) succeeded\nAll good',
   );
   const shell: Run = { ...base, jobId: 'job-abcdef12', task: taskSchema.parse({ kind: 'shell', command: ['x'] }) };
   assert.equal(
@@ -65,12 +65,16 @@ test('outcome text prefers the agent answer or shell output and stays bounded', 
   assert.ok(describeOutcome(prompt, 'succeeded', { text: 'x'.repeat(5000) }, 'completed').length <= 4000);
   assert.equal(
     describeOutcome({ ...prompt, sessionId: 'ses_aivi_1' }, 'succeeded', { text: 'All good' }, 'completed'),
-    '✅ daily (opencode.prompt) succeeded\nAll good\nsession ses_aivi_1 in OpenCode',
+    '✅ daily (prompt) succeeded\nAll good\nsession ses_aivi_1 in OpenCode',
     'an agent job links its transcript',
   );
   const dreaming: Run = {
     ...base,
-    task: taskSchema.parse({ kind: 'dreaming', directory: '/d', memoryDirectory: '/k/memory' }),
+    task: taskSchema.parse({
+      kind: 'invocation',
+      name: 'dreaming',
+      args: { directory: '/d', memoryDirectory: '/k/memory' },
+    }),
   };
   const text = describeOutcome(
     dreaming,
@@ -93,7 +97,7 @@ test('scheduled outcomes are posted through the registered channel module and au
   const nightly = jobSchema.parse({
     id: 'nightly',
     cron: '* * * * *',
-    task: { kind: 'system.check' },
+    task: { kind: 'invocation', name: 'system.check' },
     report: { to: 'channel', module: 'discord', channel: '42' },
   });
   store.syncJobs([nightly], [], 0);
@@ -162,7 +166,7 @@ test('a report to "session" goes to the module that owns the session, else into 
   const run = {
     id: 'r1',
     jobId: 'j',
-    task: taskSchema.parse({ kind: 'system.check' }),
+    task: taskSchema.parse({ kind: 'invocation', name: 'system.check' }),
     resource: 'r',
     state: 'succeeded',
     createdAt: 0,

@@ -1,6 +1,7 @@
 import { setTimeout } from 'node:timers/promises';
-import type { Logger, ModuleHealth } from '@aivi/core';
+import type { Config, Job, Logger, ModuleHealth } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
+import type { TaskRegistry } from './tasks.ts';
 
 export interface RunningModule {
   stop(): Promise<void>;
@@ -8,6 +9,15 @@ export interface RunningModule {
 export interface HostModule<Services = unknown> {
   id: string;
   start(services: Services): Promise<RunningModule>;
+  /**
+   * System jobs to seed beside the host's own while this module is composed.
+   * They carry `invocation` tasks for operations the module claims in its
+   * `start`; when the module leaves the composition, its jobs are removed
+   * with it. Tuning their frequency from the operator's config is the
+   * [minimal-schedule-config](../../docs/backlog/minimal-schedule-config.md)
+   * slice, not built yet.
+   */
+  jobs?(config: Config): Job[];
 }
 
 /**
@@ -42,18 +52,31 @@ export class ModuleSupervisor<Services> {
   private readonly log: Logger;
   private readonly fatal: (error: unknown) => void;
   private readonly retry: RetryPolicy;
+  private readonly tasks?: TaskRegistry | undefined;
   constructor(
     services: Services,
     signal: AbortSignal,
     log: Logger,
     fatal: (error: unknown) => void,
     retry: RetryPolicy = DEFAULT_RETRY,
+    tasks?: TaskRegistry | undefined,
   ) {
     this.services = services;
     this.signal = signal;
     this.log = log;
     this.fatal = fatal;
     this.retry = retry;
+    this.tasks = tasks;
+  }
+
+  /**
+   * The door for one module: everything shared, but `tasks` scoped so its
+   * claims carry the module's own id (the exactly-once rule needs honest
+   * owners). The cast rewrites only that field's narrower shape.
+   */
+  private servicesFor(moduleId: string): Services {
+    if (!this.tasks) return this.services;
+    return { ...this.services, tasks: this.tasks.forModule(moduleId) } as unknown as Services;
   }
 
   async start(modules: HostModule<Services>[]): Promise<void> {
@@ -78,7 +101,7 @@ export class ModuleSupervisor<Services> {
     const entry = this.entries.get(id)!;
     entry.health.attempts++;
     try {
-      entry.running = await entry.module.start(this.services);
+      entry.running = await entry.module.start(this.servicesFor(entry.module.id));
       entry.health = { ...entry.health, state: 'running', lastError: null, nextRetryAt: null };
       this.order.push(id);
       this.log.info('module.started', { module: id, attempts: entry.health.attempts });

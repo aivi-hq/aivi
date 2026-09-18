@@ -51,8 +51,8 @@ module with webhook routes on the same listener.
   clean checkouts under `<home>/projects/`, described from the home by a
   `docs/` convention ([docs/projects.md](docs/projects.md)).
 - Jobs: definitions (cron or one-off `at`) and their runs in SQLite, Croner
-  as the calendar, `shell`/`opencode.prompt`/`dreaming`/maintenance tasks,
-  dedupe, pools and leases, restart recovery, missed-run accounting,
+  as the calendar, `shell` and `prompt` tasks plus claimed system operations
+  (`invocation`), dedupe, pools and leases, restart recovery, missed-run accounting,
   retention, reports.
 - Dreaming: a scheduled agent maintains `facts.md` and proposals from
   conversations since its last run ([docs/dreaming.md](docs/dreaming.md)).

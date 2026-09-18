@@ -117,7 +117,7 @@ test('an agent creates a recurring agent job for its own agent and directory; re
   assert.equal(item.kind, 'recurring');
   assert.equal(item.state, 'active');
   assert.deepEqual(entry.spec.task, {
-    kind: 'opencode.prompt',
+    kind: 'prompt',
     agent: 'librarian',
     directory: '/team',
     prompt: 'Summarize last week',
@@ -193,7 +193,7 @@ test('one-offs, script jobs, overrides and the report checks', async t => {
     on: 'failure',
   });
   const overridden = store.job(other.items[0]!.id).spec;
-  assert.equal(overridden.task.kind, 'opencode.prompt');
+  assert.equal(overridden.task.kind, 'prompt');
   assert.equal((overridden.task as { agent: string }).agent, 'coder');
   assert.deepEqual(overridden.report, { to: 'channel', module: 'discord', channel: '42', on: 'failure' });
   assert.match(other.summary, /Only failures are posted to discord 42/);

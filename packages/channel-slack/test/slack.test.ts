@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import type { KnowledgeService, Run } from '@aivi/core';
 import { configSchema, silentLogger, slackConfigSchema } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
-import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store } from '@aivi/host';
+import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry } from '@aivi/host';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import {
   conversationParts,
@@ -268,6 +268,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     log: silentLogger,
     channels,
     routes: new PublicRoutes(),
+    tasks: new TaskRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -312,7 +313,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     id: 'run-1',
     jobId: 'job-1',
     task: {
-      kind: 'opencode.prompt',
+      kind: 'prompt',
       agent: 'librarian',
       directory: '/librarian',
       prompt: 'p',
@@ -456,6 +457,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     log: silentLogger,
     channels: new Channels(),
     routes: new PublicRoutes(),
+    tasks: new TaskRegistry().forModule('test'),
     wake: () => {
       for (const l of woken) l();
     },
@@ -468,7 +470,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   // Capacity is taken by a job, so the message waits.
   const job = store.claim('host', 1, loaded.config.scheduler.resources, 0);
   assert.equal(job, null);
-  store.enqueue({ kind: 'system.check' }, 'local-model', 'busy');
+  store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'busy');
   const busy = store.claim('host', 1, loaded.config.scheduler.resources)!;
   const running = await createSlackModule(config, slack.connection).start(services);
   t.after(async () => {
@@ -525,6 +527,7 @@ test('progress: the placeholder goes into the thread, is updated through chat.up
     log: silentLogger,
     channels: new Channels(),
     routes: new PublicRoutes(),
+    tasks: new TaskRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -588,6 +591,7 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
     log: silentLogger,
     channels: new Channels(),
     routes: new PublicRoutes(),
+    tasks: new TaskRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Config, Logger, Run } from '@aivi/core';
-import { errorMessage, silentLogger } from '@aivi/core';
+import { errorMessage, silentLogger, taskLabel } from '@aivi/core';
 import type { Store } from './store.ts';
 
 export interface ExecutionContext {
@@ -93,7 +93,7 @@ export class Scheduler {
   }
 
   private launch(run: Run): void {
-    const log = this.log.child({ run: run.id, job: run.jobId, kind: run.task.kind, resource: run.resource });
+    const log = this.log.child({ run: run.id, job: run.jobId, kind: taskLabel(run.task), resource: run.resource });
     log.info('run.started');
     const own = new AbortController();
     const signal = AbortSignal.any([this.abort.signal, own.signal]);

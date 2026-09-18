@@ -9,8 +9,8 @@ const config = configSchema.parse({ version: 1, scheduler: { agentSchedules: fal
 test('a slow task queues the next task; execution failure blocks further dispatch', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
-  const first = store.enqueue({ kind: 'system.check' }, 'local-model', 'one', 1);
-  const second = store.enqueue({ kind: 'system.check' }, 'local-model', 'two', 2);
+  const first = store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'one', 1);
+  const second = store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'two', 2);
   let release!: () => void;
   const pending = new Promise<void>(resolve => {
     release = resolve;
@@ -44,7 +44,7 @@ test('startup applies removed jobs before dispatching any stale queued run', asy
         timezone: 'UTC',
         resource: 'local-model',
         enabled: true,
-        task: { kind: 'system.check' },
+        task: { kind: 'invocation', name: 'system.check' },
       },
     ],
     [],
@@ -75,7 +75,7 @@ test('a missed occurrence is reported like a failure and never executed', async 
         timezone: 'UTC',
         resource: 'local-model',
         enabled: true,
-        task: { kind: 'system.check' },
+        task: { kind: 'invocation', name: 'system.check' },
         report: { to: 'session', session: 'ses_1', on: 'failure' },
       },
     ],
@@ -108,7 +108,7 @@ test('a missed occurrence is reported like a failure and never executed', async 
 test('runs abort stops one running run; it ends blocked and keeps its capacity', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
-  const job = store.enqueue({ kind: 'system.check' }, 'local-model', 'long');
+  const job = store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'long');
   let seen: AbortSignal | undefined;
   const scheduler = new Scheduler(store, config, async (_run, context) => {
     seen = context.signal;

@@ -71,3 +71,5 @@ export {
 } from './session.ts';
 export type { AddJobOptions, AuditEntry, JobEntry, Lease, RunFilter } from './store.ts';
 export { Store } from './store.ts';
+export type { TaskClaims, TaskHandler } from './tasks.ts';
+export { TaskRegistry } from './tasks.ts';

@@ -65,9 +65,12 @@ should be rules" is the intended workflow.
   "timezone": "Europe/Amsterdam",
   "resource": "local-model",
   "task": {
-    "kind": "dreaming",
-    "origins": ["discord"],
-    "maxSessions": 50
+    "kind": "invocation",
+    "name": "dreaming",
+    "args": {
+      "origins": ["discord"],
+      "maxSessions": 50
+    }
   },
   "report": { "to": "channel", "module": "discord", "channel": "<channel id>", "on": "always" }
 }
@@ -75,7 +78,8 @@ should be rules" is the intended workflow.
 
 `memoryDirectory` defaults to `<home>/memory`, the org memory, which is always
 a core `memory` source ([projects](projects.md)); another directory must be
-inside a core knowledge source (configuration fails otherwise). `agent` names an agent in the home's `.opencode/agents/` (set
+inside a core knowledge source (the run fails with that reason otherwise; the
+args are the dreaming operation's own, opaque to the config). `agent` names an agent in the home's `.opencode/agents/` (set
 `directory` for an agent defined elsewhere). The dreamer picks its model in
 its own frontmatter; replace the file to change how memory is kept.
 

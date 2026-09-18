@@ -17,6 +17,7 @@ import {
   searchSchema,
   selectSources,
   silentLogger,
+  taskLabel,
 } from '@aivi/core';
 import { type JobHandler, JobRefused } from './jobs.ts';
 import type { Store } from './store.ts';
@@ -52,14 +53,14 @@ export function status(store: Store, loaded: LoadedConfig, now = Date.now(), mod
       .map(j => ({
         id: j.spec.id,
         source: j.source,
-        kind: j.spec.task.kind,
+        kind: taskLabel(j.spec.task),
         title: j.spec.title ?? null,
         nextAt: new Date(j.nextAt!).toISOString(),
       })),
     recent: store.recent(now - 24 * 3_600_000, 20).map(r => ({
       id: r.id,
       jobId: r.jobId,
-      kind: r.task.kind,
+      kind: taskLabel(r.task),
       state: r.state,
       finishedAt: new Date(r.finishedAt ?? now).toISOString(),
       error: r.error,

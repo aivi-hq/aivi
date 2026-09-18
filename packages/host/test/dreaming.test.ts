@@ -4,10 +4,12 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { configSchema, taskSchema } from '@aivi/core';
+import { dreamingArgsSchema } from '@aivi/core';
 import { collectSessions, dream, readCursor, renderTranscript } from '../src/dreaming.ts';
 import { connectOpenCode } from '../src/opencode.ts';
+import { createExecutor } from '../src/runtime.ts';
 import { Store } from '../src/store.ts';
+import { TaskRegistry } from '../src/tasks.ts';
 
 const T0 = Date.parse('2026-09-14T10:00:00Z');
 const sessions = [
@@ -152,8 +154,7 @@ test('dream writes the transcript, allows the same two write targets in the org 
   const client = await start(t, mock);
   const store = new Store(':memory:');
   t.after(async () => store.close());
-  const task = taskSchema.parse({ kind: 'dreaming', directory: '/lib', memoryDirectory: memory });
-  assert.equal(task.kind, 'dreaming');
+  const task = dreamingArgsSchema.parse({ directory: '/lib', memoryDirectory: memory });
   // Simulate the agent writing an org fact and a project fact during its turn.
   const originalPrompt = mock.server.listeners('request')[0] as (...args: unknown[]) => unknown;
   mock.server.removeAllListeners('request');
@@ -227,7 +228,7 @@ test('dream writes the transcript, allows the same two write targets in the org 
   );
 });
 
-test('dreaming defaults to <home>/memory, which is always a core source; another directory must be inside one', async t => {
+test('the dreaming operation resolves its args against the home and demands a searchable memory directory', async t => {
   const { loadConfig } = await import('@aivi/core');
   const root = await mkdtemp(join(tmpdir(), 'aivi-dream-cfg-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -241,20 +242,41 @@ test('dreaming defaults to <home>/memory, which is always a core source; another
           {
             id: 'dreaming',
             cron: '0 3 * * *',
-            task: { kind: 'dreaming', directory: 'lib', ...(memoryDirectory ? { memoryDirectory } : {}) },
+            task: {
+              kind: 'invocation',
+              name: 'dreaming',
+              args: { directory: 'lib', ...(memoryDirectory ? { memoryDirectory } : {}) },
+            },
           },
         ],
       }),
     );
-  await write('elsewhere/memory');
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /inside a core knowledge source/);
-  await write('knowledge/memory');
-  let loaded = await loadConfig(join(root, 'aivi.json'));
-  let task = loaded.config.jobs[0]!.task;
-  assert.equal(task.kind === 'dreaming' && task.memoryDirectory, join(root, 'knowledge/memory'));
-  await write();
-  loaded = await loadConfig(join(root, 'aivi.json'));
-  task = loaded.config.jobs[0]!.task;
-  assert.equal(task.kind === 'dreaming' && task.memoryDirectory, join(root, 'memory'));
-  assert.ok(configSchema);
+  // The claimant parses and resolves its own args; wrong ones fail the run with a readable reason.
+  const runDreaming = async (memoryDirectory?: string) => {
+    await write(memoryDirectory);
+    const loaded = await loadConfig(join(root, 'aivi.json'));
+    const store = new Store(':memory:');
+    t.after(() => store.close());
+    const execute = createExecutor(loaded, {
+      store,
+      events: { watch: () => () => {} },
+      opencode: async () => {
+        throw new Error('no OpenCode here');
+      },
+      tasks: new TaskRegistry(),
+    });
+    const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', `dream:${memoryDirectory ?? 'default'}`);
+    return execute(
+      { ...job, id: `run:${memoryDirectory ?? 'default'}` },
+      { signal: new AbortController().signal, attachSession() {} },
+    );
+  };
+  const outside = await runDreaming('elsewhere/memory');
+  assert.equal(outside.state, 'failed');
+  assert.match(outside.reason ?? '', /inside a core knowledge source/);
+  // Past the check the run reaches for OpenCode; the connection error proves it got that far.
+  const inside = await runDreaming('knowledge/memory');
+  assert.match(inside.reason ?? '', /no OpenCode here/);
+  const fallback = await runDreaming();
+  assert.match(fallback.reason ?? '', /no OpenCode here/, '<home>/memory is always a core source');
 });

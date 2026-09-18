@@ -6,13 +6,14 @@ import { connectOpenCode } from '../src/opencode.ts';
 import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
+import { TaskRegistry } from '../src/tasks.ts';
 
 const quiet = { watch: () => () => {} };
 
 test('opencode.prompt jobs run a full verified turn and succeed with the final answer', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'opencode.prompt', agent: 'librarian', directory: '/team', prompt: 'Read the handbook' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'Read the handbook' }),
     'local-model',
     'request',
   );
@@ -91,7 +92,15 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    createExecutor({ path: '/aivi.json', config, projects: [], sources: [] }, { store, events: quiet, opencode }),
+    createExecutor(
+      {
+        path: '/aivi.json',
+        config,
+        projects: [],
+        sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+      },
+      { store, events: quiet, opencode, tasks: new TaskRegistry() },
+    ),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -113,7 +122,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   const store = new Store(':memory:');
   t.after(() => store.close());
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'opencode.prompt', agent: 'librarian', directory: '/team', prompt: 'hi' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'hi' }),
     'local-model',
     'unreachable',
   );
@@ -124,7 +133,15 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    createExecutor({ path: '/aivi.json', config, projects: [], sources: [] }, { store, events: quiet, opencode }),
+    createExecutor(
+      {
+        path: '/aivi.json',
+        config,
+        projects: [],
+        sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+      },
+      { store, events: quiet, opencode, tasks: new TaskRegistry() },
+    ),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -138,7 +155,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
 test('a turn that times out while session.wait is pending reports the timeout, not the SDK transport wrapper', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'opencode.prompt', agent: 'librarian', directory: '/team', prompt: 'slow' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'slow' }),
     'local-model',
     'slow-turn',
   );
@@ -162,11 +179,16 @@ test('a turn that times out while session.wait is pending reports the timeout, n
   assert.ok(address && typeof address !== 'string');
   const config = configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } });
   const execute = createExecutor(
-    { path: '/aivi.json', config, projects: [], sources: [] },
-    { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}) },
+    {
+      path: '/aivi.json',
+      config,
+      projects: [],
+      sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+    },
+    { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}), tasks: new TaskRegistry() },
   );
   // Below the schema minimum on purpose: the executor is called directly to keep the test fast.
-  assert.equal(job.task.kind, 'opencode.prompt');
+  assert.equal(job.task.kind, 'prompt');
   const outcome = await execute(
     { ...job, task: { ...job.task, timeoutMs: 300 } },
     { signal: new AbortController().signal, attachSession() {} },
@@ -178,7 +200,7 @@ test('a turn that times out while session.wait is pending reports the timeout, n
 test('a prompt job whose session cannot be created fails; nothing was submitted to an agent', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'opencode.prompt', agent: 'librarian', directory: '/team', prompt: 'hi' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'hi' }),
     'local-model',
     'no-session',
   );
@@ -199,8 +221,13 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
     store,
     config.scheduler,
     createExecutor(
-      { path: '/aivi.json', config, projects: [], sources: [] },
-      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}) },
+      {
+        path: '/aivi.json',
+        config,
+        projects: [],
+        sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+      },
+      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}), tasks: new TaskRegistry() },
     ),
   );
   scheduler.tick();
@@ -213,7 +240,11 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
 test('a dreaming job persists its session id before the first request and blocks if that request fails', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'dreaming', directory: '/lib', memoryDirectory: '/tmp/aivi-memory-unused' }),
+    taskSchema.parse({
+      kind: 'invocation',
+      name: 'dreaming',
+      args: { directory: '/lib', memoryDirectory: '/lib/memory' },
+    }),
     'local-model',
     'dream',
   );
@@ -236,8 +267,13 @@ test('a dreaming job persists its session id before the first request and blocks
     store,
     config.scheduler,
     createExecutor(
-      { path: '/aivi.json', config, projects: [], sources: [] },
-      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}) },
+      {
+        path: '/aivi.json',
+        config,
+        projects: [],
+        sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+      },
+      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}), tasks: new TaskRegistry() },
     ),
   );
   scheduler.tick();
@@ -254,7 +290,12 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   const store = new Store(':memory:');
   t.after(() => store.close());
   const config = configSchema.parse({ version: 1, stateDirectory: '/tmp' });
-  const loaded = { path: '/aivi.json', config, projects: [], sources: [] };
+  const loaded = {
+    path: '/aivi.json',
+    config,
+    projects: [],
+    sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+  };
   const opencode = async () => {
     throw new Error('not needed');
   };
@@ -274,7 +315,7 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   const scheduler = new Scheduler(
     store,
     { ...config.scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
-    createExecutor(loaded, { store, events: quiet, opencode }),
+    createExecutor(loaded, { store, events: quiet, opencode, tasks: new TaskRegistry() }),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -321,10 +362,16 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
     store,
     config.scheduler,
     createExecutor(
-      { path: '/aivi.json', config, projects: [], sources: [] },
+      {
+        path: '/aivi.json',
+        config,
+        projects: [],
+        sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+      },
       {
         store,
         events: quiet,
+        tasks: new TaskRegistry(),
         protectedEnv: ['FROM_DOTENV'],
         opencode: async () => {
           throw new Error('x');
@@ -357,10 +404,16 @@ test('a command that cannot start fails instead of blocking capacity', async t =
     store,
     config.scheduler,
     createExecutor(
-      { path: '/aivi.json', config, projects: [], sources: [] },
+      {
+        path: '/aivi.json',
+        config,
+        projects: [],
+        sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+      },
       {
         store,
         events: quiet,
+        tasks: new TaskRegistry(),
         opencode: async () => {
           throw new Error('x');
         },
@@ -392,10 +445,16 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
     store,
     config.scheduler,
     createExecutor(
-      { path: '/aivi.json', config, projects: [], sources: [] },
+      {
+        path: '/aivi.json',
+        config,
+        projects: [],
+        sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
+      },
       {
         store,
         events: quiet,
+        tasks: new TaskRegistry(),
         opencode: async () => {
           throw new Error('x');
         },
@@ -406,4 +465,43 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
   await scheduler.drain();
   assert.equal(store.run(job.id).state, 'blocked');
   assert.match(store.run(job.id).error ?? '', /killed by SIGTERM/);
+});
+
+test('invocations dispatch to their claimant: the host claims its five, an unclaimed name fails with its name', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const config = configSchema.parse({ version: 1 });
+  const tasks = new TaskRegistry();
+  const execute = createExecutor(
+    { path: '/aivi.json', config, projects: [], sources: [] },
+    {
+      store,
+      events: quiet,
+      tasks,
+      opencode: async () => {
+        throw new Error('unused');
+      },
+    },
+  );
+  assert.deepEqual(
+    tasks
+      .claimed()
+      .map(c => c.name)
+      .sort(),
+    ['dreaming', 'knowledge.index', 'projects.sync', 'runs.prune', 'system.check'],
+    'the host claims its own system operations like any other claimant',
+  );
+  const job = store.enqueue(taskSchema.parse({ kind: 'invocation', name: 'linear.sweep' }), 'local-model', 'sweep');
+  const context = { signal: new AbortController().signal, attachSession() {} };
+  const unclaimed = await execute({ ...job, id: 'run-unclaimed' }, context);
+  assert.equal(unclaimed.state, 'failed');
+  assert.match(unclaimed.reason ?? '', /Nothing claims the operation "linear.sweep"/);
+  let sweeps = 0;
+  tasks.forModule('linear').claim('linear.sweep', async () => {
+    sweeps++;
+    return { state: 'succeeded', result: { removed: 1 } };
+  });
+  const done = await execute({ ...job, id: 'run-claimed' }, context);
+  assert.equal(sweeps, 1);
+  assert.deepEqual(done.result, { removed: 1 });
 });

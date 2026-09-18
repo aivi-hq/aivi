@@ -1,9 +1,15 @@
 import type { Run, RunState } from '@aivi/core';
 
 export interface DeliveryContext {
-  run: Run;
-  state: RunState;
+  /** The run whose outcome this text delivers; absent on a module's own notice. */
+  run?: Run;
+  /** How that run ended; absent on a notice. */
+  state?: RunState;
+  /** Thread title for a notice without a run; a run's report is titled by its job. */
+  title?: string;
 }
+/** A re-entry is a job's result coming back: it always carries its run. */
+export type ReentryContext = DeliveryContext & { run: Run };
 
 /**
  * What a chat platform adapter registers with the host (`services.channels.register`).
@@ -17,7 +23,7 @@ export interface ChannelModule {
   /** This session is one of the module's conversations (bound or adopted). */
   ownsSession(sessionId: string): boolean;
   /** Bring a job outcome into the conversation bound to `sessionId` as a turn of kind `job`. */
-  reenter(sessionId: string, text: string, context: DeliveryContext): Promise<void>;
+  reenter(sessionId: string, text: string, context: ReentryContext): Promise<void>;
   /** Post text to a platform channel. Throw if aivi may not post there. */
   post(channel: string, text: string, context: DeliveryContext): Promise<void>;
   /** Whether a report to `channel` could be delivered; refuses a job before it spends anything. */

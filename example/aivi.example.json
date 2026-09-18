@@ -41,7 +41,8 @@
       "timezone": "UTC",
       "resource": "maintenance",
       "task": {
-        "kind": "system.check"
+        "kind": "invocation",
+        "name": "system.check"
       }
     },
     {
@@ -50,7 +51,8 @@
       "timezone": "UTC",
       "resource": "maintenance",
       "task": {
-        "kind": "knowledge.index"
+        "kind": "invocation",
+        "name": "knowledge.index"
       }
     },
     {
@@ -59,8 +61,11 @@
       "timezone": "Europe/Amsterdam",
       "resource": "local-model",
       "task": {
-        "kind": "dreaming",
-        "origins": ["discord", "slack"]
+        "kind": "invocation",
+        "name": "dreaming",
+        "args": {
+          "origins": ["discord", "slack"]
+        }
       },
       "report": {
         "to": "channel",

@@ -134,7 +134,7 @@ OpenCode's default model instead of the librarian's), so every turn resolves it:
 the agent's `model` from `agent.list` for the directory, or a conversation's
 `/model` pin; it goes into `session.create` and, when `session.get` shows
 something else, through `session.switchModel` before the prompt. An agent file
-that pins none leaves OpenCode's default alone. The agent file is the boundary for every caller: an `opencode.prompt` job
+that pins none leaves OpenCode's default alone. The agent file is the boundary for every caller: a `prompt` job
 sends no session rules; Discord adds `external_directory` allows for the
 configured sources; dreaming adds those plus `edit` allows for its two write
 targets. aivi never sends a deny.

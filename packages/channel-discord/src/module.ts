@@ -526,22 +526,24 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         let target = channel;
         if (!channel.isThread() && !channel.isDMBased() && 'threads' in channel && !channel.isThreadOnly()) {
           try {
-            const { run } = context;
-            let title: string | undefined;
-            try {
-              title = services.store.job(run.jobId).spec.title;
-            } catch {
-              // The job was removed after its run finished; the text names it.
+            const { run, title } = context;
+            let threadTitle = title ?? threadName(text);
+            if (run) {
+              try {
+                threadTitle = services.store.job(run.jobId).spec.title ?? threadTitle;
+              } catch {
+                // The job was removed after its run finished; the text names it.
+              }
             }
             const thread = await opener.startThread({
-              name: title ?? threadName(text),
+              name: threadTitle,
               autoArchiveDuration: 1440,
-              reason: `aivi run ${run.id}`,
+              reason: run ? `aivi run ${run.id}` : 'aivi notice',
             });
             target = thread;
             store.adopt(
               thread.id,
-              run.task.kind === 'opencode.prompt' && run.sessionId
+              run && run.task.kind === 'prompt' && run.sessionId
                 ? { session: run.sessionId, agent: run.task.agent, directory: run.task.directory }
                 : { seed: text },
             );

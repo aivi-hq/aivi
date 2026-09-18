@@ -24,7 +24,7 @@ try {
     }),
   );
   const task = join(directory, 'check.json');
-  await writeFile(task, JSON.stringify({ kind: 'system.check' }));
+  await writeFile(task, JSON.stringify({ kind: 'invocation', name: 'system.check' }));
   // The temp directory is the aivi home: aivi.json, .env and state/ live there.
   const env = { ...process.env, AIVI_HOME: directory };
   const run = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8', env }));

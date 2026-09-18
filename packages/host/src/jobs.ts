@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Job, JobItem, JobRequest, JobResponse, LoadedConfig, Report } from '@aivi/core';
-import { formatInstant, jobSchema, nextOccurrences, parseDue, taskSchema } from '@aivi/core';
+import { formatInstant, jobSchema, nextOccurrences, parseDue, userTaskSchema } from '@aivi/core';
 import type { Channels } from './channel/router.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import { SESSION_DESTINATION } from './reports.ts';
@@ -100,15 +100,15 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
       // directory's .opencode/, where `agent.get` does not.
       const agents = await client.agent.list({ location: { directory } }).catch(() => ({ data: [] }));
       if (!agents.data.some(a => a.id === agent)) throw new JobRefused(`No agent "${agent}" exists in ${directory}.`);
-      task = taskSchema.parse({
-        kind: 'opencode.prompt',
+      task = userTaskSchema.parse({
+        kind: 'prompt',
         agent,
         directory,
         prompt: input.prompt,
         ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
       });
     } else {
-      task = taskSchema.parse({
+      task = userTaskSchema.parse({
         kind: 'shell',
         command: input.command,
         cwd: input.cwd ?? directory,
@@ -238,12 +238,12 @@ function withRefusal<T>(fn: () => T): T {
 }
 
 function titleOf(task: Job['task']): string {
-  if (task.kind === 'opencode.prompt') {
+  if (task.kind === 'prompt') {
     const line = task.prompt.split('\n').find(l => l.trim()) ?? task.prompt;
     return `"${line.length > 60 ? `${line.slice(0, 59)}…` : line}"`;
   }
   if (task.kind === 'shell') return `\`${task.command.join(' ').slice(0, 60)}\``;
-  return task.kind;
+  return task.name;
 }
 
 function reportText(report: Report | null): string {

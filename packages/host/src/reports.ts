@@ -1,4 +1,5 @@
 import type { Report, Run, RunState } from '@aivi/core';
+import { taskLabel } from '@aivi/core';
 
 /** `report.to` for "back into the session that asked". */
 export const SESSION_DESTINATION = 'session';
@@ -30,13 +31,14 @@ export function describeOutcome(
   reason: string | undefined,
   limit = 4000,
 ): string {
-  const head = `${ICON[state] ?? '❌'} ${run.jobId} (${run.task.kind}) ${state}`;
+  const op = taskLabel(run.task);
+  const head = `${ICON[state] ?? '❌'} ${run.jobId} (${op}) ${state}`;
   let body: string;
   const r = result as Record<string, unknown> | null | undefined;
   if (state === 'missed')
     body = reason ?? `missed: aivi was not running at ${new Date(run.scheduledFor).toISOString()}`;
-  else if (run.task.kind === 'opencode.prompt' && typeof r?.text === 'string') body = r.text;
-  else if (run.task.kind === 'dreaming' && r) {
+  else if (run.task.kind === 'prompt' && typeof r?.text === 'string') body = r.text;
+  else if (op === 'dreaming' && r) {
     const reviewed = Number(r.reviewed ?? 0);
     const changed = Array.isArray(r.changed) ? (r.changed as string[]) : [];
     body =
@@ -52,12 +54,12 @@ export function describeOutcome(
     body = [`exit ${String(r.exitCode)}`, String(r.stdout ?? '').trim(), String(r.stderr ?? '').trim()]
       .filter(Boolean)
       .join('\n');
-  else if (run.task.kind === 'system.check' && r && Array.isArray(r.sources)) {
+  else if (op === 'system.check' && r && Array.isArray(r.sources)) {
     const missing = (r.sources as { id: string; available: boolean }[]).filter(s => !s.available).map(s => s.id);
     body = missing.length
       ? `Missing sources: ${missing.join(', ')}`
       : `All ${(r.sources as unknown[]).length} knowledge sources available.`;
-  } else if (run.task.kind === 'projects.sync' && r && Array.isArray(r.projects)) {
+  } else if (op === 'projects.sync' && r && Array.isArray(r.projects)) {
     const outcomes = r.projects as { id: string; state: string; reason?: string }[];
     const updated = outcomes.filter(o => o.state === 'updated').map(o => o.id);
     const skipped = outcomes.filter(o => o.state === 'skipped').map(o => `${o.id} (${o.reason})`);
@@ -67,11 +69,11 @@ export function describeOutcome(
     ]
       .filter(Boolean)
       .join('\n');
-  } else if (run.task.kind === 'runs.prune' && r)
+  } else if (op === 'runs.prune' && r)
     body = `Deleted ${String(r.runs)} run(s) and ${String(r.jobs)} finished one-off job(s).`;
   else body = result === null || result === undefined ? '' : JSON.stringify(result);
   if (state !== 'succeeded' && state !== 'missed' && reason) body = body ? `${reason}\n${body}` : reason;
-  const foot = run.task.kind === 'opencode.prompt' && run.sessionId ? `session ${run.sessionId} in OpenCode` : '';
+  const foot = run.task.kind === 'prompt' && run.sessionId ? `session ${run.sessionId} in OpenCode` : '';
   const text = [head, body, foot].filter(Boolean).join('\n');
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }

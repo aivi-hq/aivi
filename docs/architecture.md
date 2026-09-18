@@ -165,7 +165,7 @@ platform's own signature) are public; everything else requires the bearer
 token unless `host.auth.mode` is `none`. The jobs route is a deliberate revision of the
 earlier "no job mutations over the API" rule (2026-09-15): it is limited to what
 an agent may do for a person who asked (its own agent and directory by default,
-a report the destination accepts, no other task kinds, refused from job
+a report the destination accepts, only `prompt` and `shell` tasks, refused from job
 sessions) and can be switched off with `scheduler.agentSchedules: false`; the API still
 exposes no prompts, secrets, or ticket control.
 Per-device tokens and reverse-proxy SSO are future auth modes on the same

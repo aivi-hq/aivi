@@ -47,13 +47,13 @@ export interface Status {
   completion: 'verified-final-answer';
   /** Optional modules and whether each is running; empty from the CLI, which has no running host. */
   modules: ModuleHealth[];
-  /** The next few job occurrences, soonest first. */
-  upcoming: { id: string; source: JobSource; kind: Task['kind']; title: string | null; nextAt: string }[];
+  /** The next few job occurrences, soonest first; `kind` is the task label: kind, or operation name for an invocation. */
+  upcoming: { id: string; source: JobSource; kind: string; title: string | null; nextAt: string }[];
   /** Runs that reached a final state in the last 24 hours, newest first. */
   recent: {
     id: string;
     jobId: string;
-    kind: Task['kind'];
+    kind: string;
     state: RunState;
     finishedAt: string;
     error: string | null;

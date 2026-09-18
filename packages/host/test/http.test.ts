@@ -167,13 +167,20 @@ test('jobs API validates the body, maps refusals to their status, and status lis
     path: '/aivi.json',
     config: configSchema.parse({
       version: 1,
-      jobs: [{ id: 'nightly', title: 'Nightly check', cron: '0 3 * * *', task: { kind: 'system.check' } }],
+      jobs: [
+        {
+          id: 'nightly',
+          title: 'Nightly check',
+          cron: '0 3 * * *',
+          task: { kind: 'invocation', name: 'system.check' },
+        },
+      ],
     }),
     projects: [],
     sources: [],
   };
   store.syncJobs(loaded.config.jobs, [], Date.now());
-  const done = store.enqueue({ kind: 'system.check' }, 'local-model', 'done');
+  const done = store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'done');
   const claimed = store.claim('host', 1, { 'local-model': 1 })!;
   store.finish(claimed.id, 'host', 'failed', null, 'boom');
   const token = 'test-only-token-never-for-deployment';

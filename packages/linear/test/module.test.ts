@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import type { KnowledgeService } from '@aivi/core';
 import { configSchema, silentLogger } from '@aivi/core';
 import type { HostServices, SessionEvents } from '@aivi/host';
-import { Channels, connectOpenCode, PublicRoutes, Store } from '@aivi/host';
+import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry } from '@aivi/host';
 import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
 import { LinearClient } from '../src/client.ts';
 import { conversationFor, createLinearModule, openLinearStore } from '../src/module.ts';
@@ -186,6 +186,7 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     log: silentLogger,
     channels: new Channels(),
     routes,
+    tasks: new TaskRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -413,6 +414,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     log: silentLogger,
     channels: new Channels(),
     routes,
+    tasks: new TaskRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),

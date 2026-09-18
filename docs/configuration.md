@@ -56,15 +56,31 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 
 ## Tasks
 
+A task is one of three kinds. `shell` and `prompt` are the tasks a person or
+an agent can author; `invocation` names a system capability that the host or a
+module registered, and exists so such a capability can be *scheduled* like any
+other job. `aivi_jobs` accepts only the first two.
+
 | Kind | Fields | Outcome |
+| --- | --- | --- |
+| `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
+| `prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
+| `invocation` | `name` (the operation to invoke), `args` (opaque to everyone but the operation, which parses them and fails the run when they are wrong) | Runs the operation that *claimed* the name. Each name is claimed exactly once: a second claimant is a fatal configuration error at startup, and a run of an unclaimed name fails with its name in the reason |
+
+### Operations
+
+The host claims its own five like any other claimant; a module claims
+`<module>.<thing>` names when it starts (for example `linear.sweep`). Views
+(`aivi jobs list`, status, reports) show the operation name where a task kind
+would appear.
+
+| Name | Fields (args) | Outcome |
 | --- | --- | --- |
 | `system.check` | – | Reports whether every knowledge source path exists |
 | `knowledge.index` | – | Refreshes the search index |
 | `projects.sync` | – | For every project with a checkout: `git fetch`, then fast-forward the checked-out branch to its upstream; skipped (logged `projects.sync.skipped`, listed in the report) when `source/` has local changes, a detached HEAD, no upstream or diverged history, so nothing is ever forced. Reindexes when any project moved. The host seeds one such job from `scheduler.projectsSync` |
 | `runs.prune` | `olderThanDays` (≥ 1) | Deletes runs that ended `succeeded`, `failed`, `cancelled` or `missed` before that, with their audit rows, then the `done`/`missed` one-off jobs that have no runs left. Blocked and active runs and recurring jobs are never touched. The host seeds one such job from `scheduler.retention` |
-| `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
-| `opencode.prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
-| `dreaming` | `memoryDirectory` (`memory`, the org memory in the home), `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; see [dreaming](dreaming.md) |
+| `dreaming` | `memoryDirectory` (`memory`, the org memory in the home), `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; paths resolve against the home, and `memoryDirectory` must be inside a core knowledge source. See [dreaming](dreaming.md) |
 
 ## Jobs, runs, tasks
 
@@ -78,12 +94,14 @@ the job's task when it is created, so editing a definition never changes a
 queued run.
 
 Every job has a `source`: `config` (this file), `system` (seeded by the host
-from `scheduler.retention` and `scheduler.projectsSync`), `agent` (created through `aivi_jobs`) or
+from `scheduler.retention` and `scheduler.projectsSync`, and by each composed module beside
+them — a module that leaves the composition loses its jobs), `agent` (created through `aivi_jobs`) or
 `operator` (created with `aivi jobs add`). Startup reconciles `config` and
 `system` jobs against the settings: unchanged definitions keep their next
 occurrence, changed ones cancel their queued run and start from the next
 future occurrence, a `config` job that disappeared is paused, a `system` job
-that disappeared is removed. Agent and operator jobs are never touched by
+that disappeared is removed. Two system job definitions sharing an id are a
+fatal configuration error, never a silent overwrite. Agent and operator jobs are never touched by
 that; they are paused, resumed and removed through the tool or the CLI.
 Config changes require a host restart.
 

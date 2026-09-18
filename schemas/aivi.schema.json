@@ -1057,64 +1057,6 @@
                 "properties": {
                   "kind": {
                     "type": "string",
-                    "const": "system.check"
-                  }
-                },
-                "required": [
-                  "kind"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "const": "knowledge.index"
-                  }
-                },
-                "required": [
-                  "kind"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "const": "projects.sync"
-                  }
-                },
-                "required": [
-                  "kind"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "const": "runs.prune"
-                  },
-                  "olderThanDays": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
-                  }
-                },
-                "required": [
-                  "kind",
-                  "olderThanDays"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
                     "const": "shell"
                   },
                   "command": {
@@ -1157,63 +1099,7 @@
                 "properties": {
                   "kind": {
                     "type": "string",
-                    "const": "dreaming"
-                  },
-                  "agent": {
-                    "description": "OpenCode agent that reviews conversations and maintains memory.",
-                    "default": "dreamer",
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "directory": {
-                    "description": "OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents.",
-                    "default": ".",
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "memoryDirectory": {
-                    "description": "Where the org facts.md and proposals/ live; default <home>/memory, which is always a core memory source. Must be inside a core knowledge source so memory is searchable.",
-                    "default": "memory",
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "origins": {
-                    "description": "Which aivi session origins to review (metadata.aivi.origin).",
-                    "default": [
-                      "discord"
-                    ],
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "maxSessions": {
-                    "description": "Oldest-first batch size per run; the rest waits for the next run.",
-                    "default": 50,
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 200
-                  },
-                  "timeoutMs": {
-                    "default": 1800000,
-                    "type": "integer",
-                    "minimum": 10000,
-                    "maximum": 86400000
-                  }
-                },
-                "required": [
-                  "kind"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "const": "opencode.prompt"
+                    "const": "prompt"
                   },
                   "agent": {
                     "type": "string",
@@ -1247,6 +1133,31 @@
                   "agent",
                   "directory",
                   "prompt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "invocation"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "args": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "kind",
+                  "name"
                 ],
                 "additionalProperties": false
               }

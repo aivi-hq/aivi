@@ -96,13 +96,13 @@ test('conversation leases and scheduler claims enforce the same global capacity'
   const core = new Store(':memory:');
   t.after(() => core.close());
   const store = new ConversationStore(core, platform, 'binding');
-  core.enqueue({ kind: 'system.check' }, 'local-model', 'scheduled');
+  core.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'scheduled');
   const job = core.claim('host', 1, scheduler.resources)!;
   store.enqueue(message('one'), 10);
   assert.equal(store.claim(scheduler, limits.resource), null);
   core.finish(job.id, 'host', 'succeeded', {}, 'done');
   const turn = store.claim(scheduler, limits.resource)!;
-  core.enqueue({ kind: 'system.check' }, 'local-model', 'next');
+  core.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'next');
   assert.equal(core.claim('host', 1, scheduler.resources), null);
   store.block(turn.id);
   assert.equal(core.claim('host', 1, scheduler.resources), null);

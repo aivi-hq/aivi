@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { jobSchema } from '@aivi/core';
 import { Store } from '../src/store.ts';
 
-const check = { kind: 'system.check' } as const;
+const check = { kind: 'invocation', name: 'system.check' } as const;
 const start = Date.parse('2026-09-13T00:00:00Z');
 const daily = () => jobSchema.parse({ id: 'daily', cron: '* * * * *', task: check });
 const pools = { 'local-model': 1 };
@@ -26,7 +26,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
       task TEXT NOT NULL, resource TEXT NOT NULL, state TEXT NOT NULL,
       created_at INTEGER NOT NULL, scheduled_for INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER,
       schedule_id TEXT, session_id TEXT, owner TEXT, result TEXT, error TEXT);
-    INSERT INTO jobs VALUES('run-1','existing','f','{"kind":"system.check"}','local-model','queued',${start},${start},NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+    INSERT INTO jobs VALUES('run-1','existing','f','{"kind":"invocation","name":"system.check"}','local-model','queued',${start},${start},NULL,NULL,NULL,NULL,NULL,NULL,NULL);
     ALTER TABLE audit RENAME COLUMN run_id TO job_id;
     INSERT INTO audit(job_id,at,action,reason) VALUES('run-1',${start},'enqueued','operator');
     PRAGMA user_version=1;
@@ -66,10 +66,10 @@ test('schema v7 gives every one-off its own job definition and keeps schedule an
       schedule_id TEXT, session_id TEXT, owner TEXT, result TEXT, error TEXT, report TEXT,
       cancel_requested INTEGER NOT NULL DEFAULT 0);
     INSERT INTO jobs(id,dedupe_key,fingerprint,task,resource,state,created_at,scheduled_for,finished_at,schedule_id,report) VALUES
-      ('run-a','agent:ses_1:msg_1','f','{"kind":"system.check"}','local-model','queued',${start},${start + 3_600_000},NULL,NULL,
+      ('run-a','agent:ses_1:msg_1','f','{"kind":"invocation","name":"system.check"}','local-model','queued',${start},${start + 3_600_000},NULL,NULL,
         '{"to":"session","session":"ses_1","on":"always"}'),
-      ('run-b','manual:smoke','f','{"kind":"system.check"}','maintenance','succeeded',${start},${start},${start + 5},NULL,NULL),
-      ('run-c','schedule:nightly:1','f','{"kind":"system.check"}','local-model','failed',${start},${start},${start + 5},'nightly',NULL);
+      ('run-b','manual:smoke','f','{"kind":"invocation","name":"system.check"}','maintenance','succeeded',${start},${start},${start + 5},NULL,NULL),
+      ('run-c','schedule:nightly:1','f','{"kind":"invocation","name":"system.check"}','local-model','failed',${start},${start},${start + 5},'nightly',NULL);
     ALTER TABLE audit RENAME COLUMN run_id TO job_id;
     PRAGMA user_version=6;
   `);
@@ -292,7 +292,7 @@ test('system jobs are seeded by sync, listed with the others, and removed when t
   const retention = jobSchema.parse({
     id: 'retention',
     cron: '0 4 * * *',
-    task: { kind: 'runs.prune', olderThanDays: 30 },
+    task: { kind: 'invocation', name: 'runs.prune', args: { olderThanDays: 30 } },
   });
   store.syncJobs([daily()], [retention], start);
   assert.deepEqual(

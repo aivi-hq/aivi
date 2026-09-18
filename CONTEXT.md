@@ -20,7 +20,8 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 | Word | Meaning |
 | --- | --- |
-| task | what to do: `kind` + parameters (`system.check`, `knowledge.index`, `projects.sync`, `runs.prune`, `shell`, `opencode.prompt`, `dreaming`) |
+| task | what can be done: `prompt` or `shell` (the only kinds a person or agent authors), or `invocation` (the `name` of an operation plus opaque `args`) |
+| operation | a system capability of the host or a module, claimed by name exactly once at composition (a second claimant is fatal; a run of an unclaimed name fails with its name); seeded as `system` jobs by the module that owns it, shown by operation name in every view |
 | job | a definition: a task plus *when*, recurring (`cron` + `timezone`) or one-off (`at`), with `id`, `title`, `resource`, `report`, `misfire`, `enabled`; state `active`/`paused`/`done`/`missed`; source `config` (aivi.json), `system` (seeded by the host: `retention`, `projects-sync`), `agent` (created through `aivi_jobs`) or `operator` (`aivi jobs add`); one outstanding run at a time |
 | run | one execution of a job: `queued → running → succeeded / failed / blocked`, or `cancelled`, or `missed`; one row, one audit trail, always a `jobId`; snapshots the task |
 | missed | a run recorded for an occurrence found later than its misfire grace; terminal, never executed, reported like a failure |
@@ -55,11 +56,20 @@ runs in one process; adapters are optional modules with a start/stop contract.
   No coalesce-and-run-late, no silent skip; "run whenever" is a large grace
   ([architecture](docs/architecture.md#sqlite-and-croner)).
 - **Retention and project sync are system jobs.** `scheduler.retention` seeds
-  `retention` (task `runs.prune`) and `scheduler.projectsSync` seeds
-  `projects-sync` (task `projects.sync`, fast-forward only) into the same
+  `retention` (invocation `runs.prune`) and `scheduler.projectsSync` seeds
+  `projects-sync` (invocation `projects.sync`, fast-forward only) into the same
   table, so they are listed, pooled, run and reported like everything else
   instead of being hidden timers
   ([operations](docs/operations.md#how-runs-end)).
+- **Modules schedule through the host, and the host executes nothing of theirs.**
+  A module declares `jobs(config)` (seeded as `system` jobs that vanish with
+  the module) and claims operation names in its `start` through a claims door
+  scoped to its id; the scheduler fires the `invocation` task and hands the run
+  to whoever claimed the name. A name is claimed exactly once — a second
+  claimant or two system jobs sharing an id is fatal at startup, an unclaimed
+  name fails the run with its name. The host's own five operations are claimed
+  into the same registry; only `prompt` and `shell` are tasks an agent can
+  author ([configuration](docs/configuration.md#tasks)).
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
   `blocked`, capacity kept, human resolves. Exception: a conversation turn

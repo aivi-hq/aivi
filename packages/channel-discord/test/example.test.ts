@@ -14,7 +14,7 @@ test('the example home template loads through the real loaders with every featur
   assert.ok(loaded.sources.length > 0);
   const discord = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
   assert.ok(loaded.config.browser && loaded.config.search && discord, 'everything is on');
-  assert.ok(loaded.config.jobs.some(s => s.task.kind === 'dreaming'));
+  assert.ok(loaded.config.jobs.some(s => s.task.kind === 'invocation' && s.task.name === 'dreaming'));
   assert.ok(discord!.resource in loaded.config.scheduler.resources, 'Discord pool exists');
   assert.equal(discord!.directory, example, 'the home is the OpenCode location');
   for (const file of await readdir(join(example, 'tasks'))) {

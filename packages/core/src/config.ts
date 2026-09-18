@@ -16,85 +16,101 @@ const source = z.strictObject({
   path: z.string().min(1),
   kind: knowledgeKindSchema.default('doc').describe(knowledgeKindHelp),
 });
-export const taskSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('system.check') }),
-  z.strictObject({ kind: z.literal('knowledge.index') }),
-  /** Fast-forward every project's `source/` to its upstream, then reindex what changed. */
-  z.strictObject({ kind: z.literal('projects.sync') }),
-  z.strictObject({
-    kind: z.literal('runs.prune'),
-    /** Finished runs (and the finished one-off jobs they belonged to) older than this are deleted; blocked and active work never is. */
-    olderThanDays: z.number().int().min(1),
-  }),
-  z.strictObject({
-    kind: z.literal('shell'),
-    /** argv, never a shell string: no quoting or injection surprises. */
-    command: z.array(z.string().min(1)).min(1),
-    cwd: z.string().min(1).optional(),
-    /** Merged over the inherited host environment (minus aivi's own secrets). */
-    env: z.record(z.string().min(1), z.string()).optional(),
-    timeoutMs: z
-      .number()
-      .int()
-      .min(1000)
-      .max(24 * 3_600_000)
-      .default(600_000),
-  }),
-  z.strictObject({
-    kind: z.literal('dreaming'),
-    agent: z
-      .string()
-      .min(1)
-      .default('dreamer')
-      .describe('OpenCode agent that reviews conversations and maintains memory.'),
-    directory: z
-      .string()
-      .min(1)
-      .default('.')
-      .describe('OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents.'),
-    memoryDirectory: z
-      .string()
-      .min(1)
-      .default('memory')
-      .describe(
-        'Where the org facts.md and proposals/ live; default <home>/memory, which is always a core memory source. Must be inside a core knowledge source so memory is searchable.',
-      ),
-    origins: z
-      .array(z.string().min(1))
-      .min(1)
-      .default(['discord'])
-      .describe('Which aivi session origins to review (metadata.aivi.origin).'),
-    maxSessions: z
-      .number()
-      .int()
-      .min(1)
-      .max(200)
-      .default(50)
-      .describe('Oldest-first batch size per run; the rest waits for the next run.'),
-    timeoutMs: z
-      .number()
-      .int()
-      .min(10_000)
-      .max(24 * 3_600_000)
-      .default(1_800_000),
-  }),
-  z.strictObject({
-    kind: z.literal('opencode.prompt'),
-    agent: z.string().min(1),
-    directory: z.string().min(1),
-    prompt: z.string().min(1),
-    /** Wall-clock limit for the whole turn; an expired turn blocks the job for inspection. */
-    timeoutMs: z
-      .number()
-      .int()
-      .min(10_000)
-      .max(24 * 3_600_000)
-      .default(1_800_000),
-    /** Unattended default: deny permission prompts and let the agent continue. `fail` blocks the job with the prompt pending. */
-    onPermission: z.enum(['reject', 'fail']).default('reject'),
-  }),
-]);
+/** A script: argv, never a shell string, so there are no quoting or injection surprises. */
+const shellTaskSchema = z.strictObject({
+  kind: z.literal('shell'),
+  command: z.array(z.string().min(1)).min(1),
+  cwd: z.string().min(1).optional(),
+  /** Merged over the inherited host environment (minus aivi's own secrets). */
+  env: z.record(z.string().min(1), z.string()).optional(),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(1000)
+    .max(24 * 3_600_000)
+    .default(600_000),
+});
+/** One turn of one OpenCode agent in one checkout. */
+const promptTaskSchema = z.strictObject({
+  kind: z.literal('prompt'),
+  agent: z.string().min(1),
+  directory: z.string().min(1),
+  prompt: z.string().min(1),
+  /** Wall-clock limit for the whole turn; an expired turn blocks the job for inspection. */
+  timeoutMs: z
+    .number()
+    .int()
+    .min(10_000)
+    .max(24 * 3_600_000)
+    .default(1_800_000),
+  /** Unattended default: deny permission prompts and let the agent continue. `fail` blocks the job with the prompt pending. */
+  onPermission: z.enum(['reject', 'fail']).default('reject'),
+});
+/**
+ * A system capability of the host or of a module. `name` is the operation:
+ * claimed exactly once (a second claimant is fatal at startup; a run of an
+ * unclaimed operation fails with its name in the reason). `args` are opaque
+ * to everyone but the claimant, which parses them and fails the run when
+ * they are wrong. Only ever hand-written to opt into a capability by
+ * scheduling it (the `dreaming` job); agents never see this kind.
+ */
+const invocationTaskSchema = z.strictObject({
+  kind: z.literal('invocation'),
+  name: z.string().min(1),
+  args: z.record(z.string(), z.unknown()).optional(),
+});
+export const taskSchema = z.discriminatedUnion('kind', [shellTaskSchema, promptTaskSchema, invocationTaskSchema]);
+/** The tasks a person writes in aivi.json or a task file; what `aivi_jobs` accepts and nothing else. */
+export const userTaskSchema = z.discriminatedUnion('kind', [shellTaskSchema, promptTaskSchema]);
 export type Task = z.infer<typeof taskSchema>;
+/** Display label for a task: the operation name for an invocation, the kind for anything else. */
+export function taskLabel(task: Task): string {
+  return task.kind === 'invocation' ? task.name : task.kind;
+}
+/** Args of the host's `runs.prune` operation. */
+export const runsPruneArgsSchema = z.strictObject({
+  /** Finished runs (and the finished one-off jobs they belonged to) older than this are deleted; blocked and active work never is. */
+  olderThanDays: z.number().int().min(1),
+});
+/** Args of the host's `dreaming` operation; paths resolve against the aivi home, like task paths in aivi.json. */
+export const dreamingArgsSchema = z.strictObject({
+  agent: z
+    .string()
+    .min(1)
+    .default('dreamer')
+    .describe('OpenCode agent that reviews conversations and maintains memory.'),
+  directory: z
+    .string()
+    .min(1)
+    .default('.')
+    .describe('OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents.'),
+  memoryDirectory: z
+    .string()
+    .min(1)
+    .default('memory')
+    .describe(
+      'Where the org facts.md and proposals/ live; default <home>/memory, which is always a core memory source. Must be inside a core knowledge source so memory is searchable.',
+    ),
+  origins: z
+    .array(z.string().min(1))
+    .min(1)
+    .default(['discord'])
+    .describe('Which aivi session origins to review (metadata.aivi.origin).'),
+  maxSessions: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .default(50)
+    .describe('Oldest-first batch size per run; the rest waits for the next run.'),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(10_000)
+    .max(24 * 3_600_000)
+    .default(1_800_000),
+});
+export type DreamingArgs = z.infer<typeof dreamingArgsSchema>;
 const reportOn = z.enum(['always', 'failure', 'never']).default('always');
 /**
  * Where a job's outcome goes. `session`: back into an OpenCode session as a
@@ -695,7 +711,7 @@ export const configSchema = z
           id: 'system',
           cron: system.cron,
           timezone: system.timezone,
-          task: { kind: 'system.check' },
+          task: { kind: 'shell', command: ['x'] },
         }).success
       )
         ctx.addIssue({
@@ -730,7 +746,7 @@ export function retentionJob(
     cron: retention.cron,
     timezone: retention.timezone ?? hostTimezone,
     resource: systemPool(config, retention.resource),
-    task: { kind: 'runs.prune', olderThanDays: retention.olderThanDays },
+    task: { kind: 'invocation', name: 'runs.prune', args: { olderThanDays: retention.olderThanDays } },
   });
 }
 
@@ -747,7 +763,7 @@ export function projectsSyncJob(
     cron: sync.cron,
     timezone: sync.timezone ?? hostTimezone,
     resource: systemPool(config, sync.resource),
-    task: { kind: 'projects.sync' },
+    task: { kind: 'invocation', name: 'projects.sync' },
   });
 }
 
@@ -904,19 +920,10 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
   }
   for (const job of config.jobs) {
     const task = job.task;
-    if (task.kind === 'opencode.prompt') task.directory = absolute(base, task.directory);
+    if (task.kind === 'prompt') task.directory = absolute(base, task.directory);
     if (task.kind === 'shell' && task.cwd) task.cwd = absolute(base, task.cwd);
-    if (task.kind === 'dreaming') {
-      task.directory = absolute(base, task.directory);
-      task.memoryDirectory = absolute(base, task.memoryDirectory);
-      const inside = sources.some(
-        s => s.scope === 'core' && (task.memoryDirectory === s.path || task.memoryDirectory.startsWith(`${s.path}/`)),
-      );
-      if (!inside)
-        throw new Error(
-          `Job ${job.id}: memoryDirectory must be inside a core knowledge source so memories are searchable`,
-        );
-    }
+    // Invocation args resolve at run time by whoever claimed the operation; the
+    // config does not know their shapes.
   }
   return { config, path, sources, projects };
 }

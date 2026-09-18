@@ -1,14 +1,12 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import type { Logger, Task } from '@aivi/core';
+import type { DreamingArgs, Logger } from '@aivi/core';
 import { silentLogger } from '@aivi/core';
 import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import { runTurn, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
-
-type DreamingTask = Extract<Task, { kind: 'dreaming' }>;
 
 export interface DreamingDeps {
   store: Store;
@@ -160,7 +158,7 @@ async function snapshot(directory: string): Promise<Map<string, string>> {
  * write boundary; what counts as memorable lives in the agent definition.
  */
 export async function dream(
-  task: DreamingTask,
+  task: DreamingArgs,
   runId: string,
   deps: DreamingDeps,
 ): Promise<{ state: 'succeeded' | 'blocked'; result: DreamingResult; reason?: string }> {

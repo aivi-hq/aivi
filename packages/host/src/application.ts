@@ -6,13 +6,20 @@ import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { EventStream, type SessionEvents } from './events.ts';
 import { createJobHandler } from './jobs.ts';
-import { type HostModule as ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
+import {
+  ConfigurationError,
+  type HostModule as ModuleContract,
+  ModuleSupervisor,
+  type RetryPolicy,
+} from './modules.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import { createHostServer, type HostAuth, PublicRoutes } from './server.ts';
 import type { Store } from './store.ts';
+import type { TaskClaims } from './tasks.ts';
+import { TaskRegistry } from './tasks.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
 const FAILURE_NUDGE_AT = 3;
@@ -64,6 +71,8 @@ export interface HostServices {
   channels: Channels;
   /** Webhook routes a module exposes on the host listener, outside bearer auth; the platform's signature is the auth. */
   routes: PublicRoutes;
+  /** What `kind: 'invocation'` tasks dispatch to: the host claims its own operations here, modules claim theirs. */
+  tasks: TaskClaims;
   /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
   wake(): void;
   /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
@@ -126,6 +135,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       onStart: reason => log.info('opencode.started', { reason }),
     });
   const wake = new Wake();
+  const tasks = new TaskRegistry();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
@@ -178,13 +188,15 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       log,
       channels,
       routes,
+      // The supervisor replaces this with each module's own scope before start; nothing else reads it.
+      tasks: tasks.forModule('host'),
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
       fail,
     };
     // An optional module never takes the host down: a failed start is retried in the background
     // and shows as degraded in status; only a ConfigurationError is fatal.
-    supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry);
+    supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks);
     await supervisor.start(modules);
     abort.signal.throwIfAborted();
     options.onReady?.(http.address());
@@ -223,7 +235,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
-      createExecutor(loaded, { store, knowledge, opencode, events, protectedEnv: options.protectedEnv, log }),
+      createExecutor(loaded, { store, knowledge, opencode, events, protectedEnv: options.protectedEnv, log, tasks }),
       log,
       async (run, state, result, reason) => {
         // Capacity was released: queued work may be claimable now.
@@ -244,8 +256,16 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         }
       },
     );
-    // Retention and projects-sync are the host's own definitions: seeded here, listed and run like any other.
-    store.syncJobs(loaded.config.jobs, systemJobs(loaded.config));
+    // Retention and projects-sync are the host's own definitions; composed modules seed theirs beside
+    // them. All are listed and run like any other job; a module that left the composition loses its
+    // jobs, and two definitions sharing an id is a configuration error, not a silent overwrite.
+    const system = [...systemJobs(loaded.config), ...modules.flatMap(m => m.jobs?.(loaded.config) ?? [])];
+    const systemIds = new Set<string>();
+    for (const job of system) {
+      if (systemIds.has(job.id)) throw new ConfigurationError(`Two system job definitions claim job id ${job.id}`);
+      systemIds.add(job.id);
+    }
+    store.syncJobs(loaded.config.jobs, system);
     if (loaded.config.search?.indexOnStart) {
       const startedAt = Date.now();
       await knowledge.index();

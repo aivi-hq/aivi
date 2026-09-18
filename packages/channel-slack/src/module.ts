@@ -395,7 +395,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         try {
           store.adopt(
             thread,
-            run.task.kind === 'opencode.prompt' && run.sessionId
+            run && run.task.kind === 'prompt' && run.sessionId
               ? { session: run.sessionId, agent: run.task.agent, directory: run.task.directory }
               : { seed: text },
           );
