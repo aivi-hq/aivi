@@ -289,6 +289,167 @@ export const opencodeSchema = z.strictObject({
       'discover: never start or stop the local service. ensure: start one when none runs. own (default): also restart a running one at `aivi serve` startup (persistent terminals are handed off), so aivi is the one thing to supervise.',
     ),
 });
+/**
+ * Who may talk to aivi through a communication channel (Discord, Slack, …).
+ * Every adapter maps its own identifiers into this one shape:
+ * - `dm.users`: people allowed to talk in private; no `dm` means nobody.
+ * - `channels[]`: shared places (a channel and its threads). `users` restricts
+ *   who is heard there; `trigger` says whether a mention is required.
+ * Anyone not matched is ignored before anything reaches the model.
+ */
+export const accessPolicySchema = z
+  .strictObject({
+    dm: z
+      .strictObject({
+        users: z.array(z.string().min(1)).min(1).describe('User IDs allowed to talk to aivi in private messages.'),
+      })
+      .optional()
+      .describe('Private messages. Omit to refuse all DMs.'),
+    channels: z
+      .array(
+        z.strictObject({
+          id: z.string().min(1).describe('Channel ID as the platform reports it.'),
+          users: z
+            .union([z.literal('anyone'), z.array(z.string().min(1)).min(1)])
+            .default('anyone')
+            .describe('"anyone", or the user IDs aivi listens to here.'),
+          trigger: z
+            .enum(['mention', 'mention-to-start', 'any'])
+            .default('mention-to-start')
+            .describe(
+              '"mention": every message must address aivi. ' +
+                '"mention-to-start": a mention opens a conversation; inside a thread aivi already takes part in, every message counts. ' +
+                '"any": every message counts (needs message content access).',
+            ),
+          sessions: z
+            .enum(['threads', 'channel'])
+            .default('threads')
+            .describe(
+              '"threads": a top-level message addressing aivi opens a thread; each thread is its own conversation and the channel itself never is. ' +
+                '"channel": the channel is one shared conversation and its threads are ignored.',
+            ),
+        }),
+      )
+      .default([])
+      .describe('Shared places aivi listens in, each with its own rules.'),
+  })
+  .describe(
+    'Who may talk to aivi through this channel. Unmatched messages are ignored before anything is stored or sent to a model.',
+  );
+export type AccessPolicy = z.infer<typeof accessPolicySchema>;
+export type AccessChannel = AccessPolicy['channels'][number];
+export interface AccessRoute {
+  channelId: string;
+  parentId: string | null;
+  userId: string;
+  isDM: boolean;
+  mentioned: boolean;
+  /** aivi already takes part in this conversation (a session exists for it). */
+  knownConversation: boolean;
+}
+
+/** The channel entry governing a route, or undefined when the place is not configured. */
+export function accessEntry(policy: AccessPolicy, route: AccessRoute): AccessChannel | undefined {
+  const inThread = route.parentId !== null;
+  const entry = policy.channels.find(c => c.id === (inThread ? route.parentId : route.channelId));
+  if (entry && inThread && entry.sessions === 'channel') return undefined;
+  return entry;
+}
+
+export function accessAllows(policy: AccessPolicy, route: AccessRoute): boolean {
+  if (route.isDM) return policy.dm?.users.includes(route.userId) ?? false;
+  const entry = accessEntry(policy, route);
+  if (!entry) return false;
+  if (entry.users !== 'anyone' && !entry.users.includes(route.userId)) return false;
+  if (entry.trigger === 'any' || route.mentioned) return true;
+  return entry.trigger === 'mention-to-start' && route.parentId !== null && route.knownConversation;
+}
+const snowflake = z.string().regex(/^\d{17,20}$/);
+/**
+ * The Discord module: gateway, access policy and reply behaviour. Presence of
+ * this block enables the module; `false` is an explicit off. Its one secret,
+ * `DISCORD_BOT_TOKEN`, comes from the environment.
+ */
+export const discordConfigSchema = z
+  .strictObject({
+    applicationId: snowflake.describe('The Discord application the bot token belongs to.'),
+    agent: z.string().default('librarian'),
+    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
+    directory: z.string().min(1).default('.'),
+    resource: z.string().default('local-model'),
+    /** Who may talk to the bot: DM allow-list and shared channels (with their threads). */
+    access: accessPolicySchema,
+    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "discord" }`). Empty: never post proactively. */
+    reportChannels: z.array(snowflake).default([]),
+    /** Requires the Message Content intent in the developer portal; needed for any trigger other than "mention". */
+    messageContent: z.boolean().default(false),
+    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
+    progress: z.enum(['silent', 'status', 'tools']).default('status'),
+    maxConcurrent: z.number().int().min(1).max(32).default(1),
+    maxPending: z.number().int().min(1).max(1000).default(100),
+    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
+  })
+  .superRefine((config, ctx) => {
+    if (!config.messageContent && config.access.channels.some(c => c.trigger !== 'mention')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['messageContent'],
+        message:
+          'triggers other than "mention" need messageContent: true (Discord only delivers unmentioned message text with that intent)',
+      });
+    }
+  });
+export type DiscordConfig = z.infer<typeof discordConfigSchema>;
+/** Slack ids: channels `C…`/`G…`, DM channels `D…`, users `U…`/`W…`. */
+export const isChannelId = (id: string) => /^[CG][A-Z0-9]{8,}$/.test(id);
+export const isDMChannelId = (id: string) => /^D[A-Z0-9]{8,}$/.test(id);
+export const isUserId = (id: string) => /^[UW][A-Z0-9]{8,}$/.test(id);
+const channelId = z.string().refine(isChannelId, 'Expected a Slack channel id (C… or G…)');
+/**
+ * The Slack module: access policy, command prefix and reply behaviour.
+ * Presence of this block enables the module; `false` is an explicit off. Its
+ * secrets, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, come from the environment.
+ */
+export const slackConfigSchema = z
+  .strictObject({
+    agent: z.string().default('librarian'),
+    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
+    directory: z.string().min(1).default('.'),
+    /** Slash commands are `/<prefix>-new`, `/<prefix>-status`, `/<prefix>-search`, defined in the Slack app manifest. */
+    commandPrefix: z
+      .string()
+      .regex(/^[a-z][a-z0-9_-]*$/)
+      .max(24)
+      .default('aivi'),
+    resource: z.string().default('local-model'),
+    /** Who may talk to the bot: DM allow-list and shared channels (with their threads). */
+    access: accessPolicySchema,
+    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "slack" }`). Empty: never post proactively. */
+    reportChannels: z.array(channelId).default([]),
+    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
+    progress: z.enum(['silent', 'status', 'tools']).default('status'),
+    maxConcurrent: z.number().int().min(1).max(32).default(1),
+    maxPending: z.number().int().min(1).max(1000).default(100),
+    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
+  })
+  .superRefine((config, ctx) => {
+    for (const [i, user] of (config.access.dm?.users ?? []).entries())
+      if (!isUserId(user))
+        ctx.addIssue({ code: 'custom', path: ['access', 'dm', 'users', i], message: 'Expected a Slack user id (U…)' });
+    for (const [i, channel] of config.access.channels.entries()) {
+      if (!isChannelId(channel.id))
+        ctx.addIssue({ code: 'custom', path: ['access', 'channels', i, 'id'], message: 'Expected a Slack channel id' });
+      if (channel.users !== 'anyone')
+        for (const [j, user] of channel.users.entries())
+          if (!isUserId(user))
+            ctx.addIssue({
+              code: 'custom',
+              path: ['access', 'channels', i, 'users', j],
+              message: 'Expected a Slack user id (U…)',
+            });
+    }
+  });
+export type SlackConfig = z.infer<typeof slackConfigSchema>;
 export const configSchema = z
   .strictObject({
     $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
@@ -317,8 +478,14 @@ export const configSchema = z
       ),
     modules: z
       .strictObject({
-        discord: z.strictObject({ config: z.string().min(1) }).optional(),
-        slack: z.strictObject({ config: z.string().min(1) }).optional(),
+        discord: z
+          .union([discordConfigSchema, z.literal(false)])
+          .optional()
+          .describe('Presence of this block enables the Discord module; `false` is an explicit off.'),
+        slack: z
+          .union([slackConfigSchema, z.literal(false)])
+          .optional()
+          .describe('Presence of this block enables the Slack module; `false` is an explicit off.'),
       })
       .default({}),
     browser: z
@@ -445,6 +612,16 @@ export const configSchema = z
     }
     if (config.linear && !(config.linear.resource in config.scheduler.resources))
       ctx.addIssue({ code: 'custom', path: ['linear', 'resource'], message: 'Unknown resource pool' });
+    for (const [name, module] of [
+      ['discord', config.modules.discord],
+      ['slack', config.modules.slack],
+    ] as const)
+      if (module && !(module.resource in config.scheduler.resources))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['modules', name, 'resource'],
+          message: `Unknown resource pool; name one of scheduler.resources or set modules.${name} to false`,
+        });
     for (const [i, job] of config.jobs.entries()) {
       if (!(job.resource in config.scheduler.resources))
         ctx.addIssue({ code: 'custom', path: ['jobs', i, 'resource'], message: 'Unknown resource pool' });
@@ -547,81 +724,6 @@ export function systemJobs(config: Config, hostTimezone?: string): Job[] {
   );
 }
 
-/**
- * Who may talk to aivi through a communication channel (Discord, Slack, …).
- * Every adapter maps its own identifiers into this one shape:
- * - `dm.users`: people allowed to talk in private; no `dm` means nobody.
- * - `channels[]`: shared places (a channel and its threads). `users` restricts
- *   who is heard there; `trigger` says whether a mention is required.
- * Anyone not matched is ignored before anything reaches the model.
- */
-export const accessPolicySchema = z
-  .strictObject({
-    dm: z
-      .strictObject({
-        users: z.array(z.string().min(1)).min(1).describe('User IDs allowed to talk to aivi in private messages.'),
-      })
-      .optional()
-      .describe('Private messages. Omit to refuse all DMs.'),
-    channels: z
-      .array(
-        z.strictObject({
-          id: z.string().min(1).describe('Channel ID as the platform reports it.'),
-          users: z
-            .union([z.literal('anyone'), z.array(z.string().min(1)).min(1)])
-            .default('anyone')
-            .describe('"anyone", or the user IDs aivi listens to here.'),
-          trigger: z
-            .enum(['mention', 'mention-to-start', 'any'])
-            .default('mention-to-start')
-            .describe(
-              '"mention": every message must address aivi. ' +
-                '"mention-to-start": a mention opens a conversation; inside a thread aivi already takes part in, every message counts. ' +
-                '"any": every message counts (needs message content access).',
-            ),
-          sessions: z
-            .enum(['threads', 'channel'])
-            .default('threads')
-            .describe(
-              '"threads": a top-level message addressing aivi opens a thread; each thread is its own conversation and the channel itself never is. ' +
-                '"channel": the channel is one shared conversation and its threads are ignored.',
-            ),
-        }),
-      )
-      .default([])
-      .describe('Shared places aivi listens in, each with its own rules.'),
-  })
-  .describe(
-    'Who may talk to aivi through this channel. Unmatched messages are ignored before anything is stored or sent to a model.',
-  );
-export type AccessPolicy = z.infer<typeof accessPolicySchema>;
-export type AccessChannel = AccessPolicy['channels'][number];
-export interface AccessRoute {
-  channelId: string;
-  parentId: string | null;
-  userId: string;
-  isDM: boolean;
-  mentioned: boolean;
-  /** aivi already takes part in this conversation (a session exists for it). */
-  knownConversation: boolean;
-}
-
-/** The channel entry governing a route, or undefined when the place is not configured. */
-export function accessEntry(policy: AccessPolicy, route: AccessRoute): AccessChannel | undefined {
-  const inThread = route.parentId !== null;
-  const entry = policy.channels.find(c => c.id === (inThread ? route.parentId : route.channelId));
-  if (entry && inThread && entry.sessions === 'channel') return undefined;
-  return entry;
-}
-
-export function accessAllows(policy: AccessPolicy, route: AccessRoute): boolean {
-  if (route.isDM) return policy.dm?.users.includes(route.userId) ?? false;
-  const entry = accessEntry(policy, route);
-  if (!entry) return false;
-  if (entry.users !== 'anyone' && !entry.users.includes(route.userId)) return false;
-  if (entry.trigger === 'any' || route.mentioned) return true;
-  return entry.trigger === 'mention-to-start' && route.parentId !== null && route.knownConversation;
-}
 export interface KnowledgeSource {
   id: string;
   path: string;
@@ -701,10 +803,21 @@ async function discoverProjects(
 
 export async function loadConfig(path: string): Promise<LoadedConfig> {
   path = resolve(path);
-  const config = configSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+  const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
+  // Module settings are inline now; a `config` pointer is the old shape, so say where its contents belong.
+  for (const name of ['discord', 'slack'] as const) {
+    const pointer = (raw as { modules?: Record<string, unknown> }).modules?.[name];
+    const file = (pointer as { config?: unknown } | undefined)?.config;
+    if (typeof file === 'string')
+      throw new Error(
+        `modules.${name}.config is gone: the ${name} settings live inline in ${path}. Move the contents of ${file} into that block, without its "version".`,
+      );
+  }
+  const config = configSchema.parse(raw);
   const base = dirname(path);
   config.stateDirectory = absolute(base, config.stateDirectory);
-  for (const module of Object.values(config.modules)) if (module) module.config = absolute(base, module.config);
+  if (config.modules.discord) config.modules.discord.directory = absolute(base, config.modules.discord.directory);
+  if (config.modules.slack) config.modules.slack.directory = absolute(base, config.modules.slack.directory);
   const browser = config.browser ? config.browser.connection : undefined;
   if (browser && browser.mode !== 'attach') {
     browser.userDataDir = absolute(base, browser.userDataDir);

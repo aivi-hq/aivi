@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { discordConfigSchema } from '@aivi/core';
 import { CHAT_COMMANDS } from '@aivi/host';
 import { ApplicationCommandOptionType } from 'discord.js';
-import { authorized, discordConfigSchema } from '../src/config.ts';
+import { authorized } from '../src/config.ts';
 import { DISCORD, discordCommands } from '../src/module.ts';
 
 const config = discordConfigSchema.parse({
-  version: 1,
   applicationId: '10000000000000001',
   directory: '/librarian',
   messageContent: true,
@@ -86,7 +86,6 @@ test('access policy: allow-listed DMs, mention-triggered public channels, restri
   assert.throws(
     () =>
       discordConfigSchema.parse({
-        version: 1,
         applicationId: '10000000000000001',
         directory: '/l',
         access: { channels: [{ id: '10000000000000004' }] },

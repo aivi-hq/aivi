@@ -3,10 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Run } from '@aivi/core';
-import { configSchema, silentLogger } from '@aivi/core';
+import { configSchema, silentLogger, slackConfigSchema } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store } from '@aivi/host';
-import { slackConfigSchema } from '../src/config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import {
   conversationParts,
@@ -23,7 +22,6 @@ const HOME = 'C0000000001';
 const TEAM = 'C0000000002';
 const DM = 'D0000000001';
 const config = slackConfigSchema.parse({
-  version: 1,
   directory: '/librarian',
   commandPrefix: 'spider',
   access: {
@@ -48,14 +46,11 @@ const message = (over: Partial<SlackEvent> & { channel: string; ts: string }): S
 test('config: Slack ids are checked, defaults match Discord’s, the owner’s shape parses', () => {
   assert.equal(config.agent, 'librarian');
   assert.equal(config.maxPending, 100);
-  assert.equal(slackConfigSchema.parse({ version: 1, access: {} }).commandPrefix, 'aivi');
-  assert.throws(() => slackConfigSchema.parse({ version: 1, access: { dm: { users: ['1234'] } } }), /Slack user id/);
-  assert.throws(() => slackConfigSchema.parse({ version: 1, access: { channels: [{ id: 'general' }] } }), /channel id/);
-  assert.throws(() => slackConfigSchema.parse({ version: 1, access: {}, reportChannels: [DM] }), /channel id/);
-  assert.throws(
-    () => slackConfigSchema.parse({ version: 1, access: {}, commandPrefix: 'Spider Bot' }),
-    /commandPrefix/,
-  );
+  assert.equal(slackConfigSchema.parse({ access: {} }).commandPrefix, 'aivi');
+  assert.throws(() => slackConfigSchema.parse({ access: { dm: { users: ['1234'] } } }), /Slack user id/);
+  assert.throws(() => slackConfigSchema.parse({ access: { channels: [{ id: 'general' }] } }), /channel id/);
+  assert.throws(() => slackConfigSchema.parse({ access: {}, reportChannels: [DM] }), /channel id/);
+  assert.throws(() => slackConfigSchema.parse({ access: {}, commandPrefix: 'Spider Bot' }), /commandPrefix/);
   assert.deepEqual(SLACK, { id: 'slack', label: 'Slack', replyLimit: 3900 });
   assert.deepEqual(conversationParts(`${HOME}:1.5`), { channel: HOME, threadTs: '1.5' });
   assert.deepEqual(conversationParts(DM), { channel: DM });

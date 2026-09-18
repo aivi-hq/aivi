@@ -7,6 +7,7 @@ node_modules/
 !.env.example
 *.tgz
 .DS_Store
-*.local.json
+# The live aivi config is edited by aivi and its operator; only templates are tracked.
+aivi.json
 
 example/state/

@@ -36,6 +36,40 @@ test('linear settings: defaults, secret names, reserved pool', () => {
   );
 });
 
+test('channel modules are blocks in the one file: presence enables with defaults, false is off, the pool must exist', () => {
+  const on = configSchema.parse({
+    version: 1,
+    modules: {
+      discord: { applicationId: '10000000000000001', access: {} },
+      slack: { access: {} },
+    },
+  });
+  if (typeof on.modules.discord !== 'object' || typeof on.modules.slack !== 'object')
+    throw new Error('present blocks parse to settings, not false');
+  assert.equal(on.modules.discord.agent, 'librarian');
+  assert.equal(on.modules.slack.commandPrefix, 'aivi');
+  assert.deepEqual(configSchema.parse({ version: 1, modules: { discord: false } }).modules, { discord: false });
+  assert.match(
+    JSON.stringify(
+      configSchema.safeParse({
+        version: 1,
+        modules: { discord: { applicationId: '10000000000000001', access: {}, resource: 'nope' } },
+      }).error?.issues,
+    ),
+    /Unknown resource pool; name one of scheduler\.resources or set modules\.discord to false/,
+  );
+});
+
+test('a modules.*.config pointer is the old shape and says where the settings went', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-inline-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    join(root, 'aivi.json'),
+    JSON.stringify({ version: 1, modules: { discord: { config: 'discord.json' } } }),
+  );
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /the discord settings live inline/);
+});
+
 test('config rejects ambiguous Linear app ownership and invalid job resources', () => {
   assert.equal(
     configSchema.safeParse({

@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '@aivi/core';
-import { loadSlackConfig } from '../src/config.ts';
 
 const example = resolve(import.meta.dirname, '../../../example');
 
-test('the example home enables Slack with placeholder ids that load through the real loaders', async () => {
-  const loaded = await loadConfig(join(example, 'aivi.json'));
-  assert.ok(loaded.config.modules.slack, 'Slack is on');
-  const slack = await loadSlackConfig(loaded.config.modules.slack!.config);
+// The tests load the tracked template, never the developer's own git-ignored example/aivi.json.
+test('the example home template enables Slack with placeholder ids that load through the real loaders', async () => {
+  const loaded = await loadConfig(join(example, 'aivi.example.json'));
+  const slack = typeof loaded.config.modules.slack === 'object' ? loaded.config.modules.slack : undefined;
+  assert.ok(slack, 'Slack is on');
   assert.ok(slack.resource in loaded.config.scheduler.resources, 'Slack pool exists');
   assert.equal(slack.directory, example, 'the home is the OpenCode location');
   assert.equal(slack.commandPrefix, 'aivi');

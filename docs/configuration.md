@@ -4,13 +4,18 @@
 
 aivi reads one directory, the **home**: `~/.aivi` by default, or `AIVI_HOME`.
 It holds `aivi.json`, `.env`, and `state/` (SQLite, the search index, dreaming
-transcripts). There is no config-path option. If `aivi.local.json` exists in
-the home it is used instead of `aivi.json`; `*.local.json` is git-ignored, so a
-checked-in home such as `example/` can carry a private setup beside the public
-one. In this repository `npm run aivi` sets `AIVI_HOME=example`; that home has
-every feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` and the two Slack
+transcripts). There is no config-path option. The live `aivi.json` is the file
+you and aivi edit, so it never goes under version control; a home that lives
+in a git repository tracks only a template, and the first run copies it. In
+this repository `npm run aivi` sets `AIVI_HOME=example`; that home has every
+feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` and the two Slack
 tokens in `example/.env` unless the `modules.discord` and `modules.slack`
-blocks are removed.
+blocks are removed or set to `false`. The tracked template is
+`example/aivi.example.json`:
+
+```sh
+cp example/aivi.example.json example/aivi.json   # then put your ids in it
+```
 
 `aivi.json` is installation configuration and describes the projects too; a
 project's checkout carries nothing of aivi's ([projects](projects.md)).
@@ -36,15 +41,15 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
 | `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a project that is neither checked out nor remembered fails. `<home>/projects/<id>/memory` is each project's `memory` source |
-| `modules.discord.config` | Optional path to Discord module settings ([discord](discord.md)) |
-| `modules.slack.config` | Optional path to Slack module settings ([slack](slack.md)) |
+| `modules.discord` | Presence enables the Discord module; the block is its whole setup, `false` is an explicit off ([discord](discord.md)) |
+| `modules.slack` | Presence enables the Slack module; the block is its whole setup, `false` is an explicit off ([slack](slack.md)) |
 | `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked runs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
-| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/aivi.json` writes the default out explicitly, in its `maintenance` pool |
+| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/aivi.example.json` writes the default out explicitly, in its `maintenance` pool |
 | `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that fast-forwards every project's `source/` to its upstream and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
 | `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
 
@@ -254,12 +259,14 @@ environment minus the fixed names above and minus every key defined in
 `<home>/.env`. Everything else (PATH, HOME, the operator's shell variables)
 passes through, and a task's own `env` map is merged on top.
 
-JSON schemas are generated into `schemas/` by `npm run schema`; `npm run check`
-fails when they are stale. Point your editor at them for autocompletion and
-field descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
-config file) in `aivi.json` and the Discord and Slack configs. Runtime validation additionally checks cron
+One JSON schema covers the whole file; it is generated into
+`schemas/aivi.schema.json` by `npm run schema`, and `npm run check` fails when
+it is stale. Point your editor at it for autocompletion and field
+descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
+config file) in `aivi.json`. Runtime validation additionally checks cron
 expressions, timezones, uniqueness, that every project override has a
-checkout, and Linear app references.
+checkout, that every enabled module and system job names an existing resource
+pool, and Linear app references.
 
 `aivi serve` is the single application command. See [operations](operations.md)
 for ownership and [knowledge search](knowledge.md) for indexing and retrieval.

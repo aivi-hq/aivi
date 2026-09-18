@@ -79,8 +79,9 @@ default branch). Optionally also publish to npm from the same workflow.
   OpenCode's installer and `opencode service start`; the default should only
   verify and print instructions.
 - Where config and state live for an installed copy: done (2026-09-15).
-  The CLI reads one home, `~/.aivi/` or `AIVI_HOME` (`aivi.json` or
-  `aivi.local.json`, `.env`, `state/`); there is no config-path option.
+  The CLI reads one home, `~/.aivi/` or `AIVI_HOME` (`aivi.json`, `.env`,
+  `state/`); there is no config-path option, and the live `aivi.json` is
+  never under version control ([configuration](../configuration.md#home)).
   `aivi init` should write a starter config and a librarian agent directory
   there.
 - Service management is optional: `aivi serve` is a plain foreground process.

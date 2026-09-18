@@ -11,6 +11,7 @@ Use Node 26 and npm. From the repository root:
 ```sh
 npm ci
 npm run check
+cp example/aivi.example.json example/aivi.json
 npm run aivi -- config check
 ```
 
@@ -19,9 +20,11 @@ Node's type stripping, and `npm run typecheck` (`tsc --noEmit`) is a check.
 
 aivi reads one **home** directory: `aivi.json`, `.env`, `projects/`, `memory/`
 and `state/` together. Installed copies use `~/.aivi`; in this repo `npm run
-aivi` points `AIVI_HOME` at `example/`, a complete home with everything enabled.
-Its [README](../example/README.md) lists what is in there, including how to
-provide or disable Discord and Slack.
+aivi` points `AIVI_HOME` at `example/`, a complete home with everything
+enabled. The live `example/aivi.json` is git-ignored — it is the config you
+edit — and `example/aivi.example.json` is the tracked template the checks
+read. Its [README](../example/README.md) lists what is in there, including
+how to provide or disable Discord and Slack.
 
 Start the host. Either have fnox inject an `AIVI_TOKEN` of at least 24
 characters, or set `host.auth.mode` to `"none"` for a trusted machine:
@@ -78,12 +81,12 @@ described: [projects](projects.md).
 
 ## A chat channel
 
-For Discord, fill in the IDs in `example/discord.json`, put `DISCORD_BOT_TOKEN`
-in `example/.env`, and run `serve` as above (slash commands are registered
-at start) ([Discord setup](discord.md#setup)). For Slack,
-create the app from the manifest in [Slack setup](slack.md#setup), fill in
-`example/slack.json`, and put `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in
-`example/.env`.
+For Discord, fill in the IDs in the `modules.discord` block of
+`example/aivi.json`, put `DISCORD_BOT_TOKEN` in `example/.env`, and run
+`serve` as above (slash commands are registered at start)
+([Discord setup](discord.md#setup)). For Slack, create the app from the
+manifest in [Slack setup](slack.md#setup), fill in the `modules.slack` block,
+and put `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in `example/.env`.
 
 ## Then
 

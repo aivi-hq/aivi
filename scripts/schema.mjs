@@ -1,17 +1,12 @@
-// Generate JSON schemas from the Zod definitions. `--write` updates schemas/,
-// `--check` fails when the checked-in files are stale (run by `npm run check`).
+// Generate the JSON schema from the Zod definitions. `--write` updates schemas/,
+// `--check` fails when the checked-in file is stale (run by `npm run check`).
+// One schema for one config file: every module block is inside configSchema.
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { discordConfigSchema } from '@aivi/channel-discord';
-import { slackConfigSchema } from '@aivi/channel-slack';
 import { configSchema } from '@aivi/core';
 import { z } from 'zod';
 
-const targets = [
-  ['schemas/aivi.schema.json', configSchema],
-  ['schemas/discord.schema.json', discordConfigSchema],
-  ['schemas/slack.schema.json', slackConfigSchema],
-];
+const targets = [['schemas/aivi.schema.json', configSchema]];
 const mode = process.argv[2];
 if (!['--write', '--check'].includes(mode)) {
   console.error('usage: schema.mjs --write | --check');

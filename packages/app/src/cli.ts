@@ -61,8 +61,8 @@ const usage = `aivi <command>
   linear resolve ID            Release a blocked worker --reason TEXT --confirm-stopped
   opencode check               Probe the OpenCode v2 service the host would use
 
-Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/;
-an aivi.local.json there takes precedence over aivi.json.
+Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/.
+The live aivi.json is yours and aivi's to edit; it stays out of version control.
 Options: --log-level debug|info|warn|error
 Secrets come from the environment: AIVI_TOKEN (host.auth.mode "token"),
 DISCORD_BOT_TOKEN, SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD
@@ -102,10 +102,9 @@ async function main(): Promise<void> {
   }
   const log = createLogger({ level: (values['log-level'] as LogLevel | undefined) ?? 'info' });
   // One home holds everything: aivi.json, .env, state/. Paths in the config resolve against it.
-  // A git-ignored aivi.local.json wins, so a checked-in example home can carry a private setup.
   const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
-  const configPath = ['aivi.local.json', 'aivi.json'].map(name => resolve(home, name)).find(path => existsSync(path));
-  if (!configPath)
+  const configPath = resolve(home, 'aivi.json');
+  if (!existsSync(configPath))
     throw new Error(`No aivi.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
   const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
   const loaded = await loadConfig(configPath);
@@ -123,14 +122,11 @@ async function main(): Promise<void> {
       );
   };
 
-  const discord = loaded.config.modules.discord ? await import('@aivi/channel-discord') : undefined;
-  const discordConfig = discord ? await discord.loadDiscordConfig(loaded.config.modules.discord!.config) : undefined;
-  if (discordConfig && !(discordConfig.resource in loaded.config.scheduler.resources))
-    throw new Error('Unknown Discord resource pool');
-  const slack = loaded.config.modules.slack ? await import('@aivi/channel-slack') : undefined;
-  const slackConfig = slack ? await slack.loadSlackConfig(loaded.config.modules.slack!.config) : undefined;
-  if (slackConfig && !(slackConfig.resource in loaded.config.scheduler.resources))
-    throw new Error('Unknown Slack resource pool');
+  // A modules block that is present and not false enables its module; the schema checked its pool.
+  const discordConfig = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
+  const discord = discordConfig ? await import('@aivi/channel-discord') : undefined;
+  const slackConfig = typeof loaded.config.modules.slack === 'object' ? loaded.config.modules.slack : undefined;
+  const slack = slackConfig ? await import('@aivi/channel-slack') : undefined;
   const linear = loaded.config.linear ? await import('@aivi/linear') : undefined;
 
   // Commands that need no database.
@@ -200,7 +196,7 @@ async function main(): Promise<void> {
   const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
   try {
     if (command === 'discord') {
-      if (!discord || !discordConfig) throw new Error('Discord module is not configured in aivi.json');
+      if (!discord || !discordConfig) throw new Error('Discord is not enabled in aivi.json (no modules.discord block)');
       if (subcommand === 'register') {
         await discord.registerDiscordCommands(discordConfig);
         print({ registered: true });
@@ -222,7 +218,7 @@ async function main(): Promise<void> {
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
     }
     if (command === 'slack') {
-      if (!slack || !slackConfig) throw new Error('Slack module is not configured in aivi.json');
+      if (!slack || !slackConfig) throw new Error('Slack is not enabled in aivi.json (no modules.slack block)');
       const inbox = slack.openSlackStore(store, slackConfig);
       if (subcommand === 'status') {
         print({ turns: inbox.list(), leases: store.leases() });

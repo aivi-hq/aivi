@@ -3,20 +3,20 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig, reportSchema, taskSchema } from '@aivi/core';
-import { loadDiscordConfig } from '../src/config.ts';
 
 const example = resolve(import.meta.dirname, '../../../example');
 
-// The README sends newcomers through this home; a schema change that breaks it must fail here, not on their machine.
-test('the example home loads through the real loaders with every feature enabled', async () => {
-  const loaded = await loadConfig(join(example, 'aivi.json'));
+// The README sends newcomers through this home; a schema change that breaks it must fail here, not on their
+// machine. The tests load the tracked template: the live example/aivi.json is the developer's own, ignored config.
+test('the example home template loads through the real loaders with every feature enabled', async () => {
+  const loaded = await loadConfig(join(example, 'aivi.example.json'));
   assert.equal(loaded.config.stateDirectory, join(example, 'state'), 'state lives in the home');
   assert.ok(loaded.sources.length > 0);
-  assert.ok(loaded.config.browser && loaded.config.search && loaded.config.modules.discord, 'everything is on');
+  const discord = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
+  assert.ok(loaded.config.browser && loaded.config.search && discord, 'everything is on');
   assert.ok(loaded.config.jobs.some(s => s.task.kind === 'dreaming'));
-  const discord = await loadDiscordConfig(loaded.config.modules.discord!.config);
-  assert.ok(discord.resource in loaded.config.scheduler.resources, 'Discord pool exists');
-  assert.equal(discord.directory, example, 'the home is the OpenCode location');
+  assert.ok(discord!.resource in loaded.config.scheduler.resources, 'Discord pool exists');
+  assert.equal(discord!.directory, example, 'the home is the OpenCode location');
   for (const file of await readdir(join(example, 'tasks'))) {
     const raw = JSON.parse(await readFile(join(example, 'tasks', file), 'utf8'));
     const task = 'task' in raw ? raw.task : raw;

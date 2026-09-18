@@ -150,29 +150,29 @@ should listen in. Collect the ids: your user id (profile → copy member id),
 channel ids (channel details → bottom of the About tab). DM channel ids are
 not configured; the `dm.users` allow-list decides who may DM.
 
-The example home enables Slack with placeholder ids in `example/slack.json`;
-`example/aivi.json` has:
-
-```json
-{ "modules": { "slack": { "config": "slack.json" } } }
-```
+The example template enables Slack with placeholder ids; copy
+`example/aivi.example.json` to `example/aivi.json` and edit the ids there. A
+`modules.slack` block is the whole module setup, and its presence enables the
+module (`false` is an explicit off):
 
 ```json
 {
-  "$schema": "../schemas/slack.schema.json",
-  "version": 1,
-  "agent": "librarian",
-  "commandPrefix": "aivi",
-  "access": {
-    "dm": { "users": ["U0000000001"] },
-    "channels": [{ "id": "C0000000001", "users": "anyone" }]
-  },
-  "reportChannels": ["C0000000001"],
-  "progress": "status",
-  "resource": "local-model",
-  "maxConcurrent": 1,
-  "maxPending": 100,
-  "turnTimeoutMs": 300000
+  "modules": {
+    "slack": {
+      "agent": "librarian",
+      "commandPrefix": "aivi",
+      "access": {
+        "dm": { "users": ["U0000000001"] },
+        "channels": [{ "id": "C0000000001", "users": "anyone" }]
+      },
+      "reportChannels": ["C0000000001"],
+      "progress": "status",
+      "resource": "local-model",
+      "maxConcurrent": 1,
+      "maxPending": 100,
+      "turnTimeoutMs": 300000
+    }
+  }
 }
 ```
 

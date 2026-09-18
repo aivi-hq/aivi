@@ -105,17 +105,32 @@ Give it access to the selected channels and permission to send messages, add
 reactions, create public threads, and send messages in threads. Private threads also require bot
 membership/access.
 
-The example home enables Discord. Edit the IDs in `example/discord.json`;
-`example/aivi.json` enables the module with:
+The example template enables Discord with placeholder ids; copy
+`example/aivi.example.json` to `example/aivi.json` and edit the ids there.
+A `modules.discord` block is the whole module setup, and its presence enables
+the module (`false` is an explicit off):
 
 ```json
-{ "modules": { "discord": { "config": "discord.json" } } }
+{
+  "modules": {
+    "discord": {
+      "applicationId": "10000000000000001",
+      "agent": "librarian",
+      "access": {
+        "dm": { "users": ["10000000000000002"] },
+        "channels": [{ "id": "10000000000000004", "users": "anyone" }]
+      },
+      "reportChannels": ["10000000000000005"],
+      "messageContent": true,
+      "progress": "status"
+    }
+  }
+}
 ```
 
-That path resolves relative to the home. `agent` names an agent in the home's
-`.opencode/agents/` (the home is the OpenCode location; `directory` overrides
-that for an agent defined elsewhere). Discord and native chat run the same
-agent file.
+`agent` names an agent in the home's `.opencode/agents/` (the home is the
+OpenCode location; `directory` overrides that for an agent defined elsewhere).
+Discord and native chat run the same agent file.
 
 `DISCORD_BOT_TOKEN` comes from the environment (`<home>/.env`, see
 [secrets](configuration.md#secrets)) and, with `host.auth.mode: "token"`, so

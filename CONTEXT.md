@@ -143,6 +143,12 @@ runs in one process; adapters are optional modules with a start/stop contract.
   failed `start` is retried with backoff for as long as the host runs and shows
   as `degraded` in status; only a `ConfigurationError` (something the operator
   must change) is fatal ([operations](docs/operations.md#startup)).
+- **One config file, and it is yours.** Presence of a validated block enables
+  its module (`modules.discord`, `modules.slack`, `linear`; `false` is an
+  explicit off) — no module points at a separate config file. aivi and the
+  operator edit the live `aivi.json` itself, so it never goes under version
+  control; a home in a git repository tracks only a template, which the first
+  run copies ([configuration](docs/configuration.md#home)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
 - **No build step.** Packages run from `src/*.ts` via Node's type stripping;
@@ -191,11 +197,12 @@ runs in one process; adapters are optional modules with a start/stop contract.
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). No `dist/`: sources run as they are.
 `scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
-`AIVI_HOME`): `aivi.json` (or a git-ignored `aivi.local.json`), `.env`,
+`AIVI_HOME`): `aivi.json` (the live config, never version-controlled), `.env`,
 `projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
 `state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
 `example/` is a home with everything enabled (`npm run aivi` points there);
-the tests load it.
+its `aivi.json` is the developer's own and git-ignored, and the tests load the
+tracked template `example/aivi.example.json`.
 
 ## Open threads
 
