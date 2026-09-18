@@ -304,6 +304,20 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
       merge. Record in roadmap.
 - [ ] Shrink this file to what is left.
 
+### 8. Data-change receiver (landed 2026-09-18)
+
+- [x] The data-change stream gets its own receiver instead of riding on a
+      worker app (whose rotation would have taken the subscription with it):
+      `POST /v1/linear/webhooks/data`, credentialed under the bare
+      `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET`/`LINEAR_WEBHOOK_SECRET` names,
+      no agent, runs nothing; app routes moved to
+      `POST /v1/linear/webhooks/app/<id>`. A delivery at the wrong endpoint is
+      acknowledged and dropped, logged while `linear.logMisroutes` (default
+      on); no app id is reserved — the receiver's names carry no app segment.
+      The paths in steps 2–3 above describe what was built then.
+- [ ] Live gate: the data app carrying Issues; one misrouted delivery seen in
+      the log.
+
 ## Later, deliberately
 
 - Graceful agent-first cleanup with deadlines

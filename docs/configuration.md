@@ -174,6 +174,7 @@ Presence of `linear` enables the module ([linear](linear.md)).
 {
   "linear": {
     "apps": { "dev": { "agent": "developer" }, "review": { "agent": "reviewer" } },
+    "logMisroutes": true,
     "listener": false,
     "humanLabel": "needs-human",
     "resource": "local-model",
@@ -186,6 +187,7 @@ Presence of `linear` enables the module ([linear](linear.md)).
 | Field | Meaning |
 | --- | --- |
 | `apps.<id>.agent` | Each Linear *app* (one OAuth application acting as an app user) runs as exactly one OpenCode agent; an agent can belong to one app only |
+| `logMisroutes` | `true`: log at warn a webhook delivered to the wrong endpoint — a data change on an app route, an agent session on the data route. It is dropped either way |
 | `listener` | `false`: only delegations and mentions made in Linear start a worker. `true`: an issue entering a mapped lane is delegated to that lane's app by aivi |
 | `humanLabel` | Issues with this label are never worked automatically; a hand delegation is refused with an explanation in the agent session |
 | `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
@@ -215,7 +217,11 @@ resolved by OpenCode's ordinary discovery for the worker's directory.
 Credentials are never in JSON: each app reads `LINEAR_<APP>_CLIENT_ID`,
 `LINEAR_<APP>_CLIENT_SECRET` and `LINEAR_<APP>_WEBHOOK_SECRET` from the
 environment (`<APP>` is the app id upper-cased with `-` as `_`, so `dev-app`
-reads `LINEAR_DEV_APP_CLIENT_ID`).
+reads `LINEAR_DEV_APP_CLIENT_ID`). The *data receiver* — the endpoint Linear's
+data-change webhooks arrive at (`/v1/linear/webhooks/data`), which is not an
+app and runs nothing — reads the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`
+and `LINEAR_WEBHOOK_SECRET`; those names carry no app segment, so no app id
+can ever collide with them.
 
 ## Operator commands
 

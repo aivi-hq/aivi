@@ -18,13 +18,14 @@ behaviour and setup; the plan and what is still to come are in
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `response` (the answer) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
 | lane | A team workflow state by name; `projects.<id>.linear.lanes` maps lane → app for the listener |
 | listener | `linear.listener: true`: aivi delegates an issue that enters a mapped lane to that lane's app and starts its session; off, only what people do in Linear starts a worker |
+| data receiver | one Linear app carrying the workspace's **data change** webhooks to `POST /v1/linear/webhooks/data` (bare `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET`/`LINEAR_WEBHOOK_SECRET`); it has no agent and runs nothing — lane and label changes arrive here, app events on each app's own route |
 | worker | The OpenCode session for one agent session: the app's agent, in `<home>/projects/<id>/worktrees/<agent session>`, kept for the whole run |
 
 ## What happens
 
 1. **A person delegates or mentions the app** in an issue. Linear posts an
    `AgentSessionEvent` `created` webhook to
-   `POST /v1/linear/webhooks/<app>` on the host listener. aivi verifies the
+   `POST /v1/linear/webhooks/app/<app>` on the host listener. aivi verifies the
    signature and answers within the 5 seconds Linear allows, then works.
 2. **Routing.** The issue's Linear project must match a checked-out project's
    `projects.<id>.linear.projectId` (and `workspaceId` when configured); the
@@ -59,7 +60,8 @@ behaviour and setup; the plan and what is still to come are in
 7. **Locks.** One running worker per project and one per issue at a time,
    enforced when a turn is claimed; queued ones wait and said so at step 3.
    Capacity comes from the pool `linear.resource` like every other turn.
-8. **Issue changes** (the **Issues** webhook category, on one app). When an
+8. **Issue changes** (the **Issues** data-change category, on the **data
+   receiver**). When an
    issue with a pending worker gains the HITL label, moves to a lane that is
    not mapped to that worker's app, or loses the app as delegate, the worker
    is stopped as in step 6 with a `thought` saying why. A lane change between
@@ -71,6 +73,12 @@ behaviour and setup; the plan and what is still to come are in
    a redelivery. The issue is re-read from the API for every such change, so
    label and state names are current, and a change delivered twice finds the
    delegate already set.
+
+Each endpoint carries one family: agent-session events reach only the app
+they concern, data changes reach the data receiver. A delivery that arrives
+at the wrong endpoint — a checkbox in Linear disagreeing with the config — is
+acknowledged and dropped; `linear.logMisroutes` (default `true`) logs each
+one at warn, `false` at debug only.
 
 ## When it does not end with an answer
 
@@ -86,24 +94,32 @@ for inspection; pruning them is not built yet.
 
 ## Setup
 
-For each app (a developer app and a reviewer app are two apps):
+First the data receiver, then one app per agent (a developer app and a
+reviewer app are two apps):
 
-1. In Linear, **Settings → API → Applications → New**. Name and icon are how
-   the agent appears. Enable **Client credentials**. Under **Webhooks**,
-   set the URL to `<public base>/v1/linear/webhooks/<app id>` and enable the
-   **Agent session events** category; on exactly one app also the **Issues**
-   data-change category (that is where lane and label changes arrive; a second
-   app's copy would only make the same change twice). Copy the client id,
-   client secret and webhook signing secret.
-2. In `<home>/.env`: `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET`,
-   `LINEAR_<APP>_WEBHOOK_SECRET` (`<APP>` = the id upper-cased, `-` → `_`).
-   Tokens are requested with `grant_type=client_credentials` and the scopes
-   `read,write,app:assignable,app:mentionable`; nothing is persisted.
-3. In `aivi.json`: `linear.apps.<id>.agent` naming the OpenCode agent, and
+1. **The data receiver.** In Linear, **Settings → API → Applications → New**
+   ("aivi data" is a good name; it never acts, so its face hardly matters).
+   Enable **Client credentials**. Under **Webhooks**, set the URL to
+   `<public base>/v1/linear/webhooks/data` and enable the **Issues**
+   data-change category — that is where lane and label changes arrive. Copy
+   its client id, client secret and webhook signing secret.
+2. **Each agent app.** New application. Name and icon are how the agent
+   appears. Enable **Client credentials**. Under **Webhooks**, set the URL to
+   `<public base>/v1/linear/webhooks/app/<app id>` and enable the **Agent
+   session events** category only. Copy the client id, client secret and
+   webhook signing secret.
+3. In `<home>/.env`: `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and
+   `LINEAR_WEBHOOK_SECRET` for the data receiver, and
+   `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET`,
+   `LINEAR_<APP>_WEBHOOK_SECRET` for each app (`<APP>` = the id upper-cased,
+   `-` → `_`). Tokens are requested with `grant_type=client_credentials` and
+   the scopes `read,write,app:assignable,app:mentionable`; nothing is
+   persisted.
+4. In `aivi.json`: `linear.apps.<id>.agent` naming the OpenCode agent, and
    `projects.<id>.linear.projectId` (Linear's project id) with `lanes`.
-4. The agent file: `<home>/.opencode/agents/<agent>.md`, or the repository's
+5. The agent file: `<home>/.opencode/agents/<agent>.md`, or the repository's
    own `.opencode/agents/<agent>.md` to override it per project.
-5. **Reachability.** Linear must reach the listener over HTTPS. `aivi serve`
+6. **Reachability.** Linear must reach the listener over HTTPS. `aivi serve`
    binds `host.bind:host.port`; put a tunnel or proxy in front (Tailscale
    Funnel, cloudflared, a reverse proxy, or run aivi where it is reachable)
    and give Linear that public base. Bearer auth does not apply to the

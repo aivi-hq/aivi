@@ -18,14 +18,18 @@ import {
 test('linear settings: defaults, secret names, reserved pool', () => {
   const linear = configSchema.parse({ version: 1, linear: { apps: { dev: { agent: 'developer' } } } }).linear!;
   assert.deepEqual(
-    [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs],
-    [false, 'needs-human', 'local-model', 'tools', 7_200_000],
+    [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs, linear.logMisroutes],
+    [false, 'needs-human', 'local-model', 'tools', 7_200_000, true],
   );
   assert.deepEqual(linearSecretNames('dev-app'), {
     clientId: 'LINEAR_DEV_APP_CLIENT_ID',
     clientSecret: 'LINEAR_DEV_APP_CLIENT_SECRET',
     webhookSecret: 'LINEAR_DEV_APP_WEBHOOK_SECRET',
   });
+  assert.ok(
+    configSchema.safeParse({ version: 1, linear: { apps: { data: { agent: 'developer' } } } }).success,
+    'the receiver reads bare LINEAR_* names, so no app id is reserved',
+  );
   assert.match(
     JSON.stringify(configSchema.safeParse({ version: 1, linear: { apps: {}, resource: 'gpu' } }).error?.issues),
     /Unknown resource pool/,

@@ -195,12 +195,14 @@ export const projectSchema = z.strictObject({
     .optional(),
 });
 /**
- * The Linear module (nothing reads it yet beyond validation; the plan is in
- * `docs/plans/linear.md`). Each *app* is one Linear OAuth application acting
- * as an app user, mapped to exactly one OpenCode agent; its client id, client
+ * The Linear module. Each *app* is one Linear OAuth application acting as an
+ * app user, mapped to exactly one OpenCode agent; its client id, client
  * secret and webhook signing secret come from the environment as
  * `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET` and
  * `LINEAR_<APP>_WEBHOOK_SECRET` (`<APP>` = the id upper-cased, `-` → `_`).
+ * The module also has one *data receiver*: a credentialed endpoint for
+ * Linear's data-change webhooks (`LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
+ * `LINEAR_WEBHOOK_SECRET`), which runs nothing itself.
  * Presence of this block enables the module.
  */
 export const linearSchema = z.strictObject({
@@ -210,6 +212,12 @@ export const linearSchema = z.strictObject({
       z.strictObject({ agent: z.string().min(1).describe('The OpenCode agent this app runs as; unique across apps.') }),
     )
     .describe('Linear apps by id; lanes in projects.<id>.linear.lanes refer to these ids.'),
+  logMisroutes: z
+    .boolean()
+    .default(true)
+    .describe(
+      'Log at warn a webhook delivered to the wrong endpoint (a data change on an app route, an agent session on the data route); it is dropped either way.',
+    ),
   listener: z
     .boolean()
     .default(false)

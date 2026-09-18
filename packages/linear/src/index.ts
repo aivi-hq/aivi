@@ -16,10 +16,11 @@ export {
   LINEAR,
   openLinearStore,
   projectForIssue,
+  requireDataReceiverSecrets,
   requireLinearSecrets,
 } from './module.ts';
 export type { WebhookApp } from './routes.ts';
-export { registerWebhookRoutes, webhookPath } from './routes.ts';
+export { appWebhookPath, dataWebhookPath, registerDataRoute, registerWebhookRoutes } from './routes.ts';
 export type {
   AgentSessionEventPayload,
   IssueEventPayload,

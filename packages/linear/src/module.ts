@@ -9,7 +9,7 @@ import {
   stopTurn as stopRunningTurn,
 } from '@aivi/host';
 import { LinearApiError, LinearClient } from './client.ts';
-import { registerWebhookRoutes } from './routes.ts';
+import { registerDataRoute, registerWebhookRoutes } from './routes.ts';
 import {
   type AgentSessionEventPayload,
   type IssueEventPayload,
@@ -82,6 +82,26 @@ export function requireLinearSecrets(config: LinearConfig, env: NodeJS.ProcessEn
   return out;
 }
 
+/** Credentials for the data receiver. The bare names have no app segment, so
+ * no app id can derive them and no id needs reserving. */
+export function requireDataReceiverSecrets(env: NodeJS.ProcessEnv = process.env) {
+  const clientId = env.LINEAR_CLIENT_ID;
+  const clientSecret = env.LINEAR_CLIENT_SECRET;
+  const webhookSecret = env.LINEAR_WEBHOOK_SECRET;
+  if (!clientId || !clientSecret || !webhookSecret) {
+    const missing = Object.entries({
+      LINEAR_CLIENT_ID: clientId,
+      LINEAR_CLIENT_SECRET: clientSecret,
+      LINEAR_WEBHOOK_SECRET: webhookSecret,
+    })
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    throw new ConfigurationError(`Linear data receiver: set ${missing.join(', ')} in <home>/.env`);
+  }
+  return { clientId, clientSecret, webhookSecret };
+}
+
+/** `clients` is a test seam keyed by endpoint id (an app id or `data`); real clients come from the environment. */
 export function createLinearModule(config: LinearConfig, clients?: Map<string, LinearClient>): HostModule {
   return { id: LINEAR.id, start: services => startLinear(config, services, clients) };
 }
@@ -117,6 +137,19 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       throw error;
     }
     apps.set(secret.id, { id: secret.id, agent: secret.agent, client, webhookSecret: secret.webhookSecret, userId });
+  }
+
+  // The data receiver: its own endpoint, credentials and client. It runs
+  // nothing and has no user identity in any conversation; its token only
+  // re-reads issues, but it is validated at start like every app's.
+  const dataSecrets = requireDataReceiverSecrets();
+  const dataClient = givenClients?.get('data') ?? new LinearClient(dataSecrets, { log });
+  try {
+    await dataClient.viewerId();
+  } catch (error) {
+    if (error instanceof LinearApiError && (error.status === 400 || error.status === 401))
+      throw new ConfigurationError(`Linear data receiver: credentials rejected (${error.message})`);
+    throw error;
   }
 
   const abort = new AbortController();
@@ -288,11 +321,11 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
      * (stop it); and, with the listener on, an issue entering a mapped lane with nobody on it
      * (delegate the lane's app and start its session).
      */
-    const onIssue = async (app: LinearAppRuntime, payload: IssueEventPayload) => {
+    const onIssue = async (receiver: { client: LinearClient }, payload: IssueEventPayload) => {
       if (payload.action !== 'update') return;
       const changed = Object.keys(payload.updatedFrom ?? {});
       if (!changed.some(k => ['stateId', 'labelIds', 'delegateId'].includes(k))) return;
-      const issue = await app.client.issue(payload.data.id);
+      const issue = await receiver.client.issue(payload.data.id);
       const project = projectForIssue(services.loaded.projects, {
         projectId: issue.project?.id ?? null,
         organizationId: payload.organizationId,
@@ -335,26 +368,42 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       });
     };
 
-    const dispatch = async (appId: string, payload: LinearWebhook) => {
+    /**
+     * A delivery at the wrong endpoint is a checkbox in Linear disagreeing
+     * with the config: acknowledged so Linear does not retry a working
+     * endpoint, and dropped; `logMisroutes` decides whether the drop is
+     * audible. An unknown payload type is not a misroute, only unheard.
+     */
+    const misrouted = (endpoint: string, payload: LinearWebhook) => {
+      const fields = { endpoint, type: payload.type, action: payload.action };
+      if (config.logMisroutes) log.warn('webhook.misrouted', fields);
+      else log.debug('webhook.misrouted', fields);
+    };
+
+    /** An app route carries agent-session events, which concern only that app. */
+    const dispatchApp = async (appId: string, payload: LinearWebhook) => {
       if (abort.signal.aborted) return;
-      const app = apps.get(appId)!;
       if (isAgentSessionEvent(payload)) {
+        const app = apps.get(appId);
+        if (!app) return log.warn('webhook.unknown-app', { app: appId, type: payload.type, action: payload.action });
         if (payload.action === 'created') await onCreated(app, payload);
         else await onPrompted(app, payload);
         return;
       }
-      if (isIssueEvent(payload)) {
-        await onIssue(app, payload);
-        return;
-      }
+      if (isIssueEvent(payload)) return misrouted(appId, payload);
       log.debug('webhook.ignored', { app: appId, type: payload.type, action: payload.action });
     };
-    const unroute = registerWebhookRoutes(
-      services.routes,
-      [...apps.values()].map(a => ({ id: a.id, webhookSecret: a.webhookSecret })),
-      dispatch,
-      log,
-    );
+
+    /** The data route carries the workspace's data changes, which concern no app. */
+    const dispatchData = async (payload: LinearWebhook) => {
+      if (abort.signal.aborted) return;
+      if (isIssueEvent(payload)) return onIssue({ client: dataClient }, payload);
+      if (payload.type === 'AgentSessionEvent') return misrouted('data', payload);
+      log.debug('webhook.ignored', { endpoint: 'data', type: payload.type, action: payload.action });
+    };
+
+    const unrouteApps = registerWebhookRoutes(services.routes, [...apps.values()], dispatchApp, log);
+    const unrouteData = registerDataRoute(services.routes, dataSecrets.webhookSecret, dispatchData, log);
 
     // A worker interrupted by a restart is blocked (nobody knows whether the agent stopped); say so in its session.
     for (const turn of interrupted) {
@@ -385,7 +434,8 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
 
     return {
       async stop() {
-        unroute();
+        unrouteApps();
+        unrouteData();
         unregister();
         unsubscribeWake();
         await teardown();

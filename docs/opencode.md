@@ -4,6 +4,72 @@ aivi uses the published `@opencode/client` and `@opencode/plugin` 2.0.3 packages
 the v2 `Plugin.define` API and native session operations. It does not patch
 OpenCode or read its private storage.
 
+## Plugin tools and permission actions
+
+The aivi plugin registers these tools for the OpenCode **Location** that loads
+it, so every agent in a directory that loads the plugin has them. The **effective
+id is also the permission action** you write rules against (`aivi_jobs` and
+`aivi_browser` are confirmed in their sections below; the rest follow the same
+rule). Every aivi tool is a Code Mode tool, so the agent also needs the `execute`
+action, which OpenCode's default policy already allows. There is **no per-agent
+tool allowlist in v2** — availability is location-scoped registration, and you
+grant or withhold each tool with `permissions`.
+
+| Tool | Permission action | What it does | Permissions notes |
+| --- | --- | --- | --- |
+| `knowledge_search` | `knowledge_search` | Keyword search over configured knowledge; returns source paths and excerpts | Runs over the host API, not a file read. Opening a full document still uses `read` (and `external_directory` when the source is outside the Location). |
+| `knowledge_projects` | `knowledge_projects` | List the projects and the source kinds each is searchable by | Read-only. |
+| `aivi_sources` | `aivi_sources` | List configured knowledge sources and their paths | Read-only. |
+| `aivi_status` | `aivi_status` | aivi version, job counts and capabilities | Read-only; does not start work. |
+| `aivi_context` | `aivi_context` | This conversation's context window, tokens, cost and knowledge scope | Read-only; takes the session id from the tool context. |
+| `aivi_jobs` | `aivi_jobs` | Create/list/pause/resume/remove/run jobs | Schedules work. Turn the tool off host-wide with `scheduler.agentSchedules: false`. |
+| `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The example librarian denies `browser` (OpenCode's), **not** this one. |
+
+### Giving tools to an agent
+
+OpenCode's base policy for every agent is `{action: "*", resource: "*", effect:
+"allow"}`, so all aivi tools are **allowed by default** — you usually grant them
+by doing nothing, and withhold one with a deny. To scope per agent, add rules to
+that agent's file (`<home>/.opencode/agents/<agent>.md` frontmatter `permissions:`,
+or `agents.<id>.permissions` in config); rules combine in order and the **last
+match wins**, so put the broad rule before its exceptions.
+
+```yaml
+# allow scheduling and knowledge lookup, but nothing browser-related
+permissions:
+  - { action: "aivi_browser", resource: "*", effect: "deny" }
+  - { action: "aivi_jobs",    resource: "*", effect: "allow" }
+```
+
+Because these are Code Mode tools, denying `execute` removes all of them at once.
+The home **is** the OpenCode Location, so its `knowledge/`, `memory/` and
+`projects/` directories need no `external_directory` rules; sources elsewhere get
+those from aivi per session ([below](#host-submission)). Mentioning a tool in the
+agent's prompt is how you tell it to *use* one — it does not gate access.
+
+### Adding agents
+
+An agent is one Markdown file. In aivi the home **is** the OpenCode Location, so
+add `<home>/.opencode/agents/<name>.md`; to offer it in every project, use
+`~/.config/opencode/agents/<name>.md`. The frontmatter holds the config fields
+(`description`, `mode`, `model`, `permissions`, …) and the **body is the system
+prompt** — put instructions there, not in a `system` frontmatter field. Full
+field list: [OpenCode agents](https://opencode.ai/v2/docs/agents).
+
+A new agent in this Location already has every aivi tool (the plugin registers
+them here and the default policy allows them); list the tools you want it to
+reach in the body so it uses them. **Per-project override:** a project's own
+`.opencode/agents/<name>.md` in its checkout replaces the home's agent of the
+same id for that project ([linear](linear.md)). Do not carry v1 frontmatter over
+(`tools`, `permission`, `prompt`, `disable`, `maxSteps`, `temperature`,
+`top_p`) — v2 uses `permissions`, `disabled` and `steps`.
+
+Project-override agents get the aivi tools too: the plugin is discovered from
+the home as an ancestor of the checkout or worktree, and aivi's own turn runner
+(Discord, Slack, Linear) adds `external_directory` allows for every configured
+knowledge source — so those agents can both search and read the documents. To
+guarantee the tools anywhere, declare the plugin once in the global config.
+
 ## Verified boundary (OpenCode 2.0.3, macOS, 2026-09-15)
 
 Milestone 0 of the roadmap, run against a real `opencode service` with
@@ -19,7 +85,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | Permission prompts | A tool that needs approval (for example `external_directory` when reading a knowledge source outside the project) parks the turn; `session.wait` blocks until a human replies. `permission.asked` on the event stream announces each request (`{ id, sessionID, action, resources }`); `permission.list({ sessionID })` shows what is already pending and `permission.reply` answers it. aivi answers from the event, and reads the list once after the prompt for requests that predate it (verified 2026-09-15). |
 | Plugin loading | A directory entry in `plugins` resolves `<dir>/server.*` or `<dir>/index.*`, not `package.json#main`. `packages/opencode/server.js` re-exports the build for that reason. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
 | Plugin failure mode | An exception in `setup()` marks the plugin `failed` and registers no tools. The plugin therefore never throws for a missing token; the tool call reports the 401. |
-| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `aivi_jobs`, `aivi_browser`, `knowledge_search`, `knowledge_projects` (`GET /v1/projects`: id, `removed`, searchable source kinds), `aivi_context` (`GET /v1/context?session=`: the calling session's context window, totals and knowledge scope as markdown, the same text as the channels' `/context`); tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion, upcoming, recent }`. |
+| Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `aivi_jobs`, `aivi_browser`, `knowledge_search`, `knowledge_projects` (`GET /v1/projects`: id, `removed`, searchable source kinds), `aivi_context` (`GET /v1/context?session=`: the calling session's context window, totals and knowledge scope as markdown, the same text as the channels' `/context`); tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion, upcoming, recent }`. See [Plugin tools and permission actions](#plugin-tools-and-permission-actions) for the permission actions to write rules against. |
 | Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the agent's, so an `edit` allow from dreaming wins over the dreamer's `edit: deny`; aivi never sends a broad allow, so OpenCode's default `.env` guard stays in force. |
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
 | Changes to a local plugin | The server caches module resolution; run `opencode service restart` after changing the plugin package layout **or after `npm install` rewrites `node_modules`** (the plugin otherwise fails with "Cannot find package"). The restart also reloads every client of that service, including an open TUI. |

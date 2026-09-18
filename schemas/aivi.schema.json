@@ -474,6 +474,11 @@
             "additionalProperties": false
           }
         },
+        "logMisroutes": {
+          "description": "Log at warn a webhook delivered to the wrong endpoint (a data change on an app route, an agent session on the data route); it is dropped either way.",
+          "default": true,
+          "type": "boolean"
+        },
         "listener": {
           "description": "React to issue lane changes by delegating eligible issues to the lane’s app. Off: only delegations and mentions made in Linear start a worker.",
           "default": false,

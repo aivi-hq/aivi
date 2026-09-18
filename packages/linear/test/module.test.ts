@@ -13,7 +13,7 @@ import { Channels, connectOpenCode, PublicRoutes, Store } from '@aivi/host';
 import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
 import { LinearClient } from '../src/client.ts';
 import { conversationFor, createLinearModule, openLinearStore } from '../src/module.ts';
-import { webhookPath } from '../src/routes.ts';
+import { appWebhookPath, dataWebhookPath } from '../src/routes.ts';
 import { signWebhook } from '../src/webhook.ts';
 
 const run = promisify(execFile);
@@ -137,6 +137,9 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   process.env.LINEAR_DEV_CLIENT_ID = 'cid';
   process.env.LINEAR_DEV_CLIENT_SECRET = 'sec';
   process.env.LINEAR_DEV_WEBHOOK_SECRET = 'whsec';
+  process.env.LINEAR_CLIENT_ID = 'data-cid';
+  process.env.LINEAR_CLIENT_SECRET = 'data-sec';
+  process.env.LINEAR_WEBHOOK_SECRET = 'data-whsec';
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
@@ -188,7 +191,13 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(config.linear!, new Map([['dev', linear]])).start(services);
+  const running = await createLinearModule(
+    config.linear!,
+    new Map([
+      ['dev', linear],
+      ['data', linear],
+    ]),
+  ).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
@@ -196,7 +205,7 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
 
   const deliver = async (payload: Record<string, unknown>) => {
     const body = Buffer.from(JSON.stringify({ organizationId: 'org', webhookTimestamp: Date.now(), ...payload }));
-    return routes.get(webhookPath('dev'))!({
+    return routes.get(appWebhookPath('dev'))!({
       method: 'POST',
       headers: { 'linear-signature': signWebhook(body, 'whsec'), 'linear-delivery': 'd' },
       body,
@@ -284,6 +293,52 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     () => linear.activities.some(a => a.content.type === 'error' && /do not know this session/.test(a.content.body)),
     'unknown session refused',
   );
+
+  // Wrong-endpoint deliveries are acknowledged and dropped: a data change
+  // arriving on the app route, an agent-session event on the data route.
+  const activitiesBefore = linear.activities.length;
+  const strayIssue = Buffer.from(
+    JSON.stringify({
+      type: 'Issue',
+      action: 'update',
+      organizationId: 'org',
+      webhookTimestamp: Date.now(),
+      data: { id: 'eng-1', identifier: 'ENG-1', stateId: 'rev' },
+      updatedFrom: { stateId: 'todo' },
+    }),
+  );
+  assert.equal(
+    (
+      await routes.get(appWebhookPath('dev'))!({
+        method: 'POST',
+        headers: { 'linear-signature': signWebhook(strayIssue, 'whsec') },
+        body: strayIssue,
+      })
+    ).status,
+    200,
+    'a misrouted delivery is still acknowledged, so Linear does not retry',
+  );
+  const straySession = Buffer.from(
+    JSON.stringify({
+      type: 'AgentSessionEvent',
+      action: 'created',
+      organizationId: 'org',
+      webhookTimestamp: Date.now(),
+      agentSession: { id: 'as-stray', issue: { id: 'eng-1' } },
+    }),
+  );
+  assert.equal(
+    (
+      await routes.get(dataWebhookPath)!({
+        method: 'POST',
+        headers: { 'linear-signature': signWebhook(straySession, 'data-whsec') },
+        body: straySession,
+      })
+    ).status,
+    200,
+  );
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(linear.activities.length, activitiesBefore, 'neither stray delivery posted anything');
   assert.equal(inbox.list().length, 2, 'refused sessions never became turns');
   assert.equal(store.leases().length, 0, 'no capacity held');
 });
@@ -303,6 +358,9 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   process.env.LINEAR_DEV_CLIENT_ID = 'cid';
   process.env.LINEAR_DEV_CLIENT_SECRET = 'sec';
   process.env.LINEAR_DEV_WEBHOOK_SECRET = 'whsec';
+  process.env.LINEAR_CLIENT_ID = 'data-cid';
+  process.env.LINEAR_CLIENT_SECRET = 'data-sec';
+  process.env.LINEAR_WEBHOOK_SECRET = 'data-whsec';
 
   let release: () => void = () => {};
   let gated = false;
@@ -354,7 +412,13 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(config.linear!, new Map([['dev', linear]])).start(services);
+  const running = await createLinearModule(
+    config.linear!,
+    new Map([
+      ['dev', linear],
+      ['data', linear],
+    ]),
+  ).start(services);
   t.after(async () => {
     release();
     await running.stop();
@@ -371,9 +435,9 @@ test('the listener delegates an issue entering a mapped lane and starts the work
         updatedFrom,
       }),
     );
-    return routes.get(webhookPath('dev'))!({
+    return routes.get(dataWebhookPath)!({
       method: 'POST',
-      headers: { 'linear-signature': signWebhook(body, 'whsec') },
+      headers: { 'linear-signature': signWebhook(body, 'data-whsec') },
       body,
     });
   };
@@ -409,7 +473,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
       agentActivity: { id: 'act-2', content: { type: 'prompt', body: 'Now the docs' } },
     }),
   );
-  await routes.get(webhookPath('dev'))!({
+  await routes.get(appWebhookPath('dev'))!({
     method: 'POST',
     headers: { 'linear-signature': signWebhook(body, 'whsec') },
     body,
