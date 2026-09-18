@@ -410,3 +410,29 @@ test('tasks are prompt, shell or invocation; only prompt and shell are tasks any
   assert.equal(taskLabel(taskSchema.parse({ kind: 'invocation', name: 'dreaming', args: {} })), 'dreaming');
   assert.equal(taskLabel(taskSchema.parse({ kind: 'shell', command: ['ls'] })), 'shell');
 });
+
+test('a hand-written job may name its operation as a bare string', () => {
+  const job = jobSchema.parse({ id: 'check', cron: '* * * * *', task: 'system.check' });
+  assert.deepEqual(job.task, { kind: 'invocation', name: 'system.check' });
+  // Explicit shape still wins, and carries args the string cannot.
+  const explicit = jobSchema.parse({
+    id: 'dream',
+    cron: '* * * * *',
+    task: { kind: 'invocation', name: 'dreaming', args: { origins: ['discord'] } },
+  });
+  assert.equal(explicit.task.kind, 'invocation');
+  assert.deepEqual(explicit.task.args, { origins: ['discord'] });
+});
+
+test('scheduler.timezone is the host-wide default; a per-job timezone wins over it', () => {
+  const config = configSchema.parse({ version: 1, scheduler: { timezone: 'Europe/Amsterdam' } });
+  const job = retentionJob(config, 'UTC');
+  assert.equal(job!.timezone, 'Europe/Amsterdam');
+  const override = configSchema.parse({
+    version: 1,
+    scheduler: { timezone: 'Europe/Amsterdam', retention: { timezone: 'Pacific/Auckland' } },
+  });
+  assert.equal(retentionJob(override, 'UTC')!.timezone, 'Pacific/Auckland');
+  // Without the setting, derived schedules keep the host timezone.
+  assert.equal(retentionJob(configSchema.parse({ version: 1 }), 'UTC')!.timezone, 'UTC');
+});

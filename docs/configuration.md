@@ -52,14 +52,17 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 | `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
 | `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/aivi.example.json` writes the default out explicitly, in its `maintenance` pool |
 | `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that fast-forwards every project's `source/` to its upstream and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
-| `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
+| `scheduler.timezone` | Host-wide default for derived schedules (`retention`, `projects-sync`); default the host's own timezone. A schedule's own `timezone` wins over it |
+| `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). A bare operation name is shorthand for its invocation: `"task": "system.check"` is `{ "kind": "invocation", "name": "system.check" }`; use the explicit shape when the operation takes `args`. The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
 
 ## Tasks
 
-A task is one of three kinds. `shell` and `prompt` are the tasks a person or
-an agent can author; `invocation` names a system capability that the host or a
-module registered, and exists so such a capability can be *scheduled* like any
-other job. `aivi_jobs` accepts only the first two.
+A task is what a job executes: the payload, never a thing you trigger. You
+trigger **jobs**; a **run** is one execution record. A task is one of three
+kinds. `shell` and `prompt` are the tasks a person or an agent can author;
+`invocation` names a system capability that the host or a module registered,
+and exists so such a capability can be *scheduled* like any other job.
+`aivi_jobs` accepts only the first two.
 
 | Kind | Fields | Outcome |
 | --- | --- | --- |

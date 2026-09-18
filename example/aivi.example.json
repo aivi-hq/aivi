@@ -40,20 +40,14 @@
       "cron": "*/5 * * * *",
       "timezone": "UTC",
       "resource": "maintenance",
-      "task": {
-        "kind": "invocation",
-        "name": "system.check"
-      }
+      "task": "system.check"
     },
     {
       "id": "refresh-knowledge",
       "cron": "0 * * * *",
       "timezone": "UTC",
       "resource": "maintenance",
-      "task": {
-        "kind": "invocation",
-        "name": "knowledge.index"
-      }
+      "task": "knowledge.index"
     },
     {
       "id": "dreaming",

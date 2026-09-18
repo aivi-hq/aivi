@@ -659,7 +659,7 @@ function runState(value: string): RunState {
 }
 
 const jobFileSchema = z.strictObject({
-  task: taskSchema,
+  task: z.preprocess(value => (typeof value === 'string' ? { kind: 'invocation', name: value } : value), taskSchema),
   report: reportSchema.optional(),
   resource: z.string().min(1).optional(),
 });

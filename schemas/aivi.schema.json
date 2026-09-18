@@ -876,6 +876,10 @@
           "minimum": 1,
           "maximum": 64
         },
+        "timezone": {
+          "description": "IANA timezone for derived system schedules; default the host’s.",
+          "type": "string"
+        },
         "resources": {
           "default": {
             "local-model": 1
@@ -1015,7 +1019,6 @@
       "additionalProperties": false
     },
     "jobs": {
-      "default": [],
       "type": "array",
       "items": {
         "type": "object",

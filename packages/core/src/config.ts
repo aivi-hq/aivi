@@ -150,7 +150,8 @@ export const jobSchema = z
     at: z.string().regex(ISO_INSTANT).optional(),
     resource: id.default('local-model'),
     enabled: z.boolean().default(true),
-    task: taskSchema,
+    /** What the job executes. A bare operation name is shorthand for an `invocation` of it: `"dreaming"` is `{ kind: 'invocation', name: 'dreaming' }`. */
+    task: z.preprocess(value => (typeof value === 'string' ? { kind: 'invocation', name: value } : value), taskSchema),
     report: reportSchema.optional(),
     /** Per-job override of `scheduler.misfire`. */
     misfire: misfireSchema.optional(),
@@ -543,6 +544,8 @@ export const configSchema = z
     scheduler: z
       .strictObject({
         maxConcurrent: z.number().int().min(1).max(64).default(1),
+        /** Host-wide default for derived schedules; a job's own `timezone` wins over it. */
+        timezone: z.string().optional().describe('IANA timezone for derived system schedules; default the host’s.'),
         resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
         agentSchedules: z
           .union([
@@ -744,7 +747,7 @@ export function retentionJob(
     id: RETENTION_JOB_ID,
     title: 'Prune finished runs',
     cron: retention.cron,
-    timezone: retention.timezone ?? hostTimezone,
+    timezone: retention.timezone ?? config.scheduler.timezone ?? hostTimezone,
     resource: systemPool(config, retention.resource),
     task: { kind: 'invocation', name: 'runs.prune', args: { olderThanDays: retention.olderThanDays } },
   });
@@ -761,7 +764,7 @@ export function projectsSyncJob(
     id: PROJECTS_SYNC_JOB_ID,
     title: 'Sync project checkouts',
     cron: sync.cron,
-    timezone: sync.timezone ?? hostTimezone,
+    timezone: sync.timezone ?? config.scheduler.timezone ?? hostTimezone,
     resource: systemPool(config, sync.resource),
     task: { kind: 'invocation', name: 'projects.sync' },
   });
