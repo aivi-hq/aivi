@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { loadConfig, PROJECT_ID, projectLayout } from './config.ts';
@@ -36,6 +36,39 @@ export async function addProject(
   await clone(url, directory);
   const loaded = await loadConfig(configPath);
   return { id, directory, sources: loaded.sources.filter(s => s.projectId === id).map(s => s.id) };
+}
+
+/**
+ * Point a project at Linear teams: writes `projects.<id>.linear.teams` and
+ * touches nothing else — an existing `lanes` and every other part of the file
+ * stay as they were. The written file must load: if it does not, the previous
+ * bytes are restored and the error stands. The result is what got written.
+ */
+export async function writeProjectLinear(
+  configPath: string,
+  id: string,
+  teams: string[],
+): Promise<{ id: string; teams: string[]; lanes?: Record<string, string> }> {
+  if (!PROJECT_ID.test(id)) throw new Error(`Project id "${id}" must match ${PROJECT_ID}`);
+  if (!teams.length) throw new Error('Set at least one Linear team');
+  const before = await readFile(configPath, 'utf8');
+  const raw = JSON.parse(before) as Record<string, unknown>;
+  const projects = (raw.projects ?? {}) as Record<string, unknown>;
+  raw.projects = projects;
+  const entry = (projects[id] ?? {}) as Record<string, unknown>;
+  projects[id] = entry;
+  const linear = (entry.linear ?? {}) as Record<string, unknown>;
+  entry.linear = linear;
+  linear.teams = teams;
+  await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
+  try {
+    await loadConfig(configPath);
+  } catch (error) {
+    await writeFile(configPath, before);
+    throw error;
+  }
+  const lanes = linear.lanes as Record<string, string> | undefined;
+  return { id, teams, ...(lanes ? { lanes } : {}) };
 }
 
 /**

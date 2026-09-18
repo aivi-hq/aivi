@@ -5,8 +5,9 @@ export type {
   LinearClientOptions,
   LinearCredentials,
   LinearIssue,
+  LinearTeam,
 } from './client.ts';
-export { LinearApiError, LinearClient } from './client.ts';
+export { LinearApiError, LinearClient, resolveTeams } from './client.ts';
 export type { LinearAppRuntime } from './module.ts';
 export {
   conversationFor,

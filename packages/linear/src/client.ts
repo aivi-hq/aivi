@@ -56,6 +56,14 @@ export interface LinearAgentSession {
   issue: { id: string } | null;
 }
 
+/** A team in the workspace: the `id` is what aivi's config holds, the `key`
+ * is what Linear's URLs and issue identifiers show. */
+export interface LinearTeam {
+  id: string;
+  key: string;
+  name: string;
+}
+
 export class LinearApiError extends Error {
   readonly status: number;
   constructor(message: string, status: number) {
@@ -160,6 +168,13 @@ export class LinearClient {
     return data.viewer.id;
   }
 
+  /** The teams this app can see, archived excluded: the answer to "which id is PEC?".
+   * A private team the app has not joined is simply not in this list. */
+  async listTeams(): Promise<LinearTeam[]> {
+    const data = await this.graphql<{ teams: { nodes: LinearTeam[] } }>('query { teams { nodes { id key name } } }');
+    return data.teams.nodes;
+  }
+
   async createActivity(input: AgentActivityInput): Promise<string> {
     const data = await this.graphql<{ agentActivityCreate: { success: boolean; agentActivity: { id: string } } }>(
       `mutation($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success agentActivity { id } } }`,
@@ -202,6 +217,30 @@ export class LinearClient {
     );
     if (!data.issueUpdate.success) throw new LinearApiError('issueUpdate(delegateId) failed', 200);
   }
+}
+
+/**
+ * Turn what an operator pastes — a team key from a Linear URL or a raw team id —
+ * into the ids the config must hold. An exact id matches first, then a key
+ * regardless of case; duplicates collapse and the given order is kept. An
+ * unknown token is an error naming it and listing the teams the app can see:
+ * a private team the app has not joined shows up here as unknown.
+ */
+export function resolveTeams(teams: LinearTeam[], tokens: string[]): string[] {
+  const byId = new Map(teams.map(t => [t.id, t.id]));
+  const byKey = new Map(teams.map(t => [t.key.toLowerCase(), t.id]));
+  const out: string[] = [];
+  for (const token of tokens) {
+    const id = byId.get(token) ?? byKey.get(token.toLowerCase());
+    if (!id) {
+      const visible = teams.map(t => `${t.key} (${t.name})`).join(', ') || 'none';
+      throw new Error(
+        `${token} is not a team this app can see (visible: ${visible}). A private team needs the app added to it.`,
+      );
+    }
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 const describe = (text: string): string => {

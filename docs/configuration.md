@@ -217,9 +217,13 @@ is a team workflow state, by name):
 
 A repository may list several teams (one checkout, several teams); a team
 belongs to at most one project. Linear *projects* (epics) play no routing
-part. Several lanes may select the same app. `workspaceId` is optional and
-only needed when the installation spans Linear workspaces. The mapped agent is
-resolved by OpenCode's ordinary discovery for the worker's directory.
+part. `lanes` defaults to empty: the listener delegates nothing until you map
+a lane, while hand delegation always works. Several lanes may select the same
+app. `workspaceId` is optional and only needed when the installation spans
+Linear workspaces. `aivi projects add <git-url> --linear PEC` and
+`aivi projects create` write `teams` for you, resolving the team key Linear's
+URLs show to its id. The mapped agent is resolved by OpenCode's ordinary
+discovery for the worker's directory.
 
 Credentials are never in JSON: each app reads `LINEAR_<APP>_CLIENT_ID`,
 `LINEAR_<APP>_CLIENT_SECRET` and `LINEAR_<APP>_WEBHOOK_SECRET` from the

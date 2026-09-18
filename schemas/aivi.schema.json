@@ -261,7 +261,8 @@
                 }
               },
               "lanes": {
-                "description": "Workflow state name → app id: issues entering that state are worked by that app.",
+                "description": "Workflow state name → app id: issues entering that state are worked by that app. Empty by default: the listener delegates nothing until you map a lane.",
+                "default": {},
                 "type": "object",
                 "propertyNames": {
                   "type": "string",
@@ -274,8 +275,7 @@
               }
             },
             "required": [
-              "teams",
-              "lanes"
+              "teams"
             ],
             "additionalProperties": false
           }

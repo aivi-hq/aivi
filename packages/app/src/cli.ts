@@ -4,8 +4,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs, parseEnv } from 'node:util';
-import type { LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
+import type { LinearConfig, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
 import {
   addProject,
   createLogger,
@@ -13,16 +14,19 @@ import {
   jobSchema,
   loadConfig,
   parseDue,
+  projectIdFromUrl,
   projectSummaries,
   purgeProject,
   removeProject,
   reportSchema,
   selectSources,
   taskSchema,
+  writeProjectLinear,
 } from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
 import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
+import type { LinearClient } from '@aivi/linear';
 import { z } from 'zod';
 
 const usage = `aivi <command>
@@ -34,6 +38,10 @@ const usage = `aivi <command>
   sources [--project ID]       List configured knowledge sources
   projects list                Projects: the directories of <home>/projects, with their sources; removed ones keep their memory
   projects add URL [--id ID]   git clone into <home>/projects/<id>/source; that is the whole registration
+                               [--linear KEY_OR_ID[,…] [--app ID]] also writes projects.<id>.linear.teams,
+                               resolving Linear team keys (PEC) to their ids before anything is cloned
+  projects create [URL]        the one interactive command: asks URL, id, app and teams, then does
+                               projects add; every flag given skips its prompt
   projects remove ID           Delete the checkout; memory stays and the project is listed as removed
   projects purge ID --confirm  Delete the project's memory (and checkout); without --confirm only shows what would go
   knowledge search QUERY       Search via the running host [--project ID --core-only --no-core --limit N]
@@ -82,6 +90,8 @@ async function main(): Promise<void> {
       'no-core': { type: 'boolean' },
       project: { type: 'string', multiple: true },
       id: { type: 'string' },
+      linear: { type: 'string' },
+      app: { type: 'string' },
       key: { type: 'string' },
       at: { type: 'string' },
       cron: { type: 'string' },
@@ -122,6 +132,61 @@ async function main(): Promise<void> {
       );
   };
 
+  // The one interactive command: everything `projects add --linear` takes as a
+  // flag is asked here, and a flag that is given skips its prompt. The core
+  // calls — resolve teams, clone, write the config — are the same ones.
+  const projectsCreate = async (): Promise<void> => {
+    if (!linear || !loaded.config.linear) {
+      throw new Error(
+        'The Linear module is not configured in aivi.json (no `linear` block), so there is nothing to set up',
+      );
+    }
+    const linearConfig = loaded.config.linear;
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const url = (argument ?? (await rl.question('Repository URL? '))).trim();
+      if (!url) throw new Error('Provide a git URL');
+      const suggested = projectIdFromUrl(url);
+      const id = (values.id ?? (await rl.question(`Project id? [${suggested}] `))).trim() || suggested;
+      const appIds = Object.keys(linearConfig.apps);
+      let app = values.app;
+      if (!app && appIds.length > 1) {
+        appIds.forEach((name, i) => {
+          console.log(`  ${i + 1}) ${name}`);
+        });
+        const answer = (await rl.question('Ask which Linear app for teams? ')).trim();
+        app = appIds[Number(answer) - 1] ?? answer;
+      }
+      const client = await linearClientFor(linear, linearConfig, app, log);
+      const teams = await client.listTeams();
+      if (!teams.length) {
+        throw new Error(
+          'That app sees no teams: a private team needs the app added to it before aivi can work on its issues',
+        );
+      }
+      console.log(`Teams ${id} may work:`);
+      teams.forEach((team, i) => {
+        console.log(`  ${i + 1}) ${team.key} — ${team.name}  (${team.id})`);
+      });
+      const picked = (values.linear ?? (await rl.question(`Pick the teams for ${id} (space-separated)? `))).trim();
+      const tokens = picked.split(/[\s,]+/).filter(Boolean);
+      if (!tokens.length) throw new Error('Pick at least one team');
+      // A number selects from the list; anything else resolves as a team id or key.
+      const teamIds = linear.resolveTeams(
+        teams,
+        tokens.map(token => (/^\d+$/.test(token) ? (teams[Number(token) - 1]?.id ?? token) : token)),
+      );
+      const added = await addProject(configPath, url, { id });
+      const written = await writeProjectLinear(configPath, id, teamIds);
+      print({ ...added, linear: written });
+      console.error(
+        `Next: restart \`aivi serve\` to index it; projects.${id}.linear.lanes maps lane → app for the listener; the HITL label \`${linearConfig.humanLabel}\` must exist in each mapped team.`,
+      );
+    } finally {
+      rl.close();
+    }
+  };
+
   // A modules block that is present and not false enables its module; the schema checked its pool.
   const discordConfig = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
   const discord = discordConfig ? await import('@aivi/channel-discord') : undefined;
@@ -152,11 +217,40 @@ async function main(): Promise<void> {
       return;
     case 'projects add': {
       if (!argument) throw new Error('Provide a git URL');
+      const tokens = values.linear
+        ? values.linear
+            .split(',')
+            .map(token => token.trim())
+            .filter(Boolean)
+        : [];
+      if (values.linear && !tokens.length) throw new Error('--linear wants at least one team key or id');
+      // Resolve the teams before cloning: a wrong key must not leave a half-added project.
+      let teamIds: string[] = [];
+      if (tokens.length) {
+        if (!linear || !loaded.config.linear) {
+          throw new Error(
+            'The Linear module is not configured in aivi.json (no `linear` block), so there is no app to ask for teams',
+          );
+        }
+        const client = await linearClientFor(linear, loaded.config.linear, values.app, log);
+        teamIds = linear.resolveTeams(await client.listTeams(), tokens);
+      }
       const added = await addProject(configPath, argument, values.id ? { id: values.id } : {});
-      print(added);
+      if (teamIds.length) {
+        const written = await writeProjectLinear(configPath, added.id, teamIds);
+        print({ ...added, linear: written });
+        console.error(
+          written.lanes
+            ? 'Teams written; the lanes stay as configured.'
+            : `Teams written. Until projects.${added.id}.linear.lanes maps lane → app the listener delegates nothing; hand delegation works.`,
+        );
+      } else print(added);
       console.error('Restart `aivi serve` to index it; the host reads the projects directory at startup.');
       return;
     }
+    case 'projects create':
+      await projectsCreate();
+      return;
     case 'projects remove':
       if (!argument) throw new Error('Provide a project id');
       print(await removeProject(configPath, argument));
@@ -452,6 +546,23 @@ async function createResources(loaded: LoadedConfig, once: boolean, log: Logger)
       ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser)
       : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };
+}
+
+/** The client to ask for teams: the one configured app, or the one `--app` names.
+ * requireLinearSecrets names the missing LINEAR_* variables when secrets are absent. */
+async function linearClientFor(
+  linear: typeof import('@aivi/linear'),
+  config: LinearConfig,
+  app: string | undefined,
+  log: Logger,
+): Promise<LinearClient> {
+  const ids = Object.keys(config.apps);
+  if (!ids.length) throw new Error('linear.apps is empty: configure a Linear app before pointing projects at teams');
+  if (ids.length > 1 && !app) throw new Error(`Several Linear apps are configured (${ids.join(', ')}): pass --app`);
+  const id = app ?? ids[0]!;
+  if (!config.apps[id]) throw new Error(`Unknown Linear app ${id}. Configured: ${ids.join(', ')}`);
+  const creds = linear.requireLinearSecrets(config).find(cred => cred.id === id);
+  return new linear.LinearClient(creds!, { log });
 }
 
 function hostUrl(loaded: LoadedConfig): string {

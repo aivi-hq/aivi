@@ -119,9 +119,13 @@ reviewer app are two apps):
    persisted.
 4. In `aivi.json`: `linear.apps.<id>.agent` naming the OpenCode agent, and
    `projects.<id>.linear.teams` (the Linear team ids this repository works)
-   with `lanes`. A repository may map several teams to one checkout; a team
-   belongs to one project only. The HITL label must exist in **each** mapped
-   team — labels are per team in Linear.
+   with `lanes` (empty by default: the listener delegates nothing until you
+   map a lane; hand delegation always works). A repository may map several
+   teams to one checkout; a team belongs to one project only.
+   `aivi projects add <git-url> --linear PEC` clones and writes the `teams`
+   itself, resolving the team key you see in Linear's URLs to its id — or run
+   `aivi projects create`, which asks you everything. The HITL label must
+   exist in **each** mapped team — labels are per team in Linear.
 5. The agent file: `<home>/.opencode/agents/<agent>.md`, or the repository's
    own `.opencode/agents/<agent>.md` to override it per project.
 6. **Reachability.** Linear must reach the listener over HTTPS. `aivi serve`

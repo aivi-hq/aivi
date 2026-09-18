@@ -330,6 +330,21 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
 - [ ] Live gate: the data app carrying Issues; one misrouted delivery seen in
       the log.
 
+### 9. Team setup from the CLI (2026-09-18)
+
+- [x] `LinearClient.listTeams` and the pure `resolveTeams` (exact ids first,
+      then case-insensitive keys; an unknown token lists what the app can see).
+      `projects add [--linear KEY_OR_ID[,…] [--app ID]]` resolves **before
+      cloning** and writes `projects.<id>.linear.teams`; `lanes` gained an
+      empty default so teams alone is a valid entry, and the command says out
+      loud when lanes are unset. `projects create` asks URL, id, app and teams
+      interactively — the CLI's one interactive command; a flag given skips
+      its prompt.
+- [ ] Live gate: `projects add <git-url> --linear PEC` against the real
+      workspace, then `projects create` once. Where **verify 5** lands: a
+      private team the app cannot see is absent from `listTeams` and resolves
+      as "not a team this app can see". Record in roadmap.
+
 ## Later, deliberately
 
 - Graceful agent-first cleanup with deadlines

@@ -193,7 +193,10 @@ export const projectSchema = z.strictObject({
         .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
       lanes: z
         .record(z.string().min(1), id)
-        .describe('Workflow state name → app id: issues entering that state are worked by that app.'),
+        .default({})
+        .describe(
+          'Workflow state name → app id: issues entering that state are worked by that app. Empty by default: the listener delegates nothing until you map a lane.',
+        ),
     })
     .optional(),
 });

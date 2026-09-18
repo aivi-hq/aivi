@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { loadConfig, projectSummaries } from '../src/config.ts';
-import { addProject, projectIdFromUrl, purgeProject, removeProject } from '../src/projects.ts';
+import { addProject, projectIdFromUrl, purgeProject, removeProject, writeProjectLinear } from '../src/projects.ts';
 
 const run = promisify(execFile);
 
@@ -87,4 +87,36 @@ test('remove deletes the checkout and keeps memory; purge shows first and delete
   assert.equal(await stat(join(root, 'projects/site')).catch(() => null), null);
   assert.deepEqual((await loadConfig(config)).projects, []);
   await assert.rejects(purgeProject(config, 'site', { confirm: true }), /Nothing to purge/);
+});
+
+test('writeProjectLinear writes teams, keeps everything else, and restores a config that stops loading', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-projects-linear-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, 'aivi.json');
+  await writeFile(config, `${JSON.stringify({ version: 1, knowledge: [{ id: 'company', path: 'kb' }] }, null, 2)}\n`);
+  await mkdir(join(root, 'projects/site/source'), { recursive: true });
+
+  const written = await writeProjectLinear(config, 'site', ['t-1', 't-2']);
+  assert.deepEqual(written, { id: 'site', teams: ['t-1', 't-2'] });
+  const raw = JSON.parse(await readFile(config, 'utf8'));
+  assert.deepEqual(raw.projects, { site: { linear: { teams: ['t-1', 't-2'] } } });
+  assert.deepEqual(raw.knowledge, [{ id: 'company', path: 'kb' }], 'the rest of the file is kept');
+
+  // An existing lanes block survives a rewrite of the teams; so do other projects' entries.
+  await mkdir(join(root, 'projects/other/source'), { recursive: true });
+  raw.linear = { apps: { dev: { agent: 'developer' } } };
+  raw.projects.site.linear.lanes = { 'In Progress': 'dev' };
+  raw.projects.other = { enabled: true };
+  await writeFile(config, JSON.stringify(raw, null, 2));
+  assert.deepEqual(await writeProjectLinear(config, 'site', ['t-3']), {
+    id: 'site',
+    teams: ['t-3'],
+    lanes: { 'In Progress': 'dev' },
+  });
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.other, { enabled: true });
+
+  await assert.rejects(writeProjectLinear(config, 'site', []), /at least one Linear team/);
+  const before = await readFile(config, 'utf8');
+  await assert.rejects(writeProjectLinear(config, 'site', ['']), /teams/, 'the schema rejects an empty team id');
+  assert.equal(await readFile(config, 'utf8'), before, 'a config that stopped loading is restored');
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { LinearApiError, LinearClient } from '../src/client.ts';
+import { LinearApiError, LinearClient, resolveTeams } from '../src/client.ts';
 
 interface Seen {
   path: string;
@@ -119,4 +119,33 @@ test('GraphQL errors and HTTP failures surface as LinearApiError; mutations chec
   const issue = await client.issue('i1');
   assert.deepEqual(issue.labels, [{ id: 'l', name: 'needs-human' }], 'label connection flattened');
   assert.equal(issue.branchName, 'me/eng-1-t');
+});
+
+test('listTeams asks for the teams this app can see', async t => {
+  const linear = mockLinear(seen =>
+    seen.body.includes('teams')
+      ? { status: 200, body: { data: { teams: { nodes: [{ id: 't-1', key: 'PEC', name: 'Peck Track' }] } } } }
+      : { status: 200, body: { data: {} } },
+  );
+  const baseUrl = await linear.start();
+  t.after(linear.stop);
+  const client = new LinearClient({ clientId: 'cid', clientSecret: 'sec' }, { baseUrl });
+  assert.deepEqual(await client.listTeams(), [{ id: 't-1', key: 'PEC', name: 'Peck Track' }]);
+  assert.match(linear.seen.find(s => s.path === '/graphql')!.body, /includeArchived|nodes \{ id key name \}/);
+});
+
+test('resolveTeams takes ids and keys alike; an unknown token lists what the app can see', () => {
+  const teams = [
+    { id: 't-1', key: 'PEC', name: 'Peck Track' },
+    { id: 't-2', key: 'WEB', name: 'Web & Docs' },
+  ];
+  assert.deepEqual(
+    resolveTeams(teams, ['t-2', 'pec', 'pec']),
+    ['t-2', 't-1'],
+    'ids match exactly, keys ignore case, duplicates collapse, order is kept',
+  );
+  assert.throws(
+    () => resolveTeams(teams, ['SEC']),
+    /SEC is not a team this app can see \(visible: PEC \(Peck Track\), WEB \(Web & Docs\)\)/,
+  );
 });
