@@ -10,4 +10,6 @@ node_modules/
 # The live aivi config is edited by aivi and its operator; only templates are tracked.
 aivi.json
 
+# The live home's projects are its own checkouts: never repo content, never linted.
+example/projects/
 example/state/
