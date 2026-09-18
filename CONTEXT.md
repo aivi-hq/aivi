@@ -171,6 +171,14 @@ runs in one process; adapters are optional modules with a start/stop contract.
   checkout); lanes, branch-name format and labels all live per Linear team,
   while a Linear *project* is the humans' epic with a completion date and
   aivi never consults it ([linear](docs/linear.md)).
+- **The lane map is a convention with per-project deviations.**
+  `projectDefaults.linear.lanes` is the company-wide base and a project wins
+  one lane at a time over it (merge, where `projectDefaults.knowledge`
+  replaces: a lane map is a lookup table, not a list); `null` marks a lane
+  humans work — written in the file, absent from the map the listener
+  consults. Deviations stay at project level; a per-team lane map is the
+  named escape hatch if two teams in one checkout ever want different
+  routing for the same lane name ([linear](docs/linear.md)).
 
 ## Where each fact lives
 

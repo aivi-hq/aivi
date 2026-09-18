@@ -345,6 +345,30 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
       private team the app cannot see is absent from `listTeams` and resolves
       as "not a team this app can see". Record in roadmap.
 
+### 10. Lane convention + interactive setup (2026-09-18)
+
+- [x] `projectDefaults.linear` (`lanes`, `workspaceId`): the company-wide
+      lane convention every Linear project inherits; a project wins one lane
+      at a time (merge, where knowledge replaces) and `null` marks a lane
+      humans work — written in the file, absent from the effective map
+      `loadConfig` hands on, so the listener needs no null check. `teams` is
+      never defaulted. `listTeams` now carries each team's workflow states;
+      completed and canceled ones are never offered as lanes.
+      `writeProjectLinear(path, id, { teams, lanes? })` writes lanes only when
+      given; `--lane "Dev:dev"` (shorthand `"Dev,Review:dev"`, split at the
+      last colon) and `--unlane "Review"` (no reserved words) work on both
+      setup commands and skip the interactive lane questions.
+      `projects create` is now a `@clack/prompts` flow (6-pkg MIT tree, chosen
+      over `@inquirer/prompts` by a live survey of the 2026 landscape): teams
+      multiselect with the id as per-option hint, a note showing the
+      convention, one select per lane it leaves open (apps, or leave it for
+      humans), spinners for the fetch and clone, and it refuses a non-TTY
+      stdin pointing at the flag form. The client's token logs are silent in
+      the setup commands unless `--log-level debug`.
+- [ ] Live gate: one interactive `projects create` against the real
+      workspace (still where **verify 5** lands, now with the lane questions)
+      and one `--lane`/`--unlane` write. Record in roadmap.
+
 ## Later, deliberately
 
 - Graceful agent-first cleanup with deadlines

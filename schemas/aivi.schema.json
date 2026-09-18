@@ -190,6 +190,38 @@
             ],
             "additionalProperties": false
           }
+        },
+        "linear": {
+          "description": "The lane convention for projects that do not map the lane themselves.",
+          "type": "object",
+          "properties": {
+            "lanes": {
+              "description": "The lane convention every Linear project gets unless it maps the lane itself: workflow state name → app id, or null for a lane humans work.",
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "minLength": 1
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]*$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "workspaceId": {
+              "description": "Linear organization id every project gets unless it names its own.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -261,7 +293,7 @@
                 }
               },
               "lanes": {
-                "description": "Workflow state name → app id: issues entering that state are worked by that app. Empty by default: the listener delegates nothing until you map a lane.",
+                "description": "Workflow state name → app id: issues entering that state are worked by that app. `null` marks a human lane: the gateway never runs on it, and it overrides a projectDefaults lane. Empty by default: the listener delegates nothing until you map a lane.",
                 "default": {},
                 "type": "object",
                 "propertyNames": {
@@ -269,8 +301,15 @@
                   "minLength": 1
                 },
                 "additionalProperties": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_-]*$"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]*$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               }
             },

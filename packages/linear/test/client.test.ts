@@ -121,23 +121,56 @@ test('GraphQL errors and HTTP failures surface as LinearApiError; mutations chec
   assert.equal(issue.branchName, 'me/eng-1-t');
 });
 
-test('listTeams asks for the teams this app can see', async t => {
+test('listTeams asks for the teams this app can see and flattens the states connection', async t => {
   const linear = mockLinear(seen =>
     seen.body.includes('teams')
-      ? { status: 200, body: { data: { teams: { nodes: [{ id: 't-1', key: 'PEC', name: 'Peck Track' }] } } } }
+      ? {
+          status: 200,
+          body: {
+            data: {
+              teams: {
+                nodes: [
+                  {
+                    id: 't-1',
+                    key: 'PEC',
+                    name: 'Peck Track',
+                    states: {
+                      nodes: [
+                        { id: 's-1', name: 'Todo', type: 'unstarted' },
+                        { id: 's-2', name: 'In Progress', type: 'started' },
+                        { id: 's-3', name: 'Done', type: 'completed' },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }
       : { status: 200, body: { data: {} } },
   );
   const baseUrl = await linear.start();
   t.after(linear.stop);
   const client = new LinearClient({ clientId: 'cid', clientSecret: 'sec' }, { baseUrl });
-  assert.deepEqual(await client.listTeams(), [{ id: 't-1', key: 'PEC', name: 'Peck Track' }]);
-  assert.match(linear.seen.find(s => s.path === '/graphql')!.body, /includeArchived|nodes \{ id key name \}/);
+  assert.deepEqual(await client.listTeams(), [
+    {
+      id: 't-1',
+      key: 'PEC',
+      name: 'Peck Track',
+      states: [
+        { id: 's-1', name: 'Todo', type: 'unstarted' },
+        { id: 's-2', name: 'In Progress', type: 'started' },
+        { id: 's-3', name: 'Done', type: 'completed' },
+      ],
+    },
+  ]);
+  assert.match(linear.seen.find(s => s.path === '/graphql')!.body, /states \{ nodes \{ id name type \} \}/);
 });
 
 test('resolveTeams takes ids and keys alike; an unknown token lists what the app can see', () => {
   const teams = [
-    { id: 't-1', key: 'PEC', name: 'Peck Track' },
-    { id: 't-2', key: 'WEB', name: 'Web & Docs' },
+    { id: 't-1', key: 'PEC', name: 'Peck Track', states: [] },
+    { id: 't-2', key: 'WEB', name: 'Web & Docs', states: [] },
   ];
   assert.deepEqual(
     resolveTeams(teams, ['t-2', 'pec', 'pec']),

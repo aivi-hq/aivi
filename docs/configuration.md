@@ -40,6 +40,7 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, always with `AIVI_TOKEN` in its environment, so a new plugin build is live and the plugin can authenticate. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
+| `projectDefaults.linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
 | `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a project that is neither checked out nor remembered fails. `<home>/projects/<id>/memory` is each project's `memory` source |
 | `modules.discord` | Presence enables the Discord module; the block is its whole setup, `false` is an explicit off ([discord](discord.md)) |
 | `modules.slack` | Presence enables the Slack module; the block is its whole setup, `false` is an explicit off ([slack](slack.md)) |
@@ -204,11 +205,14 @@ is a team workflow state, by name):
 
 ```json
 {
+  "projectDefaults": {
+    "linear": { "lanes": { "Dev": "dev", "Review": "dev", "Triage": null } }
+  },
   "projects": {
     "website": {
       "linear": {
         "teams": ["linear-team-id"],
-        "lanes": { "In Progress": "dev", "Review": "review" }
+        "lanes": { "Review": "review", "Shipped": null }
       }
     }
   }
@@ -219,11 +223,19 @@ A repository may list several teams (one checkout, several teams); a team
 belongs to at most one project. Linear *projects* (epics) play no routing
 part. `lanes` defaults to empty: the listener delegates nothing until you map
 a lane, while hand delegation always works. Several lanes may select the same
-app. `workspaceId` is optional and only needed when the installation spans
-Linear workspaces. `aivi projects add <git-url> --linear PEC` and
-`aivi projects create` write `teams` for you, resolving the team key Linear's
-URLs show to its id. The mapped agent is resolved by OpenCode's ordinary
-discovery for the worker's directory.
+app; `null` marks a lane humans work — the gateway never runs it. Lanes merge
+one key at a time over `projectDefaults.linear.lanes` (where `knowledge`
+replaces: a lane map is a lookup table, not a list), so the example website
+works `Dev` with `dev` as the convention says, `Review` with `review` because
+the entry outvotes the convention, and leaves `Triage` and `Shipped` to
+people. `teams` is never defaulted: a team belongs to one project. `workspaceId` is optional and only needed when
+the installation spans Linear workspaces; `projectDefaults.linear.workspaceId`
+supplies it to every project that omits its own.
+`aivi projects add <git-url> --linear PEC` and `aivi projects create` write
+`teams` for you, resolving the team key Linear's URLs show to its id;
+`--lane "Dev:dev"` (shorthand `--lane "Dev,Review:dev"`) and
+`--unlane "Backlog"` write the lanes along with them. The mapped agent is
+resolved by OpenCode's ordinary discovery for the worker's directory.
 
 Credentials are never in JSON: each app reads `LINEAR_<APP>_CLIENT_ID`,
 `LINEAR_<APP>_CLIENT_SECRET` and `LINEAR_<APP>_WEBHOOK_SECRET` from the

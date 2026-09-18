@@ -57,11 +57,13 @@ export interface LinearAgentSession {
 }
 
 /** A team in the workspace: the `id` is what aivi's config holds, the `key`
- * is what Linear's URLs and issue identifiers show. */
+ * is what Linear's URLs and issue identifiers show. States drive the lane
+ * picker; `type` completed or canceled lanes are never offered for work. */
 export interface LinearTeam {
   id: string;
   key: string;
   name: string;
+  states: { id: string; name: string; type: string }[];
 }
 
 export class LinearApiError extends Error {
@@ -168,11 +170,19 @@ export class LinearClient {
     return data.viewer.id;
   }
 
-  /** The teams this app can see, archived excluded: the answer to "which id is PEC?".
-   * A private team the app has not joined is simply not in this list. */
+  /** The teams this app can see with their workflow states, archived excluded:
+   * the answer to "which id is PEC?" and "which lanes does PEC have?".
+   * Linear returns `states` as a connection; its `nodes` are flattened here. */
   async listTeams(): Promise<LinearTeam[]> {
-    const data = await this.graphql<{ teams: { nodes: LinearTeam[] } }>('query { teams { nodes { id key name } } }');
-    return data.teams.nodes;
+    const data = await this.graphql<{
+      teams: { nodes: { id: string; key: string; name: string; states: { nodes: LinearTeam['states'] } }[] };
+    }>('query { teams { nodes { id key name states { nodes { id name type } } } } }');
+    return data.teams.nodes.map(team => ({
+      id: team.id,
+      key: team.key,
+      name: team.name,
+      states: team.states.nodes,
+    }));
   }
 
   async createActivity(input: AgentActivityInput): Promise<string> {

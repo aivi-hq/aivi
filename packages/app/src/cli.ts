@@ -4,7 +4,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { parseArgs, parseEnv } from 'node:util';
 import type { LinearConfig, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
 import {
@@ -13,13 +12,16 @@ import {
   errorMessage,
   jobSchema,
   loadConfig,
+  PROJECT_ID,
   parseDue,
+  parseLaneFlags,
   projectIdFromUrl,
   projectSummaries,
   purgeProject,
   removeProject,
   reportSchema,
   selectSources,
+  silentLogger,
   taskSchema,
   writeProjectLinear,
 } from '@aivi/core';
@@ -27,6 +29,7 @@ import type { HostModule, HostResources } from '@aivi/host';
 import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
 import type { LinearClient } from '@aivi/linear';
+import * as p from '@clack/prompts';
 import { z } from 'zod';
 
 const usage = `aivi <command>
@@ -40,7 +43,9 @@ const usage = `aivi <command>
   projects add URL [--id ID]   git clone into <home>/projects/<id>/source; that is the whole registration
                                [--linear KEY_OR_ID[,…] [--app ID]] also writes projects.<id>.linear.teams,
                                resolving Linear team keys (PEC) to their ids before anything is cloned
-  projects create [URL]        the one interactive command: asks URL, id, app and teams, then does
+                               [--lane "Dev:dev"] [--lane "Dev,Review:dev"] [--unlane "Backlog"] write the
+                               lanes too; a lane unlaned is for humans, so the gateway never runs on it
+  projects create [URL]        the one interactive command: asks URL, id, app, teams and lanes, then does
                                projects add; every flag given skips its prompt
   projects remove ID           Delete the checkout; memory stays and the project is listed as removed
   projects purge ID --confirm  Delete the project's memory (and checkout); without --confirm only shows what would go
@@ -92,6 +97,8 @@ async function main(): Promise<void> {
       id: { type: 'string' },
       linear: { type: 'string' },
       app: { type: 'string' },
+      lane: { type: 'string', multiple: true },
+      unlane: { type: 'string', multiple: true },
       key: { type: 'string' },
       at: { type: 'string' },
       cron: { type: 'string' },
@@ -120,6 +127,9 @@ async function main(): Promise<void> {
   const loaded = await loadConfig(configPath);
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  // The Linear client logs each token fetch at info level; in the setup commands that noise
+  // sits between prompts, so the client stays silent unless --log-level debug asks for it.
+  const clientLog = values['log-level'] === 'debug' ? log : silentLogger;
   // The CLI writes to SQLite directly; the running host learns about it through this poke and nothing
   // else, so a poke that cannot be delivered is said out loud rather than swallowed.
   const poke = async () => {
@@ -141,50 +151,166 @@ async function main(): Promise<void> {
         'The Linear module is not configured in aivi.json (no `linear` block), so there is nothing to set up',
       );
     }
+    if (!process.stdin.isTTY)
+      throw new Error(
+        'projects create needs an interactive terminal; in a script use: aivi projects add <git-url> --linear <key-or-id> [--lane "Dev:dev"] [--unlane "Backlog"]',
+      );
     const linearConfig = loaded.config.linear;
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const url = (argument ?? (await rl.question('Repository URL? '))).trim();
-      if (!url) throw new Error('Provide a git URL');
-      const suggested = projectIdFromUrl(url);
-      const id = (values.id ?? (await rl.question(`Project id? [${suggested}] `))).trim() || suggested;
-      const appIds = Object.keys(linearConfig.apps);
-      let app = values.app;
-      if (!app && appIds.length > 1) {
-        appIds.forEach((name, i) => {
-          console.log(`  ${i + 1}) ${name}`);
-        });
-        const answer = (await rl.question('Ask which Linear app for teams? ')).trim();
-        app = appIds[Number(answer) - 1] ?? answer;
-      }
-      const client = await linearClientFor(linear, linearConfig, app, log);
-      const teams = await client.listTeams();
-      if (!teams.length) {
-        throw new Error(
-          'That app sees no teams: a private team needs the app added to it before aivi can work on its issues',
-        );
-      }
-      console.log(`Teams ${id} may work:`);
-      teams.forEach((team, i) => {
-        console.log(`  ${i + 1}) ${team.key} — ${team.name}  (${team.id})`);
+    // Every exit below this line is a clack screen: stop() ends the flow with
+    // nothing cloned or written; later failures say what survived.
+    const stop = (why: string): void => {
+      p.cancel(`Setup stopped: ${why}. Nothing was cloned or written.`);
+      process.exitCode = 1;
+    };
+    p.intro('aivi projects create');
+    const urlAnswer =
+      argument ?? (await p.text({ message: 'Repository URL to clone', placeholder: 'git@github.com:acme/site.git' }));
+    if (p.isCancel(urlAnswer)) return stop('no repository given');
+    const url = urlAnswer.trim();
+    if (!url) return stop('no repository given');
+    const suggested = projectIdFromUrl(url);
+    const idAnswer =
+      values.id ??
+      (await p.text({
+        message:
+          "Project id — aivi's name for this checkout: the directory <home>/projects/<id> and the projects.<id> entry in aivi.json. Linear never sees it.",
+        placeholder: suggested,
+        validate: value => {
+          const v = (value ?? '').trim();
+          if (!v || PROJECT_ID.test(v)) return undefined;
+          return 'Lowercase letters, digits, underscores or dashes; start with a letter';
+        },
+      }));
+    if (p.isCancel(idAnswer)) return stop('no project id given');
+    const id = idAnswer.trim() || suggested;
+    const appIds = Object.keys(linearConfig.apps);
+    let app = values.app;
+    if (!app && appIds.length > 1) {
+      const picked = await p.select({
+        message: 'Ask which Linear app for teams',
+        options: appIds.map(name => ({ value: name, label: name })),
       });
-      const picked = (values.linear ?? (await rl.question(`Pick the teams for ${id} (space-separated)? `))).trim();
-      const tokens = picked.split(/[\s,]+/).filter(Boolean);
-      if (!tokens.length) throw new Error('Pick at least one team');
-      // A number selects from the list; anything else resolves as a team id or key.
-      const teamIds = linear.resolveTeams(
-        teams,
-        tokens.map(token => (/^\d+$/.test(token) ? (teams[Number(token) - 1]?.id ?? token) : token)),
-      );
-      const added = await addProject(configPath, url, { id });
-      const written = await writeProjectLinear(configPath, id, teamIds);
-      print({ ...added, linear: written });
-      console.error(
-        `Next: restart \`aivi serve\` to index it; projects.${id}.linear.lanes maps lane → app for the listener; the HITL label \`${linearConfig.humanLabel}\` must exist in each mapped team.`,
-      );
-    } finally {
-      rl.close();
+      if (p.isCancel(picked)) return stop('no app chosen');
+      app = picked;
     }
+    const client = await linearClientFor(linear, linearConfig, app, clientLog);
+    const fetchSpinner = p.spinner();
+    fetchSpinner.start('Asking the app which teams it can see');
+    let teams: Awaited<ReturnType<typeof client.listTeams>>;
+    try {
+      teams = await client.listTeams();
+    } catch (error) {
+      fetchSpinner.error(errorMessage(error));
+      process.exitCode = 1;
+      return;
+    }
+    fetchSpinner.stop(`The app can see ${teams.length} team${teams.length === 1 ? '' : 's'}`);
+    if (!teams.length)
+      return stop('that app sees no teams — a private team needs the app added to it, or check its credentials');
+    let tokens: string[];
+    if (values.linear) {
+      tokens = values.linear
+        .split(/[\s,]+/)
+        .map(token => token.trim())
+        .filter(Boolean);
+      if (!tokens.length) return stop('--linear wants at least one team key or id');
+    } else {
+      const picked = await p.multiselect({
+        message: `Which of these teams may work in ${id}?`,
+        options: teams.map(team => ({ value: team.id, label: `${team.key} — ${team.name}`, hint: team.id })),
+        required: true,
+      });
+      if (p.isCancel(picked)) return stop('no teams picked');
+      tokens = picked;
+    }
+    let teamIds: string[];
+    try {
+      teamIds = linear.resolveTeams(teams, tokens);
+    } catch (error) {
+      return stop(errorMessage(error));
+    }
+    let lanes: Record<string, string | null>;
+    try {
+      lanes = parseLaneFlags(values.lane ?? [], values.unlane ?? []);
+    } catch (error) {
+      return stop(errorMessage(error));
+    }
+    if (!Object.keys(lanes).length) {
+      // The convention is the base; only the lanes it leaves open get asked,
+      // and a lane whose workflow state only ends work (done, canceled) never does.
+      const conventions = loaded.config.projectDefaults.linear?.lanes ?? {};
+      const mapped = Object.entries(conventions).filter(([, app]) => app !== null);
+      p.note(
+        mapped.length
+          ? mapped.map(([lane, appName]) => `${lane} → ${appName}`).join('\n')
+          : 'nothing yet — every lane of the picked teams gets asked',
+        'Lane convention (projectDefaults.linear.lanes)',
+      );
+      const selected = teams.filter(team => teamIds.includes(team.id));
+      const open = [
+        ...new Set(
+          selected.flatMap(team =>
+            team.states
+              .filter(state => state.type !== 'completed' && state.type !== 'canceled')
+              .map(state => state.name),
+          ),
+        ),
+      ].filter(name => !(name in conventions));
+      for (const lane of open) {
+        const from = selected
+          .filter(team => team.states.some(state => state.name === lane))
+          .map(team => team.key)
+          .join(', ');
+        const choice = await p.select<string | null>({
+          message: `Which Linear agent works the "${lane}" lane (of ${from})?`,
+          options: [
+            ...Object.entries(linearConfig.apps).map(
+              ([id, app]): { value: string | null; label: string; hint?: string } => ({
+                value: id,
+                label: `${id} — runs agent ${app.agent}`,
+                hint: 'the lane stores this id; it names the OpenCode agent, which the repository may redefine locally',
+              }),
+            ),
+            {
+              value: null,
+              label: 'leave it for humans',
+              hint: 'a human works this lane; the gateway never runs on it',
+            },
+          ],
+        });
+        if (p.isCancel(choice)) return stop('lane setup incomplete');
+        lanes[lane] = choice;
+      }
+      if (!open.length) p.note('the convention already covers every lane these teams work in', 'Lanes');
+    }
+    const cloneSpinner = p.spinner();
+    cloneSpinner.start(`Cloning ${url} into <home>/projects/${id}/source`);
+    let added: Awaited<ReturnType<typeof addProject>>;
+    try {
+      added = await addProject(configPath, url, { id });
+    } catch (error) {
+      cloneSpinner.error(errorMessage(error));
+      process.exitCode = 1;
+      return;
+    }
+    cloneSpinner.stop(`Cloned into ${added.directory}`);
+    let written: Awaited<ReturnType<typeof writeProjectLinear>>;
+    try {
+      written = await writeProjectLinear(configPath, id, {
+        teams: teamIds,
+        ...(Object.keys(lanes).length ? { lanes } : {}),
+      });
+    } catch (error) {
+      p.cancel(
+        `Cloned, but writing projects.${id}.linear failed: ${errorMessage(error)}. The old file is restored; the checkout stays.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    print({ ...added, linear: written });
+    p.outro(
+      `Next: restart \`aivi serve\` to index it; the HITL label \`${linearConfig.humanLabel}\` must exist in each mapped team. Hand delegation works whatever the lanes say.`,
+    );
   };
 
   // A modules block that is present and not false enables its module; the schema checked its pool.
@@ -224,6 +350,9 @@ async function main(): Promise<void> {
             .filter(Boolean)
         : [];
       if (values.linear && !tokens.length) throw new Error('--linear wants at least one team key or id');
+      const lanes = parseLaneFlags(values.lane ?? [], values.unlane ?? []);
+      if (Object.keys(lanes).length && !tokens.length)
+        throw new Error('--lane/--unlane need --linear: a lane routes to an app only inside a mapped team');
       // Resolve the teams before cloning: a wrong key must not leave a half-added project.
       let teamIds: string[] = [];
       if (tokens.length) {
@@ -232,16 +361,19 @@ async function main(): Promise<void> {
             'The Linear module is not configured in aivi.json (no `linear` block), so there is no app to ask for teams',
           );
         }
-        const client = await linearClientFor(linear, loaded.config.linear, values.app, log);
+        const client = await linearClientFor(linear, loaded.config.linear, values.app, clientLog);
         teamIds = linear.resolveTeams(await client.listTeams(), tokens);
       }
       const added = await addProject(configPath, argument, values.id ? { id: values.id } : {});
       if (teamIds.length) {
-        const written = await writeProjectLinear(configPath, added.id, teamIds);
+        const written = await writeProjectLinear(configPath, added.id, {
+          teams: teamIds,
+          ...(Object.keys(lanes).length ? { lanes } : {}),
+        });
         print({ ...added, linear: written });
         console.error(
           written.lanes
-            ? 'Teams written; the lanes stay as configured.'
+            ? 'Teams and lanes written; the listener works the mapped lanes and leaves the human ones alone.'
             : `Teams written. Until projects.${added.id}.linear.lanes maps lane → app the listener delegates nothing; hand delegation works.`,
         );
       } else print(added);

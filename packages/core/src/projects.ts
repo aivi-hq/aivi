@@ -39,18 +39,20 @@ export async function addProject(
 }
 
 /**
- * Point a project at Linear teams: writes `projects.<id>.linear.teams` and
- * touches nothing else — an existing `lanes` and every other part of the file
- * stay as they were. The written file must load: if it does not, the previous
- * bytes are restored and the error stands. The result is what got written.
+ * Point a project at Linear teams, and optionally its lanes: writes
+ * `projects.<id>.linear.teams` (and `lanes` when given) and touches nothing
+ * else — every other part of the file stays as it was, an existing `lanes`
+ * included when none is passed. The written file must load: if it does not,
+ * the previous bytes are restored and the error stands. The result is what
+ * got written, human lanes (`null`) included.
  */
 export async function writeProjectLinear(
   configPath: string,
   id: string,
-  teams: string[],
-): Promise<{ id: string; teams: string[]; lanes?: Record<string, string> }> {
+  options: { teams: string[]; lanes?: Record<string, string | null> },
+): Promise<{ id: string; teams: string[]; lanes?: Record<string, string | null> }> {
   if (!PROJECT_ID.test(id)) throw new Error(`Project id "${id}" must match ${PROJECT_ID}`);
-  if (!teams.length) throw new Error('Set at least one Linear team');
+  if (!options.teams.length) throw new Error('Set at least one Linear team');
   const before = await readFile(configPath, 'utf8');
   const raw = JSON.parse(before) as Record<string, unknown>;
   const projects = (raw.projects ?? {}) as Record<string, unknown>;
@@ -59,7 +61,8 @@ export async function writeProjectLinear(
   projects[id] = entry;
   const linear = (entry.linear ?? {}) as Record<string, unknown>;
   entry.linear = linear;
-  linear.teams = teams;
+  linear.teams = options.teams;
+  if (options.lanes) linear.lanes = options.lanes;
   await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
   try {
     await loadConfig(configPath);
@@ -67,8 +70,36 @@ export async function writeProjectLinear(
     await writeFile(configPath, before);
     throw error;
   }
-  const lanes = linear.lanes as Record<string, string> | undefined;
-  return { id, teams, ...(lanes ? { lanes } : {}) };
+  const lanes = linear.lanes as Record<string, string | null> | undefined;
+  return { id, teams: options.teams, ...(lanes ? { lanes } : {}) };
+}
+
+/**
+ * The `--lane`/`--unlane` flags as a lane map, exactly what writeProjectLinear
+ * writes. Each `--lane` is `LANE[,LANE…]:APP` — split at the *last* colon, so
+ * a lane name may hold one; each `--unlane` is a lane to mark for humans
+ * (`null`, a separate flag so no word is reserved). A lane given both ways is
+ * an error.
+ */
+export function parseLaneFlags(lanes: string[], unlanes: string[]): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const entry of lanes) {
+    const at = entry.lastIndexOf(':');
+    const app = at < 0 ? '' : entry.slice(at + 1).trim();
+    if (!app || at <= 0) throw new Error(`--lane "${entry}" must read LANE:APP, e.g. --lane "Dev:dev"`);
+    for (const lane of entry.slice(0, at).split(',')) {
+      const name = lane.trim();
+      if (!name) throw new Error(`--lane "${entry}" has an empty lane name`);
+      out[name] = app;
+    }
+  }
+  for (const entry of unlanes) {
+    const name = entry.trim();
+    if (!name) throw new Error('--unlane needs a lane name');
+    if (out[name] !== undefined) throw new Error(`Lane "${name}" is given both --lane and --unlane; choose one`);
+    out[name] = null;
+  }
+  return out;
 }
 
 /**

@@ -14,6 +14,7 @@
     "@aivi/host": "0.1.0",
     "@aivi/knowledge": "0.1.0",
     "@aivi/linear": "0.1.0",
+    "@clack/prompts": "1.8.1",
     "zod": "4.1.13"
   }
 }

@@ -6,7 +6,14 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { loadConfig, projectSummaries } from '../src/config.ts';
-import { addProject, projectIdFromUrl, purgeProject, removeProject, writeProjectLinear } from '../src/projects.ts';
+import {
+  addProject,
+  parseLaneFlags,
+  projectIdFromUrl,
+  purgeProject,
+  removeProject,
+  writeProjectLinear,
+} from '../src/projects.ts';
 
 const run = promisify(execFile);
 
@@ -96,7 +103,7 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
   await writeFile(config, `${JSON.stringify({ version: 1, knowledge: [{ id: 'company', path: 'kb' }] }, null, 2)}\n`);
   await mkdir(join(root, 'projects/site/source'), { recursive: true });
 
-  const written = await writeProjectLinear(config, 'site', ['t-1', 't-2']);
+  const written = await writeProjectLinear(config, 'site', { teams: ['t-1', 't-2'] });
   assert.deepEqual(written, { id: 'site', teams: ['t-1', 't-2'] });
   const raw = JSON.parse(await readFile(config, 'utf8'));
   assert.deepEqual(raw.projects, { site: { linear: { teams: ['t-1', 't-2'] } } });
@@ -108,15 +115,53 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
   raw.projects.site.linear.lanes = { 'In Progress': 'dev' };
   raw.projects.other = { enabled: true };
   await writeFile(config, JSON.stringify(raw, null, 2));
-  assert.deepEqual(await writeProjectLinear(config, 'site', ['t-3']), {
+  assert.deepEqual(await writeProjectLinear(config, 'site', { teams: ['t-3'] }), {
     id: 'site',
     teams: ['t-3'],
     lanes: { 'In Progress': 'dev' },
   });
   assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.other, { enabled: true });
 
-  await assert.rejects(writeProjectLinear(config, 'site', []), /at least one Linear team/);
+  // Given lanes are written as they are, human lanes included.
+  assert.deepEqual(await writeProjectLinear(config, 'site', { teams: ['t-4'], lanes: { Dev: 'dev', Triage: null } }), {
+    id: 'site',
+    teams: ['t-4'],
+    lanes: { Dev: 'dev', Triage: null },
+  });
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site.linear.lanes, {
+    Dev: 'dev',
+    Triage: null,
+  });
+
+  await assert.rejects(writeProjectLinear(config, 'site', { teams: [] }), /at least one Linear team/);
   const before = await readFile(config, 'utf8');
-  await assert.rejects(writeProjectLinear(config, 'site', ['']), /teams/, 'the schema rejects an empty team id');
+  await assert.rejects(
+    writeProjectLinear(config, 'site', { teams: [''] }),
+    /teams/,
+    'the schema rejects an empty team id',
+  );
   assert.equal(await readFile(config, 'utf8'), before, 'a config that stopped loading is restored');
+  await assert.rejects(
+    writeProjectLinear(config, 'site', { teams: ['t-5'], lanes: { Dev: 'ghost' } }),
+    /unknown Linear app ghost/,
+    'lanes are checked by the load before they stand',
+  );
+  assert.equal(await readFile(config, 'utf8'), before, 'a rejected lane write is restored too');
+});
+
+test('lane flags read as a lane map: shorthand, human lanes, colons kept', () => {
+  assert.deepEqual(parseLaneFlags(['Dev:dev', 'Review,Build:review'], ['Backlog']), {
+    Dev: 'dev',
+    Review: 'review',
+    Build: 'review',
+    Backlog: null,
+  });
+  assert.deepEqual(parseLaneFlags(['Stand:up:dev'], []), { 'Stand:up': 'dev' }, 'split at the last colon');
+  assert.deepEqual(parseLaneFlags([], []), {});
+  assert.throws(() => parseLaneFlags(['Dev'], []), /must read LANE:APP/);
+  assert.throws(() => parseLaneFlags(['Dev:'], []), /must read LANE:APP/);
+  assert.throws(() => parseLaneFlags([':dev'], []), /must read LANE:APP/);
+  assert.throws(() => parseLaneFlags(['Dev, :dev'], []), /empty lane name/);
+  assert.throws(() => parseLaneFlags(['Dev:dev'], ['Dev']), /both --lane and --unlane/);
+  assert.throws(() => parseLaneFlags([], ['  ']), /--unlane needs a lane name/);
 });

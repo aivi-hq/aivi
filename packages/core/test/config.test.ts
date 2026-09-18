@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -309,6 +309,50 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
     false,
   );
   assert.equal(configSchema.safeParse({ version: 1, projects: { 'Bad Id': {} } }).success, false);
+});
+
+test('projectDefaults.linear.lanes is the base; a project wins one lane at a time, and null means humans work it', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-lanes-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'projects/site/source'), { recursive: true });
+  const write = (extra: Record<string, unknown>) =>
+    writeFile(
+      join(root, 'aivi.json'),
+      JSON.stringify({
+        version: 1,
+        linear: { apps: { dev: { agent: 'developer' }, review: { agent: 'reviewer' } } },
+        ...extra,
+      }),
+    );
+  await write({
+    projectDefaults: { linear: { lanes: { Dev: 'dev', Review: 'dev', Triage: null }, workspaceId: 'ws-default' } },
+    projects: { site: { linear: { teams: ['t-1'], lanes: { Review: 'review', Shipped: null } } } },
+  });
+  const routing = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
+  assert.deepEqual(
+    routing.lanes,
+    { Dev: 'dev', Review: 'review' },
+    'the convention is the base, the entry wins per lane, and human lanes are absent from the map the listener consults',
+  );
+  assert.equal(routing.workspaceId, 'ws-default', 'workspaceId falls back to the convention');
+  const raw = JSON.parse(await readFile(join(root, 'aivi.json'), 'utf8'));
+  assert.equal(raw.projects.site.linear.lanes.Shipped, null, 'the file keeps the human lanes');
+
+  // A bare linear entry gets the whole convention, workspaceId included.
+  await write({
+    projectDefaults: { linear: { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
+    projects: { site: { linear: { teams: ['t-1'] } } },
+  });
+  const bare = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
+  assert.deepEqual(bare.lanes, { Dev: 'dev' }, 'the convention applies untouched when the project maps nothing');
+  assert.equal(bare.workspaceId, 'ws-default');
+
+  // A default lane naming an unknown app fails the load of every project that inherits it.
+  await write({
+    projectDefaults: { linear: { lanes: { Dev: 'ghost' } } },
+    projects: { site: { linear: { teams: ['t-1'] } } },
+  });
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /site refers to unknown Linear app ghost/);
 });
 
 test('calendar calculations use the configured timezone across daylight saving changes', () => {

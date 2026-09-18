@@ -16,7 +16,7 @@ behaviour and setup; the plan and what is still to come are in
 | delegate | `Issue.delegate`: the app working the issue while the human assignee stays responsible |
 | agent session | Linear's unit of agent work on an issue; aivi treats each as one conversation, id `<app>:<agent session id>` |
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `response` (the answer) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
-| lane | A team workflow state by name; `projects.<id>.linear.lanes` maps lane → app for the listener |
+| lane | A team workflow state by name; `projects.<id>.linear.lanes` maps lane → app for the listener, `null` leaves it to humans |
 | listener | `linear.listener: true`: aivi delegates an issue that enters a mapped lane to that lane's app and starts its session; off, only what people do in Linear starts a worker |
 | data receiver | one Linear app carrying the workspace's **data change** webhooks to `POST /v1/linear/webhooks/data` (bare `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET`/`LINEAR_WEBHOOK_SECRET`); it has no agent and runs nothing — lane and label changes arrive here, app events on each app's own route |
 | worker | The OpenCode session for one agent session: the app's agent, in `<home>/projects/<id>/worktrees/<agent session>`, kept for the whole run |
@@ -120,12 +120,15 @@ reviewer app are two apps):
 4. In `aivi.json`: `linear.apps.<id>.agent` naming the OpenCode agent, and
    `projects.<id>.linear.teams` (the Linear team ids this repository works)
    with `lanes` (empty by default: the listener delegates nothing until you
-   map a lane; hand delegation always works). A repository may map several
-   teams to one checkout; a team belongs to one project only.
-   `aivi projects add <git-url> --linear PEC` clones and writes the `teams`
-   itself, resolving the team key you see in Linear's URLs to its id — or run
-   `aivi projects create`, which asks you everything. The HITL label must
-   exist in **each** mapped team — labels are per team in Linear.
+   map a lane; hand delegation always works; `null` marks a lane humans
+   work). `projectDefaults.linear.lanes` is the company-wide convention the
+   entries merge over, one lane at a time. A repository may map several teams
+   to one checkout; a team belongs to one project only.
+   `aivi projects add <git-url> --linear PEC --lane "Dev:dev" --unlane Triage`
+   clones and writes the `teams` and lanes itself, resolving the team key you
+   see in Linear's URLs to its id — or run `aivi projects create`, which shows
+   the convention and asks only for the lanes it leaves open. The HITL label
+   must exist in **each** mapped team — labels are per team in Linear.
 5. The agent file: `<home>/.opencode/agents/<agent>.md`, or the repository's
    own `.opencode/agents/<agent>.md` to override it per project.
 6. **Reachability.** Linear must reach the listener over HTTPS. `aivi serve`

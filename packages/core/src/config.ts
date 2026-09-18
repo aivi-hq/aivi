@@ -192,10 +192,10 @@ export const projectSchema = z.strictObject({
         .min(1)
         .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
       lanes: z
-        .record(z.string().min(1), id)
+        .record(z.string().min(1), id.nullable())
         .default({})
         .describe(
-          'Workflow state name → app id: issues entering that state are worked by that app. Empty by default: the listener delegates nothing until you map a lane.',
+          'Workflow state name → app id: issues entering that state are worked by that app. `null` marks a human lane: the gateway never runs on it, and it overrides a projectDefaults lane. Empty by default: the listener delegates nothing until you map a lane.',
         ),
     })
     .optional(),
@@ -473,6 +473,22 @@ export const configSchema = z
           .array(source)
           .default([...DEFAULT_PROJECT_KNOWLEDGE])
           .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
+        linear: z
+          .strictObject({
+            lanes: z
+              .record(z.string().min(1), id.nullable())
+              .default({})
+              .describe(
+                'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → app id, or null for a lane humans work.',
+              ),
+            workspaceId: z
+              .string()
+              .min(1)
+              .optional()
+              .describe('Linear organization id every project gets unless it names its own.'),
+          })
+          .optional()
+          .describe('The lane convention for projects that do not map the lane themselves.'),
       })
       .default({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] })
       .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
@@ -749,13 +765,21 @@ export interface KnowledgeSource {
   scope: 'core' | 'project';
   projectId?: string;
 }
+/** The project's Linear routing as it takes effect: `lanes` is the merge of
+ * `projectDefaults.linear.lanes` and the entry's own, entry winning one key at
+ * a time, with the human lanes (`null`) filtered out — those live in the file. */
+export interface ProjectLinear {
+  workspaceId?: string;
+  teams: string[];
+  lanes: Record<string, string>;
+}
 export interface Project {
   id: string;
   /** The clean checkout: `<home>/projects/<id>/source`; absent on disk when `removed`. `projectLayout(dirname(directory))` names the rest. */
   directory: string;
   /** The checkout is gone but `memory/` remains: still listed and searchable until purged. */
   removed?: true;
-  linear?: NonNullable<z.infer<typeof projectSchema>['linear']>;
+  linear?: ProjectLinear;
 }
 export interface LoadedConfig {
   config: Config;
@@ -857,14 +881,25 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
       for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
         sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
     sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
-    for (const app of Object.values(entry.linear?.lanes ?? {})) {
-      if (!config.linear?.apps[app]) throw new Error(`Project ${projectId} refers to unknown Linear app ${app}`);
+    // Lanes merge per lane — the convention is the base and the entry wins one
+    // key at a time — and `null` means a human works the lane, so it is absent
+    // from the map the listener consults while it stays written in the file.
+    let linear: ProjectLinear | undefined;
+    if (entry.linear) {
+      const merged = { ...(config.projectDefaults.linear?.lanes ?? {}), ...entry.linear.lanes };
+      const lanes: Record<string, string> = {};
+      for (const [lane, app] of Object.entries(merged)) if (app) lanes[lane] = app;
+      const workspaceId = entry.linear.workspaceId ?? config.projectDefaults.linear?.workspaceId;
+      linear = { teams: entry.linear.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
+      for (const app of Object.values(lanes)) {
+        if (!config.linear?.apps[app]) throw new Error(`Project ${projectId} refers to unknown Linear app ${app}`);
+      }
     }
     projects.push({
       id: projectId,
       directory: layout.source,
       ...(removed ? { removed: true } : {}),
-      ...(entry.linear ? { linear: entry.linear } : {}),
+      ...(linear ? { linear } : {}),
     });
   }
   for (const job of config.jobs) {
