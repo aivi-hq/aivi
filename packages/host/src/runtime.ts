@@ -96,7 +96,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       if (!deps.knowledge) throw new Error('Knowledge service is not available');
       return { state: 'succeeded', result: await deps.knowledge.index() };
     },
-    'projects.sync': async (run, context) => {
+    'projects.sync': async (_run, context) => {
       const projects = await syncProjects(loaded.projects, context.signal);
       const updated = projects.filter(p => p.state === 'updated').map(p => p.id);
       for (const p of projects)
@@ -104,7 +104,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       const indexed = updated.length && deps.knowledge ? await deps.knowledge.index() : undefined;
       return { state: 'succeeded', result: { projects, ...(indexed !== undefined ? { indexed } : {}) } };
     },
-    'runs.prune': operation('runs.prune', runsPruneArgsSchema, async (run, context, args) => {
+    'runs.prune': operation('runs.prune', runsPruneArgsSchema, async (_run, _context, args) => {
       const cutoff = Date.now() - args.olderThanDays * 86_400_000;
       return { state: 'succeeded', result: { olderThan: new Date(cutoff).toISOString(), ...deps.store.prune(cutoff) } };
     }),

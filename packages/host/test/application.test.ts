@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { configSchema, jobSchema, taskSchema } from '@aivi/core';
+import { configSchema, jobSchema } from '@aivi/core';
 import type { HostModule, HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
 import { ConfigurationError } from '../src/modules.ts';

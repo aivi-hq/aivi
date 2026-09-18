@@ -56,9 +56,9 @@ const usage = `aivi <command>
   jobs add FILE                Add a job from a task file: a task, or {task, report?, resource?}
                                [--at ISO|30m|2h|1d | --cron EXPR --timezone TZ] [--title T --resource POOL --key ID]
                                Without --at or --cron it runs once, now
+  jobs run ID                  Queue one run of this job now, outside its schedule
   jobs pause|resume ID         Pause or resume an agent- or operator-created job
   jobs remove ID               Remove an agent- or operator-created job
-  jobs run ID                  Queue one run of a job now
   runs list                    Runs (operator output, including prompts) [--job ID --state S --limit N]
   runs show ID                 One run with its audit history
   runs cancel ID               Cancel a queued run only
@@ -537,6 +537,11 @@ async function main(): Promise<void> {
           await poke();
           return;
         }
+        case 'run':
+          if (!argument) break;
+          print(store.runJob(argument));
+          await poke();
+          return;
         case 'pause':
         case 'resume':
           if (!argument) break;
@@ -547,11 +552,6 @@ async function main(): Promise<void> {
           if (!argument) break;
           store.removeJob(argument);
           print({ removed: argument });
-          return;
-        case 'run':
-          if (!argument) break;
-          print(store.runJob(argument));
-          await poke();
           return;
       }
     }
