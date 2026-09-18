@@ -166,6 +166,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
   discarded, the lock released, worktree and session kept; only an
   unverifiable stop is `blocked`. One worker per project and per issue
   ([linear](docs/linear.md); what is left: [plans/linear.md](docs/plans/linear.md)).
+- **A repository is a Linear team.** Routing reads the issue's team only
+  (`projects.<id>.linear.teams`, a list: several teams may share one
+  checkout); lanes, branch-name format and labels all live per Linear team,
+  while a Linear *project* is the humans' epic with a completion date and
+  aivi never consults it ([linear](docs/linear.md)).
 
 ## Where each fact lives
 

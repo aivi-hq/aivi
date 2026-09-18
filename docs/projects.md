@@ -66,8 +66,8 @@ only overrides:
   is `decision`, the rest of `docs/` is `doc`; nothing is indexed twice or under
   two kinds. This is resolved once, when the index is configured: the outer
   collection ignores the inner one's subtree.
-- `projects.<id>.linear` (`projectId`, `lanes`, optional `workspaceId`) ties
-  the project to a Linear project for the [Linear module](linear.md)
+- `projects.<id>.linear` (`teams`, `lanes`, optional `workspaceId`) ties
+  the project to Linear teams for the [Linear module](linear.md)
   ([configuration](configuration.md#linear)).
 
 ## Who works in a project

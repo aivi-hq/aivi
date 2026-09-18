@@ -27,8 +27,10 @@ behaviour and setup; the plan and what is still to come are in
    `AgentSessionEvent` `created` webhook to
    `POST /v1/linear/webhooks/app/<app>` on the host listener. aivi verifies the
    signature and answers within the 5 seconds Linear allows, then works.
-2. **Routing.** The issue's Linear project must match a checked-out project's
-   `projects.<id>.linear.projectId` (and `workspaceId` when configured); the
+2. **Routing.** The issue's Linear **team** must be in a checked-out
+   project's `projects.<id>.linear.teams` (and `workspaceId` when configured);
+   every Linear issue belongs to exactly one team, so routing always answers,
+   and a Linear *project* (the humans' epic) is not consulted. The
    issue must not carry the HITL label (`linear.humanLabel`, default
    `needs-human`). Otherwise the session gets one `error` activity saying why
    and nothing else happens. The lane the issue is in is passed to the agent
@@ -116,7 +118,10 @@ reviewer app are two apps):
    the scopes `read,write,app:assignable,app:mentionable`; nothing is
    persisted.
 4. In `aivi.json`: `linear.apps.<id>.agent` naming the OpenCode agent, and
-   `projects.<id>.linear.projectId` (Linear's project id) with `lanes`.
+   `projects.<id>.linear.teams` (the Linear team ids this repository works)
+   with `lanes`. A repository may map several teams to one checkout; a team
+   belongs to one project only. The HITL label must exist in **each** mapped
+   team — labels are per team in Linear.
 5. The agent file: `<home>/.opencode/agents/<agent>.md`, or the repository's
    own `.opencode/agents/<agent>.md` to override it per project.
 6. **Reachability.** Linear must reach the listener over HTTPS. `aivi serve`

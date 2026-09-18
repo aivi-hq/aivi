@@ -144,14 +144,14 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     version: 1,
     opencode: { url: 'http://placeholder' },
     linear: { apps: { dev: { agent: 'developer' } } },
-    projects: { website: { linear: { projectId: 'lp-1', lanes: { 'In Progress': 'dev' } } } },
+    projects: { website: { linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'dev' } } } },
   });
   const opencode = await fakeOpenCode(t, 'Done: fixed the header.');
   config.opencode.url = opencode.url;
   const loaded = {
     config,
     path: join(root, 'home/aivi.json'),
-    projects: [{ id: 'website', directory: source, linear: { projectId: 'lp-1', lanes: { 'In Progress': 'dev' } } }],
+    projects: [{ id: 'website', directory: source, linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'dev' } } }],
     sources: [],
   };
   const linear = new FakeLinear();
@@ -164,7 +164,6 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     url: 'https://linear.app/x/issue/ENG-1',
     state: { id: 's1', name: 'In Progress', type: 'started' },
     team: { id: 't', key: 'ENG' },
-    project: { id: 'lp-1', name: 'Website' },
     labels: [],
     delegate: { id: 'app-user-dev' },
     assignee: { id: 'u', name: 'Me' },
@@ -172,7 +171,7 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   });
   linear.issues.set('eng-1', issue('eng-1'));
   linear.issues.set('eng-2', issue('eng-2', { labels: [{ id: 'l', name: 'needs-human' }] }));
-  linear.issues.set('eng-3', issue('eng-3', { project: { id: 'other', name: 'Elsewhere' } }));
+  linear.issues.set('eng-3', issue('eng-3', { team: { id: 't9', key: 'OTH' } }));
 
   const store = new Store(':memory:');
   const routes = new PublicRoutes();
@@ -269,7 +268,7 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     'stop with nothing running',
   );
 
-  // Refusals: the HITL label, an issue outside any mapped project, an unknown session.
+  // Refusals: the HITL label, an issue outside every mapped team, an unknown session.
   await created('as-2', 'eng-2');
   await until(
     () => linear.activities.some(a => a.content.type === 'error' && /needs-human/.test(a.content.body)),
@@ -279,7 +278,7 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   await until(
     () =>
       linear.activities.some(
-        a => a.content.type === 'error' && /not in a Linear project that aivi maps/.test(a.content.body),
+        a => a.content.type === 'error' && /not in a Linear team that aivi maps/.test(a.content.body),
       ),
     'unmapped refused',
   );
@@ -341,6 +340,13 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   assert.equal(linear.activities.length, activitiesBefore, 'neither stray delivery posted anything');
   assert.equal(inbox.list().length, 2, 'refused sessions never became turns');
   assert.equal(store.leases().length, 0, 'no capacity held');
+
+  // A second mapped team routes to the same checkout: teams is a list on purpose.
+  linear.issues.set('eng-4', issue('eng-4', { team: { id: 'tx', key: 'OPS' } }));
+  await created('as-4', 'eng-4');
+  await until(() => opencode.prompts.some(p => p.text.includes('ENG-4')), 'the other mapped team routes');
+  await until(() => inbox.list().every(t => t.state === 'sent'), 'and answered');
+  assert.ok(await stat(join(root, 'home/projects/website/worktrees/as-4')), 'a worktree of the same checkout');
 });
 
 test('the listener delegates an issue entering a mapped lane and starts the worker; the HITL label or a lane change mid-run stops it', async t => {
@@ -371,12 +377,12 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     version: 1,
     opencode: { url: opencode.url },
     linear: { apps: { dev: { agent: 'developer' } }, listener: true },
-    projects: { api: { linear: { projectId: 'lp-api', lanes } } },
+    projects: { api: { linear: { teams: ['t'], lanes } } },
   });
   const loaded = {
     config,
     path: join(root, 'home/aivi.json'),
-    projects: [{ id: 'api', directory: source, linear: { projectId: 'lp-api', lanes } }],
+    projects: [{ id: 'api', directory: source, linear: { teams: ['t'], lanes } }],
     sources: [],
   };
   const linear = new FakeLinear();
@@ -389,7 +395,6 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     url: 'https://linear.app/x/issue/API-7',
     state: { id: 'todo', name: 'Todo', type: 'unstarted' },
     team: { id: 't', key: 'API' },
-    project: { id: 'lp-api', name: 'API' },
     labels: [],
     delegate: null,
     assignee: { id: 'u', name: 'Me' },

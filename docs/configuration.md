@@ -199,15 +199,15 @@ Presence of `linear` enables the module ([linear](linear.md)).
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
 | `turnTimeoutMs` | A worker turn longer than this is interrupted and ends `stopped` (default two hours) |
 
-The project entry selects apps by lane (a lane is a team workflow state, by
-name):
+The project entry routes by Linear **team** and selects apps by lane (a lane
+is a team workflow state, by name):
 
 ```json
 {
   "projects": {
     "website": {
       "linear": {
-        "projectId": "linear-project-id",
+        "teams": ["linear-team-id"],
         "lanes": { "In Progress": "dev", "Review": "review" }
       }
     }
@@ -215,8 +215,10 @@ name):
 }
 ```
 
-Several lanes may select the same app. `workspaceId` is optional and only
-needed when the installation spans Linear workspaces. The mapped agent is
+A repository may list several teams (one checkout, several teams); a team
+belongs to at most one project. Linear *projects* (epics) play no routing
+part. Several lanes may select the same app. `workspaceId` is optional and
+only needed when the installation spans Linear workspaces. The mapped agent is
 resolved by OpenCode's ordinary discovery for the worker's directory.
 
 Credentials are never in JSON: each app reads `LINEAR_<APP>_CLIENT_ID`,

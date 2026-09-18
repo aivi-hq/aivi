@@ -1,7 +1,10 @@
 # Linear module: plan
 
 Status: scope agreed 2026-09-16; steps 0b–6 built the same day (behaviour in
-[linear.md](../linear.md)); step 0 (live checks) and the live gate are open. This is a working checklist,
+[linear.md](../linear.md)); step 0 (live checks) and the live gate are open.
+2026-09-18: routing switched from Linear projects to Linear **teams**
+(`projects.<id>.linear.teams`, a list; a Linear project plays no part) and the
+data-change got its own receiver (step 8). This is a working checklist,
 not the behaviour document; when a step lands, tick it here and write the
 behaviour into the owning page ([linear.md](../linear.md) once it exists,
 [configuration.md](../configuration.md) for fields and secrets). Items marked
@@ -67,7 +70,7 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
 - **Each worker runs in its own git worktree**, never in the project's
   `source/` checkout: `git fetch origin`, then `git worktree add
   <home>/projects/<id>/worktrees/<agent-session> -B <issue.branchName>
-  origin/<default>` (the branch name is Linear's, from the workspace's
+  origin/<default>` (the branch name is Linear's, from the team's
   branch-format setting; an existing branch is reused). The worker's
   directory is that worktree, so `source/` stays clean and indexable, and a
   stopped worker leaves nothing for the next one to trip over. Worktrees
@@ -89,7 +92,8 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
   are updated to this).
 - **Lane automation is the listener, off by default until it has been seen
   live.** Issue `update` webhooks whose `stateId` changed: resolve project by
-  `data.projectId` (and `organizationId` when `workspaceId` is configured),
+  the issue's team from the API re-read (and `organizationId` when
+  `workspaceId` is configured),
   lane by state *name*, app by lane, agent by app; eligible when the issue has
   no delegate, no HITL label, and no pending worker; then
   `agentSessionCreateOnIssue` and `issueUpdate(delegateId)`. Issue events are
@@ -146,7 +150,7 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
   "projects": {
     "website": {
       "linear": {
-        "projectId": "…",
+        "teams": ["…"],
         "workspaceId": "…",
         "lanes": { "In Progress": "dev", "Review": "review" }
       }
@@ -181,6 +185,12 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
       `Issue.branchName` in the session payload or by query, and the
       delegate-removed notification (`issueUnassignedFromYou`) as they arrive
       today; the Webhooks schema explorer is the reference.
+- [ ] **verify 5** An app user can be delegated issues in every mapped team,
+      including a **private** team the app user has not joined; if membership
+      is required, the setup says to add each app to every mapped team.
+- [ ] **verify 6** The Issues data-change payload carries `teamId`. Routing
+      does not depend on it (the module re-reads the issue from the API), but
+      confirm it once.
 
 ### 0b. Home layout: one directory per project
 
@@ -245,7 +255,7 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
       at `created` (before the turn is queued; an existing worktree holding
       the branch is continued); failure → `error` activity, nothing queued.
       **Left:** worktree pruning by age, never while a turn is pending.
-- [x] `created`: resolve project (`issue.projectId`), lane → app → agent;
+- [x] `created`: resolve project (`issue.team.id`), lane → app → agent;
       refuse with an `error` activity when the project is unknown or the HITL
       label is present (the lane is context, not a gate; an unknown agent
       surfaces as a not-started turn); otherwise the acknowledging `thought`,
@@ -300,7 +310,9 @@ at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-
       activities → response; a follow-up prompt; a stop request → error
       activity, `stopped` turn, lock released, worktree present; two issues
       in one project serialize; the listener delegating on a lane change; the
-      HITL label refusing; `projects.sync` fast-forwarding `source/` after a
+      HITL label refusing; an issue in a mapped team with **no Linear
+      project** routes, and one from a second mapped team works the same
+      checkout; `projects.sync` fast-forwarding `source/` after a
       merge. Record in roadmap.
 - [ ] Shrink this file to what is left.
 

@@ -30,7 +30,7 @@ Rules for the worker/Linear lifecycle (built: `docs/linear.md`; what is left:
   worker and releases the project lock; the worktree and the native
   transcript stay for inspection. `blocked` is only for a stop that cannot be
   verified. Graceful agent-first cleanup is a later upgrade, not a precondition.
-- Linear project lanes select apps; each app maps to one unique OpenCode agent.
+- Linear team lanes select apps; each app maps to one unique OpenCode agent.
 
 When behavior changes, update the one document that owns that fact (the map is
 in `CONTEXT.md`) in the same commit; a change is not done while a document

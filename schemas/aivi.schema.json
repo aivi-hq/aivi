@@ -251,10 +251,14 @@
                 "type": "string",
                 "minLength": 1
               },
-              "projectId": {
-                "description": "The Linear project whose issues belong to this project.",
-                "type": "string",
-                "minLength": 1
+              "teams": {
+                "description": "Linear team ids whose issues belong to this project; a team maps to at most one project.",
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "lanes": {
                 "description": "Workflow state name → app id: issues entering that state are worked by that app.",
@@ -270,7 +274,7 @@
               }
             },
             "required": [
-              "projectId",
+              "teams",
               "lanes"
             ],
             "additionalProperties": false

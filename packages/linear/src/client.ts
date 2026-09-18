@@ -45,7 +45,6 @@ export interface LinearIssue {
   url: string;
   state: { id: string; name: string; type: string };
   team: { id: string; key: string };
-  project: { id: string; name: string } | null;
   labels: { id: string; name: string }[];
   delegate: { id: string } | null;
   assignee: { id: string; name: string } | null;
@@ -72,7 +71,6 @@ const ISSUE_FIELDS = `
   id identifier title description branchName url
   state { id name type }
   team { id key }
-  project { id name }
   labels { nodes { id name } }
   delegate { id }
   assignee { id name }

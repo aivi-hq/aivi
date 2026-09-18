@@ -34,6 +34,19 @@ test('linear settings: defaults, secret names, reserved pool', () => {
     JSON.stringify(configSchema.safeParse({ version: 1, linear: { apps: {}, resource: 'gpu' } }).error?.issues),
     /Unknown resource pool/,
   );
+  assert.match(
+    JSON.stringify(
+      configSchema.safeParse({
+        version: 1,
+        linear: { apps: { dev: { agent: 'developer' } } },
+        projects: {
+          website: { linear: { teams: ['lt-1'], lanes: {} } },
+          api: { linear: { teams: ['lt-1', 'lt-2'], lanes: {} } },
+        },
+      }).error?.issues,
+    ),
+    /already mapped to project website/,
+  );
 });
 
 test('channel modules are blocks in the one file: presence enables with defaults, false is off, the pool must exist', () => {
@@ -223,7 +236,7 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
     );
   await write({
     website: {
-      linear: { workspaceId: 'team', projectId: 'project', lanes: { Development: 'worker', Review: 'worker' } },
+      linear: { workspaceId: 'team', teams: ['lt-1'], lanes: { Development: 'worker', Review: 'worker' } },
     },
     wiki: { knowledge: [{ id: 'pages', path: 'pages' }] },
     paused: { enabled: false },

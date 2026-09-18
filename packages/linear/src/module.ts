@@ -106,15 +106,15 @@ export function createLinearModule(config: LinearConfig, clients?: Map<string, L
   return { id: LINEAR.id, start: services => startLinear(config, services, clients) };
 }
 
-/** Which aivi project an issue belongs to: by Linear project id, and by workspace when one is configured. */
+/** Which aivi project an issue belongs to: by the issue's Linear team, and by workspace when one is configured. */
 export function projectForIssue(
   projects: Project[],
-  issue: { projectId: string | null; organizationId: string },
+  issue: { teamId: string; organizationId: string },
 ): Project | undefined {
   return projects.find(
     p =>
       !p.removed &&
-      p.linear?.projectId === issue.projectId &&
+      p.linear?.teams.includes(issue.teamId) === true &&
       (!p.linear.workspaceId || p.linear.workspaceId === issue.organizationId),
   );
 }
@@ -242,13 +242,13 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       if (!issueId) return refuse(conversation, 'I only work on issues; this session has none.');
       const issue = await app.client.issue(issueId);
       const project = projectForIssue(services.loaded.projects, {
-        projectId: issue.project?.id ?? null,
+        teamId: issue.team.id,
         organizationId: payload.organizationId,
       });
       if (!project)
         return refuse(
           conversation,
-          `${issue.identifier} is not in a Linear project that aivi maps to a checkout (\`projects.<id>.linear.projectId\`), so I cannot work on it.`,
+          `${issue.identifier} is not in a Linear team that aivi maps to a checkout (\`projects.<id>.linear.teams\`), so I cannot work on it.`,
         );
       if (issue.labels.some(l => l.name === config.humanLabel))
         return refuse(
@@ -327,10 +327,11 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       if (!changed.some(k => ['stateId', 'labelIds', 'delegateId'].includes(k))) return;
       const issue = await receiver.client.issue(payload.data.id);
       const project = projectForIssue(services.loaded.projects, {
-        projectId: issue.project?.id ?? null,
+        teamId: issue.team.id,
         organizationId: payload.organizationId,
       });
       if (!project) return;
+      // Lane names are per Linear team; two mapped teams sharing a state name share the lane's app.
       const lanes = project.linear?.lanes ?? {};
       const laneApp = lanes[issue.state.name];
       const human = issue.labels.some(l => l.name === config.humanLabel);

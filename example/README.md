@@ -37,7 +37,7 @@ because Discord and Slack are enabled in the template. Either:
 | `aivi.example.json` | The tracked template: sources, projects, jobs, scheduler pools and retention, browser, Discord, Slack — all with placeholder ids |
 | `aivi.json` | Your live config (git-ignored): copy the template and put your real ids in it |
 | `.env.example` | The secrets `serve` reads from `.env` |
-| (no `linear` block) | Add `linear.apps` and a project's `linear.projectId` to try the Linear module ([linear](../docs/linear.md)); it needs the `LINEAR_*` secrets and a public URL |
+| (no `linear` block) | Add `linear.apps` and a project's `linear.teams` to try the Linear module ([linear](../docs/linear.md)); it needs the `LINEAR_*` secrets and a public URL |
 | `.opencode/agents/` | The `librarian` and `dreamer` agents; the home is the OpenCode location |
 | `opencode.jsonc` | Loads the aivi plugin and selects `librarian` when you open this directory in OpenCode |
 | `knowledge/` | Company-wide documents (`doc`) |

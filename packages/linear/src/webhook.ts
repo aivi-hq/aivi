@@ -43,8 +43,6 @@ export interface IssueEventPayload {
     state?: { id: string; name: string; type?: string };
     labelIds?: string[];
     labels?: { id: string; name: string }[];
-    projectId?: string | null;
-    project?: { id: string; name?: string } | null;
     teamId?: string;
     delegateId?: string | null;
     branchName?: string;

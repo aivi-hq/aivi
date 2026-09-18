@@ -96,7 +96,6 @@ test('GraphQL errors and HTTP failures surface as LinearApiError; mutations chec
             url: 'https://linear.app/x/issue/ENG-1',
             state: { id: 's', name: 'In Progress', type: 'started' },
             team: { id: 't', key: 'ENG' },
-            project: { id: 'p', name: 'P' },
             labels: { nodes: [{ id: 'l', name: 'needs-human' }] },
             delegate: null,
             assignee: null,

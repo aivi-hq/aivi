@@ -187,7 +187,10 @@ export const projectSchema = z.strictObject({
         .min(1)
         .optional()
         .describe('Linear organization id; only needed with more than one workspace.'),
-      projectId: z.string().min(1).describe('The Linear project whose issues belong to this project.'),
+      teams: z
+        .array(z.string().min(1))
+        .min(1)
+        .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
       lanes: z
         .record(z.string().min(1), id)
         .describe('Workflow state name → app id: issues entering that state are worked by that app.'),
@@ -610,6 +613,18 @@ export const configSchema = z
         });
       agents.add(value.agent);
     }
+    const teamOwners = new Map<string, string>();
+    for (const [project, entry] of Object.entries(config.projects))
+      for (const [i, team] of entry.linear?.teams.entries() ?? []) {
+        const owner = teamOwners.get(team);
+        if (owner && owner !== project)
+          ctx.addIssue({
+            code: 'custom',
+            path: ['projects', project, 'linear', 'teams', i],
+            message: `This Linear team is already mapped to project ${owner}`,
+          });
+        teamOwners.set(team, project);
+      }
     if (config.linear && !(config.linear.resource in config.scheduler.resources))
       ctx.addIssue({ code: 'custom', path: ['linear', 'resource'], message: 'Unknown resource pool' });
     for (const [name, module] of [
