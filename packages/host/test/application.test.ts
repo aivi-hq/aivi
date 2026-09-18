@@ -289,49 +289,6 @@ test('duplicate host is rejected before initializing shared services', async t =
   store.releaseDaemon('existing');
 });
 
-test('once mode dispatches due work without opening the API or starting modules', async t => {
-  const store = new Store(':memory:');
-  t.after(() => store.close());
-  let indexed = 0;
-  const knowledge = {
-    async index() {
-      indexed++;
-      return { indexed: 2 };
-    },
-    async search() {
-      return [];
-    },
-    async close() {},
-  };
-  const config = loaded();
-  config.config.search!.indexOnStart = false;
-  const job = store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, 'local-model', 'index');
-  let moduleStarted = false;
-  const modules: HostModule[] = [
-    {
-      id: 'never',
-      async start() {
-        moduleStarted = true;
-        return { async stop() {} };
-      },
-    },
-  ];
-  await runHost({
-    loaded: config,
-    store,
-    resources: async () => ({ knowledge }),
-    modules,
-    auth: { mode: 'none' },
-    once: true,
-    signal: new AbortController().signal,
-  });
-  assert.equal(indexed, 1);
-  assert.equal(store.run(job.id).state, 'succeeded');
-  assert.equal(moduleStarted, false);
-  store.acquireDaemon('another');
-  store.releaseDaemon('another');
-});
-
 test('scheduled knowledge indexing uses the same injected service', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());

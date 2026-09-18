@@ -1,7 +1,7 @@
 # Operations
 
-For whoever runs `aivi serve`: what happens at startup and shutdown, what a
-tick does, how runs end, and what to do when work is blocked. Configuration
+For whoever runs `aivi serve`: what happens at startup and shutdown, how work
+is dispatched, how runs end, and what to do when work is blocked. Configuration
 fields are in [configuration](configuration.md); the reasons behind the
 behaviour are in [architecture](architecture.md).
 
@@ -16,9 +16,8 @@ shared services, reconciles the job definitions it owns (`jobs[]` from
 once each has had its first attempt. From then on the loop sleeps until the
 next due instant and wakes early when something changes the queue
 (`HostServices.wake`, `POST /v1/wake` from the CLI, a run or turn releasing
-capacity). Nothing periodic exists. `aivi tick` runs
-the same lifecycle in one-shot mode: no API, no modules (and no token needed),
-one dispatch round, drain, exit.
+capacity). Nothing periodic exists; the serving host is the only executor of
+work.
 
 A module whose start fails does not take the host down (live finding
 2026-09-15: a chat platform answered 503 during startup and the knowledge
@@ -48,14 +47,14 @@ processes start on first use and stop with the host ([browser](browser.md)).
 `aivi serve` logs one JSON object per line on stderr; `--log-level debug` shows
 job materialization. stdout is reserved for command output.
 
-## Tick
+## Dispatch
 
-Each tick first materializes due job occurrences into runs. An occurrence
+Each wake first materializes due job occurrences into runs. An occurrence
 found later than its misfire grace (`scheduler.misfire.graceSeconds`, per-job
 `misfire`) is recorded as one `missed` run for the whole gap and reported like
 a failure; nothing is executed for it and the job moves to its next future
-occurrence ([configuration](configuration.md#jobs-runs-tasks)). Then the tick
-claims queued runs within capacity and executes them.
+occurrence ([configuration](configuration.md#jobs-runs-tasks)). Then it claims
+queued runs within capacity and executes them.
 
 ## How runs end
 

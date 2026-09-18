@@ -97,8 +97,6 @@ export interface RunHostOptions {
   /** Environment variable names shell tasks must not inherit (the keys of `<home>/.env`); aivi's fixed secrets are always hidden. */
   protectedEnv?: Iterable<string>;
   log?: Logger;
-  /** Materialize schedules, dispatch what is due, wait, and return. No API, no modules. */
-  once?: boolean;
   /** Backoff for module starts that fail; the default climbs from 1 s to 10 min. */
   moduleRetry?: RetryPolicy;
   onReady?: (address: unknown) => void;
@@ -273,12 +271,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     }
     abort.signal.throwIfAborted();
 
-    if (options.once) {
-      scheduler.tick();
-      await scheduler.drain();
-    } else {
-      await serve(scheduler, channels, knowledge);
-    }
+    await serve(scheduler, channels, knowledge);
   } catch (error) {
     errors.push(error);
   } finally {

@@ -36,7 +36,6 @@ import { z } from 'zod';
 const usage = `aivi <command>
 
   serve                        Start the host: API, scheduler, knowledge, configured modules
-  tick                         Materialize due jobs and dispatch their runs once, then exit
   status                       Inspect durable queue counts
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
@@ -603,16 +602,13 @@ async function main(): Promise<void> {
         }
       }
     }
-    if (command === 'tick' || command === 'serve') {
-      const once = command === 'tick';
+    if (command === 'serve') {
       // Fail on a missing token before touching the daemon lock, QMD, or Chrome.
-      const auth = once
-        ? { mode: 'none' as const }
-        : resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
+      const auth = resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
       const modules: HostModule[] = [];
-      if (!once && discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
-      if (!once && slack && slackConfig) modules.push(slack.createSlackModule(slackConfig));
-      if (!once && linear && loaded.config.linear) modules.push(linear.createLinearModule(loaded.config.linear));
+      if (discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
+      if (slack && slackConfig) modules.push(slack.createSlackModule(slackConfig));
+      if (linear && loaded.config.linear) modules.push(linear.createLinearModule(loaded.config.linear));
       const abort = new AbortController();
       const stop = () => abort.abort();
       process.once('SIGINT', stop);
@@ -625,15 +621,13 @@ async function main(): Promise<void> {
           auth,
           protectedEnv,
           log,
-          once,
           signal: abort.signal,
-          resources: () => createResources(loaded, once, log),
+          resources: () => createResources(loaded, log),
           onReady: address =>
             console.log(
               JSON.stringify({ listening: address, modules: modules.map(m => m.id), sources: loaded.sources.length }),
             ),
         });
-        if (once) print(status(store, loaded));
       } finally {
         process.removeListener('SIGINT', stop);
         process.removeListener('SIGTERM', stop);
@@ -670,11 +664,11 @@ const jobFileSchema = z.strictObject({
   resource: z.string().min(1).optional(),
 });
 
-async function createResources(loaded: LoadedConfig, once: boolean, log: Logger): Promise<HostResources> {
+async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostResources> {
   const knowledge = await createKnowledgeService(loaded, undefined, log);
-  // Browser construction is lazy; no Chrome launch occurs until a tool call. A one-shot tick never needs it.
+  // Browser construction is lazy; no Chrome launch occurs until a tool call.
   const browser =
-    !once && loaded.config.browser !== false
+    loaded.config.browser !== false
       ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser)
       : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };

@@ -101,7 +101,7 @@ with the answer only.
   with no replay and no reconnect of its own, so the host rediscovers the
   client and reopens it with backoff (1 s doubling to 30 s) whenever it ends
   or errors, until the host stops. The first `events.watch(sessionID,
-  listener)` opens it; `tick` and `once` never do. Events are fanned out by
+  listener)` opens it. Events are fanned out by
   `data.sessionID`; events for sessions nobody watches are dropped. Connect
   and disconnect are logged once per transition (`events.connected`,
   `events.disconnected`).

@@ -69,12 +69,12 @@ claimed. Schemas regenerated, smoke green, live example home loaded.
   and `syncJobs` replaces the live job rows on its own.
 - **Order is the whole race**: module claims happen in `start()`, so
   `supervisor.start(modules)` must precede the wake loop's first
-  `scheduler.tick()`; `syncJobs` precedes both `serve` and `tick`. It held;
-  keep it when rebuilding, and keep the application-level tests that pin it.
-- **`aivi tick` never starts modules** (pre-existing). A module-owned
-  operation that is due during a tick fails with "Nothing claims the
-  operation …". Honest and visible, but decide it deliberately, not by
-  accident.
+  `scheduler.tick()`; `syncJobs` precedes `serve`. It held;
+  keep the application-level tests that pin it.
+- **The CLI `aivi tick` was removed** (owner's call, 2026-09-18): the serving
+  host is the only executor, so a module-owned operation can never meet a
+  module-less dispatch. `scheduler.tick()` runs only inside `runHost`, after
+  `supervisor.start(modules)`.
 - Renaming a task kind touches: core schema + job builders, the executor,
   reports, `aivi_jobs`, both channel adapters (they check `task.kind` to
   decide session-adopt vs seed), the CLI, the example home, and the docs

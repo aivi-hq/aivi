@@ -12,6 +12,15 @@ const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));
 const config = join(directory, 'aivi.json');
 let daemon;
 let stopped;
+/** Poll until `probe` returns true; a smoke check waits on the running host, it never assumes timing. */
+const until = async (probe, ms = 10000) => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await probe()) return;
+    if (Date.now() > deadline) throw new Error('smoke: timed out waiting for the host to execute the run');
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+};
 try {
   // "discover": a smoke check must never restart the developer's own OpenCode service.
   await writeFile(
@@ -37,16 +46,6 @@ try {
     added.job.spec.id,
     'the key deduplicates',
   );
-  run('tick');
-  const shown = run('runs', 'show', added.runs[0].id);
-  assert.equal(shown.run.result.sources[0].available, true);
-  assert.equal(run('jobs', 'show', added.job.spec.id).job.state, 'done');
-  assert.ok(
-    run('jobs', 'list').some(j => j.id === 'retention' && j.source === 'system'),
-    'the retention job is seeded from scheduler.retention',
-  );
-  assert.equal(run('runs', 'list', '--state', 'succeeded').length, 1);
-  assert.equal(run('status').counts.succeeded, 1);
 
   const token = randomBytes(32).toString('hex');
   daemon = spawn(process.execPath, [cli, 'serve'], {
@@ -77,12 +76,15 @@ try {
       }
     });
   });
-  const response = await fetch(`http://127.0.0.1:${listening.port}/v1/status`, {
-    headers: { authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(5000),
-  });
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).counts.succeeded, 1);
+  // The queued one-off is due now: the serving loop dispatches it on its first pass.
+  await until(() =>
+    fetch(`http://127.0.0.1:${listening.port}/v1/status`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    })
+      .then(response => response.json())
+      .then(status => status.counts.succeeded === 1),
+  );
   assert.equal(
     (await fetch(`http://127.0.0.1:${listening.port}/v1/status`)).status,
     401,
@@ -92,7 +94,19 @@ try {
   daemon.kill('SIGTERM');
   const [code] = await stopped;
   assert.equal(code, 0);
-  run('tick'); // clean shutdown released singleton ownership
+
+  // Every CLI read happens after the clean shutdown released singleton ownership: the store reopens,
+  // and the run the host executed is durable in SQLite.
+  const shown = run('runs', 'show', added.runs[0].id);
+  assert.equal(shown.run.state, 'succeeded');
+  assert.equal(shown.run.result.sources[0].available, true);
+  assert.equal(run('jobs', 'show', added.job.spec.id).job.state, 'done');
+  assert.ok(
+    run('jobs', 'list').some(j => j.id === 'retention' && j.source === 'system'),
+    'the retention job is seeded from scheduler.retention',
+  );
+  assert.equal(run('runs', 'list', '--state', 'succeeded').length, 1);
+  assert.equal(run('status').counts.succeeded, 1);
 
   // Auth mode "none" serves without a token, for trusted networks.
   await writeFile(
@@ -130,7 +144,9 @@ try {
   );
   daemon.kill('SIGTERM');
   assert.equal((await stopped)[0], 0);
-  console.log('CLI smoke passed: jobs add → tick → runs show → serve (token, none) → graceful shutdown → reopen');
+  console.log(
+    'CLI smoke passed: jobs add → serve dispatches the queued run → token & open modes → graceful shutdown → reopen',
+  );
 } finally {
   if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
     daemon.kill('SIGKILL');

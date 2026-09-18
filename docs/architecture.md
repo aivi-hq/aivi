@@ -57,8 +57,8 @@ authenticated API. `knowledge_search` reaches the same service used by the
 channels' search commands and scheduled indexing jobs; `aivi_jobs` reaches the
 same store the CLI edits.
 
-What happens at startup, tick and shutdown, and how runs end, is described for
-operators in [operations](operations.md).
+What happens at startup, on each wake, and at shutdown, and how runs end, is
+described for operators in [operations](operations.md).
 
 ## SQLite and Croner
 
@@ -76,7 +76,7 @@ job, recurring or one-off), and is woken early when the queue changes: the
 jobs tool, a run or Discord turn releasing capacity, or the CLI poking
 `POST /v1/wake` after it wrote to SQLite (and says so when the host cannot be
 reached). Nothing periodic exists: no safety-net interval, no polling. No
-in-memory timer holds state, so a crash or restart has nothing to reconcile. A tick does not invoke a model unless a queued task requests one.
+in-memory timer holds state, so a crash or restart has nothing to reconcile. Dispatching never invokes a model unless a queued task requests one.
 
 `BEGIN IMMEDIATE` transactions serialize job creation, materialization of due
 occurrences into runs, and run claims. Unique keys on definitions deduplicate

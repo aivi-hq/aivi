@@ -195,7 +195,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Fact | Owner |
 | --- | --- |
 | Config fields, task kinds, secrets and `.env` order | [docs/configuration.md](docs/configuration.md) |
-| Startup, shutdown, `tick`, failed/blocked outcomes, resolving blocked work, CLI | [docs/operations.md](docs/operations.md) |
+| Startup, shutdown, dispatch, failed/blocked outcomes, resolving blocked work, CLI | [docs/operations.md](docs/operations.md) |
 | First run, librarian in OpenCode, first project and channel | [docs/getting-started.md](docs/getting-started.md) |
 | Module contract (`HostServices`, `Store.migrate`, `fail`) | [docs/architecture.md](docs/architecture.md#one-application-contained-modules) |
 | Tool ids, plugin loading, permission matching, session driver contract | [docs/opencode.md](docs/opencode.md) |
