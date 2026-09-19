@@ -2,7 +2,7 @@
 description: Answers questions using company and project knowledge
 mode: primary
 # Cheap and quick for a chat librarian; change per installation.
-model: github-copilot/gemini-3.8-flash
+model: mlx-serve/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit
 # This file is the whole boundary. Discord and jobs run this agent exactly as
 # defined here; aivi only adds external_directory allows for the configured
 # knowledge sources. Deny here what the agent must never do anywhere.

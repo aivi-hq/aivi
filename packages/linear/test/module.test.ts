@@ -152,7 +152,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
-    linear: { agent: 'assistant', primary: 'dev', apps: { dev: {}, face: {} } },
+    linear: { agent: 'assistant', primary: 'dev', apps: { dev: {}, face: {} }, mcp: false },
     projects: { website: { linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'developer' } } } },
   });
   const opencode = await fakeOpenCode(t, 'Done: fixed the header.');
@@ -392,7 +392,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
-    linear: { apps: { dev: {} } },
+    linear: { apps: { dev: {} }, mcp: false },
     projects: {
       site: {
         linear: { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
@@ -506,7 +506,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   const config = configSchema.parse({
     version: 1,
     opencode: { url: opencode.url },
-    linear: { apps: { dev: {} }, listener: true },
+    linear: { apps: { dev: {} }, mcp: false, listener: true },
     projects: { api: { linear: { teams: ['t'], lanes: { 'In Progress': 'developer', Review: 'developer' } } } },
   });
   const loaded = {

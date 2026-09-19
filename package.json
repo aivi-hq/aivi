@@ -1,14 +1,21 @@
 {
-  "name": "aivi",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
+  "devDependencies": {
+    "@biomejs/biome": "2.5.13",
+    "@types/node": "26.5.1",
+    "lefthook": "2.1.14",
+    "typescript": "5.9.3"
+  },
   "engines": {
     "node": ">=26.0.0 <27"
   },
+  "name": "aivi",
+  "overrides": {
+    "@opencode/client": "2.0.10",
+    "@opencode/plugin": "2.0.10",
+    "@opencode/schema": "2.0.10",
+    "@opencode/protocol": "2.0.10"
+  },
+  "private": true,
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "npm run typecheck && node --test packages/*/test/*.test.ts",
@@ -25,10 +32,9 @@
     "agentic:verify": "biome check --write . && npm run check",
     "prepare": "lefthook install"
   },
-  "devDependencies": {
-    "@biomejs/biome": "2.5.13",
-    "@types/node": "26.5.1",
-    "lefthook": "2.1.14",
-    "typescript": "5.9.3"
-  }
+  "type": "module",
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*"
+  ]
 }

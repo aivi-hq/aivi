@@ -1,36 +1,136 @@
-# Editor mode: maintaining aivi from a conversation
+# Operator tools from a conversation (editor mode)
 
-Status: seed of an idea (owner, 2026-09-14). Research and shape before building.
+Status: seed of an idea (owner, 2026-09-14); reshaped 2026-09-19 after the
+single-app rework: the owner wants **operator tools available to the existing
+agents on demand** — CLI-grade operations (adding a project, jobs, indexing)
+as plugin tools, toggled per agent through its own file's permissions. The
+dedicated `editor` agent is the later, stricter shell around the same tools;
+the tools themselves are the first build.
 
 ## Idea
 
-From any communication channel (not email), a user with the right access can
-switch a conversation into *editor mode*: a fresh session with a different
-agent whose skills and tools maintain the installation itself. Examples of what
-it should be able to do:
+From any channel — the Linear assistant, the Discord/Slack librarian — an
+operator can ask aivi to do installation work it can already do from the CLI:
 
-- add a project (clone into the projects directory, register, index)
-- change an agent's soul or model, install or update a skill
-- walk through the skill-workshop proposals from dreaming and accept/reject them
-- trigger indexing, cleanup, or `aivi update`
-- show status, schedules, recent outcomes
+- add a project (clone, register, map Linear teams and lanes, index)
+- change an agent's soul, model or file; install or update a skill
+- walk through dreaming's proposals and accept/reject them
+- trigger indexing, cleanup; inspect status, schedules, recent outcomes
+- resolve a blocked run after inspecting it
 
-Could be one-shot ("add project X") or a session. It would make server
-maintenance a chat instead of SSH.
+Server maintenance becomes a chat instead of SSH. The owner's phrase for the
+gate: *permissions I can toggle* — the tool exists, the agent file decides.
 
-## Why it fits the thin core
+## Why now
 
-Everything above is an OpenCode agent with tools: the host only has to expose
-the operations (host API endpoints or plugin tools) and the access rule. No new
-UI, no new runtime.
+The rework changed the ground this page stood on:
+
+- The **assistant** (`linear.agent`) and channel agents are the natural
+  holders: they already run on the channel machinery with per-agent files, and
+  the soul exists as a file an agent could maintain.
+- **The CLI's operations are already library code** (`packages/core/src/projects.ts`:
+  `addProject`, `writeProjectLinear`, `removeProject`, `purgeProject`), and the
+  plugin already reaches the host API (`aivi_jobs` can create, run, pause,
+  remove). An operator tool is mostly a thin wrapper over an existing path.
+- **Linear onboarding proved the pattern live** (2026-09-19 dogfood): the
+  librarian created the `needs-human` label through the Linear MCP from a
+  conversation. What is missing is the aivi side (config, projects) — the
+  Linear side of onboarding already works by conversation.
+- The `aivi.json` rule has moved: "aivi and the operator edit the live
+  `aivi.json` itself" (CONTEXT.md) — so *an agent* editing config is no longer
+  conceptually forbidden; the question is which agent, with what guardrails.
+
+## The v0 proposal: operator tools, gated by agent files
+
+One plugin tool group (say `aivi_ops`), each action mapping 1:1 to an existing
+CLI code path — no new host API, no new authority model:
+
+| Action | Wraps | Notes |
+| --- | --- | --- |
+| `projects.add` | `addProject` + `writeProjectLinear` | the full `projects add` path, Linear mapping included; needs team resolution, which lives in `@aivi/linear` |
+| `projects.remove` / `purge` | same-named CLI functions | `purge` keeps its `confirm` semantics: the agent must relay what goes and get an explicit yes in chat |
+| `jobs.*` | exists today (`aivi_jobs`) | no new work |
+| `knowledge.index` | the host operation | via the jobs path or a direct POST, as `aivi jobs run` does |
+| `status` | exists today (`aivi_status`) | |
+
+The toggle is exactly the house rule — *the agent file is the boundary*: the
+shipped `librarian.md` / `aivi.md` deny the new tool id; an operator who wants
+a given agent to maintain the installation removes the deny (or adds an
+`allow`). No `access.editors` list, no mode switching, no new auth surface:
+whoever may already talk to that agent, may now ask it for this. The deny
+lives in the agent file next to every other boundary, and flipping it is one
+line the operator already owns.
+
+Guardrails that stay regardless of toggle:
+
+- **Never silent about a restart**: config and agent-file edits still need
+  `aivi serve` to restart; the agent must say so.
+- **Secrets**: deny `read` on `*.env*` stays in every shipped file; the tools
+  never return config values that are secrets (redact like `/status` does).
+- **Purge/delete**: only with a human "yes" quoted in the conversation, and
+  the tool takes a `confirm` flag the agent fills from it — same discipline as
+  `aivi purge --confirm`.
+- **One write per turn shown**: the reply names what changed (the transcript
+  is the audit), as editor-mode already proposed for souls and skills.
+
+## The later shell: a dedicated editor agent
+
+What the original idea adds on top, kept here for when the simple tools prove
+themselves insufficient: a separate `editor` agent (host-pinned policy like
+dreaming's, DM-only entry via `/editor`, one exception to "no agent
+switching"), for the cases that need more than a tool toggle — editing any
+`*.json` under the config directory, shell, `aivi update`, restart. Its v1
+operations table and write boundary below remain the reference for that shape.
+
+| Operation | How | v1 |
+| --- | --- | --- |
+| status: schedules, recent outcomes, blocked turns, index freshness | `aivi_jobs` (list) + `aivi_status` | yes |
+| trigger index / dreaming / system check | `aivi_jobs` enqueue, limited to configured kinds | yes |
+| review dreaming proposals | agent edits `<memory>/rules.md` and `<memory>/proposals/*` | yes |
+| edit a soul or its model | agent edits `<dir>/.opencode/agents/*.md`, never `editor.md` itself; the soul is `<home>/soul.md` since 2026-09-19, injected and hot-reloaded — an editor may edit it as a file | yes |
+| install / update a skill | agent writes `<dir>/.opencode/skills/**` from pasted text | yes |
+| add project | `aivi_ops.projects.add` (the tool above) | yes |
+| clone repository, `aivi update`, cleanup, restart | none | defer |
+
+Entering: `access.editors: [userId]` on the shared access policy; absent means
+off. `/editor [text]` accepted only in a DM from an editor; behaves like
+`/new` with a different fixed agent; one-shot with text. No channel or thread
+ever enters editor mode.
 
 ## Questions
 
-- Who may enter editor mode (a role in the access policy)?
-- Which operations are safe unattended, which need confirmation in chat?
-- Does the editor agent run in a dedicated OpenCode location (`~/.aivi/`) with
-  edit rights only there and in the projects directory?
-- How does it relate to `/new` and to the one-librarian-per-bot rule?
+- **Toggle vs mode — the central open question.** Two shapes for giving an
+  agent operator powers: (a) *tool toggle*: the tool always exists in the
+  plugin; a shipped agent file denies it, the operator flips one line to
+  grant it — granted ahead of time, not mid-conversation; (b) *a mode*: a
+  dedicated `editor` agent entered on demand (`/editor`), which is the only
+  way to get tools a session did not start with — OpenCode fixes a session's
+  tools at its agent, so "inject tools on demand" would need an agent switch
+  (a fresh session), which is work the channel machinery already knows how to
+  do (`/new` with a different fixed agent) but adds an entry/exit concept.
+  Owner's instinct: a mode is fine too, but suspects OpenCode does not
+  support true mid-session tool injection and does not want to build agent
+  switching just for this. Settle here first: if toggling pre-granted tools
+  in agent files is enough (and "the deny lives in the file I already own" is
+  the UX), (a) wins on simplicity; if asking *inside* a conversation ("may I
+  add a project?" → granted for this exchange) is wanted, that is (b) plus a
+  `permission.ask` route to the chat, which is a bigger build.
+
+- Does `aivi_ops` belong in the plugin (tool surface) or as host API only,
+  called through Code Mode? Plugin: it inherits session identity and the
+  permission gate for free.
+- Should `projects.add` resolve Linear teams itself (import from
+  `@aivi/linear`'s client) or ask the operator for raw team ids?
+- Does the assistant ever get `edit` on `aivi.json` directly (the
+  "config is yours and aivi's" decision), or only through narrow tools?
+  The editor-mode answer was "never from a chat"; the newer CONTEXT decision
+  softens that. Settle before shipping any config-write surface.
+- Does a Linear agent session need `permission.ask` routing (currently
+  auto-rejected for workers) before any destructive action is allowed?
+- If a mode is chosen: is `/editor` DM-only as researched, or may the Linear
+  assistant carry it too (a delegation the operator confirms in chat)?
+- Relation to `docs/backlog/installation.md` (`aivi update`, restart) and
+  [dashboard](dashboard.md) (read-only viewing of the same data).
 
 ## Research
 
@@ -44,10 +144,9 @@ self-maintenance from chat as owner-only commands that are *off by default*:
 natural-language `/openclaw <request>` "setup and repair helper" that only
 runs from an owner DM. Authorization is a dedicated `commands.ownerAllowFrom`
 list, separate from channel allow-lists; authorized non-owners get a refusal
-that names the exact config line to add. Config written from a group is routed
-privately to the owner. Lessons: a separate owner list, deterministic commands
-for the dangerous writes plus an agent for the rest, validation before every
-write, DM-only, and disabled until configured.
+that names the exact config line to add. Lessons: a separate owner list,
+deterministic commands for the dangerous writes plus an agent for the rest,
+validation before every write, DM-only, and disabled until configured.
 
 **OpenCode v2.** Agents are Markdown files with frontmatter `permissions`
 (ordered rules, last match wins; `edit` matches the target path, `shell`
@@ -60,62 +159,6 @@ action; extra directories or HTTP catalogs come from a `skills` array
 (https://opencode.ai/v2/docs/skills). aivi already pins a per-session policy
 from the host: `dreaming.ts` denies everything, allows the read tools, grants
 `external_directory` for the memory directory and allows `edit` only on
-`facts.md` and `proposals/*`. The librarian session in `discord/native.ts`
-is the read-only counterpart. Both auto-reject `ask` because nobody is at the
-server; the "fixed agent and directory" check per conversation means editor
-mode is necessarily a separate native session.
-
-## Recommendation
-
-**Scope (v1).** One agent, `editor`, defined next to `librarian` and `dreamer`
-in the adapter's OpenCode directory, running in that same Location. Operations:
-
-| Operation | How | v1 |
-| --- | --- | --- |
-| status: schedules, recent outcomes, blocked turns, index freshness | new plugin tool `aivi_jobs` (list) + existing `aivi_status` | yes |
-| trigger index / dreaming / system check | `aivi_jobs` enqueue, limited to task kinds already configured | yes |
-| review dreaming proposals | agent edits `<memory>/rules.md` and `<memory>/proposals/*` | yes |
-| edit a soul or its model | agent edits `<dir>/.opencode/agents/*.md`, never `editor.md` itself | yes |
-| install / update a skill | agent writes `<dir>/.opencode/skills/**` from text the user pastes; URLs only after the user has seen the fetched content | yes |
-| add project | new plugin tool `aivi_projects_add {url, id?}` calling the same `addProject` as `aivi projects add` (built 2026-09-15: a clone into `<home>/projects/<id>` is the registration; no config write) ([projects](../projects.md)) | register-only |
-| clone repository, `aivi update`, cleanup, restart | none | defer |
-
-**Entering and leaving.** `access.editors: [userId]` is added to the shared
-`accessPolicySchema`; absent means the feature is off. `/editor [text]` is
-accepted only in a DM from an editor. It behaves like `/new` with a different
-fixed agent: the store records `mode: "editor"` for that DM, the next messages
-run against a fresh native session (`metadata.aivi.origin: "editor"`, excluded
-from dreaming's default `origins`), and `/editor off` or `/new` returns to the
-librarian. With text it is one-shot: one turn, then back. No channel or thread
-ever enters editor mode, so a group never sees configuration. This is the one
-exception to "no `/agent` switching": a maintenance mode, not a personality.
-
-**Write boundary (host-pinned per session, as in `dreaming.ts`).** Deny all;
-allow `read`, `glob`, `grep`, `execute`, `skill`, `webfetch`, `websearch`,
-`knowledge_search`, `aivi_sources`, `aivi_status`, `aivi_jobs`,
-`aivi_projects_add`; deny `read` on `*.env*`; `external_directory` for the
-config directory (`dirname(loaded.path)`), the memory directory and the
-projects directory; `edit` allowed only on `<dir>/.opencode/agents/*.md`,
-`<dir>/.opencode/skills/**`, `<memory>/rules.md`, `<memory>/proposals/*`, then
-`edit` denied again on `<dir>/.opencode/agents/editor.md`. `shell` and
-`subagent` stay denied. `aivi.json` and adapter configs are never editable by
-the model: adding a project is a clone, not a config write, so `aivi.json`
-never changes from a chat. `steps` is capped in the
-agent file. After each turn the host snapshots the writable trees (reuse
-dreaming's `snapshot`) and appends the changed-file list to the reply, so the
-transcript is the audit.
-
-**Confirmation.** `ask` cannot be honoured today, so v1 splits by risk rather
-than prompting: low-risk writes (souls, skills, proposals → rules, enqueue,
-register project) are `allow`, with a soul rule to show the change before
-writing; everything else is `deny`, which needs no confirmation because it is
-impossible. Things that must require an explicit yes before they are ever
-allowed: changing access policies or any `*.json` under the config directory,
-any `shell`, deleting or renaming files, installing a skill from a URL the
-user did not paste, changing the editor's own file, `aivi update`/restart.
-
-**Defer.** Routing `ask` to the chat as a yes/no (unlocks config edits and
-shell allow-lists), `git clone` for add-project, hot reload of `aivi.json`
-(today a restart is required and the editor must say so), `/restart` and
-`aivi update` (belong to `docs/backlog/installation.md`), per-editor audit
-beyond session metadata, and any editor access from channels or email.
+`facts.md` and `proposals/*`. Both unattended paths auto-reject `ask` because
+nobody is at the server — which is why the operator tools above are
+allow/deny in agent files, and `ask`-in-chat stays a deferred upgrade.

@@ -97,14 +97,12 @@ export async function describeSession(
   // The window at the last call is everything that call was sent plus what it wrote.
   const inUse = last ? last.input + last.cache.read + last.cache.write + last.output : 0;
   let limit: number | undefined;
-  let threshold: number | undefined;
   if (model) {
     const catalogue = await client.model
       .list({ location: { directory: session.location.directory } }, { signal })
       .catch(() => undefined);
     const info = catalogue?.data.find(m => m.providerID === model!.providerID && m.modelID === model!.id);
     limit = info?.limit.context;
-    if (info?.compaction?.mode === 'provider' && info.compaction.threshold) threshold = info.compaction.threshold;
   }
   const modelName = model
     ? `\`${model.providerID}/${model.id}${model.variant ? ` (${model.variant})` : ''}\``
@@ -116,7 +114,7 @@ export async function describeSession(
       `Model ${modelName} · window ${n(limit)} tokens`,
       `In use ${n(inUse)} / ${n(limit)} (${Math.round(share * 100)}%)`,
       bar(share),
-      `Headroom ${n(Math.max(0, limit - inUse))} tokens · ${compactions} compaction${compactions === 1 ? '' : 's'}${threshold ? ` · compacts at ${n(threshold)}` : ''}`,
+      `Headroom ${n(Math.max(0, limit - inUse))} tokens · ${compactions} compaction${compactions === 1 ? '' : 's'}`,
     );
   } else if (last) {
     window.push(

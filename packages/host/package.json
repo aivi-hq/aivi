@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "@aivi/core": "0.1.0",
-    "@opencode/client": "2.0.4"
+    "@opencode/client": "2.0.10"
   }
 }

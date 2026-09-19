@@ -393,7 +393,7 @@ async function main(): Promise<void> {
     }
     case 'opencode check': {
       const client = await connectOpenCode(loaded.config.opencode);
-      print(await client.server.status({ signal: AbortSignal.timeout(10000) }));
+      print(await client.server.info({ signal: AbortSignal.timeout(10000) }));
       return;
     }
     case 'knowledge search': {
