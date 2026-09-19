@@ -8,6 +8,8 @@ export type {
   LinearTeam,
 } from './client.ts';
 export { LinearApiError, LinearClient, resolveTeams } from './client.ts';
+export type { LinearMcpOptions } from './mcp.ts';
+export { LinearMcp } from './mcp.ts';
 export type { LinearAppRuntime } from './module.ts';
 export {
   conversationFor,
@@ -19,7 +21,6 @@ export {
   projectForIssue,
   requireLinearSecrets,
 } from './module.ts';
-export { LinearMcpProxy, proxyCredentials } from './proxy.ts';
 export type { WebhookApp } from './routes.ts';
 export { appWebhookPath, registerWebhookRoutes } from './routes.ts';
 export type {

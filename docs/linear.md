@@ -112,15 +112,18 @@ built yet.
 
 ## The Linear MCP
 
-Agents act in Linear through Linear's hosted MCP, reached via a tiny proxy
-aivi ships: `packages/linear/src/proxy.ts`, a stdio MCP process OpenCode
-spawns per config (`type: "local"`). It forwards to `https://mcp.linear.app/mcp`
-carrying an *app actor* token minted from the primary's `client_credentials`
-— writes attribute to the app, not a human. The token is re-minted once on a
-401 (the app token lives 30 days with no refresh token; Linear's documented
-pattern). Credentials come from the environment or `<home>/.env`; the MCP is
-enabled in OpenCode's config (`example/opencode.jsonc` shows the shape).
-Personal API keys would never expire but attribute to a human: disqualified.
+Agents act in Linear through Linear's hosted MCP, reached through a forwarder
+the module hosts itself: when `linear.mcp` is set, `serve` binds
+`http://127.0.0.1:<port>` (default 4101, loopback only) and pipes every request
+verbatim to `https://mcp.linear.app/mcp`, rewriting only the authorization
+header to the app-actor token from the module's own client — minted with
+`client_credentials`, re-minted once on a 401 (the app token lives 30 days
+with no refresh token; Linear's documented pattern). Writes attribute to the
+app, never a human; personal API keys would never expire but attribute to a
+human: disqualified. OpenCode connects as a remote MCP
+(`type: "remote"`, `url: http://127.0.0.1:4101/mcp` —
+`example/opencode.jsonc`). The MCP lives and dies with `serve`, like the
+webhooks and the workers it serves.
 
 ## Setup
 

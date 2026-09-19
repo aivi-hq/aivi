@@ -8,14 +8,12 @@
     }
   ],
   "mcp": {
-    // The Linear MCP proxy: a stdio process that forwards to Linear's hosted
-    // MCP with an app-actor token minted from the bare LINEAR_* credentials.
-    // Set enabled to true once LINEAR_CLIENT_ID/LINEAR_CLIENT_SECRET are in
-    // the home's .env; use an absolute path when OpenCode starts elsewhere.
+    // Linear's hosted MCP through aivi's own loopback forwarder: enable
+    // `linear.mcp` in aivi.json (default port 4101) and point here. Writes
+    // attribute to the app, never a human.
     "linear": {
-      "type": "local",
-      "command": ["node", "packages/linear/src/proxy.ts"],
-      "enabled": false
+      "type": "remote",
+      "url": "http://127.0.0.1:4101/mcp"
     }
   }
 }

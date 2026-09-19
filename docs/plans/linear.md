@@ -44,10 +44,12 @@ The full argument lives in the plan file; what landed, each with its tests:
       `blockedBy` (a blocker not in a finished state holds it back);
       `ConversationStore.bind` takes an optional `project`.
 - [x] `client.ts`: `createComment`; `blockedBy` in the issue read.
-- [x] The Linear MCP proxy (`packages/linear/src/proxy.ts`): stdio MCP
-      forwarding to Linear's hosted MCP with an app-actor token, re-mint on
-      401; wired into `example/opencode.jsonc` (off until the credentials
-      exist).
+- [x] The Linear MCP: the module hosts a loopback forwarder (`linear.mcp`,
+      default port 4101) that pipes to Linear's hosted MCP, rewriting only the
+      authorization header to the app-actor token from its own `LinearClient`
+      (re-mint on 401); OpenCode connects as a remote MCP. Reshaped from a
+      stdio spawn the same day after review: credentials stay inside aivi, and
+      the lifecycle is `serve`'s.
 - [x] CLI: `projects create` asks which agent works each lane (text, empty =
       humans); `linear status` lists conversations (workers and assistant
       sessions) with their agent; `--lane` reads `LANE:AGENT`.

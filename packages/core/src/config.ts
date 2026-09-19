@@ -294,6 +294,14 @@ export const linearSchema = z.strictObject({
       'Issues carrying this label are never worked automatically; a hand delegation is refused with an explanation.',
     ),
   resource: id.default('local-model').describe('Pool a worker turn takes a slot in.'),
+  mcp: z
+    .strictObject({
+      port: z.number().int().min(0).max(65535).default(4101),
+    })
+    .optional()
+    .describe(
+      "Presence enables the Linear MCP: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app. OpenCode connects as a remote MCP at http://127.0.0.1:<port>/mcp. Loopback only.",
+    ),
   progress: z
     .enum(['silent', 'status', 'tools'])
     .default('tools')

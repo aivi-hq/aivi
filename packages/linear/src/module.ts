@@ -15,6 +15,7 @@ import {
   stopTurn as stopRunningTurn,
 } from '@aivi/host';
 import { LinearApiError, LinearClient } from './client.ts';
+import { LinearMcp } from './mcp.ts';
 import { registerWebhookRoutes } from './routes.ts';
 import {
   type AgentSessionEventPayload,
@@ -140,11 +141,13 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
     engine?.stop();
   };
   services.signal.addEventListener('abort', stop, { once: true });
+  let mcp: LinearMcp | undefined;
   const teardown = async () => {
     stop();
     try {
       await engine?.shutdown();
     } finally {
+      await mcp?.stop();
       services.signal.removeEventListener('abort', stop);
     }
   };
@@ -205,6 +208,20 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       log.info('session.refused', { conversation, why });
       await activity(conversation, { type: 'error', body: why }).catch(error => log.warn('notify.failed', { error }));
     };
+
+    // The Linear MCP: the module's own loopback forwarder, authorised with the
+    // primary's app-actor token. Agents act in Linear; writes attribute to the app.
+    if (config.mcp) {
+      const primary = apps.get(primaryId!);
+      mcp = new LinearMcp(primary!.client, { port: config.mcp.port, log });
+      try {
+        const port = await mcp.start();
+        log.info('linear.mcp.ready', { url: `http://127.0.0.1:${port}/mcp` });
+      } catch (error) {
+        await mcp.stop();
+        throw new ConfigurationError(`Linear MCP could not bind 127.0.0.1:${config.mcp.port}: ${errorMessage(error)}`);
+      }
+    }
 
     /** End the worker in `conversation` because Linear says it must not continue; the worktree stays. */
     const stopWorker = async (conversation: string, why: string) => {

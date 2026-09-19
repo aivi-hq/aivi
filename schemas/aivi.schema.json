@@ -868,6 +868,19 @@
           "type": "string",
           "pattern": "^[a-z][a-z0-9_-]*$"
         },
+        "mcp": {
+          "description": "Presence enables the Linear MCP: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app. OpenCode connects as a remote MCP at http://127.0.0.1:<port>/mcp. Loopback only.",
+          "type": "object",
+          "properties": {
+            "port": {
+              "default": 4101,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        },
         "progress": {
           "description": "What the ephemeral activities in the agent session show while a worker runs.",
           "default": "tools",
