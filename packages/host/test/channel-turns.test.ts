@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, realpath } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '../src/channel/contract.ts';
@@ -200,5 +203,86 @@ test('an unreachable OpenCode is a turn that never started, not a blocked one', 
   await assert.rejects(
     ask(turn, AbortSignal.timeout(3000), () => {}),
     (error: unknown) => error instanceof TurnNotStarted && /No running OpenCode/.test(error.message),
+  );
+});
+
+test('a source whose directory does not exist is skipped, not a module start that fails its retry loop', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'aivi-turns-')));
+  await mkdir(join(root, 'docs'));
+  const requests: { path: string; method: string; body: Record<string, any> }[] = [];
+  let promptMetadata: Record<string, unknown> = {};
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = raw ? JSON.parse(raw) : {};
+    requests.push({ path: req.url!, method: req.method!, body });
+    if (req.method === 'PATCH' || req.url!.endsWith('/wait') || req.url!.endsWith('/model')) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.setHeader('content-type', 'application/json');
+    if (req.url!.startsWith('/api/agent'))
+      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+    if (req.url!.endsWith('/permission') && req.method === 'GET') {
+      res.end(JSON.stringify({ data: [] }));
+      return;
+    }
+    if (req.url!.endsWith('/prompt')) {
+      promptMetadata = body.metadata;
+      res.end(JSON.stringify({ data: { id: body.id } }));
+      return;
+    }
+    if (req.url!.endsWith('/context')) {
+      res.end(
+        JSON.stringify({
+          data: [
+            { type: 'user', id: 'user', text: 'Question', metadata: promptMetadata, time: { created: 1 } },
+            {
+              type: 'assistant',
+              id: 'answer',
+              agent: 'librarian',
+              finish: 'stop',
+              time: { created: 2, completed: 3 },
+              content: [{ type: 'text', text: 'Answer' }],
+            },
+            { type: 'idle', id: 'idle', outcome: 'succeeded', time: { created: 4 } },
+          ],
+        }),
+      );
+      return;
+    }
+    res.end(
+      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
+    );
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const loaded = {
+    config: configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } }),
+    path: '/config',
+    projects: [],
+    // The company convention on a repository without a `docs/adr`: a vacuous allow, not an error.
+    sources: [
+      { id: 'docs', path: join(root, 'docs'), kind: 'doc' as const, scope: 'project' as const, projectId: 'peck' },
+      {
+        id: 'adr',
+        path: join(root, 'docs', 'adr'),
+        kind: 'decision' as const,
+        scope: 'project' as const,
+        projectId: 'peck',
+      },
+    ],
+  };
+  const ask = await createTurnRunner(platform, config, loaded, () => connectOpenCode(loaded.config.opencode), quiet);
+  assert.equal(await ask(turn, AbortSignal.timeout(3000), () => {}), 'Answer');
+  const rules = requests.filter(r => r.method === 'PATCH' && r.path.startsWith('/api/session/'));
+  assert.equal(rules.length, 1);
+  assert.deepEqual(
+    rules[0]!.body.permissions.map((p: { resource: string }) => p.resource),
+    [`${join(root, 'docs')}/**`],
+    'only the existing source is allowed; the missing directory is skipped',
   );
 });

@@ -34,8 +34,11 @@ export async function createTurnRunner(
 ): Promise<Ask> {
   const permissions: { action: string; resource: string; effect: 'allow' }[] = [];
   // Sources may be files or directories. Match native canonical external-directory boundaries.
+  // A repository without the conventional directory is normal (knowledge.md): a missing
+  // source is a vacuous allow, already warned once as `knowledge.missing` by the index.
   for (const source of loaded.sources) {
-    const path = await realpath(source.path);
+    const path = await realpath(source.path).catch(() => null);
+    if (!path) continue;
     const directory = (await stat(path)).isDirectory() ? path : dirname(path);
     if (/[?*]/.test(directory)) throw new Error('Knowledge directory contains native permission wildcard characters');
     permissions.push({
