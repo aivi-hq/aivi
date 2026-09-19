@@ -129,9 +129,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   // Discovery is one file read, so it runs per unit of work: a restarted `opencode service`
   // (new port and password) is picked up by the next turn without restarting aivi.
   const opencode = () =>
-    connectOpenCode(loaded.config.opencode, process.env, {
-      onStart: reason => log.info('opencode.started', { reason }),
-    });
+    connectOpenCode(
+      loaded.config.opencode,
+      process.env,
+      {
+        onStart: reason => log.info('opencode.started', { reason }),
+      },
+      log,
+    );
   const wake = new Wake();
   const tasks = new TaskRegistry();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for

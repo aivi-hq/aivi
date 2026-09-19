@@ -81,10 +81,14 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Verified final answer**, never idleness: `finalAnswer` reads the native
   context (`user → assistant(finish: stop) → idle(succeeded)`, no unfinished
   tools).
-- **OpenCode discovery per unit of work** (one file read per job or turn), no
-  cached client, so `opencode service restart` is picked up by the next turn.
-  aivi owns the local service's lifecycle by default (`opencode.lifecycle:
-  own`): one restart at `aivi serve` startup so the current plugin build and
+- **OpenCode discovery per unit of work** (one file read plus one HTTP probe
+  per job or turn), no cached client, so `opencode service restart` is picked
+  up by the next turn. Discovery is tolerant: a server is alive when it
+  answers HTTP on its registered endpoint, whatever its version — the SDK's
+  replace-on-version-mismatch machinery never runs against a server aivi
+  found, and the server's version is logged once per process. aivi owns the
+  local service's lifecycle by default (`opencode.lifecycle:
+  'own'`): one restart at `aivi serve` startup so the current plugin build and
   `AIVI_TOKEN` are in, a start whenever it is missing, never a stop later.
   `ensure` and `discover` are the smaller degrees; the example home uses
   `discover` so tests never touch a developer's OpenCode.

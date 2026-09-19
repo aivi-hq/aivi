@@ -42,11 +42,13 @@ to what is left and point at the owners. `docs/review/*.md` are findings, not
 specifications; `docs/backlog/*.md` are unscheduled ideas.
 
 Use Node 26 (`engines` in `package.json`), pinned dependencies, and npm
-workspaces. The `@opencode/*` family is one version set: every package pins the
-same version, kept in step with the installed `opencode` binary (root
-`overrides` enforces it) — the SDK probes the binary's HTTP surface, and a
-drift makes aivi kill healthy servers on every connection. There is no build:
-packages run from `src/*.ts` (type stripping),
+workspaces. The `@opencode/*` family is one version set: every package pins
+the same version (root `overrides` enforces it). aivi owns OpenCode discovery:
+a server is alive when it answers HTTP on its registered endpoint, whatever
+its version — the SDK's replace-on-mismatch machinery is never allowed to
+kill a running server, and version skew is logged, never fatal. When a server
+release moves an endpoint aivi uses, bump the family in the same commit.
+There is no build: packages run from `src/*.ts` (type stripping),
 so keep to erasable TypeScript syntax and `.ts` import specifiers. Test
 lifecycle, persistence, and configuration changes at the actual boundaries they
 affect. Live OpenCode, Discord and macOS Chrome verification are
