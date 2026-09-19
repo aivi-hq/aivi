@@ -113,7 +113,8 @@ built yet.
 ## The Linear MCP
 
 Agents act in Linear through Linear's hosted MCP, reached through a forwarder
-the module hosts itself: when `linear.mcp` is set, `serve` binds
+the module hosts itself: on by default (`linear.mcp: false` disables it),
+`serve` binds
 `http://127.0.0.1:<port>` (default 4101, loopback only) and pipes every request
 verbatim to `https://mcp.linear.app/mcp`, rewriting only the authorization
 header to the app-actor token from the module's own client — minted with

@@ -77,7 +77,6 @@
   "linear": {
     "agent": "aivi",
     "apps": { "aivi": {} },
-    "mcp": {},
     "listener": false,
     "resource": "local-model",
     "progress": "tools"

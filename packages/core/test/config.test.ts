@@ -24,6 +24,8 @@ test('linear settings: defaults, secret names, reserved pool', () => {
     [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs, linear.logMisroutes],
     [false, 'needs-human', 'local-model', 'tools', 7_200_000, true],
   );
+  assert.deepEqual(linear.mcp, { port: 4101 }, 'the Linear MCP is on by default on its loopback port');
+  assert.deepEqual(configSchema.parse({ version: 1, linear: { apps: { dev: {} }, mcp: false } }).linear!.mcp, false);
   assert.deepEqual(linearSecretNames('dev-app'), {
     clientId: 'LINEAR_DEV_APP_CLIENT_ID',
     clientSecret: 'LINEAR_DEV_APP_CLIENT_SECRET',

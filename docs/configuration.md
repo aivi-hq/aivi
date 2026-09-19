@@ -237,7 +237,7 @@ Presence of `linear` enables the module ([linear](linear.md)).
 | `listener` | `false`: only delegations and mentions made in Linear start a worker. `true`: an issue entering a mapped lane is delegated by aivi (on the primary) and its worker starts |
 | `humanLabel` | Issues with this label are never worked automatically; a hand delegation is refused with an explanation in the agent session |
 | `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
-| `mcp` | Presence enables the Linear MCP: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app ([linear](linear.md#the-linear-mcp)) |
+| `mcp` | On by default: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app; `false` disables it ([linear](linear.md#the-linear-mcp)) |
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
 | `turnTimeoutMs` | A worker turn longer than this is interrupted and ends `stopped` (default two hours) |
 
