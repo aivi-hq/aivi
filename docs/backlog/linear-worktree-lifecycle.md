@@ -1,12 +1,16 @@
 # Worktree lifecycle per lane
 
-Status: **planned (v3), not built.** Full plan lived at
-`~/.opencode/plan/worktree-lifecycle.md` (outside the repo — do not depend on
-it; the substance is here). Owner's why: the first real lanes are
-triage/refinement, read-only conversation lanes, so worktrees must not exist
-until a work lane. Builds on the committed lane convention (`59b33fd`,
-behaviour in [linear.md](../linear.md)) and the task registry
-([task-registry.md](task-registry.md), built 2026-09-18).
+Status: **planned (v3), partly landed.** The lane shape and the checkout
+environment landed with the single-app rework (2026-09-19,
+[plans/linear.md](../plans/linear.md) step 11): lanes are
+`agent | null | { agent, worktree: false }`, and a `worktree: false` lane runs
+its agent in the project's clean checkout with the agent file's own `edit`
+deny as the only enforcement. `client.ts` gained `createComment`. What remains
+of this page is the **sweep**: issue-keyed worktrees, terminal-lane removal
+and staging, `linear.sweep` as a daily system job, `linear.reportChannels`.
+(The issue-keyed worktree — `worktrees/PEC-123` shared across agents — is a
+behaviour change from today's per-session keying; if it lands, it lands with
+the sweep.)
 
 ## Rules (agreed with the owner)
 

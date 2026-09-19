@@ -1,3 +1,5 @@
+import { type FSWatcher, readFileSync, watch } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { BrowserRequest, JobRequest } from '@aivi/core';
 import type { KnowledgeKind } from '@aivi/core/kinds';
 import { knowledgeKindHelp, knowledgeKindNames } from '@aivi/core/kinds';
@@ -5,6 +7,17 @@ import { createHostClient } from '@aivi/host/client';
 import { Plugin } from '@opencode/plugin';
 
 const DEFAULT_HOST_URL = 'http://127.0.0.1:4100';
+
+/**
+ * Where the soul lives: `<home>/soul.md`, overridable with the plugin's
+ * `soul` option or `AIVI_HOME`. The aivi home is the OpenCode location, so the
+ * default needs no configuration.
+ */
+function soulPath(options: Record<string, unknown>, location: { directory?: string } | undefined): string | undefined {
+  if (typeof options.soul === 'string' && options.soul) return resolve(options.soul);
+  if (process.env.AIVI_HOME) return join(process.env.AIVI_HOME, 'soul.md');
+  return location?.directory ? join(location.directory, 'soul.md') : undefined;
+}
 
 /**
  * Flat object schema for the browser tool. Provider tool APIs require a root
@@ -200,6 +213,52 @@ export default Plugin.define({
         execute: async (input, context) => json(await client.browser(context.sessionID, input as BrowserRequest)),
       });
     });
-    return () => registration.dispose();
+
+    // The soul: who aivi is, appended to **every** agent's prompt (aivi runs on
+    // a dedicated machine, so every agent there is an aivi agent). The
+    // registry replays this transform on every rebuild — reading soul.md
+    // fresh each time — so an agent-file edit can never wipe it and no soul
+    // text is copied into agent files. soul.md itself sits outside the
+    // `.opencode` roots OpenCode watches, so the plugin watches it here and
+    // invalidates the registry on change; sessions continue, history is in
+    // the store.
+    const disposers: (() => unknown)[] = [() => registration.dispose()];
+    const path = soulPath(ctx.options as Record<string, unknown>, ctx.location as { directory?: string } | undefined);
+    if (path && typeof ctx.agent?.transform === 'function') {
+      const agentTransform = await ctx.agent.transform(editor => {
+        let text: string;
+        try {
+          text = readFileSync(path, 'utf8').trim();
+        } catch {
+          return; // no soul yet: nothing to say
+        }
+        if (!text) return;
+        for (const agent of editor.list()) {
+          editor.update(agent.id as unknown as string, a => {
+            a.system = a.system ? `${a.system}\n\n${text}` : text;
+          });
+        }
+      });
+      disposers.push(() => agentTransform.dispose());
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let watcher: FSWatcher | undefined;
+      try {
+        watcher = watch(dirname(path), (_event, filename) => {
+          if (filename && filename !== basename(path)) return;
+          clearTimeout(timer);
+          timer = setTimeout(() => void ctx.agent.reload(), 100);
+        });
+        disposers.push(() => {
+          clearTimeout(timer);
+          watcher?.close();
+        });
+      } catch {
+        // No directory to watch: the soul is simply absent until it exists.
+      }
+    }
+
+    return () => {
+      for (const off of disposers) void off();
+    };
   },
 });

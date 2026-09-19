@@ -13,7 +13,7 @@ import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry } from '@a
 import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
 import { LinearClient } from '../src/client.ts';
 import { conversationFor, createLinearModule, openLinearStore } from '../src/module.ts';
-import { appWebhookPath, dataWebhookPath } from '../src/routes.ts';
+import { appWebhookPath } from '../src/routes.ts';
 import { signWebhook } from '../src/webhook.ts';
 
 const run = promisify(execFile);
@@ -54,6 +54,8 @@ async function fakeOpenCode(
     }
     if (url.endsWith('/context')) {
       const last = prompts.at(-1)!;
+      // The transcript names the agent that ran; finalAnswer verifies it against the session's.
+      const running = sessions.get(decodeURIComponent(url.split('/').at(-2)!))?.agent ?? 'developer';
       return void res.end(
         JSON.stringify({
           data: [
@@ -61,7 +63,7 @@ async function fakeOpenCode(
             {
               type: 'assistant',
               id: 'a',
-              agent: 'developer',
+              agent: running,
               finish: 'stop',
               time: { created: 2, completed: 3 },
               content: [{ type: 'text', text: answer }],
@@ -88,6 +90,7 @@ class FakeLinear extends LinearClient {
   issues = new Map<string, LinearIssue>();
   delegated: [string, string | null][] = [];
   sessionsCreated: string[] = [];
+  comments: [string, string][] = [];
   constructor() {
     super({ clientId: 'x', clientSecret: 'y' }, { baseUrl: 'http://127.0.0.1:1' });
   }
@@ -112,6 +115,10 @@ class FakeLinear extends LinearClient {
     const issue = this.issues.get(issueId);
     if (issue) issue.delegate = delegateId ? { id: delegateId } : null;
   }
+  override async createComment(issueId: string, body: string) {
+    this.comments.push([issueId, body]);
+    return `c-${this.comments.length}`;
+  }
 }
 
 const noEvents: SessionEvents = { watch: () => () => {} };
@@ -121,7 +128,7 @@ const until = async (check: () => boolean, what: string) => {
 };
 const knowledge: KnowledgeService = { search: async () => [], index: async () => ({}), close: async () => {} };
 
-test('a delegation runs the mapped agent in a worktree and answers with a response; HITL and unmapped issues are refused; follow-ups and stop work', async t => {
+test('a delegation in a mapped lane runs the lane agent in a worktree; people reach the assistant; a wrong delegation is un-taken; HITL refuses', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = join(root, 'upstream');
@@ -133,25 +140,33 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   const source = join(root, 'home/projects/website/source');
   await mkdir(join(root, 'home/projects/website'), { recursive: true });
   await run('git', ['clone', '-q', upstream, source]);
+  const home = join(root, 'home');
 
-  process.env.LINEAR_DEV_CLIENT_ID = 'cid';
-  process.env.LINEAR_DEV_CLIENT_SECRET = 'sec';
-  process.env.LINEAR_DEV_WEBHOOK_SECRET = 'whsec';
-  process.env.LINEAR_CLIENT_ID = 'data-cid';
-  process.env.LINEAR_CLIENT_SECRET = 'data-sec';
-  process.env.LINEAR_WEBHOOK_SECRET = 'data-whsec';
+  // The one app keeps the bare names; the face uses its own; the primary carries the data feed.
+  process.env.LINEAR_CLIENT_ID = 'cid';
+  process.env.LINEAR_CLIENT_SECRET = 'sec';
+  process.env.LINEAR_WEBHOOK_SECRET = 'whsec';
+  process.env.LINEAR_FACE_CLIENT_ID = 'face-cid';
+  process.env.LINEAR_FACE_CLIENT_SECRET = 'face-sec';
+  process.env.LINEAR_FACE_WEBHOOK_SECRET = 'face-whsec';
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
-    linear: { apps: { dev: { agent: 'developer' } } },
-    projects: { website: { linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'dev' } } } },
+    linear: { agent: 'assistant', primary: 'dev', apps: { dev: {}, face: {} } },
+    projects: { website: { linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'developer' } } } },
   });
   const opencode = await fakeOpenCode(t, 'Done: fixed the header.');
   config.opencode.url = opencode.url;
   const loaded = {
     config,
-    path: join(root, 'home/aivi.json'),
-    projects: [{ id: 'website', directory: source, linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'dev' } } }],
+    path: join(home, 'aivi.json'),
+    projects: [
+      {
+        id: 'website',
+        directory: source,
+        linear: { teams: ['t', 'tx'], lanes: { 'In Progress': { agent: 'developer', worktree: true } } },
+      },
+    ],
     sources: [],
   };
   const linear = new FakeLinear();
@@ -167,11 +182,17 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     labels: [],
     delegate: { id: 'app-user-dev' },
     assignee: { id: 'u', name: 'Me' },
+    blockedBy: [],
     ...extra,
   });
   linear.issues.set('eng-1', issue('eng-1'));
   linear.issues.set('eng-2', issue('eng-2', { labels: [{ id: 'l', name: 'needs-human' }] }));
+  // A team no project maps: the assistant's ground, in the home.
   linear.issues.set('eng-3', issue('eng-3', { team: { id: 't9', key: 'OTH' } }));
+  // A delegation into a lane nobody mapped: the assistant refuses it and the delegate is removed.
+  linear.issues.set('eng-5', issue('eng-5', { state: { id: 's9', name: 'Deploy', type: 'started' } }));
+  // A mention (no delegate) on the face, in a mapped team.
+  linear.issues.set('eng-6', issue('eng-6', { delegate: null }));
 
   const store = new Store(':memory:');
   const routes = new PublicRoutes();
@@ -195,7 +216,7 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     config.linear!,
     new Map([
       ['dev', linear],
-      ['data', linear],
+      ['face', linear],
     ]),
   ).start(services);
   t.after(async () => {
@@ -203,16 +224,16 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     store.close();
   });
 
-  const deliver = async (payload: Record<string, unknown>) => {
+  const deliver = async (app: string, secret: string, payload: Record<string, unknown>) => {
     const body = Buffer.from(JSON.stringify({ organizationId: 'org', webhookTimestamp: Date.now(), ...payload }));
-    return routes.get(appWebhookPath('dev'))!({
+    return routes.get(appWebhookPath(app))!({
       method: 'POST',
-      headers: { 'linear-signature': signWebhook(body, 'whsec'), 'linear-delivery': 'd' },
+      headers: { 'linear-signature': signWebhook(body, secret), 'linear-delivery': 'd' },
       body,
     });
   };
   const created = (agentSession: string, issueId: string) =>
-    deliver({
+    deliver('dev', 'whsec', {
       type: 'AgentSessionEvent',
       action: 'created',
       agentSession: { id: agentSession, issue: { id: issueId } },
@@ -231,8 +252,8 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   const worktree = join(root, 'home/projects/website/worktrees/as-1');
   assert.ok(await stat(join(worktree, '.git')), 'the worktree exists');
   assert.equal((await git(worktree, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim(), 'me/eng-1-fix-header');
-  const session = [...opencode.sessions.values()][0]!;
-  assert.deepEqual(session, { agent: 'developer', directory: worktree }, 'the mapped agent runs in the worktree');
+  const worker = [...opencode.sessions.values()].find(s => s.agent === 'developer')!;
+  assert.equal(worker.directory, worktree, 'the lane agent runs in the worktree');
   assert.match(
     opencode.prompts[0]!.text,
     /Linear delegated ENG-1 "Fix header" to you \(app dev\) in project website, lane "In Progress"/,
@@ -240,15 +261,17 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   assert.match(opencode.prompts[0]!.text, /<issue identifier="ENG-1">/);
   const inbox = openLinearStore(store);
   assert.equal(inbox.list()[0]!.state, 'sent');
+  const workerConversation = conversationFor('dev', 'as-1');
   assert.deepEqual(
-    [inbox.sessionOf(conversationFor('dev', 'as-1'))!.project, inbox.sessionOf(conversationFor('dev', 'as-1'))!.issue],
+    [inbox.sessionOf(workerConversation)!.project, inbox.sessionOf(workerConversation)!.issue],
     ['website', 'eng-1'],
   );
+  assert.equal(inbox.sessionOf(workerConversation)!.agent, 'developer');
   assert.equal((await created('as-1', 'eng-1')).status, 200, 'a redelivery is a no-op');
   assert.equal(inbox.list().length, 1);
 
   // A follow-up prompt is a new turn in the same session; a stop with nothing running says so.
-  await deliver({
+  await deliver('dev', 'whsec', {
     type: 'AgentSessionEvent',
     action: 'prompted',
     agentSession: { id: 'as-1', issue: { id: 'eng-1' } },
@@ -257,7 +280,7 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   await until(() => opencode.prompts.length === 2, 'the follow-up reached the same session');
   assert.equal(opencode.prompts[1]!.text, '[Linear follow-up from a person in Linear]\nAlso fix the footer');
   await until(() => inbox.list().every(t => t.state === 'sent'), 'answered');
-  await deliver({
+  await deliver('dev', 'whsec', {
     type: 'AgentSessionEvent',
     action: 'prompted',
     agentSession: { id: 'as-1' },
@@ -269,33 +292,54 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
     'stop with nothing running',
   );
 
-  // Refusals: the HITL label, an issue outside every mapped team, an unknown session.
+  // The HITL label refuses any agent.
   await created('as-2', 'eng-2');
   await until(
     () => linear.activities.some(a => a.content.type === 'error' && /needs-human/.test(a.content.body)),
     'HITL refused',
   );
+
+  // A team no project maps: the assistant answers from the home, the delegate is un-taken.
   await created('as-3', 'eng-3');
   await until(
-    () =>
-      linear.activities.some(
-        a => a.content.type === 'error' && /not in a Linear team that aivi maps/.test(a.content.body),
-      ),
-    'unmapped refused',
+    () => opencode.sessions.size >= 2 && [...opencode.sessions.values()].some(s => s.agent === 'assistant'),
+    'the assistant session ran',
   );
-  await deliver({
-    type: 'AgentSessionEvent',
-    action: 'prompted',
-    agentSession: { id: 'as-9' },
-    agentActivity: { id: 'act-x', content: { type: 'prompt', body: 'hi' } },
-  });
-  await until(
-    () => linear.activities.some(a => a.content.type === 'error' && /do not know this session/.test(a.content.body)),
-    'unknown session refused',
+  const assistantSession = [...opencode.sessions.values()].find(s => s.agent === 'assistant')!;
+  assert.equal(assistantSession.directory, home, 'no project: the assistant runs in the home');
+  assert.deepEqual(linear.delegated.at(-1), ['eng-3', null], 'the wrong delegation was un-taken');
+  await until(() => inbox.list().length === 3, 'the assistant turn exists');
+  assert.match(
+    opencode.prompts.at(-1)!.text,
+    /was delegated to you, but its lane \("In Progress"\) is not mapped to any agent/,
   );
 
-  // Wrong-endpoint deliveries are acknowledged and dropped: a data change
-  // arriving on the app route, an agent-session event on the data route.
+  // A delegation into an unmapped lane of a mapped team: the assistant, in the checkout.
+  await created('as-5', 'eng-5');
+  await until(() => inbox.list().length === 4, 'the assistant turn for the unmapped lane');
+  assert.deepEqual(linear.delegated.at(-1), ['eng-5', null]);
+  await until(
+    () => [...opencode.sessions.values()].filter(s => s.agent === 'assistant' && s.directory === source).length === 1,
+    'the assistant runs in the project checkout when the team maps one',
+  );
+
+  // A mention on the face reaches the same assistant; the conversation lives on the face.
+  await deliver('face', 'face-whsec', {
+    type: 'AgentSessionEvent',
+    action: 'created',
+    agentSession: { id: 'as-6', issue: { id: 'eng-6' } },
+    promptContext: '<issue identifier="ENG-6">…</issue>',
+  });
+  await until(() => inbox.list().length === 5, 'the face mention became a turn');
+  assert.equal(inbox.sessionOf(conversationFor('face', 'as-6'))!.agent, 'assistant');
+  assert.deepEqual(
+    linear.delegated.filter(d => d[0] === 'eng-6'),
+    [],
+    'a mention is not un-delegated',
+  );
+  await until(() => inbox.list().every(t => t.state === 'sent'), 'all answered');
+
+  // A data change on a face's route is a misroute: acknowledged, dropped.
   const activitiesBefore = linear.activities.length;
   const strayIssue = Buffer.from(
     JSON.stringify({
@@ -309,37 +353,17 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   );
   assert.equal(
     (
-      await routes.get(appWebhookPath('dev'))!({
+      await routes.get(appWebhookPath('face'))!({
         method: 'POST',
-        headers: { 'linear-signature': signWebhook(strayIssue, 'whsec') },
+        headers: { 'linear-signature': signWebhook(strayIssue, 'face-whsec') },
         body: strayIssue,
       })
     ).status,
     200,
     'a misrouted delivery is still acknowledged, so Linear does not retry',
   );
-  const straySession = Buffer.from(
-    JSON.stringify({
-      type: 'AgentSessionEvent',
-      action: 'created',
-      organizationId: 'org',
-      webhookTimestamp: Date.now(),
-      agentSession: { id: 'as-stray', issue: { id: 'eng-1' } },
-    }),
-  );
-  assert.equal(
-    (
-      await routes.get(dataWebhookPath)!({
-        method: 'POST',
-        headers: { 'linear-signature': signWebhook(straySession, 'data-whsec') },
-        body: straySession,
-      })
-    ).status,
-    200,
-  );
   await new Promise(r => setTimeout(r, 50));
-  assert.equal(linear.activities.length, activitiesBefore, 'neither stray delivery posted anything');
-  assert.equal(inbox.list().length, 2, 'refused sessions never became turns');
+  assert.equal(linear.activities.length, activitiesBefore, 'the stray delivery posted nothing');
   assert.equal(store.leases().length, 0, 'no capacity held');
 
   // A second mapped team routes to the same checkout: teams is a list on purpose.
@@ -350,7 +374,116 @@ test('a delegation runs the mapped agent in a worktree and answers with a respon
   assert.ok(await stat(join(root, 'home/projects/website/worktrees/as-4')), 'a worktree of the same checkout');
 });
 
-test('the listener delegates an issue entering a mapped lane and starts the worker; the HITL label or a lane change mid-run stops it', async t => {
+test('a read-only lane runs its agent in the project checkout without a worktree', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-readonly-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = join(root, 'upstream');
+  await mkdir(upstream, { recursive: true });
+  await writeFile(join(upstream, 'README.md'), 'r');
+  await run('git', ['init', '-q', '-b', 'main', upstream]);
+  await git(upstream, 'add', '.');
+  await git(upstream, 'commit', '-q', '-m', 'init');
+  const source = join(root, 'home/projects/site/source');
+  await mkdir(join(root, 'home/projects/site'), { recursive: true });
+  await run('git', ['clone', '-q', upstream, source]);
+  process.env.LINEAR_CLIENT_ID = 'cid';
+  process.env.LINEAR_CLIENT_SECRET = 'sec';
+  process.env.LINEAR_WEBHOOK_SECRET = 'whsec';
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: 'http://placeholder' },
+    linear: { apps: { dev: {} } },
+    projects: {
+      site: {
+        linear: { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
+      },
+    },
+  });
+  const opencode = await fakeOpenCode(t, 'Answered.');
+  config.opencode.url = opencode.url;
+  const loaded = {
+    config,
+    path: join(root, 'home/aivi.json'),
+    projects: [
+      {
+        id: 'site',
+        directory: source,
+        linear: { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
+      },
+    ],
+    sources: [],
+  };
+  const linear = new FakeLinear();
+  linear.issues.set('site-1', {
+    id: 'site-1',
+    identifier: 'SITE-1',
+    title: 'What ships next',
+    description: null,
+    branchName: 'me/site-1',
+    url: 'https://linear.app/x/issue/SITE-1',
+    state: { id: 's', name: 'Research', type: 'started' },
+    team: { id: 't', key: 'SITE' },
+    labels: [],
+    delegate: { id: 'app-user-dev' },
+    assignee: { id: 'u', name: 'Me' },
+    blockedBy: [],
+  });
+  const store = new Store(':memory:');
+  const routes = new PublicRoutes();
+  const services: HostServices = {
+    loaded,
+    store,
+    knowledge,
+    opencode: () => connectOpenCode(loaded.config.opencode, {}),
+    events: noEvents,
+    signal: new AbortController().signal,
+    log: silentLogger,
+    channels: new Channels(),
+    routes,
+    tasks: new TaskRegistry().forModule('test'),
+    wake: () => {},
+    onWake: () => () => {},
+    fail: error => assert.fail(String(error)),
+  };
+  const running = await createLinearModule(config.linear!, new Map([['dev', linear]])).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  const body = Buffer.from(
+    JSON.stringify({
+      type: 'AgentSessionEvent',
+      action: 'created',
+      organizationId: 'org',
+      webhookTimestamp: Date.now(),
+      agentSession: { id: 'as-r1', issue: { id: 'site-1' } },
+      promptContext: '<issue identifier="SITE-1"></issue>',
+    }),
+  );
+  await routes.get(appWebhookPath('dev'))!({
+    method: 'POST',
+    headers: { 'linear-signature': signWebhook(body, 'whsec'), 'linear-delivery': 'd' },
+    body,
+  });
+  const inbox = openLinearStore(store);
+  await until(() => inbox.list().some(t => t.state === 'sent'), 'answered from the checkout');
+  const session = [...opencode.sessions.values()][0]!;
+  assert.deepEqual(session, { agent: 'researcher', directory: source }, 'no worktree: the checkout is the directory');
+  assert.match(opencode.prompts[0]!.text, /clean checkout/, 'the prompt says where the agent works');
+  assert.ok(
+    linear.activities.some(a => a.content.type === 'thought' && /working in the project checkout/.test(a.content.body)),
+    'the acknowledgement says so too',
+  );
+  assert.equal(
+    await stat(join(root, 'home/projects/site/worktrees'))
+      .then(s => s.isDirectory())
+      .catch(() => false),
+    false,
+    'no worktrees directory was made',
+  );
+});
+
+test('the listener delegates an issue entering a mapped lane and starts the worker; the HITL label or a lane change mid-run stops it; a blocked issue waits', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-listener-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = join(root, 'upstream');
@@ -362,28 +495,36 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   const source = join(root, 'home/projects/api/source');
   await mkdir(join(root, 'home/projects/api'), { recursive: true });
   await run('git', ['clone', '-q', upstream, source]);
-  process.env.LINEAR_DEV_CLIENT_ID = 'cid';
-  process.env.LINEAR_DEV_CLIENT_SECRET = 'sec';
-  process.env.LINEAR_DEV_WEBHOOK_SECRET = 'whsec';
-  process.env.LINEAR_CLIENT_ID = 'data-cid';
-  process.env.LINEAR_CLIENT_SECRET = 'data-sec';
-  process.env.LINEAR_WEBHOOK_SECRET = 'data-whsec';
+  process.env.LINEAR_CLIENT_ID = 'cid';
+  process.env.LINEAR_CLIENT_SECRET = 'sec';
+  process.env.LINEAR_WEBHOOK_SECRET = 'whsec';
 
   let release: () => void = () => {};
   let gated = false;
   const gate = () => (gated ? new Promise<void>(r => (release = r)) : Promise.resolve());
   const opencode = await fakeOpenCode(t, 'Shipped.', gate);
-  const lanes = { 'In Progress': 'dev', Review: 'dev' };
   const config = configSchema.parse({
     version: 1,
     opencode: { url: opencode.url },
-    linear: { apps: { dev: { agent: 'developer' } }, listener: true },
-    projects: { api: { linear: { teams: ['t'], lanes } } },
+    linear: { apps: { dev: {} }, listener: true },
+    projects: { api: { linear: { teams: ['t'], lanes: { 'In Progress': 'developer', Review: 'developer' } } } },
   });
   const loaded = {
     config,
     path: join(root, 'home/aivi.json'),
-    projects: [{ id: 'api', directory: source, linear: { teams: ['t'], lanes } }],
+    projects: [
+      {
+        id: 'api',
+        directory: source,
+        linear: {
+          teams: ['t'],
+          lanes: {
+            'In Progress': { agent: 'developer', worktree: true },
+            Review: { agent: 'developer', worktree: true },
+          },
+        },
+      },
+    ],
     sources: [],
   };
   const linear = new FakeLinear();
@@ -399,6 +540,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     labels: [],
     delegate: null,
     assignee: { id: 'u', name: 'Me' },
+    blockedBy: [],
   };
   linear.issues.set('api-7', issue);
   const store = new Store(':memory:');
@@ -419,13 +561,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(
-    config.linear!,
-    new Map([
-      ['dev', linear],
-      ['data', linear],
-    ]),
-  ).start(services);
+  const running = await createLinearModule(config.linear!, new Map([['dev', linear]])).start(services);
   t.after(async () => {
     release();
     await running.stop();
@@ -442,9 +578,9 @@ test('the listener delegates an issue entering a mapped lane and starts the work
         updatedFrom,
       }),
     );
-    return routes.get(dataWebhookPath)!({
+    return routes.get(appWebhookPath('dev'))!({
       method: 'POST',
-      headers: { 'linear-signature': signWebhook(body, 'data-whsec') },
+      headers: { 'linear-signature': signWebhook(body, 'whsec') },
       body,
     });
   };
@@ -454,8 +590,13 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   await new Promise(r => setTimeout(r, 50));
   assert.deepEqual(linear.sessionsCreated, []);
 
-  // Todo → In Progress with no delegate: the listener delegates the lane's app and the worker runs to an answer.
+  // Linear's native blocking: a blocker not in a finished state holds the listener back.
+  issue.blockedBy = [{ id: 'api-6', state: { id: 's', name: 'In Progress', type: 'started' } }];
   issue.state = { id: 'prog', name: 'In Progress', type: 'started' };
+  await issueUpdate({ stateId: 'todo' });
+  await new Promise(r => setTimeout(r, 50));
+  assert.deepEqual(linear.sessionsCreated, [], 'a blocked issue is not delegated');
+  issue.blockedBy = [{ id: 'api-6', state: { id: 's2', name: 'Done', type: 'completed' } }];
   await issueUpdate({ stateId: 'todo' });
   await until(() => linear.activities.some(a => a.content.type === 'response'), 'the worker answered');
   assert.deepEqual(linear.sessionsCreated, ['api-7']);
@@ -468,7 +609,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   await new Promise(r => setTimeout(r, 50));
   assert.equal(linear.sessionsCreated.length, 1);
 
-  // In Progress → Review keeps the same app: a running worker is left alone. A move out of the mapping stops it.
+  // In Progress → Review keeps the same agent: a running worker is left alone. A move out of the mapping stops it.
   gated = true;
   const body = Buffer.from(
     JSON.stringify({
@@ -489,7 +630,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   issue.state = { id: 'rev', name: 'Review', type: 'started' };
   await issueUpdate({ stateId: 'prog' });
   await new Promise(r => setTimeout(r, 50));
-  assert.equal(inbox.list().filter(t => t.state === 'running').length, 1, 'same app, still running');
+  assert.equal(inbox.list().filter(t => t.state === 'running').length, 1, 'same agent, still running');
   issue.labels = [{ id: 'l', name: 'needs-human' }];
   await issueUpdate({ labelIds: [] });
   await until(() => inbox.list().every(t => t.state !== 'running'), 'the worker was stopped');
@@ -504,6 +645,6 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     linear.activities.some(a => a.content.type === 'thought' && /needs-human.*was added/.test(a.content.body)),
     'and why',
   );
-  assert.equal(store.leases().length, 0, 'the lock is released');
+  assert.equal(store.leases().length, 0, 'the lease is released');
   release();
 });

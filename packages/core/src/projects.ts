@@ -76,8 +76,8 @@ export async function writeProjectLinear(
 
 /**
  * The `--lane`/`--unlane` flags as a lane map, exactly what writeProjectLinear
- * writes. Each `--lane` is `LANE[,LANE…]:APP` — split at the *last* colon, so
- * a lane name may hold one; each `--unlane` is a lane to mark for humans
+ * writes. Each `--lane` is `LANE[,LANE…]:AGENT` — split at the *last* colon,
+ * so a lane name may hold one; each `--unlane` is a lane to mark for humans
  * (`null`, a separate flag so no word is reserved). A lane given both ways is
  * an error.
  */
@@ -85,12 +85,12 @@ export function parseLaneFlags(lanes: string[], unlanes: string[]): Record<strin
   const out: Record<string, string | null> = {};
   for (const entry of lanes) {
     const at = entry.lastIndexOf(':');
-    const app = at < 0 ? '' : entry.slice(at + 1).trim();
-    if (!app || at <= 0) throw new Error(`--lane "${entry}" must read LANE:APP, e.g. --lane "Dev:dev"`);
+    const agent = at < 0 ? '' : entry.slice(at + 1).trim();
+    if (!agent || at <= 0) throw new Error(`--lane "${entry}" must read LANE:AGENT, e.g. --lane "Dev:dev"`);
     for (const lane of entry.slice(0, at).split(',')) {
       const name = lane.trim();
       if (!name) throw new Error(`--lane "${entry}" has an empty lane name`);
-      out[name] = app;
+      out[name] = agent;
     }
   }
   for (const entry of unlanes) {

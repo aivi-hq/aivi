@@ -35,13 +35,13 @@ Company agent definitions can be checked out into the normal global OpenCode con
 
 Names such as librarian, developer, reviewer, or groomer are configurable choices. There is no fixed catalogue of lane names, workflow stages, or worker agents. Use the term "OpenCode agent" consistently for agent definitions and identities; "browser profile" and fnox's own profile terminology refer to their respective products.
 
-The routing relationship is many lanes to one application, then one app to one OpenCode agent. For example, development and review can both select `dev-app`, and the separate app mapping links `dev-app` to `developer`. A second Linear app cannot also map to `developer`. Lane and ticket context determine the job; they do not change that app-to-agent mapping. Validate duplicate agent assignments and unresolved app references before activating the configuration. Project-specific definitions of the mapped agent still follow OpenCode's ordinary configuration discovery.
+The routing relationship is many lanes to one OpenCode agent: a lane names the agent directly (`agent | null | { agent, worktree: false }`). For example, development and review can both select `developer`, and a read-only lane may name the same agent with `worktree: false` to run in the project's checkout. Lane and ticket context determine the job; they do not change the lane's agent. Lanes need no app resolution at configuration time: an unknown agent file is OpenCode's own error at session start. One Linear application (the primary) receives the webhooks and authorises the Linear MCP; further applications are faces with no routing meaning, and people who address aivi directly — mentions, delegations nothing claims — reach the assistant. Project-specific definitions of a mapped agent still follow OpenCode's ordinary configuration discovery.
 
 ## 3. Conversations, knowledge, and tools
 
 - OpenCode is the initial native chat interface. Discord is the first shared knowledge/chat interface, exposing a deliberately limited subset of OpenCode session capabilities. A DM has a current session; a new channel thread starts a separate session. All Discord conversations use the same configured OpenCode agent, but do not share one conversation history. Shared conversations preserve the identity of each speaker.
 - A new-session command creates fresh OpenCode conversation context and updates the channel-to-session association. The old session and durable memory remain available as described in section 5.
-- Direct native OpenCode conversations retain native agent selection and switching. Discord exposes neither agent switching nor project-work session selection. Manual use does not create a ticket or claim a worker run. Automated workers cannot switch their assigned agent; resolve it through the selected Linear app's mapping at run creation.
+- Direct native OpenCode conversations retain native agent selection and switching. Discord exposes neither agent switching nor project-work session selection. Manual use does not create a ticket or claim a worker run. Automated workers cannot switch their assigned agent; resolve it through the issue's lane mapping at run creation.
 - Project execution uses the relevant project's directory and configuration through native OpenCode or Linear automation. The Discord librarian may search and inspect multiple projects to answer a question without moving its conversation into a project worker session. Reading a project's documents does not grant permission to edit it, run its operational tasks, or use write-capable specialist tools.
 - OpenCode's existing session/message history is the authoritative transcript. Reuse it through the supported API/SDK; transcript exports are also candidates for indexing. A derived search index can be rebuilt from that history. The host does not implement a parallel session engine or independent authoritative transcript store. Research confirms SQLite-backed v2 storage and documented history/export interfaces; JSONL is not an integration assumption.
 - Retrieval must support keyword search and semantic retrieval where useful. FTS5, embedding models, and storage for derived indexes and host state are implementation choices for the next phases.
@@ -107,8 +107,8 @@ Graceful agent-first cleanup (steering the worker to undo effects a worktree doe
 | Situation | Behavior |
 | --- | --- |
 | New-session command | Archive the old conversation and retain its searchability. Memory persists. Explicit deletion is a separate action. |
-| Stop request, HITL label added, lane left its mapping, delegate removed | Interrupt the worker, post one final activity, end `stopped`, release the project lock. Worktree and session stay for inspection. |
-| Stop cannot be verified | End `blocked`; the lock is held until an operator resolves it after inspecting the session. |
+| Stop request, HITL label added, lane left its mapping, delegate removed | Interrupt the worker, post one final activity, end `stopped`, release the issue. Worktree and session stay for inspection. |
+| Stop cannot be verified | End `blocked`; the issue is held until an operator resolves it after inspecting the session. |
 | HITL label present | No automatic delegation; a hand delegation is refused with an explanation. |
 
 ## 6. Operational requirements
@@ -116,7 +116,7 @@ Graceful agent-first cleanup (steering the worker to undo effects a worktree doe
 - Reuse OpenCode's persisted sessions and retain the host's external associations and orchestration state needed to recover after a restart and explain what ran, why it ran, and its result.
 - Handle repeated deliveries and retries without creating duplicate worker runs or blindly repeating completed external actions.
 - Make blocked, failed, and interrupted work visible through the configured interfaces.
-- An interrupted worker leaves its worktree and session inspectable; only an unverifiable stop holds the project lock.
+- An interrupted worker leaves its worktree and session inspectable; only an unverifiable stop holds the issue.
 - Provide housekeeping for completed runs, stale resources, history/index retention, and backups. Detailed policies belong to technical design.
 - Keep credentials out of ordinary prompts and logs. Preserve configured OpenCode permissions and agent tool boundaries across direct and delegated execution.
 - Allow chat, browser, memory, and scheduling capabilities to operate when the Linear/project integration is unconfigured.
@@ -137,9 +137,9 @@ The platform does not automatically modify or redeploy its own source code.
 2. OpenCode provides the native chat interface and Discord the first shared knowledge interface. Every Discord conversation uses one configured agent without switching or project execution; separate DMs/threads retain separate sessions. Native OpenCode retains agent switching, while automated workers keep their assigned agent throughout execution.
 3. The Discord librarian consults a GitHub or Linear specialist for information without acquiring project-write or worker-launch capabilities through delegation.
 4. Old conversations are retrieved from OpenCode history through a derived index without promoting all their contents into durable memory or maintaining another authoritative transcript store.
-5. An actionable Linear issue without a delegate or unresolved worker state selects an application through the project's lane mapping, then starts the unique OpenCode agent linked to that application. Its human assignee remains responsible. A direct-only agent is not automatically selected as a worker.
-6. Two lanes reuse the same Linear app, and therefore the same mapped OpenCode agent, while running the appropriate lane-specific jobs. Configuration linking a second app to that agent is rejected.
-7. A lane changes during execution: the worker is stopped, its agent session shows why and where its worktree and OpenCode session are, the project lock is released, and repeated events never create overlapping owning workers.
+5. An actionable Linear issue without a delegate or unresolved worker state selects the OpenCode agent named by the project's lane mapping, then starts that agent in the project's worktree. Its human assignee remains responsible.
+6. Two lanes name the same OpenCode agent and run the appropriate lane-specific jobs. A lane set to `null` is never worked automatically; it is humans' work.
+7. A lane changes during execution: the worker is stopped, its agent session shows why and where its worktree and OpenCode session are, the issue is released for the next worker, and repeated events never create overlapping owning workers.
 8. A HITL-marked issue receives no new automatic delegation while a developer handles it interactively.
 9. Separate sessions manage their own browser tabs while retaining the installation's browser profile and installed extensions.
 10. An installation without Linear configuration still supports conversations, knowledge retrieval, browser tasks, and recurring work.

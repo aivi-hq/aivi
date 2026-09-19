@@ -133,9 +133,9 @@ teach the scheduler what a conversation is. What the two share is capacity:
 every turn takes a resource lease from the same pools as jobs
 (`Store.acquireLease`), so the `local-model` limit holds across both.
 
-Linear workers (not built) will be conversations of the same machinery, one per
+Linear workers are conversations of the same machinery, one per
 agent session, each in its own git worktree; a stop ends the worker and
-releases the project lock, and only an unverifiable stop is `blocked`
+releases the issue, and only an unverifiable stop is `blocked`
 ([plans/linear.md](plans/linear.md)).
 
 ## Knowledge and permissions

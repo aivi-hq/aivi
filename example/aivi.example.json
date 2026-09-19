@@ -1,6 +1,7 @@
 {
   "$schema": "../schemas/aivi.schema.json",
   "version": 1,
+  "name": "aivi",
   "host": {
     "port": 4100
   },
@@ -72,6 +73,13 @@
   "search": {
     "provider": "qmd",
     "indexOnStart": true
+  },
+  "linear": {
+    "agent": "aivi",
+    "apps": { "aivi": {} },
+    "listener": false,
+    "resource": "local-model",
+    "progress": "tools"
   },
   "modules": {
     "discord": {

@@ -31,7 +31,7 @@ is no build step. From here on: [getting started](docs/getting-started.md)
 | `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
 | `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads |
 | `@aivi/channel-slack` | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads |
-| `@aivi/linear` | Linear module: agent sessions as conversations, workers in git worktrees, activities and responses ([linear](docs/linear.md)) |
+| `@aivi/linear` | Linear module: one app receiving every webhook, the assistant for people, workers in git worktrees, the Linear MCP proxy ([linear](docs/linear.md)) |
 | `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `knowledge_projects`, `aivi_sources`, `aivi_status`, `aivi_context`, `aivi_jobs`, `aivi_browser` |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
@@ -57,8 +57,8 @@ module with webhook routes on the same listener.
 - Dreaming: a scheduled agent maintains `facts.md` and proposals from
   conversations since its last run ([docs/dreaming.md](docs/dreaming.md)).
 
-Next, in order: next channels, installation on other machines, Linear (with
-per-project locks and quiet-time maintenance). Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
+Next, in order: next channels, installation on other machines, the Linear
+live gate. Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
 unscheduled ideas: `docs/backlog/`.
 
 `npm run agentic:verify` runs Biome and `npm run check` (build, tests against

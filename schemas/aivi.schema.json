@@ -196,7 +196,7 @@
           "type": "object",
           "properties": {
             "lanes": {
-              "description": "The lane convention every Linear project gets unless it maps the lane itself: workflow state name → app id, or null for a lane humans work.",
+              "description": "The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.",
               "default": {},
               "type": "object",
               "propertyNames": {
@@ -206,11 +206,32 @@
               "additionalProperties": {
                 "anyOf": [
                   {
-                    "type": "string",
-                    "pattern": "^[a-z][a-z0-9_-]*$"
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   {
-                    "type": "null"
+                    "type": "object",
+                    "properties": {
+                      "agent": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "worktree": {
+                        "type": "boolean",
+                        "const": false
+                      }
+                    },
+                    "required": [
+                      "agent"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -293,7 +314,7 @@
                 }
               },
               "lanes": {
-                "description": "Workflow state name → app id: issues entering that state are worked by that app. `null` marks a human lane: the gateway never runs on it, and it overrides a projectDefaults lane. Empty by default: the listener delegates nothing until you map a lane.",
+                "description": "Workflow state name → the OpenCode agent that works issues entering that state. `null` marks a human lane. `{ agent, worktree: false }` runs the agent in the project checkout on main, without a worktree. Empty by default: the listener delegates nothing until you map a lane.",
                 "default": {},
                 "type": "object",
                 "propertyNames": {
@@ -303,11 +324,32 @@
                 "additionalProperties": {
                   "anyOf": [
                     {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9_-]*$"
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     {
-                      "type": "null"
+                      "type": "object",
+                      "properties": {
+                        "agent": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "worktree": {
+                          "type": "boolean",
+                          "const": false
+                        }
+                      },
+                      "required": [
+                        "agent"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 }
@@ -780,30 +822,32 @@
     "linear": {
       "type": "object",
       "properties": {
+        "agent": {
+          "description": "The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the assistant. Default: the aivi name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "primary": {
+          "description": "The app that carries the workspace data feed, signs the bare LINEAR_* secrets and authorises the Linear MCP; default the one app. Required once several apps are configured.",
+          "type": "string",
+          "minLength": 1
+        },
         "apps": {
-          "description": "Linear apps by id; lanes in projects.<id>.linear.lanes refer to these ids.",
+          "description": "Linear apps by id. The primary (see `primary`) carries the data feed; every other app is a face — a name and icon in Linear’s UI with its own credentials, no routing meaning.",
           "type": "object",
           "propertyNames": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_-]*$"
           },
           "additionalProperties": {
+            "description": "Empty today: credentials come from the environment; the id is the app identity and its webhook route.",
             "type": "object",
-            "properties": {
-              "agent": {
-                "description": "The OpenCode agent this app runs as; unique across apps.",
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "agent"
-            ],
+            "properties": {},
             "additionalProperties": false
           }
         },
         "logMisroutes": {
-          "description": "Log at warn a webhook delivered to the wrong endpoint (a data change on an app route, an agent session on the data route); it is dropped either way.",
+          "description": "Log at warn a webhook delivered to the wrong endpoint (a data change on a face’s route); it is dropped either way.",
           "default": true,
           "type": "boolean"
         },
@@ -846,6 +890,12 @@
         "apps"
       ],
       "additionalProperties": false
+    },
+    "name": {
+      "description": "The persona: one name on every platform (the Linear application, the Discord and Slack bot usernames, what colleagues ping). Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms — the operator uses this name in each console.",
+      "default": "aivi",
+      "type": "string",
+      "minLength": 1
     },
     "scheduler": {
       "default": {

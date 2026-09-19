@@ -25,12 +25,15 @@ Rules for the worker/Linear lifecycle (built: `docs/linear.md`; what is left:
 `docs/plans/linear.md`):
 
 - Never release a worker's resources merely because its caller disconnected.
-- A worker runs in its own git worktree, never in the project's `source/`.
+- A worker runs in its own git worktree, never in the project's `source/`;
+  the one exception is a lane that says `worktree: false` — read-only by its
+  agent file's own deny, never by aivi.
 - Stop means stop: a stop request, the HITL label or a lane change ends the
-  worker and releases the project lock; the worktree and the native
-  transcript stay for inspection. `blocked` is only for a stop that cannot be
-  verified. Graceful agent-first cleanup is a later upgrade, not a precondition.
-- Linear team lanes select apps; each app maps to one unique OpenCode agent.
+  worker and releases the issue; the worktree and the native transcript stay
+  for inspection. `blocked` is only for a stop that cannot be verified.
+  Graceful agent-first cleanup is a later upgrade, not a precondition.
+- Linear lanes select OpenCode agents directly; one app (the primary) does the
+  receiving and the assistant (`linear.agent`) answers what no lane claims.
 
 When behavior changes, update the one document that owns that fact (the map is
 in `CONTEXT.md`) in the same commit; a change is not done while a document

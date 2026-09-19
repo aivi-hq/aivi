@@ -170,12 +170,22 @@ runs in one process; adapters are optional modules with a start/stop contract.
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
 - **An agent session is a conversation.** The Linear module runs on the
   channel machinery: a delegation is a `created` webhook → one bound
-  conversation → one worker turn of the app's agent in its own git worktree
+  conversation → one worker turn of the lane's agent in its own git worktree
   (`projects/<id>/worktrees/<session>`, on Linear's branch name), progress as
   ephemeral thoughts, the answer as a response. Stop means stop: the turn is
-  discarded, the lock released, worktree and session kept; only an
-  unverifiable stop is `blocked`. One worker per project and per issue
+  discarded, capacity released, worktree and session kept; only an
+  unverifiable stop is `blocked`. One worker per issue; worktrees isolate
+  concurrent workers, so there is no per-project lock
   ([linear](docs/linear.md); what is left: [plans/linear.md](docs/plans/linear.md)).
+- **One Linear app, one persona, lanes pick agents.** The primary app carries
+  the workspace's data feed and every agent-session webhook on one route and
+  authorises the Linear MCP; extra apps are faces (name and icon, no routing
+  meaning). Routing is deterministic: a delegation whose lane maps an agent
+  runs it; everything people send directly — mentions, delegations nothing
+  claims — lands on the assistant (`linear.agent`), which answers or refuses
+  and never does lane work. The soul (`<home>/soul.md`) is aivi's declared
+  identity, injected by the plugin into every agent's prompt and hot-reloaded
+  ([linear](docs/linear.md), [configuration](docs/configuration.md#the-soul)).
 - **A repository is a Linear team.** Routing reads the issue's team only
   (`projects.<id>.linear.teams`, a list: several teams may share one
   checkout); lanes, branch-name format and labels all live per Linear team,
@@ -186,9 +196,10 @@ runs in one process; adapters are optional modules with a start/stop contract.
   one lane at a time over it (merge, where `projectDefaults.knowledge`
   replaces: a lane map is a lookup table, not a list); `null` marks a lane
   humans work — written in the file, absent from the map the listener
-  consults. Deviations stay at project level; a per-team lane map is the
-  named escape hatch if two teams in one checkout ever want different
-  routing for the same lane name ([linear](docs/linear.md)).
+  consults. A lane names an OpenCode agent; `{ agent, worktree: false }` runs
+  it in the project's checkout. Deviations stay at project level; a per-team
+  lane map is the named escape hatch if two teams in one checkout ever want
+  different routing for the same lane name ([linear](docs/linear.md)).
 
 ## Where each fact lives
 

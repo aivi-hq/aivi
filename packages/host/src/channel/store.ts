@@ -23,7 +23,7 @@ export interface Turn {
   seed: string | null;
   /** The conversation's model override (`/model`), applied to the session before each prompt; null means the agent's default. */
   model: ModelRef | null;
-  /** Set by `bind` for workers: one turn at a time per project and per issue across the module's conversations. */
+  /** Set by `bind` for workers: one turn at a time per issue across the module's conversations. */
   project: string | null;
   issue: string | null;
 }
@@ -258,9 +258,10 @@ export class ConversationStore {
   }
 
   /**
-   * One turn per channel at a time, and for bound workers one per project and per issue
-   * across channels (the project lock; a blocked worker keeps it until resolved). The
-   * lease reserves shared model capacity in the same transaction.
+   * One turn per channel at a time, and for bound workers one per issue
+   * across channels (a blocked worker keeps it until resolved). Worktrees
+   * isolate concurrent work, so there is no per-project lock; capacity comes
+   * from the shared pool, reserved in the same transaction.
    */
   claim(config: Config['scheduler'], resource: string): Turn | null {
     const rows = this.core.db
@@ -269,7 +270,6 @@ export class ConversationStore {
         SELECT 1 FROM ${this.n.turns} busy JOIN ${this.n.sessions} bs ON bs.channel=busy.channel
         WHERE busy.state IN ('running','replying','blocked') AND (
           busy.channel=t.channel
-          OR (s.project IS NOT NULL AND bs.project=s.project)
           OR (s.issue IS NOT NULL AND bs.issue=s.issue)
         )
       ) ORDER BY t.seq`)
@@ -306,18 +306,29 @@ export class ConversationStore {
   }
 
   /**
-   * Bind a new conversation to a fresh session that runs `agent` in `directory` (a
-   * worker in its worktree), keyed for the locks by `project` and `issue`. Refused when
-   * the conversation already exists.
+   * Bind a new conversation to a fresh session that runs `agent` in `directory`
+   * (a worker in its worktree or the project checkout, the assistant in the
+   * checkout or the home), keyed for the per-issue lock by `issue`; `project`
+   * is metadata. Refused when the conversation already exists.
    */
-  bind(channel: string, binding: { agent: string; directory: string; project: string; issue: string }): void {
+  bind(
+    channel: string,
+    binding: { agent: string; directory: string; project?: string | null; issue?: string | null },
+  ): void {
     this.core.transaction(() => {
       if (this.has(channel)) throw new Error(`${this.platform.label} conversation ${channel} already has a session`);
       this.core.db
         .prepare(
           `INSERT INTO ${this.n.sessions}(channel,session,ready,agent,directory,project,issue) VALUES(?,?,0,?,?,?,?)`,
         )
-        .run(channel, this.n.newSession(), binding.agent, binding.directory, binding.project, binding.issue);
+        .run(
+          channel,
+          this.n.newSession(),
+          binding.agent,
+          binding.directory,
+          binding.project ?? null,
+          binding.issue ?? null,
+        );
     });
   }
 
@@ -343,14 +354,13 @@ export class ConversationStore {
 
   /**
    * The conversation whose pending turn keeps `channel`'s next turn waiting: the same
-   * issue or project busy elsewhere; null when nothing stands in the way.
+   * issue busy elsewhere; null when nothing stands in the way.
    */
   waitingOn(channel: string): { channel: string; issue: string | null } | null {
     const row = this.core.db
       .prepare(
         `SELECT bs.channel AS channel, bs.issue AS issue FROM ${this.n.sessions} s
-         JOIN ${this.n.sessions} bs ON bs.channel<>s.channel AND (
-           (s.project IS NOT NULL AND bs.project=s.project) OR (s.issue IS NOT NULL AND bs.issue=s.issue))
+         JOIN ${this.n.sessions} bs ON bs.channel<>s.channel AND (s.issue IS NOT NULL AND bs.issue=s.issue)
          JOIN ${this.n.turns} busy ON busy.channel=bs.channel AND busy.state IN ('running','replying','blocked')
          WHERE s.channel=? LIMIT 1`,
       )

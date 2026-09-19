@@ -1,8 +1,21 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "librarian",
-  "plugins": [{
-    "package": "../packages/opencode",
-    "options": { "url": "http://127.0.0.1:4100" }
-  }]
+  "plugins": [
+    {
+      "package": "../packages/opencode",
+      "options": { "url": "http://127.0.0.1:4100" }
+    }
+  ],
+  "mcp": {
+    // The Linear MCP proxy: a stdio process that forwards to Linear's hosted
+    // MCP with an app-actor token minted from the bare LINEAR_* credentials.
+    // Set enabled to true once LINEAR_CLIENT_ID/LINEAR_CLIENT_SECRET are in
+    // the home's .env; use an absolute path when OpenCode starts elsewhere.
+    "linear": {
+      "type": "local",
+      "command": ["node", "packages/linear/src/proxy.ts"],
+      "enabled": false
+    }
+  }
 }

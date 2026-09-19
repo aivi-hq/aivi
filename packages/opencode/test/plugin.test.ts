@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import plugin from '../src/index.ts';
 
@@ -11,9 +14,47 @@ type RegisteredTool = {
   execute(input: unknown, context: { sessionID: string; messageID?: string }): Promise<{ content: string }>;
 };
 
-function setupWith(options: Record<string, unknown>, onAdd: (tool: RegisteredTool) => void, onDispose = () => {}) {
+type AgentLike = { id: string; system?: string | undefined };
+type AgentEditorFake = { list(): AgentLike[]; update(id: string, fn: (a: AgentLike) => void): void };
+
+/** A fake agent domain: records the transform callbacks so tests can replay them like the registry does. */
+function fakeAgentDomain(agents: Map<string, AgentLike>) {
+  const callbacks: ((editor: AgentEditorFake) => void)[] = [];
+  let reloads = 0;
+  return {
+    callbacks,
+    get reloads() {
+      return reloads;
+    },
+    domain: {
+      transform: async (callback: (editor: AgentEditorFake) => void) => {
+        const editor: AgentEditorFake = {
+          list: () => [...agents.keys()].map(id => ({ id, system: agents.get(id)!.system })),
+          update: (id, fn) => {
+            const agent = agents.get(id);
+            if (agent) fn(agent);
+          },
+        };
+        callbacks.push(callback);
+        callback(editor);
+        return { dispose: async () => {} };
+      },
+      reload: async () => {
+        reloads++;
+      },
+    },
+  };
+}
+
+function setupWith(
+  options: Record<string, unknown>,
+  onAdd: (tool: RegisteredTool) => void,
+  onDispose = () => {},
+  agent?: ReturnType<typeof fakeAgentDomain>['domain'],
+) {
   return plugin.setup({
     options,
+    agent,
     tool: {
       transform: async (callback: (editor: Editor) => void) => {
         callback({ namespace() {}, add: onAdd });
@@ -141,4 +182,47 @@ test('jobs tool forwards the calling session and message so the host can derive 
     messageId: 'msg_caller',
   });
   if (typeof cleanup === 'function') await cleanup();
+});
+
+test('the soul is appended to every agent at each replay, never twice, and an edit invalidates the registry', async t => {
+  withToken(t, 'test-soul-token');
+  const root = await mkdtemp(join(tmpdir(), 'aivi-soul-'));
+  const soulFile = join(root, 'soul.md');
+  await writeFile(soulFile, 'I am aivi. I route rather than do.');
+  const agents = new Map<string, AgentLike>([
+    ['librarian', { id: 'librarian', system: 'base prompt' }],
+    ['worker', { id: 'worker' }],
+  ]);
+  const fake = fakeAgentDomain(agents);
+  const cleanup = await setupWith(
+    { soul: soulFile },
+    () => {},
+    () => {},
+    fake.domain,
+  );
+  t.after(async () => {
+    if (typeof cleanup === 'function') await cleanup();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // The transform ran once; both agents carry the soul, however their prompt was written.
+  assert.equal(agents.get('librarian')!.system, 'base prompt\n\nI am aivi. I route rather than do.');
+  assert.equal(agents.get('worker')!.system, 'I am aivi. I route rather than do.');
+
+  // The registry replays the transform over a rebuilt (fresh) state: appending stays idempotent.
+  const fresh = new Map<string, AgentLike>([['fresh', { id: 'fresh', system: 'x' }]]);
+  fake.callbacks.at(-1)?.({
+    list: () => [...fresh.keys()].map(id => ({ id, system: fresh.get(id)!.system })),
+    update: (id, fn) => {
+      const agent = fresh.get(id);
+      if (agent) fn(agent);
+    },
+  });
+  assert.equal(fresh.get('fresh')!.system, 'x\n\nI am aivi. I route rather than do.', 'appended once, not twice');
+
+  // A soul.md edit is seen without a restart: the watcher invalidates the registry.
+  const reloadsBefore = fake.reloads;
+  await writeFile(soulFile, 'I am aivi, renewed.');
+  for (let i = 0; i < 100 && fake.reloads === reloadsBefore; i++) await new Promise(r => setTimeout(r, 20));
+  assert.ok(fake.reloads > reloadsBefore, 'the edit triggered agent.reload()');
 });

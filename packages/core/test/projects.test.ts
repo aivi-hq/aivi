@@ -111,14 +111,14 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
 
   // An existing lanes block survives a rewrite of the teams; so do other projects' entries.
   await mkdir(join(root, 'projects/other/source'), { recursive: true });
-  raw.linear = { apps: { dev: { agent: 'developer' } } };
-  raw.projects.site.linear.lanes = { 'In Progress': 'dev' };
+  raw.linear = { apps: { dev: {} } };
+  raw.projects.site.linear.lanes = { 'In Progress': 'developer' };
   raw.projects.other = { enabled: true };
   await writeFile(config, JSON.stringify(raw, null, 2));
   assert.deepEqual(await writeProjectLinear(config, 'site', { teams: ['t-3'] }), {
     id: 'site',
     teams: ['t-3'],
-    lanes: { 'In Progress': 'dev' },
+    lanes: { 'In Progress': 'developer' },
   });
   assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.other, { enabled: true });
 
@@ -141,12 +141,17 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
     'the schema rejects an empty team id',
   );
   assert.equal(await readFile(config, 'utf8'), before, 'a config that stopped loading is restored');
+  // A lane names an OpenCode agent: no app resolution happens at write time.
+  await writeProjectLinear(config, 'site', { teams: ['t-5'], lanes: { Dev: 'ghost-agent' } });
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site.linear.lanes, { Dev: 'ghost-agent' });
+  // But a write that stops the config loading for another reason is restored.
+  const restored = await readFile(config, 'utf8');
   await assert.rejects(
-    writeProjectLinear(config, 'site', { teams: ['t-5'], lanes: { Dev: 'ghost' } }),
-    /unknown Linear app ghost/,
-    'lanes are checked by the load before they stand',
+    writeProjectLinear(config, 'site', { teams: [''] }),
+    /teams/,
+    'the schema rejects an empty team id',
   );
-  assert.equal(await readFile(config, 'utf8'), before, 'a rejected lane write is restored too');
+  assert.equal(await readFile(config, 'utf8'), restored, 'a rejected lane write is restored too');
 });
 
 test('lane flags read as a lane map: shorthand, human lanes, colons kept', () => {
@@ -158,9 +163,9 @@ test('lane flags read as a lane map: shorthand, human lanes, colons kept', () =>
   });
   assert.deepEqual(parseLaneFlags(['Stand:up:dev'], []), { 'Stand:up': 'dev' }, 'split at the last colon');
   assert.deepEqual(parseLaneFlags([], []), {});
-  assert.throws(() => parseLaneFlags(['Dev'], []), /must read LANE:APP/);
-  assert.throws(() => parseLaneFlags(['Dev:'], []), /must read LANE:APP/);
-  assert.throws(() => parseLaneFlags([':dev'], []), /must read LANE:APP/);
+  assert.throws(() => parseLaneFlags(['Dev'], []), /must read LANE:AGENT/);
+  assert.throws(() => parseLaneFlags(['Dev:'], []), /must read LANE:AGENT/);
+  assert.throws(() => parseLaneFlags([':dev'], []), /must read LANE:AGENT/);
   assert.throws(() => parseLaneFlags(['Dev, :dev'], []), /empty lane name/);
   assert.throws(() => parseLaneFlags(['Dev:dev'], ['Dev']), /both --lane and --unlane/);
   assert.throws(() => parseLaneFlags([], ['  ']), /--unlane needs a lane name/);

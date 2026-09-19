@@ -19,7 +19,7 @@ import {
 } from '../src/config.ts';
 
 test('linear settings: defaults, secret names, reserved pool', () => {
-  const linear = configSchema.parse({ version: 1, linear: { apps: { dev: { agent: 'developer' } } } }).linear!;
+  const linear = configSchema.parse({ version: 1, linear: { apps: { dev: {} } } }).linear!;
   assert.deepEqual(
     [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs, linear.logMisroutes],
     [false, 'needs-human', 'local-model', 'tools', 7_200_000, true],
@@ -30,8 +30,8 @@ test('linear settings: defaults, secret names, reserved pool', () => {
     webhookSecret: 'LINEAR_DEV_APP_WEBHOOK_SECRET',
   });
   assert.ok(
-    configSchema.safeParse({ version: 1, linear: { apps: { data: { agent: 'developer' } } } }).success,
-    'the receiver reads bare LINEAR_* names, so no app id is reserved',
+    configSchema.safeParse({ version: 1, linear: { apps: { data: {} } } }).success,
+    'no app id is reserved: the bare LINEAR_* names mean the primary',
   );
   assert.match(
     JSON.stringify(configSchema.safeParse({ version: 1, linear: { apps: {}, resource: 'gpu' } }).error?.issues),
@@ -41,7 +41,7 @@ test('linear settings: defaults, secret names, reserved pool', () => {
     JSON.stringify(
       configSchema.safeParse({
         version: 1,
-        linear: { apps: { dev: { agent: 'developer' } } },
+        linear: { apps: { dev: {} } },
         projects: {
           website: { linear: { teams: ['lt-1'], lanes: {} } },
           api: { linear: { teams: ['lt-1', 'lt-2'], lanes: {} } },
@@ -86,18 +86,29 @@ test('a modules.*.config pointer is the old shape and says where the settings we
   await assert.rejects(loadConfig(join(root, 'aivi.json')), /the discord settings live inline/);
 });
 
-test('config rejects ambiguous Linear app ownership and invalid job resources', () => {
+test('config rejects ambiguous Linear primary settings and invalid job resources', () => {
+  // Several apps without a primary: which one carries the data feed is ambiguous.
   assert.equal(
     configSchema.safeParse({
       version: 1,
-      linear: {
-        apps: {
-          developer: { agent: 'dev' },
-          reviewer: { agent: 'dev' },
-        },
-      },
+      linear: { apps: { developer: {}, reviewer: {} } },
     }).success,
     false,
+  );
+  // A primary that is not a configured app is a typo.
+  assert.equal(
+    configSchema.safeParse({
+      version: 1,
+      linear: { primary: 'ghost', apps: { developer: {}, reviewer: {} } },
+    }).success,
+    false,
+  );
+  assert.equal(
+    configSchema.safeParse({
+      version: 1,
+      linear: { primary: 'developer', apps: { developer: {}, reviewer: {} } },
+    }).success,
+    true,
   );
   assert.equal(
     configSchema.safeParse({
@@ -240,7 +251,7 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
         version: 1,
         knowledge: [{ id: 'company', path: 'handbook' }],
         projects,
-        linear: { apps: { worker: { agent: 'dev' } } },
+        linear: { apps: { worker: {} } },
       }),
     );
   await write({
@@ -267,7 +278,7 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
     'a removed project keeps only its memory',
   );
   assert.equal(loaded.projects[1]!.directory, join(root, 'projects/website/source'));
-  assert.equal(loaded.projects[1]!.linear!.lanes.Review, 'worker');
+  assert.equal(loaded.projects[1]!.linear!.lanes.Review!.agent, 'worker');
   // The convention (docs as doc, docs/adr as decision) plus the project's memory, or the project's own list plus memory.
   assert.deepEqual(
     selectSources(loaded, ['website'], false).map(s => [s.id, s.kind, s.path]),
@@ -327,20 +338,18 @@ test('projectDefaults.linear.lanes is the base; a project wins one lane at a tim
   const write = (extra: Record<string, unknown>) =>
     writeFile(
       join(root, 'aivi.json'),
-      JSON.stringify({
-        version: 1,
-        linear: { apps: { dev: { agent: 'developer' }, review: { agent: 'reviewer' } } },
-        ...extra,
-      }),
+      JSON.stringify({ version: 1, linear: { primary: 'dev', apps: { dev: {}, review: {} } }, ...extra }),
     );
   await write({
     projectDefaults: { linear: { lanes: { Dev: 'dev', Review: 'dev', Triage: null }, workspaceId: 'ws-default' } },
-    projects: { site: { linear: { teams: ['t-1'], lanes: { Review: 'review', Shipped: null } } } },
+    projects: {
+      site: { linear: { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } } },
+    },
   });
   const routing = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
   assert.deepEqual(
     routing.lanes,
-    { Dev: 'dev', Review: 'review' },
+    { Dev: { agent: 'dev', worktree: true }, Review: { agent: 'reviewer', worktree: false } },
     'the convention is the base, the entry wins per lane, and human lanes are absent from the map the listener consults',
   );
   assert.equal(routing.workspaceId, 'ws-default', 'workspaceId falls back to the convention');
@@ -353,15 +362,21 @@ test('projectDefaults.linear.lanes is the base; a project wins one lane at a tim
     projects: { site: { linear: { teams: ['t-1'] } } },
   });
   const bare = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
-  assert.deepEqual(bare.lanes, { Dev: 'dev' }, 'the convention applies untouched when the project maps nothing');
+  assert.deepEqual(
+    bare.lanes,
+    { Dev: { agent: 'dev', worktree: true } },
+    'the convention applies untouched when the project maps nothing',
+  );
   assert.equal(bare.workspaceId, 'ws-default');
 
-  // A default lane naming an unknown app fails the load of every project that inherits it.
+  // A lane names an OpenCode agent; no app resolution happens at load time — an
+  // unknown agent file is OpenCode's own error at session start.
   await write({
-    projectDefaults: { linear: { lanes: { Dev: 'ghost' } } },
+    projectDefaults: { linear: { lanes: { Dev: 'ghost-agent' } } },
     projects: { site: { linear: { teams: ['t-1'] } } },
   });
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /site refers to unknown Linear app ghost/);
+  const ghosted = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
+  assert.deepEqual(ghosted.lanes, { Dev: { agent: 'ghost-agent', worktree: true } });
 });
 
 test('calendar calculations use the configured timezone across daylight saving changes', () => {

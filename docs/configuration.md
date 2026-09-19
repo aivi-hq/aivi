@@ -27,11 +27,26 @@ Paths in installation config and in task files resolve relative to the home.
 Project source paths resolve relative to the checkout, `<home>/projects/<id>/source`.
 The home is also the OpenCode location: agents live in `<home>/.opencode/agents/`.
 
+## The soul
+
+`<home>/soul.md` says who aivi is: name, voice, standing promises, "I route
+rather than do". aivi's plugin injects it into **every** agent's prompt (the
+installation is a dedicated machine, so every agent there is an aivi agent) —
+injected, never copied into agent files, so an agent-file edit cannot delete
+it, and a `soul.md` edit takes effect without a restart. It is injected once
+per session as part of the agent definition, so it costs nothing per message.
+Keep it short: name, voice, red lines. Anything specific to one place (how to
+behave on Discord, what a Linear refusal means) belongs in that platform's
+agent file; facts aivi *learns* belong in memory. The soul is who aivi *says*
+it is; knowledge and dreaming carry who aivi *knows*. A soul file that starts
+containing facts is the wrong file growing.
+
 ## Fields
 
 | Field | Default / purpose |
 | --- | --- |
 | `version` | Required; `1` |
+| `name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms: the operator uses this name in each console |
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
@@ -200,7 +215,9 @@ Presence of `linear` enables the module ([linear](linear.md)).
 ```json
 {
   "linear": {
-    "apps": { "dev": { "agent": "developer" }, "review": { "agent": "reviewer" } },
+    "agent": "aivi",
+    "primary": "aivi",
+    "apps": { "aivi": {}, "reviewer": {} },
     "logMisroutes": true,
     "listener": false,
     "humanLabel": "needs-human",
@@ -213,15 +230,17 @@ Presence of `linear` enables the module ([linear](linear.md)).
 
 | Field | Meaning |
 | --- | --- |
-| `apps.<id>.agent` | Each Linear *app* (one OAuth application acting as an app user) runs as exactly one OpenCode agent; an agent can belong to one app only |
-| `logMisroutes` | `true`: log at warn a webhook delivered to the wrong endpoint — a data change on an app route, an agent session on the data route. It is dropped either way |
-| `listener` | `false`: only delegations and mentions made in Linear start a worker. `true`: an issue entering a mapped lane is delegated to that lane's app by aivi |
+| `agent` | The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the **assistant**. Default: the aivi name |
+| `primary` | The app that carries the workspace's data feed, signs the bare `LINEAR_*` secrets and authorises the Linear MCP. Default: the one app; required once several apps are configured |
+| `apps.<id>` | A Linear OAuth application acting as an app user. The primary does the receiving; every other app is a **face** — a name and icon in Linear's UI with its own credentials, no routing meaning |
+| `logMisroutes` | `true`: log at warn a webhook delivered to the wrong endpoint — a data change on a face's route. It is dropped either way |
+| `listener` | `false`: only delegations and mentions made in Linear start a worker. `true`: an issue entering a mapped lane is delegated by aivi (on the primary) and its worker starts |
 | `humanLabel` | Issues with this label are never worked automatically; a hand delegation is refused with an explanation in the agent session |
 | `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
 | `turnTimeoutMs` | A worker turn longer than this is interrupted and ends `stopped` (default two hours) |
 
-The project entry routes by Linear **team** and selects apps by lane (a lane
+The project entry routes by Linear **team** and selects agents by lane (a lane
 is a team workflow state, by name):
 
 ```json
@@ -233,7 +252,7 @@ is a team workflow state, by name):
     "website": {
       "linear": {
         "teams": ["linear-team-id"],
-        "lanes": { "Review": "review", "Shipped": null }
+        "lanes": { "Review": { "agent": "reviewer", "worktree": false }, "Shipped": null }
       }
     }
   }
@@ -243,29 +262,36 @@ is a team workflow state, by name):
 A repository may list several teams (one checkout, several teams); a team
 belongs to at most one project. Linear *projects* (epics) play no routing
 part. `lanes` defaults to empty: the listener delegates nothing until you map
-a lane, while hand delegation always works. Several lanes may select the same
-app; `null` marks a lane humans work — the gateway never runs it. Lanes merge
-one key at a time over `projectDefaults.linear.lanes` (where `knowledge`
+a lane, while hand delegation always works. A lane names an **OpenCode agent**
+directly; several lanes may name the same agent; `null` marks a lane humans
+work. A lane may be an object `{ agent, worktree: false }`: the agent runs in
+the project's clean checkout on main without a worktree — aivi builds no
+enforcement there, the agent file's own `edit` deny is the only guard, and the
+checkout is never worked in by a lane that does not say so. Lanes merge one
+key at a time over `projectDefaults.linear.lanes` (where `knowledge`
 replaces: a lane map is a lookup table, not a list), so the example website
-works `Dev` with `dev` as the convention says, `Review` with `review` because
-the entry outvotes the convention, and leaves `Triage` and `Shipped` to
-people. `teams` is never defaulted: a team belongs to one project. `workspaceId` is optional and only needed when
-the installation spans Linear workspaces; `projectDefaults.linear.workspaceId`
-supplies it to every project that omits its own.
+works `Dev` with `dev` as the convention says, `Review` with `reviewer` in the
+checkout because the entry outvotes the convention, and leaves `Triage` and
+`Shipped` to people. `teams` is never defaulted: a team belongs to one
+project. `workspaceId` is optional and only needed when the installation spans
+Linear workspaces; `projectDefaults.linear.workspaceId` supplies it to every
+project that omits its own.
 `aivi projects add <git-url> --linear PEC` and `aivi projects create` write
 `teams` for you, resolving the team key Linear's URLs show to its id;
 `--lane "Dev:dev"` (shorthand `--lane "Dev,Review:dev"`) and
 `--unlane "Backlog"` write the lanes along with them. The mapped agent is
-resolved by OpenCode's ordinary discovery for the worker's directory.
+resolved by OpenCode's ordinary discovery for the session's directory; an
+unknown agent file is OpenCode's own error at session start, not a config
+error.
 
-Credentials are never in JSON: each app reads `LINEAR_<APP>_CLIENT_ID`,
-`LINEAR_<APP>_CLIENT_SECRET` and `LINEAR_<APP>_WEBHOOK_SECRET` from the
-environment (`<APP>` is the app id upper-cased with `-` as `_`, so `dev-app`
-reads `LINEAR_DEV_APP_CLIENT_ID`). The *data receiver* — the endpoint Linear's
-data-change webhooks arrive at (`/v1/linear/webhooks/data`), which is not an
-app and runs nothing — reads the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`
-and `LINEAR_WEBHOOK_SECRET`; those names carry no app segment, so no app id
-can ever collide with them.
+Credentials are never in JSON. The **primary** app reads the bare
+`LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and `LINEAR_WEBHOOK_SECRET` — the
+bare names mean *the one app*. Every other app follows the convention
+`LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET` and
+`LINEAR_<APP>_WEBHOOK_SECRET` (`<APP>` is the app id upper-cased with `-` as
+`_`, so `dev-app` reads `LINEAR_DEV_APP_CLIENT_ID`). The Linear MCP is
+authorised with the primary's credentials through the proxy that ships in
+`packages/linear` ([linear](linear.md#the-linear-mcp)).
 
 ## Operator commands
 
@@ -278,9 +304,10 @@ Secrets never live in JSON files. They come from the process environment, and
 the CLI loads dotenv-style files without overriding variables that are already
 set: `<home>/.env`. `fnox exec` works the same way. Variables: `AIVI_TOKEN`, `DISCORD_BOT_TOKEN`,
 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` (Slack's bot and app-level tokens),
-`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), and per
-Linear app `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET`,
-`LINEAR_<APP>_WEBHOOK_SECRET` ([Linear](#linear-validation-only)).
+`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), and for
+Linear the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
+`LINEAR_WEBHOOK_SECRET` (the primary app) plus `LINEAR_<APP>_…` per extra app
+([Linear](#linear)).
 
 With `host.auth.mode: "token"`, `AIVI_TOKEN` (at least 24 characters) must be
 present in the host environment and in the OpenCode server's environment for the

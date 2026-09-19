@@ -3,10 +3,9 @@ import { silentLogger } from '@aivi/core';
 import type { PublicRequest, PublicRoutes } from '@aivi/host';
 import { type LinearWebhook, verifyWebhook } from './webhook.ts';
 
-/** An app's own stream, at `app/<id>`: agent-session events, which Linear delivers only to the app they concern. */
+/** An app's own stream, at `app/<id>`: agent-session events — and, for the
+ * primary, the workspace's **Issues** data changes on the same route. */
 export const appWebhookPath = (app: string) => `/v1/linear/webhooks/app/${app}`;
-/** The workspace's data-change stream: one endpoint for the whole module, no app identity. */
-export const dataWebhookPath = '/v1/linear/webhooks/data';
 
 export interface WebhookApp {
   id: string;
@@ -62,15 +61,4 @@ export function registerWebhookRoutes(
   return () => {
     for (const off of unregister) off();
   };
-}
-
-/** The module's one data-change route, beside but not part of the app routes. */
-export function registerDataRoute(
-  routes: PublicRoutes,
-  webhookSecret: string,
-  dispatch: (payload: LinearWebhook) => Promise<void>,
-  log: Logger = silentLogger,
-): () => void {
-  const unregister = routes.register(dataWebhookPath, route({ endpoint: 'data' }, webhookSecret, dispatch, log));
-  return () => unregister();
 }

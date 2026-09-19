@@ -4,13 +4,67 @@ Status: scope agreed 2026-09-16; steps 0b–6 built the same day (behaviour in
 [linear.md](../linear.md)); step 0 (live checks) and the live gate are open.
 2026-09-18: routing switched from Linear projects to Linear **teams**
 (`projects.<id>.linear.teams`, a list; a Linear project plays no part) and the
-data-change got its own receiver (step 8). This is a working checklist,
-not the behaviour document; when a step lands, tick it here and write the
-behaviour into the owning page ([linear.md](../linear.md) once it exists,
-[configuration.md](../configuration.md) for fields and secrets). Items marked
+data-change got its own receiver (step 8). 2026-09-19: the single-app rework
+(step 11, plan at `~/.opencode/plan/linear-keeper.md`) replaced the app-to-agent
+routing, the data receiver and the project lock — the behaviour sections
+below that still say "app → agent", "data receiver" or "project lock" describe
+what was built then, and [linear.md](../linear.md) is the owner of what is.
+This is a working checklist, not the behaviour document. Items marked
 **verify** are facts the docs could not settle; each is a live gate before the
 step that depends on it. Requirements this serves: [requirements.md](../requirements.md)
 §2, §4, §5.
+
+## 11. The single-app rework (2026-09-19, built)
+
+The full argument lives in the plan file; what landed, each with its tests:
+
+- [x] Config: top-level `name` (the persona, default `aivi`), `linear.agent`
+      (the assistant, default the aivi name), `linear.primary` (required only
+      once several apps are configured), `apps.<id>` with no fields (an app is
+      credentials and a route), lanes `agent | null | { agent, worktree:
+      false }` naming agents, the apps-share-an-agent check retired,
+      `workspaceId` unchanged.
+- [x] Secrets: the bare `LINEAR_*` names mean the primary; every other app
+      (a face) keeps the `LINEAR_<APP>_*` convention;
+      `requireDataReceiverSecrets` gone.
+- [x] The soul: the plugin's `agent.transform` appends `<home>/soul.md` to
+      every agent's prompt, re-read at each registry rebuild; the plugin
+      watches the file and calls `agent.reload()` on change. No per-agent
+      config: aivi runs on a dedicated machine.
+- [x] Routing: one route shape `POST /v1/linear/webhooks/app/<id>`; the
+      primary's route carries the Issues data changes too (a data change on a
+      face's route is a misroute); HITL refuses any agent; a delegation whose
+      lane maps an agent runs it — worktree, or the project checkout for
+      `worktree: false`; everything else (mentions, delegations nothing
+      claims, teams that map no project) lands on the assistant, in the
+      checkout or the home, with the delegate un-taken when a delegation was
+      wrong.
+- [x] The per-project lock is out: `claim` and `waitingOn` key on the issue
+      only; per-issue redelivery dedup kept; the listener respects
+      `blockedBy` (a blocker not in a finished state holds it back);
+      `ConversationStore.bind` takes an optional `project`.
+- [x] `client.ts`: `createComment`; `blockedBy` in the issue read.
+- [x] The Linear MCP proxy (`packages/linear/src/proxy.ts`): stdio MCP
+      forwarding to Linear's hosted MCP with an app-actor token, re-mint on
+      401; wired into `example/opencode.jsonc` (off until the credentials
+      exist).
+- [x] CLI: `projects create` asks which agent works each lane (text, empty =
+      humans); `linear status` lists conversations (workers and assistant
+      sessions) with their agent; `--lane` reads `LANE:AGENT`.
+- [x] `example/`: `soul.md`, the assistant's agent file (`aivi.md`), a
+      `linear` block in `aivi.example.json`, `.env.example` with the bare
+      names as the one-app path.
+- [x] Docs: `linear.md`, `configuration.md` (`name`, the soul, the Linear
+      section), `CONTEXT.md`, `AGENTS.md`, this file, backlogs
+      (projects-and-capacity obsoleted; worktree lifecycle narrowed to the
+      sweep).
+- [ ] Live gate (in addition to step 7's): one app receiving both webhook
+      families on one route; a mention answered by the assistant; a
+      delegation into an unmapped lane refused and un-delegated; two workers
+      in one project running concurrently in separate worktrees; a
+      `worktree: false` lane running in the checkout; `blockedBy` visibly
+      holding a delegation; the Linear MCP tools usable from a worker session
+      attributing writes to the app.
 
 ## Vocabulary (Linear's words, used as Linear uses them)
 
@@ -160,7 +214,9 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
 ```
 
 `workspaceId` optional (single-workspace default). One OpenCode agent maps to
-at most one app (existing check). Secrets: [decisions](#decisions-taken-2026-09-16).
+at most one app (an existing check in `configSchema.superRefine`; it retired
+with `apps.<id>.agent` in the 2026-09-19 rework below). Secrets:
+[decisions](#decisions-taken-2026-09-16).
 
 ## Checklist
 

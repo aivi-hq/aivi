@@ -4,8 +4,16 @@ Status: idea from the owner (2026-09-14); researched; deliberately deferred to
 the Linear milestone (2026-09-15), since nothing runs *in* a project until
 worker agents exist. What a project *is* was settled and built the same day
 ([projects](../projects.md)): a checkout at `<home>/projects/<id>`, described
-from the home. The "Projects" recommendation below is superseded by that page;
-the lock and idle designs still stand.
+from the home. The "Projects" recommendation below is superseded by that page.
+
+**Disposition of the lock, 2026-09-19.** A per-project lock was built
+(plans/linear.md step 5) and then removed (step 11): worktrees became the
+isolation and the pool the capacity, one worker per issue remained as the
+redelivery guard, and the assistant runs where no checkout is needed. The
+pseudo-pool design below is not wanted in that shape any more. What survives
+as an unscheduled idea is **maintenance only when idle**; the research below
+still describes the store accurately except where the lock appeared
+(`ConversationStore.claim` now keys on the issue only).
 
 ## Capacity
 

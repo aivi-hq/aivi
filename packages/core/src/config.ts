@@ -185,6 +185,28 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
   { id: 'adr', path: 'docs/adr', kind: 'decision' },
 ] as const satisfies readonly z.input<typeof source>[];
 /**
+ * A written lane binding: the OpenCode agent that works issues entering the
+ * lane, `null` for a lane humans work, or an object naming an agent that runs
+ * without a worktree — in the project's `source/` checkout on main, where
+ * only the agent file's own permissions say what it may not do.
+ */
+export const laneValueSchema = z.union([
+  z.string().min(1).nullable(),
+  z.strictObject({ agent: z.string().min(1), worktree: z.literal(false).optional() }),
+]);
+export type LaneValue = z.infer<typeof laneValueSchema>;
+/** A lane binding as routing sees it: the agent and whether it gets a worktree. */
+export interface LaneBinding {
+  agent: string;
+  worktree: boolean;
+}
+/** Normalise a written lane value (`agent | null | { agent, worktree }`); null for human lanes. */
+export function laneBinding(value: LaneValue): LaneBinding | null {
+  if (value === null) return null;
+  if (typeof value === 'string') return { agent: value, worktree: true };
+  return { agent: value.agent, worktree: value.worktree !== false };
+}
+/**
  * One project: a clean git checkout at `<home>/projects/<id>`, discovered from
  * that directory. An entry here is only needed to override: `knowledge`
  * replaces `projectDefaults.knowledge` for a repository laid out differently
@@ -209,37 +231,54 @@ export const projectSchema = z.strictObject({
         .min(1)
         .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
       lanes: z
-        .record(z.string().min(1), id.nullable())
+        .record(z.string().min(1), laneValueSchema)
         .default({})
         .describe(
-          'Workflow state name → app id: issues entering that state are worked by that app. `null` marks a human lane: the gateway never runs on it, and it overrides a projectDefaults lane. Empty by default: the listener delegates nothing until you map a lane.',
+          'Workflow state name → the OpenCode agent that works issues entering that state. `null` marks a human lane. `{ agent, worktree: false }` runs the agent in the project checkout on main, without a worktree. Empty by default: the listener delegates nothing until you map a lane.',
         ),
     })
     .optional(),
 });
 /**
- * The Linear module. Each *app* is one Linear OAuth application acting as an
- * app user, mapped to exactly one OpenCode agent; its client id, client
- * secret and webhook signing secret come from the environment as
- * `LINEAR_<APP>_CLIENT_ID`, `LINEAR_<APP>_CLIENT_SECRET` and
- * `LINEAR_<APP>_WEBHOOK_SECRET` (`<APP>` = the id upper-cased, `-` → `_`).
- * The module also has one *data receiver*: a credentialed endpoint for
- * Linear's data-change webhooks (`LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
- * `LINEAR_WEBHOOK_SECRET`), which runs nothing itself.
- * Presence of this block enables the module.
+ * The Linear module. One app does the work: it carries the workspace's
+ * **Issues** data feed on its webhook route, receives every agent-session
+ * event, and its token authorises the Linear MCP. Extra apps are *faces* — a
+ * name and icon in Linear's UI, their own credentials (`LINEAR_<APP>_*`) and
+ * webhook route, no routing meaning. Lanes in `projects.<id>.linear.lanes`
+ * name OpenCode agents directly. Presence of this block enables the module.
  */
 export const linearSchema = z.strictObject({
+  agent: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the assistant. Default: the aivi name.',
+    ),
+  primary: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'The app that carries the workspace data feed, signs the bare LINEAR_* secrets and authorises the Linear MCP; default the one app. Required once several apps are configured.',
+    ),
   apps: z
     .record(
       id,
-      z.strictObject({ agent: z.string().min(1).describe('The OpenCode agent this app runs as; unique across apps.') }),
+      z
+        .strictObject({})
+        .describe(
+          'Empty today: credentials come from the environment; the id is the app identity and its webhook route.',
+        ),
     )
-    .describe('Linear apps by id; lanes in projects.<id>.linear.lanes refer to these ids.'),
+    .describe(
+      'Linear apps by id. The primary (see `primary`) carries the data feed; every other app is a face — a name and icon in Linear’s UI with its own credentials, no routing meaning.',
+    ),
   logMisroutes: z
     .boolean()
     .default(true)
     .describe(
-      'Log at warn a webhook delivered to the wrong endpoint (a data change on an app route, an agent session on the data route); it is dropped either way.',
+      'Log at warn a webhook delivered to the wrong endpoint (a data change on a face’s route); it is dropped either way.',
     ),
   listener: z
     .boolean()
@@ -268,7 +307,11 @@ export const linearSchema = z.strictObject({
     .describe('A worker turn longer than this is interrupted and ends stopped.'),
 });
 export type LinearConfig = z.infer<typeof linearSchema>;
-/** Environment variable names one Linear app's credentials are read from. */
+/**
+ * Environment variable names for one app's credentials. The **primary** app
+ * uses the bare `linearPrimarySecretNames`; this prefixed convention is for
+ * every other app (a face) — `<APP>` = the id upper-cased, `-` → `_`.
+ */
 export const linearSecretNames = (app: string) => {
   const key = app.toUpperCase().replaceAll('-', '_');
   return {
@@ -493,10 +536,10 @@ export const configSchema = z
         linear: z
           .strictObject({
             lanes: z
-              .record(z.string().min(1), id.nullable())
+              .record(z.string().min(1), laneValueSchema)
               .default({})
               .describe(
-                'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → app id, or null for a lane humans work.',
+                'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
               ),
             workspaceId: z
               .string()
@@ -541,6 +584,13 @@ export const configSchema = z
       })
       .optional(),
     linear: linearSchema.optional(),
+    name: z
+      .string()
+      .min(1)
+      .default('aivi')
+      .describe(
+        'The persona: one name on every platform (the Linear application, the Discord and Slack bot usernames, what colleagues ping). Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms — the operator uses this name in each console.',
+      ),
     scheduler: z
       .strictObject({
         maxConcurrent: z.number().int().min(1).max(64).default(1),
@@ -641,16 +691,16 @@ export const configSchema = z
             path: [...path, i, 'id'],
             message: 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically',
           });
-    const agents = new Set<string>();
-    for (const [app, value] of Object.entries(config.linear?.apps ?? {})) {
-      if (agents.has(value.agent))
-        ctx.addIssue({
-          code: 'custom',
-          path: ['linear', 'apps', app],
-          message: 'An OpenCode agent can be mapped to only one Linear app',
-        });
-      agents.add(value.agent);
-    }
+    const appIds = Object.keys(config.linear?.apps ?? {});
+    if (config.linear && appIds.length > 1 && !config.linear.primary)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['linear', 'primary'],
+        message:
+          'Required once several apps are configured: which app carries the data feed and the bare LINEAR_* secrets',
+      });
+    if (config.linear?.primary && !appIds.includes(config.linear.primary))
+      ctx.addIssue({ code: 'custom', path: ['linear', 'primary'], message: 'Not a configured app' });
     const teamOwners = new Map<string, string>();
     for (const [project, entry] of Object.entries(config.projects))
       for (const [i, team] of entry.linear?.teams.entries() ?? []) {
@@ -726,6 +776,31 @@ export const configSchema = z
   });
 export type Config = z.infer<typeof configSchema>;
 
+/** The environment names of the one app: the primary's credentials, no app segment. */
+export const linearPrimarySecretNames = {
+  clientId: 'LINEAR_CLIENT_ID',
+  clientSecret: 'LINEAR_CLIENT_SECRET',
+  webhookSecret: 'LINEAR_WEBHOOK_SECRET',
+} as const;
+
+/** The app that carries the workspace data feed and the bare secrets: `linear.primary`, else the one configured app. */
+export function primaryLinearApp(linear: LinearConfig | undefined): string | undefined {
+  if (!linear) return undefined;
+  if (linear.primary) return linear.primary;
+  const ids = Object.keys(linear.apps);
+  return ids.length === 1 ? ids[0] : undefined;
+}
+
+/** The assistant's agent name: `linear.agent`, else the aivi name slugged (lower-case, non-alphanumerics to `-`). */
+export function assistantAgent(config: Config): string {
+  if (config.linear?.agent) return config.linear.agent;
+  const slug = config.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'aivi';
+}
+
 /** Id of the job the host seeds from `scheduler.retention`. */
 export const RETENTION_JOB_ID = 'retention';
 /** Id of the job the host seeds from `scheduler.projectsSync`. */
@@ -790,7 +865,7 @@ export interface KnowledgeSource {
 export interface ProjectLinear {
   workspaceId?: string;
   teams: string[];
-  lanes: Record<string, string>;
+  lanes: Record<string, LaneBinding>;
 }
 export interface Project {
   id: string;
@@ -906,13 +981,13 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
     let linear: ProjectLinear | undefined;
     if (entry.linear) {
       const merged = { ...(config.projectDefaults.linear?.lanes ?? {}), ...entry.linear.lanes };
-      const lanes: Record<string, string> = {};
-      for (const [lane, app] of Object.entries(merged)) if (app) lanes[lane] = app;
+      const lanes: Record<string, LaneBinding> = {};
+      for (const [lane, value] of Object.entries(merged)) {
+        const binding = laneBinding(value);
+        if (binding) lanes[lane] = binding;
+      }
       const workspaceId = entry.linear.workspaceId ?? config.projectDefaults.linear?.workspaceId;
       linear = { teams: entry.linear.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
-      for (const app of Object.values(lanes)) {
-        if (!config.linear?.apps[app]) throw new Error(`Project ${projectId} refers to unknown Linear app ${app}`);
-      }
     }
     projects.push({
       id: projectId,

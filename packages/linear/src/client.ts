@@ -48,6 +48,8 @@ export interface LinearIssue {
   labels: { id: string; name: string }[];
   delegate: { id: string } | null;
   assignee: { id: string; name: string } | null;
+  /** Issues blocking this one; a blocker not in a finished state holds the listener back. */
+  blockedBy: { id: string; state: { id: string; name: string; type: string } }[];
 }
 
 export interface LinearAgentSession {
@@ -84,10 +86,18 @@ const ISSUE_FIELDS = `
   labels { nodes { id name } }
   delegate { id }
   assignee { id name }
+  blockedBy { nodes { id state { id name type } } }
 `;
 
-type RawIssue = Omit<LinearIssue, 'labels'> & { labels: { nodes: LinearIssue['labels'] } };
-const issueOf = (raw: RawIssue): LinearIssue => ({ ...raw, labels: raw.labels.nodes });
+type RawIssue = Omit<LinearIssue, 'labels' | 'blockedBy'> & {
+  labels: { nodes: LinearIssue['labels'] };
+  blockedBy: { nodes: LinearIssue['blockedBy'] };
+};
+const issueOf = (raw: RawIssue): LinearIssue => ({
+  ...raw,
+  labels: raw.labels.nodes,
+  blockedBy: raw.blockedBy.nodes,
+});
 
 /**
  * A small GraphQL client for one Linear app. The token is obtained with the
@@ -226,6 +236,16 @@ export class LinearClient {
       { id: issueId, input: { delegateId } },
     );
     if (!data.issueUpdate.success) throw new LinearApiError('issueUpdate(delegateId) failed', 200);
+  }
+
+  /** Leave a comment on the issue: the trail when the assistant declines a delegation. */
+  async createComment(issueId: string, body: string): Promise<string> {
+    const data = await this.graphql<{ commentCreate: { success: boolean; comment: { id: string } } }>(
+      `mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }`,
+      { input: { issueId, body } },
+    );
+    if (!data.commentCreate.success) throw new LinearApiError('commentCreate failed', 200);
+    return data.commentCreate.comment.id;
   }
 }
 

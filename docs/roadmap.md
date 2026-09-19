@@ -45,8 +45,9 @@ Mock tests do not establish these; each has its own command.
 
 Projects are done (2026-09-15, [projects.md](projects.md)): discovered from
 `<home>/projects`, described from the home, per-project memory, add/remove/purge.
-Per-project locks and maintenance-when-idle wait for the Linear milestone
-([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
+The Linear module is built (2026-09-19) with worktrees as the isolation and the
+pool as the capacity — there is no per-project lock; maintenance-when-idle
+stays an idea ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 
 1. Next channels once the research lands
    ([backlog/research-channels.md](backlog/research-channels.md)); Signal and
@@ -55,8 +56,8 @@ Per-project locks and maintenance-when-idle wait for the Linear milestone
    ([backlog/installation.md](backlog/installation.md)); the home layout it
    must produce is now fixed.
 3. Remote access hardening (per-device tokens, SSO via reverse proxy), then
-   milestone 6 (worker lifecycle, with [shutdown-hooks](backlog/shutdown-hooks.md)
-   and the project lock) and 7 (Linear).
+   the Linear live gate (the module is built; what to exercise is in
+   [plans/linear.md](plans/linear.md#11-the-single-app-rework-2026-09-19-built)).
 
 ## Decisions to make early, and decisions to defer
 

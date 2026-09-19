@@ -99,6 +99,7 @@ test('GraphQL errors and HTTP failures surface as LinearApiError; mutations chec
             labels: { nodes: [{ id: 'l', name: 'needs-human' }] },
             delegate: null,
             assignee: null,
+            blockedBy: { nodes: [] },
           },
         },
       },

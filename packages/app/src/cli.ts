@@ -45,8 +45,8 @@ const usage = `aivi <command>
                                resolving Linear team keys (PEC) to their ids before anything is cloned
                                [--lane "Dev:dev"] [--lane "Dev,Review:dev"] [--unlane "Backlog"] write the
                                lanes too; a lane unlaned is for humans, so the gateway never runs on it
-  projects create [URL]        the one interactive command: asks URL, id, app, teams and lanes, then does
-                               projects add; every flag given skips its prompt
+  projects create [URL]        the one interactive command: asks URL, id, teams and lanes (which agent works
+                               each lane), then does projects add; every flag given skips its prompt
   projects remove ID           Delete the checkout; memory stays and the project is listed as removed
   projects purge ID --confirm  Delete the project's memory (and checkout); without --confirm only shows what would go
   knowledge search QUERY       Search via the running host [--project ID --core-only --no-core --limit N]
@@ -70,7 +70,7 @@ const usage = `aivi <command>
   discord resolve ID           Release a blocked turn --reason TEXT --confirm-stopped
   slack status                 Inspect Slack turns and leases
   slack resolve ID             Release a blocked turn --reason TEXT --confirm-stopped
-  linear status                Inspect Linear worker turns and leases
+  linear status                Inspect Linear conversations (workers and the assistant) and leases
   linear resolve ID            Release a blocked worker --reason TEXT --confirm-stopped
   opencode check               Probe the OpenCode v2 service the host would use
 
@@ -239,10 +239,16 @@ async function main(): Promise<void> {
       // The convention is the base; only the lanes it leaves open get asked,
       // and a lane whose workflow state only ends work (done, canceled) never does.
       const conventions = loaded.config.projectDefaults.linear?.lanes ?? {};
-      const mapped = Object.entries(conventions).filter(([, app]) => app !== null);
+      const laneAgent = (value: unknown): string =>
+        typeof value === 'string'
+          ? value
+          : typeof value === 'object' && value !== null && 'agent' in value
+            ? String(value.agent)
+            : 'null';
+      const mapped = Object.entries(conventions).filter(([, agent]) => agent !== null);
       p.note(
         mapped.length
-          ? mapped.map(([lane, appName]) => `${lane} → ${appName}`).join('\n')
+          ? mapped.map(([lane, agent]) => `${lane} → ${laneAgent(agent)}`).join('\n')
           : 'nothing yet — every lane of the picked teams gets asked',
         'Lane convention (projectDefaults.linear.lanes)',
       );
@@ -255,31 +261,18 @@ async function main(): Promise<void> {
               .map(state => state.name),
           ),
         ),
-      ].filter(name => !(name in conventions));
+      ].filter(laneName => !(laneName in conventions));
       for (const lane of open) {
         const from = selected
           .filter(team => team.states.some(state => state.name === lane))
           .map(team => team.key)
           .join(', ');
-        const choice = await p.select<string | null>({
-          message: `Which Linear agent works the "${lane}" lane (of ${from})?`,
-          options: [
-            ...Object.entries(linearConfig.apps).map(
-              ([id, app]): { value: string | null; label: string; hint?: string } => ({
-                value: id,
-                label: `${id} — runs agent ${app.agent}`,
-                hint: 'the lane stores this id; it names the OpenCode agent, which the repository may redefine locally',
-              }),
-            ),
-            {
-              value: null,
-              label: 'leave it for humans',
-              hint: 'a human works this lane; the gateway never runs on it',
-            },
-          ],
+        const choice = await p.text({
+          message: `Which OpenCode agent works the "${lane}" lane (of ${from})?`,
+          placeholder: 'leave empty to leave it for humans',
         });
         if (p.isCancel(choice)) return stop('lane setup incomplete');
-        lanes[lane] = choice;
+        lanes[lane] = choice.trim() ? choice.trim() : null;
       }
       if (!open.length) p.note('the convention already covers every lane these teams work in', 'Lanes');
     }
@@ -374,7 +367,7 @@ async function main(): Promise<void> {
         console.error(
           written.lanes
             ? 'Teams and lanes written; the listener works the mapped lanes and leaves the human ones alone.'
-            : `Teams written. Until projects.${added.id}.linear.lanes maps lane → app the listener delegates nothing; hand delegation works.`,
+            : `Teams written. Until projects.${added.id}.linear.lanes maps lane → agent the listener delegates nothing; hand delegation works.`,
         );
       } else print(added);
       console.error('Restart `aivi serve` to index it; the host reads the projects directory at startup.');
@@ -466,7 +459,7 @@ async function main(): Promise<void> {
       if (!linear || !loaded.config.linear) throw new Error('Linear is not configured in aivi.json');
       const inbox = linear.openLinearStore(store);
       if (subcommand === 'status') {
-        print({ workers: linear.describeWorkers(inbox), leases: store.leases() });
+        print({ conversations: linear.describeWorkers(inbox), leases: store.leases() });
         return;
       }
       if (subcommand === 'resolve') {
