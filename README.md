@@ -6,6 +6,9 @@ team needs around it: a shared knowledge server, scheduled work, and channels
 such as Discord and Slack, all started by one **`aivi serve`**. Ordinary OpenCode
 installs reach the knowledge server through a small native plugin.
 
+> [!WARNING]
+> This project is under active development and it will be at least until OpenCode v2 is released. Don't use it. Or do, and suffer lol. Also this project is being used to build itself using exclusively local models because I am insane.
+
 ## Try it
 
 Node 26 and npm, from the repository root:
