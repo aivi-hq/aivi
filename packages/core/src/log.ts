@@ -9,7 +9,7 @@ import {
   type LogLevel as LogTapeLogLevel,
   type Sink,
 } from '@logtape/logtape';
-import { getPrettyFormatter } from '@logtape/pretty';
+import { getPrettyFormatter, type PrettyFormatterOptions } from '@logtape/pretty';
 
 // LogTape is the logger, and this module is its only doorway in the
 // workspace: components get handles from `getLogger(['aivi', 'host'])`,
@@ -27,6 +27,23 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /** Console rendering: pretty for terminals, JSON lines for pipes. */
 export type ConsoleFormat = 'pretty' | 'json';
+
+// The category is the activation tree: `aivi` is a one-shot CLI command,
+// `aivi·host` is the serve application, and whatever the host starts hangs
+// below it (`aivi·host·discord`). One color per module; the longest prefix
+// wins, so a module's engine and turn records inherit its color. Knowledge
+// hangs at root because the CLI builds it before any host exists. Dreaming
+// is pinned to the muted gray — the prefix rule would otherwise dye it host
+// green — and the CLI root reaches the same gray by fallback.
+const CATEGORY_COLORS: NonNullable<PrettyFormatterOptions['categoryColorMap']> = new Map([
+  [['aivi', 'host', 'discord'], '#a371f7'],
+  [['aivi', 'host', 'slack'], '#36c5f0'],
+  [['aivi', 'host', 'linear'], '#5e6ad2'],
+  [['aivi', 'knowledge'], '#C69214'],
+  [['aivi', 'host', 'scheduler'], '#c51162'],
+  [['aivi', 'host'], '#00CC66'],
+  [['aivi', 'host', 'dreaming'], '#767676'],
+]);
 
 const LOG_LEVELS: Record<LogLevel, LogTapeLogLevel> = {
   debug: 'debug',
@@ -64,7 +81,16 @@ export async function configureLogging(options: LoggingSetup): Promise<() => Pro
   const jsonLines = getJsonLinesFormatter({ properties: 'flatten' });
   const consoleFormatter =
     options.format === 'pretty'
-      ? getPrettyFormatter({ colors: isTty(process.stderr), properties: true, timestamp: 'time' })
+      ? getPrettyFormatter({
+          colors: isTty(process.stderr),
+          properties: true,
+          timestamp: 'time',
+          categoryColorMap: CATEGORY_COLORS,
+          categoryColor: '#767676', // the one muted color, ours rather than LogTape's slate
+          categoryStyle: 'italic', // color, not dim: dim is what mutes the palette
+          messageColor: null, // terminal's own foreground; body text is never dim-on-dim
+          messageStyle: null,
+        })
       : jsonLines;
   // A plain function sink, not the stream adapter: disposing a web-stream
   // adapter closes process.stderr itself, and a logging shutdown must not

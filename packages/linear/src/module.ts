@@ -197,7 +197,7 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       ask,
       delivery,
       {
-        log: services.log,
+        log, // the module's own child, so engine records carry the module category
         onRelease: services.wake,
         onFailure: services.fail,
         progress: { mode: config.progress, events: services.events },

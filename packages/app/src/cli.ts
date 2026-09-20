@@ -682,7 +682,9 @@ const jobFileSchema = z.strictObject({
 });
 
 async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostResources> {
-  const knowledge = await createKnowledgeService(loaded, undefined, log);
+  // Knowledge logs under its own category: the service is built here, before
+  // any host exists, and keeps this logger whatever job triggers an index.
+  const knowledge = await createKnowledgeService(loaded, undefined, log.getChild('knowledge'));
   // Browser construction is lazy; no Chrome launch occurs until a tool call.
   const browser =
     loaded.config.browser !== false

@@ -48,7 +48,13 @@ Logging is LogTape, configured once at startup: every command mirrors its log to
 stderr — pretty on a terminal, one JSON object per line when piped, which
 `--log-format auto|pretty|json` overrides — and `aivi serve` additionally appends
 JSON lines to `<home>/state/logs/aivi.log` (rotated, so the file is capped)
-whatever the console shows. `--log-level debug` shows job materialization.
+whatever the console shows. In the pretty console the category column is the
+activation tree, colored per module: `aivi·host` green, `aivi·host·discord`
+purple, `aivi·host·slack` cyan, `aivi·host·linear` indigo, `aivi·host·scheduler`
+deep pink, `aivi·knowledge` amber; the CLI root and dreaming keep the muted
+gray. Message text uses the terminal's own foreground; the log file stays
+colorless JSON.
+`--log-level debug` shows job materialization.
 stdout is reserved for command output: `aivi serve` writes its raw JSON ready
 line to stdout only when stdout is not a terminal (scripts and smoke parse it);
 a human on a terminal sees the pretty `host.listening` record instead, which
