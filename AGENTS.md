@@ -57,3 +57,7 @@ separate gates; mock tests do not establish those.
 Commits follow Conventional Commits (`type(scope): subject`; lefthook enforces
 it). Run `npm run agentic:verify` before committing; run `npm run schema` after
 changing a zod config schema or the check fails.
+
+## Red lines
+
+- Do not be proactive and start making changes. Always request the user's express permission. Even when in build mode.
