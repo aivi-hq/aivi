@@ -195,6 +195,15 @@ runs in one process; adapters are optional modules with a start/stop contract.
   checkout); lanes, branch-name format and labels all live per Linear team,
   while a Linear *project* is the humans' epic with a completion date and
   aivi never consults it ([linear](docs/linear.md)).
+- **Attribution follows who launched the shell**, never what a prompt said. A
+  worker aivi launched is unattended, so it commits as the bot — sole author
+  and committer — because the worktree it works in carries `identity.github` as
+  its git author plus `agent.autonomous = true`, which is how the commit plugin
+  learns to add no trailer. The identity resolves as one pair from the first
+  source that answers: `identity.github`, else `opencode.coauthor` in the
+  machine's git config, else the aivi app. The project's `source/` is never
+  marked, so attended work keeps a human author with the agent as co-author
+  ([linear](docs/linear.md), [configuration](docs/configuration.md#fields)).
 - **The lane map is a convention with per-project deviations.**
   `projectDefaults.linear.lanes` is the company-wide base and a project wins
   one lane at a time over it (merge, where `projectDefaults.knowledge`
@@ -220,7 +229,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |
 | Discord behavior, setup, recovery | [docs/discord.md](docs/discord.md) |
 | Slack behavior, app manifest, setup | [docs/slack.md](docs/slack.md) |
-| Linear behavior (agent sessions as conversations, worktrees, stops), setup | [docs/linear.md](docs/linear.md) |
+| Linear behavior (agent sessions as conversations, worktrees and their attribution, stops), setup | [docs/linear.md](docs/linear.md) |
 | Browser service | [docs/browser.md](docs/browser.md) |
 | Decisions | [docs/architecture.md](docs/architecture.md) |
 | Status per milestone, live gates, next steps | [docs/roadmap.md](docs/roadmap.md) |

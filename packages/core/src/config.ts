@@ -527,6 +527,94 @@ export const slackConfigSchema = z
     }
   });
 export type SlackConfig = z.infer<typeof slackConfigSchema>;
+/**
+ * The aivi GitHub App, created 2026-09-20. The last resort for the git identity
+ * and the only identity that works unattended: GitHub resolves a bot commit's
+ * avatar and link from the email **inside the commit**, never from who pushed,
+ * so this needs no token and no installation.
+ */
+export const AIVI_AGENT_BOT = {
+  user: 'aivi-agent[bot]',
+  email: '331678708+aivi-agent[bot]@users.noreply.github.com',
+  app: 5011508,
+} as const;
+/**
+ * Who aivi is. `name` is the persona every platform shows; `github` is who aivi
+ * **commits** as in work it launched itself, and is resolved by `gitIdentity`
+ * rather than by a default, because its middle step reads the machine instead
+ * of this file.
+ */
+export const identitySchema = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .default('aivi')
+      .describe(
+        'The persona: one name on every platform (the Linear application, the Discord and Slack bot usernames, what colleagues ping). Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms — the operator uses this name in each console.',
+      ),
+    github: z
+      .strictObject({
+        user: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'The git author name of a worker commit. Default: `opencode.coauthor` in the global git config, else the aivi app.',
+          ),
+        email: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'The git author email, same order as `user`. GitHub links the commit from this email, so the default is the app’s noreply address.',
+          ),
+        app: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            'The GitHub App id. Nothing reads it yet; whoever mints an installation token to act on GitHub as the app signs a JWT issued to this.',
+          ),
+      })
+      .optional()
+      .describe('Who aivi commits as in work it launched. Only needed to override the app.'),
+  })
+  .superRefine((identity, ctx) => {
+    const half = (identity.github?.user === undefined) !== (identity.github?.email === undefined);
+    if (half)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['github'],
+        message: 'Name the pair: git takes an author name and an email together, so give both or neither',
+      });
+  });
+export type Identity = z.infer<typeof identitySchema>;
+/** A git author, as git wants it. */
+export interface GitIdentity {
+  name: string;
+  email: string;
+}
+/** Read one key of the global git config; resolves to `""` when it is unset. */
+export type ReadGitConfig = (key: string) => Promise<string>;
+/**
+ * The identity a worker commits as, as one pair from the first source that
+ * answers: `identity.github`, then `opencode.coauthor` in the machine's git
+ * config (`Name <email>`, the same key the commit plugin co-authors with), then
+ * the aivi app. Never a name from one and an email from another — that would
+ * link a bot's commits to whoever's address came in second. An unreadable config
+ * falls through: a machine without git still gets the app.
+ */
+export async function gitIdentity(identity: Identity, read: ReadGitConfig): Promise<GitIdentity> {
+  if (identity.github?.user && identity.github.email)
+    return { name: identity.github.user, email: identity.github.email };
+  const written = /^(?<name>.+?)\s+<(?<email>[^<>]+)>$/.exec(
+    (await read('opencode.coauthor').catch(() => '')).trim(),
+  )?.groups;
+  if (written?.name && written.email) return { name: written.name, email: written.email };
+  return { name: AIVI_AGENT_BOT.user, email: AIVI_AGENT_BOT.email };
+}
 export const configSchema = z
   .strictObject({
     $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
@@ -595,13 +683,9 @@ export const configSchema = z
       })
       .optional(),
     linear: linearSchema.optional(),
-    name: z
-      .string()
-      .min(1)
-      .default('aivi')
-      .describe(
-        'The persona: one name on every platform (the Linear application, the Discord and Slack bot usernames, what colleagues ping). Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms — the operator uses this name in each console.',
-      ),
+    identity: identitySchema
+      .prefault({})
+      .describe('Who aivi is: the persona every platform shows, and who a worker it launched commits as.'),
     scheduler: z
       .strictObject({
         maxConcurrent: z.number().int().min(1).max(64).default(1),
@@ -805,7 +889,7 @@ export function primaryLinearApp(linear: LinearConfig | undefined): string | und
 /** The assistant's agent name: `linear.agent`, else the aivi name slugged (lower-case, non-alphanumerics to `-`). */
 export function assistantAgent(config: Config): string {
   if (config.linear?.agent) return config.linear.agent;
-  const slug = config.name
+  const slug = config.identity.name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
@@ -960,6 +1044,11 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
         `modules.${name}.config is gone: the ${name} settings live inline in ${path}. Move the contents of ${file} into that block, without its "version".`,
       );
   }
+  const persona = (raw as { name?: unknown }).name;
+  if (persona !== undefined)
+    throw new Error(
+      `name is gone: the persona lives in identity.name in ${path}. Write "identity": { "name": ${JSON.stringify(String(persona))} } there.`,
+    );
   const config = configSchema.parse(raw);
   const base = dirname(path);
   config.stateDirectory = absolute(base, config.stateDirectory);

@@ -2,6 +2,7 @@ import type { LinearConfig, Project } from '@aivi/core';
 import {
   assistantAgent,
   errorMessage,
+  gitIdentity,
   linearPrimarySecretNames,
   linearSecretNames,
   primaryLinearApp,
@@ -24,7 +25,7 @@ import {
   isIssueEvent,
   type LinearWebhook,
 } from './webhook.ts';
-import { ensureWorktree, worktreePathFor } from './worktree.ts';
+import { ensureWorktree, globalGitConfig, worktreePathFor } from './worktree.ts';
 
 /**
  * The platform: an agent session is a conversation. Its id is `<app>:<agent session id>`
@@ -118,6 +119,12 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
   const store = openLinearStore(services.store);
   const interrupted = store.recover();
   if (interrupted.length) log.warn('turns.interrupted', { blocked: interrupted.length });
+
+  // Who a worker commits as, resolved once for the run: aivi launched that work,
+  // so the bot authors it and no co-author trailer follows. Logged because it is
+  // the first thing to look at when a commit carries the wrong name.
+  const workerIdentity = await gitIdentity(services.loaded.config.identity, globalGitConfig);
+  log.info('worker.identity', { name: workerIdentity.name, email: workerIdentity.email });
 
   const apps = new Map<string, LinearAppRuntime>();
   const primaryId = primaryLinearApp(config);
@@ -268,6 +275,7 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
               source: project.directory,
               path,
               branch: issue.branchName,
+              identity: workerIdentity,
               signal: abort.signal,
             });
           } catch (error) {

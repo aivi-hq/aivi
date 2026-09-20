@@ -46,7 +46,9 @@ containing facts is the wrong file growing.
 | Field | Default / purpose |
 | --- | --- |
 | `version` | Required; `1` |
-| `name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms: the operator uses this name in each console |
+| `identity.name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms: the operator uses this name in each console |
+| `identity.github` | Who a **worker aivi launched** commits as, as a `{user, email}` pair: name the pair or neither, never half. Default: `opencode.coauthor` in the machine's git config, else the aivi app `aivi-agent[bot] <331678708+aivi-agent[bot]@users.noreply.github.com>`. GitHub resolves a bot commit's avatar and link from the email *inside the commit*, never from who pushed, so no token and no app installation is involved ([linear](linear.md)) |
+| `identity.github.app` | The GitHub App id. Nothing reads it yet: whoever mints an installation token to act on GitHub as the app signs a JWT issued to this |
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |

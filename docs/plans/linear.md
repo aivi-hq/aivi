@@ -18,7 +18,9 @@ step that depends on it. Requirements this serves: [requirements.md](../requirem
 
 The full argument lives in the plan file; what landed, each with its tests:
 
-- [x] Config: top-level `name` (the persona, default `aivi`), `linear.agent`
+- [x] Config: `identity.name` (the persona, default `aivi`; the top-level `name`
+      it was moved into `identity` on 2026-09-20, when the git identity a worker
+      commits as joined it), `linear.agent`
       (the assistant, default the aivi name), `linear.primary` (required only
       once several apps are configured), `apps.<id>` with no fields (an app is
       credentials and a route), lanes `agent | null | { agent, worktree:

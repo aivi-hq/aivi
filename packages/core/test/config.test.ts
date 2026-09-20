@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { nextOccurrence } from '../src/clock.ts';
 import {
+  assistantAgent,
   configSchema,
+  gitIdentity,
   jobSchema,
   linearSecretNames,
   loadConfig,
@@ -452,4 +454,56 @@ test('scheduler.timezone is the host-wide default; a per-job timezone wins over 
   assert.equal(retentionJob(override, 'UTC')!.timezone, 'Pacific/Auckland');
   // Without the setting, derived schedules keep the host timezone.
   assert.equal(retentionJob(configSchema.parse({ version: 1 }), 'UTC')!.timezone, 'UTC');
+});
+
+test('identity is the persona, and who a worker commits as comes from the file, the machine, then the app', async () => {
+  const bare = configSchema.parse({ version: 1 });
+  assert.equal(bare.identity.name, 'aivi', 'the persona has a default');
+  assert.equal(assistantAgent(bare), 'aivi', 'the Linear assistant takes the persona name');
+  assert.equal(
+    assistantAgent(configSchema.parse({ version: 1, identity: { name: 'Clawd The' } })),
+    'clawd-the',
+    'the agent name is the persona slugged, while the display name stays free-form',
+  );
+  const app = { name: 'aivi-agent[bot]', email: '331678708+aivi-agent[bot]@users.noreply.github.com' };
+  const machine = async (key: string) => (key === 'opencode.coauthor' ? 'Jane Doe <jane@example.com>' : '');
+  assert.deepEqual(
+    await gitIdentity(bare.identity, machine),
+    { name: 'Jane Doe', email: 'jane@example.com' },
+    'the machine answers while the file is silent',
+  );
+  const written = configSchema.parse({
+    version: 1,
+    identity: { github: { user: 'worker[bot]', email: '99+worker[bot]@users.noreply.github.com' } },
+  });
+  assert.deepEqual(
+    await gitIdentity(written.identity, machine),
+    { name: 'worker[bot]', email: '99+worker[bot]@users.noreply.github.com' },
+    'the file wins over the machine',
+  );
+  assert.deepEqual(await gitIdentity(bare.identity, async () => ''), app, 'the app is the last resort');
+  assert.deepEqual(
+    await gitIdentity(bare.identity, async () => {
+      throw new Error('no git here');
+    }),
+    app,
+    'an unreadable machine still gets the app',
+  );
+  assert.deepEqual(
+    await gitIdentity(bare.identity, async () => 'Jane Doe'),
+    app,
+    'a value that is not `Name <email>` names no author: nobody is attributed by mistake',
+  );
+  assert.match(
+    JSON.stringify(configSchema.safeParse({ version: 1, identity: { github: { user: 'worker[bot]' } } }).error?.issues),
+    /Name the pair/,
+    'a name without an email would mix a bot author with a human address',
+  );
+});
+
+test('a top-level name is the old shape and says where the persona went', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-identity-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'aivi.json'), JSON.stringify({ version: 1, name: 'aivi' }));
+  await assert.rejects(loadConfig(join(root, 'aivi.json')), /identity\.name/);
 });
