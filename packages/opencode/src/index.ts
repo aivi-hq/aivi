@@ -1,5 +1,5 @@
 import { type FSWatcher, readFileSync, watch } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { BrowserRequest, JobRequest } from '@aivi/core';
 import type { KnowledgeKind } from '@aivi/core/kinds';
 import { knowledgeKindHelp, knowledgeKindNames } from '@aivi/core/kinds';
@@ -9,14 +9,31 @@ import { Plugin } from '@opencode/plugin';
 const DEFAULT_HOST_URL = 'http://127.0.0.1:4100';
 
 /**
- * Where the soul lives: `<home>/soul.md`, overridable with the plugin's
- * `soul` option or `AIVI_HOME`. The aivi home is the OpenCode location, so the
- * default needs no configuration.
+ * The aivi home, which holds `<home>/soul.md` and `<home>/aivi.json`. The aivi
+ * home is the OpenCode location, so the default needs no configuration;
+ * `AIVI_HOME`, or the plugin's `soul` option (a file: its directory is the
+ * home), say otherwise.
  */
-function soulPath(options: Record<string, unknown>, location: { directory?: string } | undefined): string | undefined {
-  if (typeof options.soul === 'string' && options.soul) return resolve(options.soul);
-  if (process.env.AIVI_HOME) return join(process.env.AIVI_HOME, 'soul.md');
-  return location?.directory ? join(location.directory, 'soul.md') : undefined;
+function aiviHome(options: Record<string, unknown>, location: { directory?: string } | undefined): string | undefined {
+  if (typeof options.soul === 'string' && options.soul) return dirname(resolve(options.soul));
+  if (process.env.AIVI_HOME) return resolve(process.env.AIVI_HOME);
+  return location?.directory;
+}
+
+/**
+ * The persona name, read straight out of `<home>/aivi.json` rather than through
+ * the host: the plugin is a guest in someone else's process and must state who
+ * aivi is even while the operator is mid-edit on a config the host would
+ * refuse. `''` when there is nothing to say.
+ */
+function personaName(home: string): string {
+  let identity: { name?: unknown } | undefined;
+  try {
+    identity = (JSON.parse(readFileSync(join(home, 'aivi.json'), 'utf8')) as { identity?: typeof identity }).identity;
+  } catch {
+    return '';
+  }
+  return typeof identity?.name === 'string' ? identity.name.trim() : '';
 }
 
 /**
@@ -216,22 +233,27 @@ export default Plugin.define({
 
     // The soul: who aivi is, appended to **every** agent's prompt (aivi runs on
     // a dedicated machine, so every agent there is an aivi agent). The
-    // registry replays this transform on every rebuild — reading soul.md
-    // fresh each time — so an agent-file edit can never wipe it and no soul
-    // text is copied into agent files. soul.md itself sits outside the
-    // `.opencode` roots OpenCode watches, so the plugin watches it here and
-    // invalidates the registry on change; sessions continue, history is in
+    // registry replays this transform on every rebuild — reading soul.md and
+    // the persona name fresh each time — so an agent-file edit can never wipe
+    // it and no soul text is copied into agent files. Neither file sits inside
+    // the `.opencode` roots OpenCode watches, so the plugin watches them here
+    // and invalidates the registry on change; sessions continue, history is in
     // the store.
     const disposers: (() => unknown)[] = [() => registration.dispose()];
-    const path = soulPath(ctx.options as Record<string, unknown>, ctx.location as { directory?: string } | undefined);
-    if (path && typeof ctx.agent?.transform === 'function') {
+    const home = aiviHome(ctx.options as Record<string, unknown>, ctx.location as { directory?: string } | undefined);
+    if (home && typeof ctx.agent?.transform === 'function') {
+      const soul = join(home, 'soul.md');
       const agentTransform = await ctx.agent.transform(editor => {
         let text: string;
         try {
-          text = readFileSync(path, 'utf8').trim();
+          text = readFileSync(soul, 'utf8').trim();
         } catch {
           return; // no soul yet: nothing to say
         }
+        // The name is config, so it is said from config and never repeated in
+        // soul.md: one place to change what every agent is called.
+        const who = personaName(home);
+        text = [who ? `Your name is ${who}.` : '', text].filter(Boolean).join('\n\n');
         if (!text) return;
         for (const agent of editor.list()) {
           editor.update(agent.id as unknown as string, a => {
@@ -243,8 +265,8 @@ export default Plugin.define({
       let timer: ReturnType<typeof setTimeout> | undefined;
       let watcher: FSWatcher | undefined;
       try {
-        watcher = watch(dirname(path), (_event, filename) => {
-          if (filename && filename !== basename(path)) return;
+        watcher = watch(home, (_event, filename) => {
+          if (filename && filename !== 'soul.md' && filename !== 'aivi.json') return;
           clearTimeout(timer);
           timer = setTimeout(() => void ctx.agent.reload(), 100);
         });

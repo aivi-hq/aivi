@@ -188,7 +188,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
   runs it; everything people send directly — mentions, delegations nothing
   claims — lands on the assistant (`linear.agent`), which answers or refuses
   and never does lane work. The soul (`<home>/soul.md`) is aivi's declared
-  identity, injected by the plugin into every agent's prompt and hot-reloaded
+  voice, injected by the plugin into every agent's prompt and hot-reloaded;
+  what aivi is *called* is `identity.name`, which the plugin states ahead of
+  it, so the name has one owner and a soul edit cannot change it
   ([linear](docs/linear.md), [configuration](docs/configuration.md#the-soul)).
 - **A repository is a Linear team.** Routing reads the issue's team only
   (`projects.<id>.linear.teams`, a list: several teams may share one

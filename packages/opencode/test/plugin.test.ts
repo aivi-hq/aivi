@@ -226,3 +226,55 @@ test('the soul is appended to every agent at each replay, never twice, and an ed
   for (let i = 0; i < 100 && fake.reloads === reloadsBefore; i++) await new Promise(r => setTimeout(r, 20));
   assert.ok(fake.reloads > reloadsBefore, 'the edit triggered agent.reload()');
 });
+
+test('the persona name is said from aivi.json, watched like the soul, and read past what the host would accept', async t => {
+  withToken(t, 'test-name-token');
+  const root = await mkdtemp(join(tmpdir(), 'aivi-name-'));
+  const soulFile = join(root, 'soul.md');
+  await writeFile(soulFile, 'I route rather than do.');
+  await writeFile(join(root, 'aivi.json'), JSON.stringify({ version: 1, identity: { name: 'Clawd' } }));
+  const agents = new Map<string, AgentLike>([['librarian', { id: 'librarian', system: 'base prompt' }]]);
+  const fake = fakeAgentDomain(agents);
+  const cleanup = await setupWith(
+    { soul: soulFile },
+    () => {},
+    () => {},
+    fake.domain,
+  );
+  t.after(async () => {
+    if (typeof cleanup === 'function') await cleanup();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // One place states the name: the config, so soul.md never repeats it.
+  assert.equal(agents.get('librarian')!.system, 'base prompt\n\nYour name is Clawd.\n\nI route rather than do.');
+
+  /** Replay the recorded transform over a fresh agent, as a registry rebuild does. */
+  const rebuild = (system: string) => {
+    const fresh = new Map<string, AgentLike>([['fresh', { id: 'fresh', system }]]);
+    fake.callbacks.at(-1)?.({
+      list: () => [...fresh.keys()].map(id => ({ id, system: fresh.get(id)!.system })),
+      update: (id, fn) => {
+        const agent = fresh.get(id);
+        if (agent) fn(agent);
+      },
+    });
+    return fresh.get('fresh')!.system;
+  };
+
+  // The name is config, so it changes without a restart: aivi.json is watched too.
+  const reloadsBefore = fake.reloads;
+  await writeFile(join(root, 'aivi.json'), JSON.stringify({ version: 1, identity: { name: 'Cline' } }));
+  for (let i = 0; i < 100 && fake.reloads === reloadsBefore; i++) await new Promise(r => setTimeout(r, 20));
+  assert.ok(fake.reloads > reloadsBefore, 'the edit triggered agent.reload()');
+  assert.equal(rebuild('x'), 'x\n\nYour name is Cline.\n\nI route rather than do.');
+
+  // A config the host would refuse still says who aivi is: the plugin reads the
+  // one field it states, and validates nothing else.
+  await writeFile(join(root, 'aivi.json'), '{"version": 99, "identity": {"name": "Clawd"}}');
+  assert.equal(rebuild('x'), 'x\n\nYour name is Clawd.\n\nI route rather than do.');
+
+  // A half-written file costs the name line and nothing else.
+  await writeFile(join(root, 'aivi.json'), 'half-written {');
+  assert.equal(rebuild('x'), 'x\n\nI route rather than do.', 'the soul lands even when the config cannot be read');
+});
