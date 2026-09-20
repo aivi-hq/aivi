@@ -44,8 +44,15 @@ loads the Slack SDK, and only enabled search loads QMD. A configured browser
 service is created after installation ownership is acquired; its MCP/Chrome
 processes start on first use and stop with the host ([browser](browser.md)).
 
-`aivi serve` logs one JSON object per line on stderr; `--log-level debug` shows
-job materialization. stdout is reserved for command output.
+Logging is LogTape, configured once at startup: every command mirrors its log to
+stderr — pretty on a terminal, one JSON object per line when piped, which
+`--log-format auto|pretty|json` overrides — and `aivi serve` additionally appends
+JSON lines to `<home>/state/logs/aivi.log` (rotated, so the file is capped)
+whatever the console shows. `--log-level debug` shows job materialization.
+stdout is reserved for command output: `aivi serve` writes its raw JSON ready
+line to stdout only when stdout is not a terminal (scripts and smoke parse it);
+a human on a terminal sees the pretty `host.listening` record instead, which
+also lands in the log file.
 
 ## Dispatch
 

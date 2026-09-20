@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { DreamingArgs, KnowledgeService, LoadedConfig, Logger, Run } from '@aivi/core';
-import { dreamingArgsSchema, errorMessage, MEMORY_SOURCE_ID, runsPruneArgsSchema, silentLogger } from '@aivi/core';
+import { dreamingArgsSchema, errorMessage, getLogger, MEMORY_SOURCE_ID, runsPruneArgsSchema } from '@aivi/core';
 import { dream } from './dreaming.ts';
 import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
@@ -60,7 +60,7 @@ interface ArgSchema<A> {
 type TaskHandler2<A> = (run: Run, context: ExecutionContext, args: A) => Promise<ExecutionResult>;
 
 export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execute {
-  const log = deps.log ?? silentLogger;
+  const log = deps.log ?? getLogger(['aivi']);
   const protectedEnv = [...(deps.protectedEnv ?? [])];
   const home = dirname(loaded.path);
 

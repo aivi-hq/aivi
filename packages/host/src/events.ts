@@ -1,6 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import type { Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { getLogger } from '@aivi/core';
 import type { RetryPolicy } from './modules.ts';
 import type { OpenCodeClient } from './opencode.ts';
 
@@ -38,12 +38,12 @@ export class EventStream implements SessionEvents {
   constructor(
     opencode: () => Promise<OpenCodeClient>,
     signal: AbortSignal,
-    log: Logger = silentLogger,
+    log: Logger = getLogger(['aivi']),
     retry: RetryPolicy = EVENTS_RETRY,
   ) {
     this.opencode = opencode;
     this.signal = signal;
-    this.log = log.child({ component: 'events' });
+    this.log = log.getChild('events');
     this.retry = retry;
   }
 

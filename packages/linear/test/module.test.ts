@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import type { KnowledgeService } from '@aivi/core';
-import { configSchema, silentLogger } from '@aivi/core';
+import { configSchema, getLogger } from '@aivi/core';
 import type { HostServices, SessionEvents } from '@aivi/host';
 import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry } from '@aivi/host';
 import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
@@ -204,7 +204,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     opencode: () => connectOpenCode(loaded.config.opencode, {}),
     events: noEvents,
     signal: abort.signal,
-    log: silentLogger,
+    log: getLogger(['aivi']),
     channels: new Channels(),
     routes,
     tasks: new TaskRegistry().forModule('test'),
@@ -437,7 +437,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
     opencode: () => connectOpenCode(loaded.config.opencode, {}),
     events: noEvents,
     signal: new AbortController().signal,
-    log: silentLogger,
+    log: getLogger(['aivi']),
     channels: new Channels(),
     routes,
     tasks: new TaskRegistry().forModule('test'),
@@ -553,7 +553,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     opencode: () => connectOpenCode(loaded.config.opencode, {}),
     events: noEvents,
     signal: abort.signal,
-    log: silentLogger,
+    log: getLogger(['aivi']),
     channels: new Channels(),
     routes,
     tasks: new TaskRegistry().forModule('test'),

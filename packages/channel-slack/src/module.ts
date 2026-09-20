@@ -108,7 +108,7 @@ export function createSlackModule(config: SlackConfig, connection?: SlackConnect
 }
 
 async function startSlack(config: SlackConfig, services: HostServices, given?: SlackConnection) {
-  const log = services.log.child({ component: 'slack' });
+  const log = services.log.getChild('slack');
   const slack = given ?? createSocketModeConnection(requireSlackTokens(), log);
   const store = openSlackStore(services.store, config);
   if (store.rebound)

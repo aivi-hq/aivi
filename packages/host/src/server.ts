@@ -11,12 +11,12 @@ import type {
 } from '@aivi/core';
 import {
   browserEnvelopeSchema,
+  getLogger,
   jobRequestSchema,
   knowledgeKindSchema,
   projectSummaries,
   searchSchema,
   selectSources,
-  silentLogger,
   taskLabel,
 } from '@aivi/core';
 import { type JobHandler, JobRefused } from './jobs.ts';
@@ -131,7 +131,7 @@ export function createHostServer({
   health,
   context,
   routes,
-  log = silentLogger,
+  log = getLogger(['aivi']),
 }: HostServerOptions) {
   const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
   const authorized = (request: IncomingMessage) => {

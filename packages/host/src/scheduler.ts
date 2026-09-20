@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Config, Logger, Run } from '@aivi/core';
-import { errorMessage, silentLogger, taskLabel } from '@aivi/core';
+import { errorMessage, getLogger, taskLabel } from '@aivi/core';
 import type { Store } from './store.ts';
 
 export interface ExecutionContext {
@@ -39,13 +39,13 @@ export class Scheduler {
     store: Store,
     config: Config['scheduler'],
     execute: Execute,
-    log: Logger = silentLogger,
+    log: Logger = getLogger(['aivi']),
     onFinished?: OnFinished,
   ) {
     this.store = store;
     this.config = config;
     this.execute = execute;
-    this.log = log.child({ component: 'scheduler' });
+    this.log = log.getChild('scheduler');
     this.onFinished = onFinished;
   }
 
@@ -93,7 +93,7 @@ export class Scheduler {
   }
 
   private launch(run: Run): void {
-    const log = this.log.child({ run: run.id, job: run.jobId, kind: taskLabel(run.task), resource: run.resource });
+    const log = this.log.with({ run: run.id, job: run.jobId, kind: taskLabel(run.task), resource: run.resource });
     log.info('run.started');
     const own = new AbortController();
     const signal = AbortSignal.any([this.abort.signal, own.signal]);
@@ -105,7 +105,7 @@ export class Scheduler {
             signal,
             attachSession: id => this.store.attachSession(run.id, this.owner, id),
           });
-          log.info('run.finished', { state: outcome.state, reason: outcome.reason });
+          log.info('run.finished', { state: outcome.state, reason: outcome.reason ?? 'completed' });
         } catch (error) {
           // A rejected Promise does not establish that external effects stopped.
           log.warn('run.blocked', { error });

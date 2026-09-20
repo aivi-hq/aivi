@@ -108,7 +108,7 @@ function requireToken(): string {
 }
 
 async function startDiscord(config: DiscordConfig, services: HostServices) {
-  const log = services.log.child({ component: 'discord' });
+  const log = services.log.getChild('discord');
   const token = requireToken();
   const store = openDiscordStore(services.store, config);
   if (store.rebound)

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { DreamingArgs, Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { getLogger } from '@aivi/core';
 import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
 import { runTurn, turnIdsFor } from './session.ts';
@@ -162,7 +162,7 @@ export async function dream(
   runId: string,
   deps: DreamingDeps,
 ): Promise<{ state: 'succeeded' | 'blocked'; result: DreamingResult; reason?: string }> {
-  const log = (deps.log ?? silentLogger).child({ component: 'dreaming', run: runId });
+  const log = (deps.log ?? getLogger(['aivi'])).getChild('dreaming').with({ run: runId });
   const now = deps.now ?? Date.now;
   deps.store.migrate('dreaming', CURSOR_MIGRATIONS);
   const since = readCursor(deps.store, task.memoryDirectory);

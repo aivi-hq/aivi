@@ -1,5 +1,5 @@
 import type { Config, Logger } from '@aivi/core';
-import { errorMessage, silentLogger } from '@aivi/core';
+import { errorMessage, getLogger } from '@aivi/core';
 import { TurnNotStarted } from '../session.ts';
 import type { ChannelDelivery, EngineNotices } from './contract.ts';
 import { type ProgressOptions, ProgressReporter } from './reporter.ts';
@@ -67,7 +67,7 @@ export class ChannelEngine {
     this.ask = ask;
     this.delivery = delivery;
     this.progress = options.progress;
-    this.log = (options.log ?? silentLogger).child({ component: store.platform.id });
+    this.log = options.log ?? getLogger(['aivi', store.platform.id]);
     this.onRelease = options.onRelease ?? (() => {});
     this.onFailure = options.onFailure ?? (() => {});
     this.notices = { ...CHAT_NOTICES, ...store.platform.notices };
@@ -95,7 +95,7 @@ export class ChannelEngine {
   }
 
   private launch(turn: Turn): void {
-    const log = this.log.child({ turn: turn.id, channel: turn.channel });
+    const log = this.log.with({ turn: turn.id, channel: turn.channel });
     const startedAt = Date.now();
     log.info('turn.started', { newSession: !turn.ready });
     const reporter = this.reporter(turn, log);

@@ -3,10 +3,15 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { LoadedConfig } from '@aivi/core';
-import { configSchema, silentLogger } from '@aivi/core';
+import type { LoadedConfig, Logger } from '@aivi/core';
+import { configSchema, getLogger } from '@aivi/core';
 import type { QmdSDK } from '../src/index.ts';
 import { createKnowledgeService } from '../src/index.ts';
+
+/** A fresh logger whose `warn` records into `sink`; `.with({})` keeps the shared category logger untouched. */
+function warningCatcher(sink: (event: string, data?: unknown) => void): Logger {
+  return Object.assign(getLogger(['aivi', 'knowledge']).with({}), { warn: sink });
+}
 
 test('scopes are filtered before search; empty/unknown scopes cannot broaden retrieval', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-search-'));
@@ -129,10 +134,11 @@ test('a file belongs to its most specific source; missing directories are skippe
     return;
   }
   const warnings: unknown[] = [];
-  const service = await createKnowledgeService(loaded, async () => sdk, {
-    ...silentLogger,
-    warn: (event, data) => void warnings.push([event, data]),
-  });
+  const service = await createKnowledgeService(
+    loaded,
+    async () => sdk,
+    warningCatcher((event, data) => void warnings.push([event, data])),
+  );
   t.after(() => service.close());
   await service.index();
   const hits = await service.search({ query: 'Pelican' });
@@ -160,7 +166,7 @@ test('a file belongs to its most specific source; missing directories are skippe
   const fewer = await createKnowledgeService(
     { ...loaded, sources: loaded.sources.filter(s => s.id !== 'adr') },
     async () => sdk,
-    silentLogger,
+    getLogger(['aivi']),
   );
   t.after(() => fewer.close());
   assert.deepEqual((await fewer.search({ query: 'Pelican' })).map(h => h.sourceId).sort(), ['docs', 'memory']);
@@ -200,7 +206,7 @@ test('backend scope violations are rejected; a result that escapes its source is
         return { snippet: '', line: 1 };
       },
     }),
-    { ...silentLogger, warn: event => void warnings.push(event) },
+    warningCatcher(event => void warnings.push(event)),
   );
   t.after(() => service.close());
   results = [

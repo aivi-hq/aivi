@@ -1,5 +1,5 @@
 import type { Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { getLogger } from '@aivi/core';
 import type { PublicRequest, PublicRoutes } from '@aivi/host';
 import { type LinearWebhook, verifyWebhook } from './webhook.ts';
 
@@ -50,7 +50,7 @@ export function registerWebhookRoutes(
   routes: PublicRoutes,
   apps: WebhookApp[],
   dispatch: (app: string, payload: LinearWebhook) => Promise<void>,
-  log: Logger = silentLogger,
+  log: Logger = getLogger(['aivi', 'linear']),
 ): () => void {
   const unregister = apps.map(app =>
     routes.register(

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Config, Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { getLogger } from '@aivi/core';
 import { OpenCode } from '@opencode/client';
 import type { DiscoverOptions, EnsureOptions } from '@opencode/client/service';
 import { Service } from '@opencode/client/service';
@@ -132,7 +132,7 @@ export async function connectOpenCode(
   config: Config['opencode'],
   env: OpenCodeEnv = process.env,
   hooks: ConnectHooks = {},
-  log: Logger = silentLogger,
+  log: Logger = getLogger(['aivi']),
 ): Promise<OpenCodeClient> {
   if (config.url) {
     const headers = env.OPENCODE_PASSWORD

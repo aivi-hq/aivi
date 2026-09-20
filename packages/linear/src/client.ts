@@ -1,5 +1,5 @@
 import type { Logger } from '@aivi/core';
-import { errorMessage, silentLogger } from '@aivi/core';
+import { errorMessage, getLogger } from '@aivi/core';
 
 /** What one Linear app needs to talk to the API: a client-credentials token, nothing persisted. */
 export interface LinearCredentials {
@@ -119,7 +119,7 @@ export class LinearClient {
     this.credentials = credentials;
     this.baseUrl = (options.baseUrl ?? 'https://api.linear.app').replace(/\/$/, '');
     this.fetchImpl = options.fetch ?? fetch;
-    this.log = options.log ?? silentLogger;
+    this.log = options.log ?? getLogger(['aivi', 'linear']);
     this.scope = options.scope ?? DEFAULT_SCOPE;
     this.skew = options.refreshSkewMs ?? 3_600_000;
   }
@@ -150,7 +150,8 @@ export class LinearClient {
     const parsed = JSON.parse(text) as { access_token?: string; expires_in?: number };
     if (!parsed.access_token) throw new LinearApiError('Linear token response had no access_token', 502);
     this.token = { value: parsed.access_token, expiresAt: Date.now() + (parsed.expires_in ?? 86_400) * 1000 };
-    this.log.info('linear.token', { expiresIn: parsed.expires_in ?? null });
+    // A token fetch per API burst is debug-level detail, not something a setup prompt should interleave.
+    this.log.debug('linear.token', { expiresIn: parsed.expires_in ?? null });
     return this.token.value;
   }
 

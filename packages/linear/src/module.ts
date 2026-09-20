@@ -114,7 +114,7 @@ export function projectForIssue(
 }
 
 async function startLinear(config: LinearConfig, services: HostServices, givenClients?: Map<string, LinearClient>) {
-  const log = services.log.child({ component: 'linear' });
+  const log = services.log.getChild('linear');
   const store = openLinearStore(services.store);
   const interrupted = store.recover();
   if (interrupted.length) log.warn('turns.interrupted', { blocked: interrupted.length });

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Run } from '@aivi/core';
-import { configSchema, silentLogger, slackConfigSchema } from '@aivi/core';
+import { configSchema, getLogger, slackConfigSchema } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry } from '@aivi/host';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
@@ -265,7 +265,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     opencode: () => connectOpenCode(loaded.config.opencode, {}),
     events: noEvents,
     signal: abort.signal,
-    log: silentLogger,
+    log: getLogger(['aivi']),
     channels,
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
@@ -454,7 +454,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     },
     events: noEvents,
     signal: abort.signal,
-    log: silentLogger,
+    log: getLogger(['aivi']),
     channels: new Channels(),
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
@@ -524,7 +524,7 @@ test('progress: the placeholder goes into the thread, is updated through chat.up
     opencode: () => connectOpenCode(loaded.config.opencode, {}),
     events,
     signal: abort.signal,
-    log: silentLogger,
+    log: getLogger(['aivi']),
     channels: new Channels(),
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
@@ -588,7 +588,7 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
     opencode: () => connectOpenCode(loaded.config.opencode, {}),
     events: noEvents,
     signal: abort.signal,
-    log: silentLogger,
+    log: getLogger(['aivi']),
     channels: new Channels(),
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),

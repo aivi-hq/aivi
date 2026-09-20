@@ -5,11 +5,13 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
-import type { LinearConfig, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
+import type { ConsoleFormat, LinearConfig, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
 import {
   addProject,
-  createLogger,
+  configureLogging,
   errorMessage,
+  getLogger,
+  isTty,
   jobSchema,
   loadConfig,
   PROJECT_ID,
@@ -21,7 +23,6 @@ import {
   removeProject,
   reportSchema,
   selectSources,
-  silentLogger,
   taskLabel,
   taskSchema,
   writeProjectLinear,
@@ -77,6 +78,8 @@ const usage = `aivi <command>
 Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/.
 The live aivi.json is yours and aivi's to edit; it stays out of version control.
 Options: --log-level debug|info|warn|error
+         --log-format auto|pretty|json (auto: pretty on a terminal, JSON lines when piped;
+         the log file under state/logs/ is always JSON lines, so jq never needs to know)
 Secrets come from the environment: AIVI_TOKEN (host.auth.mode "token"),
 DISCORD_BOT_TOKEN, SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD
 (only with opencode.url).
@@ -84,11 +87,15 @@ DISCORD_BOT_TOKEN, SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_P
 No secrets in config files.
 `;
 
+// Set once main() configures logging; the finally below flushes sinks on every exit path.
+let closeLogging: () => Promise<void> = async () => {};
+
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       'log-level': { type: 'string' },
+      'log-format': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       limit: { type: 'string' },
       'core-only': { type: 'boolean' },
@@ -117,9 +124,20 @@ async function main(): Promise<void> {
     console.log(usage);
     return;
   }
-  const log = createLogger({ level: (values['log-level'] as LogLevel | undefined) ?? 'info' });
   // One home holds everything: aivi.json, .env, state/. Paths in the config resolve against it.
   const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
+  // Logging is configured once, here, for the whole process: stderr mirrors the run — pretty
+  // on a terminal, JSON lines when piped — and serve additionally appends JSON lines to
+  // state/logs/aivi.log whatever the console does. stdout stays reserved for command output.
+  const logFormat = (values['log-format'] as ConsoleFormat | 'auto' | undefined) ?? 'auto';
+  if (!['auto', 'pretty', 'json'].includes(logFormat))
+    throw new Error(`Unknown log format: ${logFormat}. Use auto, pretty, or json.\n${usage}`);
+  closeLogging = await configureLogging({
+    level: (values['log-level'] as LogLevel | undefined) ?? 'info',
+    format: logFormat === 'auto' ? (isTty(process.stderr) ? 'pretty' : 'json') : logFormat,
+    ...(positionals[0] === 'serve' ? { logFile: resolve(home, 'state', 'logs', 'aivi.log') } : {}),
+  });
+  const log = getLogger(['aivi']);
   const configPath = resolve(home, 'aivi.json');
   if (!existsSync(configPath))
     throw new Error(`No aivi.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
@@ -127,9 +145,6 @@ async function main(): Promise<void> {
   const loaded = await loadConfig(configPath);
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
-  // The Linear client logs each token fetch at info level; in the setup commands that noise
-  // sits between prompts, so the client stays silent unless --log-level debug asks for it.
-  const clientLog = values['log-level'] === 'debug' ? log : silentLogger;
   // The CLI writes to SQLite directly; the running host learns about it through this poke and nothing
   // else, so a poke that cannot be delivered is said out loud rather than swallowed.
   const poke = async () => {
@@ -193,7 +208,7 @@ async function main(): Promise<void> {
       if (p.isCancel(picked)) return stop('no app chosen');
       app = picked;
     }
-    const client = await linearClientFor(linear, linearConfig, app, clientLog);
+    const client = await linearClientFor(linear, linearConfig, app, log);
     const fetchSpinner = p.spinner();
     fetchSpinner.start('Asking the app which teams it can see');
     let teams: Awaited<ReturnType<typeof client.listTeams>>;
@@ -354,7 +369,7 @@ async function main(): Promise<void> {
             'The Linear module is not configured in aivi.json (no `linear` block), so there is no app to ask for teams',
           );
         }
-        const client = await linearClientFor(linear, loaded.config.linear, values.app, clientLog);
+        const client = await linearClientFor(linear, loaded.config.linear, values.app, log);
         teamIds = linear.resolveTeams(await client.listTeams(), tokens);
       }
       const added = await addProject(configPath, argument, values.id ? { id: values.id } : {});
@@ -616,10 +631,19 @@ async function main(): Promise<void> {
           log,
           signal: abort.signal,
           resources: () => createResources(loaded, log),
-          onReady: address =>
-            console.log(
-              JSON.stringify({ listening: address, modules: modules.map(m => m.id), sources: loaded.sources.length }),
-            ),
+          onReady: address => {
+            const ready = {
+              listening: address,
+              modules: modules.map(m => m.id),
+              sources: loaded.sources.length,
+            };
+            // The record lands in the log stream and file whatever the console.
+            log.info('host.listening', ready);
+            // The raw JSON line is the machine-readable contract, for whoever
+            // pipes stdout (scripts, smoke, supervisors). A human on a terminal
+            // gets the pretty host.listening log record instead of a JSON blob.
+            if (!isTty(process.stdout)) console.log(JSON.stringify(ready));
+          },
         });
       } finally {
         process.removeListener('SIGINT', stop);
@@ -690,7 +714,9 @@ function hostUrl(loaded: LoadedConfig): string {
   return `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${port}`;
 }
 
-main().catch(error => {
-  console.error(errorMessage(error));
-  process.exitCode = 1;
-});
+main()
+  .catch(error => {
+    console.error(errorMessage(error));
+    process.exitCode = 1;
+  })
+  .finally(() => closeLogging());

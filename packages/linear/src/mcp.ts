@@ -7,7 +7,7 @@ import {
 } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { Logger } from '@aivi/core';
-import { silentLogger } from '@aivi/core';
+import { getLogger } from '@aivi/core';
 import type { LinearClient } from './client.ts';
 
 const DEFAULT_UPSTREAM = 'https://mcp.linear.app/mcp';
@@ -43,7 +43,7 @@ export class LinearMcp {
     this.client = client;
     this.port = options.port;
     this.upstream = new URL(options.upstream ?? DEFAULT_UPSTREAM);
-    this.log = options.log ?? silentLogger;
+    this.log = options.log ?? getLogger(['aivi', 'linear', 'mcp']);
   }
 
   /** Bind loopback; resolves with the actual port. */

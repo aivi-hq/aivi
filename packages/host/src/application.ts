@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { silentLogger, systemJobs } from '@aivi/core';
+import { getLogger, systemJobs } from '@aivi/core';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { EventStream, type SessionEvents } from './events.ts';
@@ -106,7 +106,7 @@ export interface RunHostOptions {
 export async function runHost(options: RunHostOptions): Promise<void> {
   const { loaded, store, signal, auth } = options;
   const modules = options.modules ?? [];
-  const log = (options.log ?? silentLogger).child({ component: 'host' });
+  const log = (options.log ?? getLogger(['aivi'])).getChild('host');
   const abort = new AbortController();
   let failure: unknown;
   const fail = (error: unknown) => {

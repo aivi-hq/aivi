@@ -1,5 +1,5 @@
 import type { Logger } from '@aivi/core';
-import { errorMessage, silentLogger } from '@aivi/core';
+import { errorMessage, getLogger } from '@aivi/core';
 import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
 
@@ -96,7 +96,7 @@ export interface TurnResult {
  */
 export async function runTurn(client: OpenCodeClient, input: TurnInput, options: TurnOptions): Promise<TurnResult> {
   const { signal } = options;
-  const log = (options.log ?? silentLogger).child({ session: input.sessionId, turn: input.messageId });
+  const log = (options.log ?? getLogger(['aivi'])).with({ session: input.sessionId, turn: input.messageId });
   const onPermission = options.onPermission ?? 'reject';
   const sessionID = input.sessionId;
   const request = { signal };
