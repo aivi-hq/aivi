@@ -155,6 +155,24 @@ export interface ProjectSummary {
   removed?: true;
   sources: { id: string; kind: KnowledgeKind }[];
 }
+/** A human colleague aivi knows by name; aivi's own work is never a person. */
+export interface Person {
+  id: string;
+  name: string;
+  email: string | null;
+  createdAt: number;
+}
+/**
+ * A bearer credential that identifies one person for association (whose job,
+ * whose link, whose memory). Only the hash is stored; the secret is shown
+ * once at mint. A token never authorizes — it answers "which person is this".
+ */
+export interface PersonToken {
+  hash: string;
+  personId: string;
+  label: string;
+  createdAt: number;
+}
 export interface HostClient {
   browser(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   status(): Promise<Status>;

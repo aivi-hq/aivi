@@ -191,15 +191,18 @@ task; **check a box in the same commit that lands it**; mark exactly one box
 compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
-**Where we are:** box 1 landed 2026-09-21 (branch `feat/client-identity`).
-Next: box 2 — `person` + `token` tables + SQLite migration.
+**Where we are:** boxes 1–2 landed 2026-09-21 (branch `feat/client-identity`).
+Next: box 3 — optional-bearer resolution in `server.ts` (auth `none`).
 
 ### Session A — identity core (aivi repo)
 
 - [x] 1. Move this file to `docs/plans/client-aivi.md`; link from
        `CONTEXT.md` (map + open threads).
-- [ ] 2. Core: `person` + `token` tables + SQLite migration; every token
-       row has a person; real-SQLite test in `packages/core/test`.
+- [x] 2. Identity tables: `person` + `token` in the host `Store` (schema
+       v8 — the single SQLite lives in host, not core); every token row has
+       a person (FK); `createPerson/people/person/mintToken/personForToken`
+       (secret shown once, stored hashed); types in `@aivi/core`; test in
+       `packages/host/test/store.test.ts`.
 - [ ] 3. Host: optional-bearer resolution in `server.ts` (known token →
        attach person; unknown/none → anonymous, accepted); delete
        `host.auth.mode` + the `AIVI_TOKEN` env comparison; rewrite the
