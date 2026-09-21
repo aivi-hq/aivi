@@ -97,7 +97,7 @@ export async function configureLogging(options: LoggingSetup): Promise<() => Pro
   // take the terminal's stderr down with it. stderr line-buffers on its own.
   const sinks: Record<string, Sink> = {
     stderr: (record: LogRecord) => {
-      process.stderr.write(consoleFormatter(record) + '\n');
+      process.stderr.write(`${consoleFormatter(record)}\n`);
     },
   };
   const sinkNames = ['stderr'];

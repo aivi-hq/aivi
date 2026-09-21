@@ -76,7 +76,7 @@ export async function discoverTolerant(options: { file?: string } = {}): Promise
 let versionAnnounced = false;
 
 /** Once per process: say which server aivi found. Skew is information, never fatal. */
-async function announceVersion(endpoint: DiscoveredEndpoint, log: Logger): Promise<void> {
+async function _announceVersion(endpoint: DiscoveredEndpoint, log: Logger): Promise<void> {
   if (versionAnnounced) return;
   try {
     const response = await fetch(`${endpoint.url}/api/info`, {

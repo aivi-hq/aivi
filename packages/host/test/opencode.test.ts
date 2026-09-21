@@ -95,7 +95,7 @@ test('tolerant discovery accepts any listening server and reports its version', 
   assert.ok(probes >= 1);
 });
 
-test('the SDK is handed a version predicate that logs once and accepts every version', async t => {
+test('the SDK is handed a version predicate that logs once and accepts every version', async _t => {
   const infos: unknown[] = [];
   const log = {
     info: (event: string, fields: unknown) => infos.push([event, fields]),
