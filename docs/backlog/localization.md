@@ -11,7 +11,7 @@ move before picking a mechanism.
   progress placeholder phases (`⏳ thinking…`, `🔧 …`, `✍️ writing the answer`),
   job report texts (`describeOutcome`), the CLI's human-facing notes, and the
   speaker prefix the agent sees (`[Discord message from …]`).
-- One locale per installation to start (`locale` in `aivi.json`, default
+- One locale per installation to start (`locale` in `config.json`, default
   `en`); per channel or per person later, once identities are linked
   ([people](../people.md)).
 - **Brand**: the name "aivi" is hard-coded in messages, session titles, the

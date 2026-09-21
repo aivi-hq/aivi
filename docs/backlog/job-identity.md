@@ -33,7 +33,7 @@ that surface will print whatever this decides.
   field name `jobs[].task` is the last place a person meets the word — a
   rename there is wide and breaking, so it waits for a deliberate decision.
 - **Why JSON for crons at all** (owner, 2026-09-18): `scheduler.retention`-style
-  schedules live in `aivi.json` because the file is the reconciliation source —
+  schedules live in `config.json` because the file is the reconciliation source —
   syncJobs keys off ids to know what survived a restart. But the desktop vision
   edits frequency from a UI, which writes through the API into SQLite. If the
   dashboard becomes the editor, does the config file keep schedules at all, or

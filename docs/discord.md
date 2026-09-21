@@ -106,7 +106,7 @@ reactions, create public threads, and send messages in threads. Private threads 
 membership/access.
 
 The example template enables Discord with placeholder ids; copy
-`example/aivi.example.json` to `example/aivi.json` and edit the ids there.
+`example/config.example.json` to `example/config.json` and edit the ids there.
 A `modules.discord` block is the whole module setup, and its presence enables
 the module (`false` is an explicit off):
 

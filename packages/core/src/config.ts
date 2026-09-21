@@ -60,7 +60,7 @@ const invocationTaskSchema = z.strictObject({
   args: z.record(z.string(), z.unknown()).optional(),
 });
 export const taskSchema = z.discriminatedUnion('kind', [shellTaskSchema, promptTaskSchema, invocationTaskSchema]);
-/** The tasks a person writes in aivi.json or a task file; what `aivi_jobs` accepts and nothing else. */
+/** The tasks a person writes in config.json or a task file; what `aivi_jobs` accepts and nothing else. */
 export const userTaskSchema = z.discriminatedUnion('kind', [shellTaskSchema, promptTaskSchema]);
 export type Task = z.infer<typeof taskSchema>;
 /** Display label for a task: the operation name for an invocation, the kind for anything else. */
@@ -72,7 +72,7 @@ export const runsPruneArgsSchema = z.strictObject({
   /** Finished runs (and the finished one-off jobs they belonged to) older than this are deleted; blocked and active work never is. */
   olderThanDays: z.number().int().min(1),
 });
-/** Args of the host's `dreaming` operation; paths resolve against the aivi home, like task paths in aivi.json. */
+/** Args of the host's `dreaming` operation; paths resolve against the aivi home, like task paths in config.json. */
 export const dreamingArgsSchema = z.strictObject({
   agent: z
     .string()

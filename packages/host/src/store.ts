@@ -75,7 +75,7 @@ export interface JobEntry {
   /** The next occurrence to materialize; null once a one-off has fired or when nothing is left. */
   nextAt: number | null;
   createdAt: number;
-  /** Idempotency key of a job created outside aivi.json (a tool message id, a CLI `--key`). */
+  /** Idempotency key of a job created outside config.json (a tool message id, a CLI `--key`). */
   dedupeKey: string | null;
 }
 const jobEntry = (r: Row): JobEntry => ({
@@ -413,7 +413,7 @@ export class Store {
     return spec.at !== undefined ? Date.parse(spec.at) : nextOccurrence(spec.cron!, spec.timezone, now);
   }
   /**
-   * Reconcile the definitions the operator owns: `config` (aivi.json) and
+   * Reconcile the definitions the operator owns: `config` (config.json) and
    * `system` (what the host seeds from its settings). Agent and operator jobs
    * are left alone. A config job that disappeared is paused; a system job that
    * disappeared is removed.
@@ -466,7 +466,7 @@ export class Store {
     }
   }
   /**
-   * A job created outside aivi.json: by an agent through the tool or by the
+   * A job created outside config.json: by an agent through the tool or by the
    * operator CLI. A one-off whose instant has already come is materialized at
    * once; a later one waits for `materializeDue`.
    */
@@ -505,7 +505,7 @@ export class Store {
   private mutable(id: string): JobEntry {
     const entry = this.job(id);
     if (entry.source === 'config' || entry.source === 'system')
-      throw new Error(`Job ${id} is defined in aivi.json; edit the configuration instead`);
+      throw new Error(`Job ${id} is defined in config.json; edit the configuration instead`);
     return entry;
   }
   /** Pause (`false`) or resume (`true`) an agent or operator job. Resuming re-anchors to the next occurrence. */

@@ -84,10 +84,10 @@ test('a modules.*.config pointer is the old shape and says where the settings we
   const root = await mkdtemp(join(tmpdir(), 'aivi-inline-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(
-    join(root, 'aivi.json'),
+    join(root, 'config.json'),
     JSON.stringify({ version: 1, modules: { discord: { config: 'discord.json' } } }),
   );
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /the discord settings live inline/);
+  await assert.rejects(loadConfig(join(root, 'config.json')), /the discord settings live inline/);
 });
 
 test('config rejects ambiguous Linear primary settings and invalid job resources', () => {
@@ -237,7 +237,7 @@ test('projects-sync is a system job too: hourly by default, same pool rule, rese
   );
 });
 
-test('projects are the directories of <home>/projects; aivi.json only overrides; selection never falls back on an unknown project', async t => {
+test('projects are the directories of <home>/projects; config.json only overrides; selection never falls back on an unknown project', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'projects/website/source'), { recursive: true });
@@ -250,7 +250,7 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
   await mkdir(join(root, 'memory/proposals'), { recursive: true });
   const write = (projects: Record<string, unknown>) =>
     writeFile(
-      join(root, 'aivi.json'),
+      join(root, 'config.json'),
       JSON.stringify({
         version: 1,
         knowledge: [{ id: 'company', path: 'handbook' }],
@@ -265,7 +265,7 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
     wiki: { knowledge: [{ id: 'pages', path: 'pages' }] },
     paused: { enabled: false },
   });
-  const loaded = await loadConfig(join(root, 'aivi.json'));
+  const loaded = await loadConfig(join(root, 'config.json'));
   assert.equal(loaded.config.stateDirectory, join(root, 'state'));
   assert.deepEqual(
     loaded.projects.map(p => [p.id, p.removed ?? false]),
@@ -311,17 +311,17 @@ test('projects are the directories of <home>/projects; aivi.json only overrides;
   assert.throws(() => selectSources(loaded, ['typo']), /Unknown project/);
   // An override for a project that is not checked out is a mistake; a directory that is not a valid id must be renamed.
   await write({ missing: {} });
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /Project missing: nothing at/);
+  await assert.rejects(loadConfig(join(root, 'config.json')), /Project missing: nothing at/);
   await write({});
   await mkdir(join(root, 'projects/Bad Name'));
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /must be named like/);
+  await assert.rejects(loadConfig(join(root, 'config.json')), /must be named like/);
   await rm(join(root, 'projects/Bad Name'), { recursive: true });
   // A repository cloned straight into projects/<id> is told where it belongs; an empty directory is not a project.
   await mkdir(join(root, 'projects/flat/.git'), { recursive: true });
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /holds its checkout in source\//);
+  await assert.rejects(loadConfig(join(root, 'config.json')), /holds its checkout in source\//);
   await rm(join(root, 'projects/flat'), { recursive: true });
   await mkdir(join(root, 'projects/empty'));
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /not a project/);
+  await assert.rejects(loadConfig(join(root, 'config.json')), /not a project/);
   await rm(join(root, 'projects/empty'), { recursive: true });
   // The id `memory` is reserved for aivi's own sources.
   assert.equal(
@@ -341,7 +341,7 @@ test('projectDefaults.linear.lanes is the base; a project wins one lane at a tim
   await mkdir(join(root, 'projects/site/source'), { recursive: true });
   const write = (extra: Record<string, unknown>) =>
     writeFile(
-      join(root, 'aivi.json'),
+      join(root, 'config.json'),
       JSON.stringify({ version: 1, linear: { primary: 'dev', apps: { dev: {}, review: {} } }, ...extra }),
     );
   await write({
@@ -350,14 +350,14 @@ test('projectDefaults.linear.lanes is the base; a project wins one lane at a tim
       site: { linear: { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } } },
     },
   });
-  const routing = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
+  const routing = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
   assert.deepEqual(
     routing.lanes,
     { Dev: { agent: 'dev', worktree: true }, Review: { agent: 'reviewer', worktree: false } },
     'the convention is the base, the entry wins per lane, and human lanes are absent from the map the listener consults',
   );
   assert.equal(routing.workspaceId, 'ws-default', 'workspaceId falls back to the convention');
-  const raw = JSON.parse(await readFile(join(root, 'aivi.json'), 'utf8'));
+  const raw = JSON.parse(await readFile(join(root, 'config.json'), 'utf8'));
   assert.equal(raw.projects.site.linear.lanes.Shipped, null, 'the file keeps the human lanes');
 
   // A bare linear entry gets the whole convention, workspaceId included.
@@ -365,7 +365,7 @@ test('projectDefaults.linear.lanes is the base; a project wins one lane at a tim
     projectDefaults: { linear: { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
     projects: { site: { linear: { teams: ['t-1'] } } },
   });
-  const bare = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
+  const bare = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
   assert.deepEqual(
     bare.lanes,
     { Dev: { agent: 'dev', worktree: true } },
@@ -379,7 +379,7 @@ test('projectDefaults.linear.lanes is the base; a project wins one lane at a tim
     projectDefaults: { linear: { lanes: { Dev: 'ghost-agent' } } },
     projects: { site: { linear: { teams: ['t-1'] } } },
   });
-  const ghosted = (await loadConfig(join(root, 'aivi.json'))).projects[0]!.linear!;
+  const ghosted = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
   assert.deepEqual(ghosted.lanes, { Dev: { agent: 'ghost-agent', worktree: true } });
 });
 
@@ -504,6 +504,6 @@ test('identity is the persona, and who a worker commits as comes from the file, 
 test('a top-level name is the old shape and says where the persona went', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-identity-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(join(root, 'aivi.json'), JSON.stringify({ version: 1, name: 'aivi' }));
-  await assert.rejects(loadConfig(join(root, 'aivi.json')), /identity\.name/);
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, name: 'aivi' }));
+  await assert.rejects(loadConfig(join(root, 'config.json')), /identity\.name/);
 });

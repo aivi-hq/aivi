@@ -44,7 +44,7 @@ test('server create initializes the home, mints the operator, and signs this mac
   assert.equal(out.url, 'http://127.0.0.1:4100');
   assert.equal(out.home, home);
   assert.match(out.next, /aivi setup/);
-  assert.deepEqual(JSON.parse(await readFile(join(home, 'aivi.json'), 'utf8')), { version: 1 });
+  assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')), { version: 1 });
   const clientPath = join(xdg, 'aivi.json');
   const client = JSON.parse(await readFile(clientPath, 'utf8'));
   assert.deepEqual(client, { configVersion: 1, url: out.url, home, person: { token: out.token } });
@@ -69,7 +69,7 @@ test('server create for another machine prints the token and writes no client co
   assert.match(out.next, /laptop/);
   assert.equal(out.clientConfig, undefined);
   assert.equal(existsSync(join(xdg, 'aivi.json')), false, 'nothing signed in here');
-  assert.deepEqual(JSON.parse(await readFile(join(home, 'aivi.json'), 'utf8')), { version: 1 });
+  assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')), { version: 1 });
 });
 
 test('server create without a flag needs an interactive terminal or --use; --use is validated', async t => {
@@ -88,7 +88,7 @@ test('people commands talk HTTP to the running host', async t => {
   const { home, env, cleanup } = await scratch();
   const server = createHostServer({
     store,
-    loaded: { path: '/aivi.json', config: configSchema.parse({ version: 1 }), sources: [], projects: [] },
+    loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), sources: [], projects: [] },
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
@@ -97,7 +97,7 @@ test('people commands talk HTTP to the running host', async t => {
     await cleanup();
   });
   const port = (server.address() as { port: number }).port;
-  await writeFile(join(home, 'aivi.json'), JSON.stringify({ version: 1, host: { port } }));
+  await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1, host: { port } }));
   const created = await run(['people', 'create', 'Nemo', '--email', 'nemo@example.com'], env);
   assert.equal(created.status, 0, created.stderr);
   const person = JSON.parse(created.stdout);

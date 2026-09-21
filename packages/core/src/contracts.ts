@@ -27,7 +27,7 @@ export interface Run {
   error: string | null;
   report: Report | null;
 }
-/** Who defined a job: `aivi.json`, an agent through `aivi_jobs`, the operator CLI, or the host itself (retention). */
+/** Who defined a job: `config.json`, an agent through `aivi_jobs`, the operator CLI, or the host itself (retention). */
 export type JobSource = 'config' | 'agent' | 'operator' | 'system';
 /** A definition's own state; `done` and `missed` only happen to one-offs. */
 export type JobState = 'active' | 'paused' | 'done' | 'missed';

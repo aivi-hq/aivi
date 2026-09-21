@@ -36,8 +36,8 @@ The rework changed the ground this page stood on:
   librarian created the `needs-human` label through the Linear MCP from a
   conversation. What is missing is the aivi side (config, projects) — the
   Linear side of onboarding already works by conversation.
-- The `aivi.json` rule has moved: "aivi and the operator edit the live
-  `aivi.json` itself" (CONTEXT.md) — so *an agent* editing config is no longer
+- The `config.json` rule has moved: "aivi and the operator edit the live
+  `config.json` itself" (CONTEXT.md) — so *an agent* editing config is no longer
   conceptually forbidden; the question is which agent, with what guardrails.
 
 ## The v0 proposal: operator tools, gated by agent files
@@ -121,7 +121,7 @@ ever enters editor mode.
   permission gate for free.
 - Should `projects.add` resolve Linear teams itself (import from
   `@aivi/linear`'s client) or ask the operator for raw team ids?
-- Does the assistant ever get `edit` on `aivi.json` directly (the
+- Does the assistant ever get `edit` on `config.json` directly (the
   "config is yours and aivi's" decision), or only through narrow tools?
   The editor-mode answer was "never from a chat"; the newer CONTEXT decision
   softens that. Settle before shipping any config-write surface.

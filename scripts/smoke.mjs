@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const cli = fileURLToPath(new URL('../packages/app/dist/cli.js', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));
-const config = join(directory, 'aivi.json');
+const config = join(directory, 'config.json');
 let daemon;
 let stopped;
 /** Poll until `probe` returns true; a smoke check waits on the running host, it never assumes timing. */
@@ -33,7 +33,7 @@ try {
   );
   const task = join(directory, 'check.json');
   await writeFile(task, JSON.stringify({ kind: 'invocation', name: 'system.check' }));
-  // The temp directory is the aivi home: aivi.json, .env and state/ live there.
+  // The temp directory is the aivi home: config.json, .env and state/ live there.
   const env = { ...process.env, AIVI_HOME: directory };
   const run = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8', env }));
   assert.equal(run('config', 'check').valid, true);

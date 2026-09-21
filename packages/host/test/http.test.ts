@@ -10,7 +10,7 @@ import { Store } from '../src/store.ts';
 test('the read API scopes sources and refuses job operations without a handler; commands are open', async t => {
   const store = new Store(':memory:');
   const loaded: LoadedConfig = {
-    path: '/aivi.json',
+    path: '/config.json',
     config: configSchema.parse({ version: 1 }),
     projects: [
       { id: 'app', directory: '/app' },
@@ -226,7 +226,7 @@ test('whoami names the caller and refuses to guess', async t => {
 test('jobs API validates the body, maps refusals to their status, and status lists upcoming and recent work', async t => {
   const store = new Store(':memory:');
   const loaded: LoadedConfig = {
-    path: '/aivi.json',
+    path: '/config.json',
     config: configSchema.parse({
       version: 1,
       jobs: [
@@ -318,7 +318,7 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   assert.throws(() => routes.register('/hooks', async () => ({ status: 200 })), /under \/v1\//);
   const server = createHostServer({
     store,
-    loaded: { path: '/aivi.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] },
+    loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] },
     routes,
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -219,7 +219,7 @@ file over memory.
 - [x] 4. `GET /v1/whoami` → `{ person: {id, name}, roles: ["operator"] }`
        (stub); 401 for anonymous and unknown bearers, the only such route;
        `Whoami` type + `whoami()` on `HostClient`; test in `http.test.ts`.
-- [x] 5. CLI: `aivi server create` — init `~/.aivi` (starter `aivi.json`,
+- [x] 5. CLI: `aivi server create` — init `~/.aivi` (starter `config.json`,
        `state/`), operator person + token (secret printed once), then "Where
        will you use aivi?" → *this machine* writes `~/.config/aivi.json`
        (0600, merged, never over an existing token), *another* prints url +

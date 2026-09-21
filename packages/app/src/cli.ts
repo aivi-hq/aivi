@@ -80,8 +80,8 @@ const usage = `aivi <command>
   linear resolve ID            Release a blocked worker --reason TEXT --confirm-stopped
   opencode check               Probe the OpenCode v2 service the host would use
 
-Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/.
-The live aivi.json is yours and aivi's to edit; it stays out of version control.
+Home: ~/.aivi (override with AIVI_HOME) holds config.json, .env, and state/.
+The live config.json is yours and aivi's to edit; it stays out of version control.
 Options: --log-level debug|info|warn|error
          --log-format auto|pretty|json (auto: pretty on a terminal, JSON lines when piped;
          the log file under state/logs/ is always JSON lines, so jq never needs to know)
@@ -133,7 +133,7 @@ async function main(): Promise<void> {
     console.log(usage);
     return;
   }
-  // One home holds everything: aivi.json, .env, state/. Paths in the config resolve against it.
+  // One home holds everything: config.json, .env, state/. Paths in the config resolve against it.
   const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
   // Logging is configured once, here, for the whole process: stderr mirrors the run — pretty
   // on a terminal, JSON lines when piped — and serve additionally appends JSON lines to
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     ...(positionals[0] === 'serve' ? { logFile: resolve(home, 'state', 'logs', 'aivi.log') } : {}),
   });
   const log = getLogger(['aivi']);
-  const configPath = resolve(home, 'aivi.json');
+  const configPath = resolve(home, 'config.json');
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
   if (command === 'server' && subcommand === 'create') {
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     return;
   }
   if (!existsSync(configPath))
-    throw new Error(`No aivi.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
+    throw new Error(`No config.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
   const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
   const loaded = await loadConfig(configPath);
   // The CLI writes to SQLite directly; the running host learns about it through this poke and nothing
@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   const projectsCreate = async (): Promise<void> => {
     if (!linear || !loaded.config.linear) {
       throw new Error(
-        'The Linear module is not configured in aivi.json (no `linear` block), so there is nothing to set up',
+        'The Linear module is not configured in config.json (no `linear` block), so there is nothing to set up',
       );
     }
     if (!process.stdin.isTTY)
@@ -201,7 +201,7 @@ async function main(): Promise<void> {
       values.id ??
       (await p.text({
         message:
-          "Project id — aivi's name for this checkout: the directory <home>/projects/<id> and the projects.<id> entry in aivi.json. Linear never sees it.",
+          "Project id — aivi's name for this checkout: the directory <home>/projects/<id> and the projects.<id> entry in config.json. Linear never sees it.",
         placeholder: suggested,
         validate: value => {
           const v = (value ?? '').trim();
@@ -379,7 +379,7 @@ async function main(): Promise<void> {
       if (tokens.length) {
         if (!linear || !loaded.config.linear) {
           throw new Error(
-            'The Linear module is not configured in aivi.json (no `linear` block), so there is no app to ask for teams',
+            'The Linear module is not configured in config.json (no `linear` block), so there is no app to ask for teams',
           );
         }
         const client = await linearClientFor(linear, loaded.config.linear, values.app, log);
@@ -443,7 +443,8 @@ async function main(): Promise<void> {
   const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
   try {
     if (command === 'discord') {
-      if (!discord || !discordConfig) throw new Error('Discord is not enabled in aivi.json (no modules.discord block)');
+      if (!discord || !discordConfig)
+        throw new Error('Discord is not enabled in config.json (no modules.discord block)');
       if (subcommand === 'register') {
         await discord.registerDiscordCommands(discordConfig);
         print({ registered: true });
@@ -465,7 +466,7 @@ async function main(): Promise<void> {
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
     }
     if (command === 'slack') {
-      if (!slack || !slackConfig) throw new Error('Slack is not enabled in aivi.json (no modules.slack block)');
+      if (!slack || !slackConfig) throw new Error('Slack is not enabled in config.json (no modules.slack block)');
       const inbox = slack.openSlackStore(store, slackConfig);
       if (subcommand === 'status') {
         print({ turns: inbox.list(), leases: store.leases() });
@@ -484,7 +485,7 @@ async function main(): Promise<void> {
       );
     }
     if (command === 'linear') {
-      if (!linear || !loaded.config.linear) throw new Error('Linear is not configured in aivi.json');
+      if (!linear || !loaded.config.linear) throw new Error('Linear is not configured in config.json');
       const inbox = linear.openLinearStore(store);
       if (subcommand === 'status') {
         print({ conversations: linear.describeWorkers(inbox), leases: store.leases() });
@@ -535,7 +536,7 @@ async function main(): Promise<void> {
             report,
             resource: fileResource,
           } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
-          // Paths in task files resolve against the home, like paths in aivi.json.
+          // Paths in task files resolve against the home, like paths in config.json.
           // Invocation args belong to the claimant: they resolve when the operation runs.
           if (task.kind === 'prompt') task.directory = resolve(home, task.directory);
           if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home, task.cwd);

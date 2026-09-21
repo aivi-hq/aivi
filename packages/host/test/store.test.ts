@@ -308,7 +308,7 @@ test('system jobs are seeded by sync, listed with the others, and removed when t
     () => store.syncJobs([{ ...daily(), id: 'retention' }], [], start),
     /already exists with source system/,
   );
-  assert.throws(() => store.setJobEnabled('retention', false), /defined in aivi.json/);
+  assert.throws(() => store.setJobEnabled('retention', false), /defined in config.json/);
   store.materializeDue(store.job('retention').nextAt!);
   const queued = store.runs({ jobId: 'retention' })[0]!;
   store.syncJobs([daily()], [], start + 1);
@@ -367,8 +367,8 @@ test('agent-created jobs live beside config ones: sync never touches them, mutat
     () => store.syncJobs([{ ...daily(), id: 'agent-1' }], [], start + 2),
     /already exists with source agent/,
   );
-  assert.throws(() => store.setJobEnabled('daily', false), /defined in aivi.json/);
-  assert.throws(() => store.removeJob('daily'), /defined in aivi.json/);
+  assert.throws(() => store.setJobEnabled('daily', false), /defined in config.json/);
+  assert.throws(() => store.removeJob('daily'), /defined in config.json/);
   assert.throws(() => store.addJob(agent.spec, 'agent', start), /already exists/);
 
   // Pause cancels queued runs; resume re-anchors to the next future occurrence.

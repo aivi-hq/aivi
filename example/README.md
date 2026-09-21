@@ -1,21 +1,21 @@
 # Example home
 
-This directory is a complete aivi **home**: `aivi.json`, `.env`, and `state/`
+This directory is a complete aivi **home**: `config.json`, `.env`, and `state/`
 together, with every feature enabled (knowledge search, dreaming, browser
 control, Discord, Slack). `npm run aivi` from the repository root uses it.
 
 ## Quickstart
 
 ```sh
-cp example/aivi.example.json example/aivi.json   # your live config, git-ignored
+cp example/config.example.json example/config.json   # your live config, git-ignored
 cp example/.env.example example/.env             # then fill in the tokens
 npm run aivi -- config check
 npm run aivi -- serve
 ```
 
-`aivi.json` is the config you and aivi edit, so it is git-ignored on purpose;
-`aivi.example.json` is the tracked template with placeholder ids, and the
-checks read that. A fresh clone has no `aivi.json` until you copy the
+`config.json` is the config you and aivi edit, so it is git-ignored on purpose;
+`config.example.json` is the tracked template with placeholder ids, and the
+checks read that. A fresh clone has no `config.json` until you copy the
 template.
 
 `serve` needs `DISCORD_BOT_TOKEN` and `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`
@@ -34,8 +34,8 @@ because Discord and Slack are enabled in the template. Either:
 
 | Path | Purpose |
 | --- | --- |
-| `aivi.example.json` | The tracked template: sources, projects, jobs, scheduler pools and retention, browser, Discord, Slack — all with placeholder ids |
-| `aivi.json` | Your live config (git-ignored): copy the template and put your real ids in it |
+| `config.example.json` | The tracked template: sources, projects, jobs, scheduler pools and retention, browser, Discord, Slack — all with placeholder ids |
+| `config.json` | Your live config (git-ignored): copy the template and put your real ids in it |
 | `.env.example` | The secrets `serve` reads from `.env` |
 | (no `linear` block) | Add `linear.apps` and a project's `linear.teams` to try the Linear module ([linear](../docs/linear.md)); it needs the `LINEAR_*` secrets and a public URL |
 | `.opencode/agents/` | The `librarian` and `dreamer` agents; the home is the OpenCode location |
@@ -50,4 +50,4 @@ Use the tools from OpenCode by opening this directory in OpenCode v2 while
 `serve` runs; see [docs/opencode.md](../docs/opencode.md). The template sets
 `opencode.lifecycle` to `discover` because the tests and the smoke check load
 it: a shipped example must never restart the developer's own OpenCode. The
-default for a real installation is `own`; change that in your own `aivi.json`.
+default for a real installation is `own`; change that in your own `config.json`.

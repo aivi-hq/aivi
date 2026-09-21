@@ -22,7 +22,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | --- | --- |
 | task | the payload a job executes: `prompt` or `shell` (the only kinds a person or agent authors), or `invocation` (the `name` of an operation plus opaque `args`); never a thing you trigger — you trigger jobs, and a run is one execution of one |
 | operation | a system capability of the host or a module, claimed by name exactly once at composition (a second claimant is fatal; a run of an unclaimed name fails with its name); seeded as `system` jobs by the module that owns it, shown by operation name in every view |
-| job | a definition: a task plus *when*, recurring (`cron` + `timezone`) or one-off (`at`), with `id`, `title`, `resource`, `report`, `misfire`, `enabled`; state `active`/`paused`/`done`/`missed`; source `config` (aivi.json), `system` (seeded by the host: `retention`, `projects-sync`), `agent` (created through `aivi_jobs`) or `operator` (`aivi jobs add`); one outstanding run at a time |
+| job | a definition: a task plus *when*, recurring (`cron` + `timezone`) or one-off (`at`), with `id`, `title`, `resource`, `report`, `misfire`, `enabled`; state `active`/`paused`/`done`/`missed`; source `config` (config.json), `system` (seeded by the host: `retention`, `projects-sync`), `agent` (created through `aivi_jobs`) or `operator` (`aivi jobs add`); one outstanding run at a time |
 | run | one execution of a job: `queued → running → succeeded / failed / blocked`, or `cancelled`, or `missed`; one row, one audit trail, always a `jobId`; snapshots the task |
 | missed | a run recorded for an occurrence found later than its misfire grace; terminal, never executed, reported like a failure |
 | turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a conversation turn is of kind `message` (a person) or `job` (an outcome re-entering) |
@@ -33,7 +33,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | channel module | a chat platform adapter (`discord`, `slack`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
 | conversation | what a channel module binds to one OpenCode session: a thread, a DM, or a whole channel |
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`; a file belongs to its most specific source |
-| project | a repository the team works on: one directory `<home>/projects/<id>` holding the clean git checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `aivi.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project directory with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`) |
+| project | a repository the team works on: one directory `<home>/projects/<id>` holding the clean git checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `config.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project directory with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`) |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`, `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
@@ -137,7 +137,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   sources; one dreaming run decides where a fact belongs, because channels
   carry no project and there is one bag of conversations.
 - **The repository is a clean checkout; the home describes the project.**
-  `projects.<id>` in `aivi.json`, checkout at `<home>/projects/<id>/source`, a
+  `projects.<id>` in `config.json`, checkout at `<home>/projects/<id>/source`, a
   company-wide `docs/` convention (`docs` as `doc`, `docs/adr` as `decision`)
   with per-project override, and projects discovered as the directories of
   `<home>/projects`, so adding a project is a `git clone` into `source/` and a repository
@@ -162,7 +162,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **One config file, and it is yours.** Presence of a validated block enables
   its module (`modules.discord`, `modules.slack`, `linear`; `false` is an
   explicit off) — no module points at a separate config file. aivi and the
-  operator edit the live `aivi.json` itself, so it never goes under version
+  operator edit the live `config.json` itself, so it never goes under version
   control; a home in a git repository tracks only a template, which the first
   run copies ([configuration](docs/configuration.md#home)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
@@ -259,12 +259,12 @@ client against a mock server). `dist/` is built by `npm run build`
 (TypeScript 7, incremental); tests still run from sources under Node's type
 stripping.
 `scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
-`AIVI_HOME`): `aivi.json` (the live config, never version-controlled), `.env`,
+`AIVI_HOME`): `config.json` (the live config, never version-controlled), `.env`,
 `projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
 `state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
 `example/` is a home with everything enabled (`npm run aivi` points there);
-its `aivi.json` is the developer's own and git-ignored, and the tests load the
-tracked template `example/aivi.example.json`.
+its `config.json` is the developer's own and git-ignored, and the tests load the
+tracked template `example/config.example.json`.
 
 ## Open threads
 

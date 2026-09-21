@@ -149,7 +149,7 @@ export async function connectOpenCode(
   }
   if (!endpoint) {
     throw new Error(
-      'No running OpenCode v2 service found. Start it with `opencode service start`, set opencode.lifecycle to "ensure", or set opencode.url in aivi.json.',
+      'No running OpenCode v2 service found. Start it with `opencode service start`, set opencode.lifecycle to "ensure", or set opencode.url in config.json.',
     );
   }
   logVersion(endpoint, log);

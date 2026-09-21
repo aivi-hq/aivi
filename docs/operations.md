@@ -9,7 +9,7 @@ behaviour are in [architecture](architecture.md).
 
 Startup acquires installation ownership, initializes
 shared services, reconciles the job definitions it owns (`jobs[]` from
-`aivi.json` and the system jobs `retention` and `projects-sync` seeded from `scheduler.*`;
+`config.json` and the system jobs `retention` and `projects-sync` seeded from `scheduler.*`;
 `Store.syncJobs`), refreshes the search index when configured, opens the API on
 `host.bind:host.port`, then starts modules in order and announces readiness
 once each has had its first attempt. From then on the loop sleeps until the
@@ -137,7 +137,7 @@ and [slack](slack.md#queue-and-recovery).
 
 ## First run: `server create`
 
-`aivi server create` initializes the home (an `aivi.json` starter, `state/` with
+`aivi server create` initializes the home (an `config.json` starter, `state/` with
 `aivi.sqlite`), creates the operator person and their token — the secret is
 printed once, only its hash is kept — then asks where the client setup happens:
 *this machine* writes the client config (`~/.config/aivi.json`: `url`, `home`,
@@ -159,7 +159,7 @@ now, whose run is queued at once. `--title` labels it, `--resource` picks the
 pool, `--key` deduplicates identical requests (a changed payload under the
 same key is rejected). Operator jobs (source `operator`, ids `job-…`) and
 agent jobs are paused, resumed and removed with `jobs pause|resume|remove ID`;
-configured and system ones are edited in `aivi.json`. `jobs run ID` queues one
+configured and system ones are edited in `config.json`. `jobs run ID` queues one
 run now, refused while one is outstanding. `jobs list` shows every definition
 with its source, state, next occurrence and last run; `jobs show ID` adds its
 runs.
