@@ -4,6 +4,8 @@
     "@changesets/changelog-github": "1.0.1",
     "@changesets/cli": "3.0.3",
     "@types/node": "26.5.1",
+    "@types/plist": "3.0.5",
+    "@types/semver": "7.8.0",
     "lefthook": "2.1.14",
     "typescript": "7.0.2"
   },

@@ -316,6 +316,14 @@ authorised with the primary's app-actor token
 `npm run aivi -- --help` lists them; what each does and when to use it is in
 [operations](operations.md#jobs-and-runs-from-the-command-line).
 
+## Update channel
+
+`update.channel` picks what `aivi update` resolves: `stable` (the default, the
+npm `latest` dist-tag) or `nightly` (GitHub prerelease builds; the feed does
+not exist yet). There is no rollback: `aivi update` stops the server, installs,
+restarts and probes `/health`; sessions resume because state is SQLite and
+OpenCode's own.
+
 ## Secrets
 
 Secrets never live in JSON files. They come from the process environment, and

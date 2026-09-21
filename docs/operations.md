@@ -173,6 +173,31 @@ The CLI writes to SQLite directly and pokes the running host (`POST /v1/wake`)
 so it dispatches without waiting; when the host is not reachable the command
 says so and the change takes effect at the next dispatch.
 
+## Running as a service
+
+`aivi service install` writes a per-user LaunchAgent (macOS,
+`~/Library/LaunchAgents/ai.aivi.server.plist`, `ProcessType=Interactive`,
+`KeepAlive`, logs under `<home>/state/logs/`) or a systemd user unit (Linux,
+`~/.config/systemd/user/aivi.service`), then starts it. The unit runs the same
+command as foreground `aivi serve`, so nothing about the server changes —
+`aivi service start|stop|restart|status` control it, `service logs` follows the
+log, `service uninstall` removes it. A headless Linux machine needs
+`loginctl enable-linger` or the service stops with the session.
+
+## Updates
+
+`aivi update` brings the installed server and plugins to their newest releases.
+The channel comes from `config.json` (`update.channel`, default `stable`). The
+command resolves the target version, checks its Node requirement (provisioning
+`<home>/runtime/` first when the machine's Node is unsuitable), stops the
+server, installs with npm, restarts and probes `/health` before calling it
+done. npm is the compatibility resolver: a plugin whose `@aivi/host` peer range
+excludes the new host fails the install, is pinned at its current version —
+logged as **disabled: no compatible release** — and is re-checked on every
+future update. There is no rollback; sessions resume because state is SQLite
+and OpenCode's own. `aivi upgrade` updates the CLI itself through its install
+method (npm today).
+
 ## Projects
 
 `aivi projects list|add|remove|purge` manage the checkouts under

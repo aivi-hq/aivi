@@ -677,6 +677,17 @@ export const configSchema = z
       })
       .optional(),
     linear: linearSchema.optional(),
+    update: z
+      .strictObject({
+        channel: z
+          .enum(['stable', 'nightly'])
+          .default('stable')
+          .describe(
+            'What `aivi update` resolves: `stable` is the npm latest dist-tag; `nightly` needs the GitHub prerelease feed, which does not exist yet.',
+          ),
+      })
+      .optional()
+      .describe('Update preferences; the default channel is stable.'),
     identity: identitySchema
       .prefault({})
       .describe('Who aivi is: the persona every platform shows, and who a worker it launched commits as.'),

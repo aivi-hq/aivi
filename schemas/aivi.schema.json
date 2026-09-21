@@ -879,6 +879,22 @@
       ],
       "additionalProperties": false
     },
+    "update": {
+      "description": "Update preferences; the default channel is stable.",
+      "type": "object",
+      "properties": {
+        "channel": {
+          "description": "What `aivi update` resolves: `stable` is the npm latest dist-tag; `nightly` needs the GitHub prerelease feed, which does not exist yet.",
+          "default": "stable",
+          "type": "string",
+          "enum": [
+            "stable",
+            "nightly"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "identity": {
       "description": "Who aivi is: the persona every platform shows, and who a worker it launched commits as.",
       "default": {},
