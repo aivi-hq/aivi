@@ -1,6 +1,6 @@
 {
   "name": "@aivi/app",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "bin": {
     "aivi": "dist/cli.js"
@@ -24,9 +24,9 @@
     "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.1.0",
-    "@aivi/host": "^0.1.0",
-    "@aivi/knowledge": "^0.1.0",
+    "@aivi/core": "^0.2.0",
+    "@aivi/host": "^0.2.0",
+    "@aivi/knowledge": "^0.1.1",
     "@clack/prompts": "1.8.1",
     "zod": "4.1.13"
   }
