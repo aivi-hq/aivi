@@ -191,8 +191,8 @@ task; **check a box in the same commit that lands it**; mark exactly one box
 compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
-**Where we are:** boxes 1–4 landed 2026-09-21 (branch `feat/client-identity`).
-Next: box 5 — CLI `aivi server create` (the only direct-store command).
+**Where we are:** boxes 1–5 landed 2026-09-21 (branch `feat/client-identity`).
+Next: box 6 — CLI `aivi people create|list|token <id>` (HTTP), then `npm run schema`.
 
 ### Session A — identity core (aivi repo)
 
@@ -215,9 +215,15 @@ Next: box 5 — CLI `aivi server create` (the only direct-store command).
 - [x] 4. `GET /v1/whoami` → `{ person: {id, name}, roles: ["operator"] }`
        (stub); 401 for anonymous and unknown bearers, the only such route;
        `Whoami` type + `whoami()` on `HostClient`; test in `http.test.ts`.
-- [ ] 5. CLI: `aivi server create` — init `~/.aivi`, create operator person
-       + token, ask "this machine / another" → chain into setup or print
-       token + instructions; the only direct-store command; test.
+- [x] 5. CLI: `aivi server create` — init `~/.aivi` (starter `aivi.json`,
+       `state/`), operator person + token (secret printed once), then "Where
+       will you use aivi?" → *this machine* writes `~/.config/aivi.json`
+       (0600, merged, never over an existing token), *another* prints url +
+       token for `aivi setup` there. Refinement on the plan: the question is
+       asked **before** anything is minted, so a cancel leaves nothing
+       behind. Flags `--use`/`--name` skip prompts; re-run refuses. First
+       CLI tests in `packages/app/test/cli.test.ts`; owning doc:
+       `operations.md` §First run.
 - [ ] 6. CLI: `aivi people create|list|token <id>` (HTTP; secret printed
        once); test. `npm run schema`.
 - [ ] 7. Docs: promote `docs/backlog/identity-linking.md` → `docs/people.md`

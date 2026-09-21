@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -37,6 +37,8 @@ import { z } from 'zod';
 const usage = `aivi <command>
 
   serve                        Start the host: API, scheduler, knowledge, configured modules
+  server create                First run: init the home, create your person and its token;
+                               where will you use aivi? [--use this-machine|another] [--name TEXT] skips the prompts
   status                       Inspect durable queue counts
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
@@ -118,6 +120,8 @@ async function main(): Promise<void> {
       reason: { type: 'string' },
       'confirm-stopped': { type: 'boolean' },
       confirm: { type: 'boolean' },
+      use: { type: 'string' },
+      name: { type: 'string' },
     },
   });
   if (values.help || !positionals.length) {
@@ -139,12 +143,16 @@ async function main(): Promise<void> {
   });
   const log = getLogger(['aivi']);
   const configPath = resolve(home, 'aivi.json');
+  const [command = '', subcommand, argument] = positionals;
+  const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  if (command === 'server' && subcommand === 'create') {
+    print(await serverCreate({ home, configPath, use: values.use, name: values.name }));
+    return;
+  }
   if (!existsSync(configPath))
     throw new Error(`No aivi.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
   const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
   const loaded = await loadConfig(configPath);
-  const [command = '', subcommand, argument] = positionals;
-  const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
   // The CLI writes to SQLite directly; the running host learns about it through this poke and nothing
   // else, so a poke that cannot be delivered is said out loud rather than swallowed.
   const poke = async () => {
@@ -719,3 +727,103 @@ main()
     process.exitCode = 1;
   })
   .finally(() => closeLogging());
+
+/**
+ * `aivi server create` — bootstrap, and the only command that mints identity:
+ * initialize the home, create the operator person and its token (the secret is
+ * printed once; only its hash is kept), then decide where the client setup
+ * happens. The question is asked before anything is minted, so a cancel leaves
+ * nothing behind. A flag given skips its prompt.
+ */
+async function serverCreate(options: {
+  home: string;
+  configPath: string;
+  use?: string | undefined;
+  name?: string | undefined;
+}): Promise<Record<string, unknown>> {
+  const { home, configPath } = options;
+  const use = options.use;
+  if (use !== undefined && use !== 'this-machine' && use !== 'another')
+    throw new Error(`Unknown --use ${use}. Use this-machine or another.`);
+  if (use === undefined && !process.stdin.isTTY)
+    throw new Error(
+      'server create needs an interactive terminal; in a script use: aivi server create --use this-machine|another [--name TEXT]',
+    );
+  if (use === undefined) p.intro('aivi server create');
+  const stopped = (why: string) => {
+    p.cancel(`Setup stopped: ${why}. Nothing was created.`);
+    process.exitCode = 1;
+  };
+  const where =
+    use ??
+    (await p.select({
+      message: 'Where will you use aivi?',
+      options: [
+        { value: 'this-machine', label: 'This machine — set up the client here too' },
+        { value: 'another', label: 'Another machine — print the token and take it there' },
+      ],
+    }));
+  if (p.isCancel(where)) {
+    stopped('no answer');
+    return {};
+  }
+  let name = options.name?.trim();
+  if (!name) {
+    const answered =
+      use === undefined
+        ? await p.text({ message: 'Your name — aivi associates records with it', placeholder: 'Operator' })
+        : undefined;
+    if (answered !== undefined && p.isCancel(answered)) {
+      stopped('no name');
+      return {};
+    }
+    name = (answered as string | undefined)?.trim() || 'Operator';
+  }
+
+  mkdirSync(home, { recursive: true });
+  if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  const loaded = await loadConfig(configPath);
+  const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
+  try {
+    if (store.people().length > 0)
+      throw new Error('This home already has people. Use `aivi people create` for the next person.');
+    const person = store.createPerson({ name });
+    const { secret } = store.mintToken(person.id, 'operator');
+    const url = hostUrl(loaded);
+    const clientConfig = where === 'this-machine' ? writeClientConfig(url, home, secret) : undefined;
+    if (use === undefined)
+      p.outro(
+        where === 'this-machine'
+          ? `Home ready at ${home}; client config written.`
+          : `Home ready at ${home}; take the token to your laptop.`,
+      );
+    return {
+      home,
+      url,
+      person: person.id,
+      token: secret,
+      ...(clientConfig ? { clientConfig } : {}),
+      next:
+        where === 'this-machine'
+          ? 'Signed in. Run `aivi setup` to install the OpenCode plugins.'
+          : 'On your laptop run `aivi setup` and paste this url and token.',
+    };
+  } finally {
+    store.close();
+  }
+}
+
+/** The one client config file, identical shape everywhere; 0600. An existing person token is never overwritten. */
+function writeClientConfig(url: string, home: string, token: string): string {
+  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  let current: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    current = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    if ((current.person as { token?: string } | undefined)?.token)
+      throw new Error(`${path} already signs a person in; delete or edit it before signing in here`);
+  }
+  const next = { ...current, configVersion: 1, url, home, person: { token } };
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return path;
+}

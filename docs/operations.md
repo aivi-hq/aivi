@@ -135,6 +135,17 @@ can then continue in the same session. Platform-specific parameters (id
 formats, reply splitting, binding rotation) are in [discord](discord.md#queue-and-recovery)
 and [slack](slack.md#queue-and-recovery).
 
+## First run: `server create`
+
+`aivi server create` initializes the home (an `aivi.json` starter, `state/` with
+`aivi.sqlite`), creates the operator person and their token — the secret is
+printed once, only its hash is kept — then asks where the client setup happens:
+*this machine* writes the client config (`~/.config/aivi.json`: `url`, `home`,
+`person.token`; 0600), *another machine* prints the token to take to `aivi
+setup` there. It is the only command that mints identity; in a script pass
+`--use this-machine|another` and `--name TEXT` to skip the prompts. A re-run on
+a home that has people refuses.
+
 ## Jobs and runs from the command line
 
 Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
