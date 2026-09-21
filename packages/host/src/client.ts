@@ -3,6 +3,8 @@ import type {
   HostClient,
   JobResponse,
   KnowledgeSource,
+  Person,
+  PersonToken,
   ProjectSummary,
   SearchHit,
   SourceSelection,
@@ -75,6 +77,23 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       request<{ text: string }>(`/v1/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
     wake: () => request<{ woken: boolean }>('/v1/wake', { method: 'POST', timeoutMs: 3_000 }),
     whoami: () => get<Whoami>('/v1/whoami'),
+    people: () => get<Person[]>('/v1/people'),
+    createPerson(input) {
+      return request<Person>('/v1/people', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+        timeoutMs: 10_000,
+      });
+    },
+    createPersonToken(personId, label) {
+      return request<{ token: PersonToken; secret: string }>(`/v1/people/${encodeURIComponent(personId)}/tokens`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ label }),
+        timeoutMs: 10_000,
+      });
+    },
     jobs(body) {
       // Creating a job checks the calling session and agent against OpenCode; a few seconds at most.
       return request<JobResponse>('/v1/jobs', {

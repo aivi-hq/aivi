@@ -191,8 +191,9 @@ task; **check a box in the same commit that lands it**; mark exactly one box
 compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
-**Where we are:** boxes 1–5 landed 2026-09-21 (branch `feat/client-identity`).
-Next: box 6 — CLI `aivi people create|list|token <id>` (HTTP), then `npm run schema`.
+**Where we are:** boxes 1–6 landed 2026-09-21 (branch `feat/client-identity`).
+Next: box 7 — Session A docs (people.md, configuration.md, operations.md,
+CONTEXT.md vocabulary).
 
 ### Session A — identity core (aivi repo)
 
@@ -224,8 +225,15 @@ Next: box 6 — CLI `aivi people create|list|token <id>` (HTTP), then `npm run s
        behind. Flags `--use`/`--name` skip prompts; re-run refuses. First
        CLI tests in `packages/app/test/cli.test.ts`; owning doc:
        `operations.md` §First run.
-- [ ] 6. CLI: `aivi people create|list|token <id>` (HTTP; secret printed
-       once); test. `npm run schema`.
+- [x] 6. People over the API: `POST /v1/people`, `GET /v1/people`,
+       `POST /v1/people/:id/tokens` (+ `personCreateSchema`/
+       `personTokenCreateSchema`), client methods, CLI `aivi people
+       create|list|token` (secret printed once); ungated like everything
+       until the api-only session. Router lesson: a path dispatch before the
+       method gate catches *all* methods — `/v1/people` branches on method.
+       CLI tests run the real CLI against an in-test host via async `spawn`
+       (`spawnSync` blocks the parent event loop and deadlocks the host).
+       `schema:check` green (no config-schema change needed).
 - [ ] 7. Docs: promote `docs/backlog/identity-linking.md` → `docs/people.md`
        (people/linking facts; email linking + keychain adapters as its
        backlog notes); `configuration.md` (token table, config file shape,

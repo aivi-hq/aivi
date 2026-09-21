@@ -178,6 +178,14 @@ export interface Whoami {
   person: { id: string; name: string };
   roles: string[];
 }
+/** Validation for the operator's people management arriving over the API. */
+export const personCreateSchema = z.strictObject({
+  name: z.string().trim().min(1).max(80),
+  email: z.email().optional(),
+});
+export const personTokenCreateSchema = z.strictObject({
+  label: z.string().trim().min(1).max(80),
+});
 export interface HostClient {
   browser(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   status(): Promise<Status>;
@@ -189,6 +197,10 @@ export interface HostClient {
   jobs(request: JobRequest): Promise<JobResponse>;
   /** The person the bearer names; the one endpoint a request cannot make anonymously. */
   whoami(): Promise<Whoami>;
+  /** Operator people management; ungated until the api-only session enforces roles. */
+  people(): Promise<Person[]>;
+  createPerson(input: { name: string; email?: string }): Promise<Person>;
+  createPersonToken(personId: string, label: string): Promise<{ token: PersonToken; secret: string }>;
   /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */
   wake(): Promise<{ woken: boolean }>;
 }

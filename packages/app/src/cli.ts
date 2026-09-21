@@ -39,6 +39,9 @@ const usage = `aivi <command>
   serve                        Start the host: API, scheduler, knowledge, configured modules
   server create                First run: init the home, create your person and its token;
                                where will you use aivi? [--use this-machine|another] [--name TEXT] skips the prompts
+  people create NAME           A person for records to belong to [--email E]
+  people list                  People and their ids
+  people token PERSON          Mint a bearer for that person [--label L]; shown once
   status                       Inspect durable queue counts
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
@@ -122,6 +125,8 @@ async function main(): Promise<void> {
       confirm: { type: 'boolean' },
       use: { type: 'string' },
       name: { type: 'string' },
+      email: { type: 'string' },
+      label: { type: 'string' },
     },
   });
   if (values.help || !positionals.length) {
@@ -617,6 +622,30 @@ async function main(): Promise<void> {
           return;
         }
       }
+    }
+    if (command === 'people') {
+      const client = createHostClient(hostUrl(loaded));
+      if (subcommand === 'create') {
+        if (!argument) throw new Error('Provide a name: aivi people create NAME [--email E]');
+        print(await client.createPerson({ name: argument, ...(values.email ? { email: values.email } : {}) }));
+        return;
+      }
+      if (subcommand === 'list') {
+        print(await client.people());
+        return;
+      }
+      if (subcommand === 'token') {
+        if (!argument) throw new Error('Provide the person id: aivi people token PERSON [--label L]');
+        const minted = await client.createPersonToken(argument, values.label ?? 'cli');
+        print({
+          person: argument,
+          label: minted.token.label,
+          token: minted.secret,
+          next: 'Shown once: this is the bearer for `aivi setup`.',
+        });
+        return;
+      }
+      throw new Error(`Unknown people command.\n${usage}`);
     }
     if (command === 'serve') {
       const modules: HostModule[] = [];

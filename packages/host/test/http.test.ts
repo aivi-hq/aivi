@@ -164,6 +164,33 @@ test('commands are open: anonymous and unknown bearers are accepted; a known bea
   assert.deepEqual(bearerPerson(store, ''), null);
 });
 
+test('people management creates, lists and mints tokens over the API', async t => {
+  const store = new Store(':memory:');
+  const loaded = {
+    path: '/config',
+    config: configSchema.parse({ version: 1 }),
+    sources: [],
+    projects: [],
+  };
+  const server = createHostServer({ store, loaded });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const client = createHostClient(`http://127.0.0.1:${address.port}`);
+  const nemo = await client.createPerson({ name: 'Nemo', email: 'nemo@example.com' });
+  assert.match(nemo.id, /^person-[0-9a-f]{8}$/);
+  assert.deepEqual(await client.people(), [nemo]);
+  const minted = await client.createPersonToken(nemo.id, 'laptop');
+  assert.match(minted.secret, /^aivi-[0-9a-f]{32}$/);
+  assert.deepEqual(store.personForToken(minted.secret)!.person.id, nemo.id);
+  await assert.rejects(client.createPersonToken('person-none', 'x'), /HTTP 404: Unknown person/);
+  await assert.rejects(client.createPerson({ name: '' }), /HTTP 400: Invalid person/);
+});
+
 test('whoami names the caller and refuses to guess', async t => {
   const store = new Store(':memory:');
   const nemo = store.createPerson({ name: 'Nemo' });

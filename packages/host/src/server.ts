@@ -14,6 +14,8 @@ import {
   getLogger,
   jobRequestSchema,
   knowledgeKindSchema,
+  personCreateSchema,
+  personTokenCreateSchema,
   projectSummaries,
   searchSchema,
   selectSources,
@@ -148,6 +150,16 @@ export function createHostServer({
       return;
     }
 
+    if (url.pathname === '/v1/people') {
+      if (request.method === 'POST') handlePeople(request, response, send);
+      else if (request.method === 'GET') send(200, store.people());
+      else send(405, { error: 'Use GET to list people or POST to create one' });
+      return;
+    }
+    if (url.pathname.startsWith('/v1/people/') && url.pathname.endsWith('/tokens')) {
+      handlePersonToken(url, request, response, send);
+      return;
+    }
     if (url.pathname === '/v1/browser') {
       handleBrowser(request, response, send);
       return;
@@ -367,6 +379,59 @@ export function createHostServer({
     })().catch(error => {
       log.warn('jobs.interrupted', { error });
       if (!response.headersSent) send(400, { error: 'Job request interrupted' });
+    });
+  }
+
+  function handlePeople(request: IncomingMessage, response: ServerResponse, send: Send) {
+    if (request.method !== 'POST') {
+      send(405, { error: 'Use POST to create a person' });
+      return;
+    }
+    void (async () => {
+      const body = await readJson(request, MAX_JOB_BODY);
+      if (typeof body === 'string') {
+        send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Person request is too large' : body });
+        return;
+      }
+      const parsed = personCreateSchema.safeParse(body);
+      if (!parsed.success) {
+        send(400, {
+          error: `Invalid person: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+        });
+        return;
+      }
+      send(200, store.createPerson({ name: parsed.data.name, email: parsed.data.email ?? null }));
+    })().catch(() => {
+      if (!response.headersSent) send(400, { error: 'Person request interrupted' });
+    });
+  }
+
+  function handlePersonToken(url: URL, request: IncomingMessage, response: ServerResponse, send: Send) {
+    if (request.method !== 'POST') {
+      send(405, { error: 'Use POST to mint a person token' });
+      return;
+    }
+    void (async () => {
+      const personId = decodeURIComponent(url.pathname.slice('/v1/people/'.length, -'/tokens'.length));
+      if (!store.person(personId)) {
+        send(404, { error: `Unknown person ${personId}` });
+        return;
+      }
+      const body = await readJson(request, MAX_JOB_BODY);
+      if (typeof body === 'string') {
+        send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Token request is too large' : body });
+        return;
+      }
+      const parsed = personTokenCreateSchema.safeParse(body);
+      if (!parsed.success) {
+        send(400, {
+          error: `Invalid token request: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+        });
+        return;
+      }
+      send(200, store.mintToken(personId, parsed.data.label));
+    })().catch(() => {
+      if (!response.headersSent) send(400, { error: 'Token request interrupted' });
     });
   }
 
