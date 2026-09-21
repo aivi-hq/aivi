@@ -13,7 +13,7 @@ move before picking a mechanism.
   speaker prefix the agent sees (`[Discord message from …]`).
 - One locale per installation to start (`locale` in `aivi.json`, default
   `en`); per channel or per person later, once identities are linked
-  ([identity-linking](identity-linking.md)).
+  ([people](../people.md)).
 - **Brand**: the name "aivi" is hard-coded in messages, session titles, the
   `aivi` tool namespace, slash command prefixes, `metadata.aivi`, and the
   agent files. Store the display name once (`brand: "aivi"` in config) and use

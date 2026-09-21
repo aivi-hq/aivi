@@ -191,9 +191,9 @@ task; **check a box in the same commit that lands it**; mark exactly one box
 compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
-**Where we are:** boxes 1–6 landed 2026-09-21 (branch `feat/client-identity`).
-Next: box 7 — Session A docs (people.md, configuration.md, operations.md,
-CONTEXT.md vocabulary).
+**Where we are:** Session A complete (boxes 1–7, 2026-09-21, branch
+`feat/client-identity`). Next: Session B starts at box 8 — the
+`@aivi/client` package (config read/write, HTTP client, types).
 
 ### Session A — identity core (aivi repo)
 
@@ -234,12 +234,14 @@ CONTEXT.md vocabulary).
        CLI tests run the real CLI against an in-test host via async `spawn`
        (`spawnSync` blocks the parent event loop and deadlocks the host).
        `schema:check` green (no config-schema change needed).
-- [ ] 7. Docs: promote `docs/backlog/identity-linking.md` → `docs/people.md`
-       (people/linking facts; email linking + keychain adapters as its
-       backlog notes); `configuration.md` (token table, config file shape,
-       `.env` keeps third-party secrets only, auth `none` final);
-       `operations.md`; `CONTEXT.md` vocabulary rows **attribution** and
-       **association**; `agentic:verify`.
+- [x] 7. Docs: `docs/backlog/identity-linking.md` promoted →
+       `docs/people.md` (attribution vs association, auth `none` + whoami
+       stub, person/token tables, client config shape, bootstrap + people
+       commands, link codes, backlog notes); `configuration.md` + `operations.md`
+       point at it; `CONTEXT.md` vocabulary rows **attribution** and
+       **association**, the tokens-identify decision bullet, and the
+       people.md fact-map row; `localization.md` backlog link repointed;
+       backlog file removed.
 
 ### Session B — the client (aivi repo)
 

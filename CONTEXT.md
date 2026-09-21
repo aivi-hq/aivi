@@ -39,6 +39,8 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
 | model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
 | chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/help`): one shared table in the host, each platform only translates |
+| attribution | which names a commit carries: the bot as author/co-author from aivi's identity, the human as author from their own git config — a git fact, it never consults whoami ([people](docs/people.md)) |
+| association | which person a record belongs to: link codes, job ownership, session stamps, memories — a host fact, taken from the calling bearer, never from what a message claimed ([people](docs/people.md)) |
 
 ## Decisions and why
 
@@ -206,6 +208,13 @@ runs in one process; adapters are optional modules with a start/stop contract.
   machine's git config, else the aivi app. The project's `source/` is never
   marked, so attended work keeps a human author with the agent as co-author
   ([linear](docs/linear.md), [configuration](docs/configuration.md#fields)).
+- **Tokens identify, never authorize.** Auth is `none`: commands are open, and
+  a bearer only names the caller for association — whose job, whose link,
+  whose memory; unknown or missing stays anonymous. Only whoami and link
+  creation reject anonymous callers, because their answers must be attached to
+  a person. A non-loopback bind warns that anyone who can reach the address
+  can use the commands, until the api-only session enforces roles
+  ([people](docs/people.md)).
 - **The lane map is a convention with per-project deviations.**
   `projectDefaults.linear.lanes` is the company-wide base and a project wins
   one lane at a time over it (merge, where `projectDefaults.knowledge`
@@ -226,6 +235,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Module contract (`HostServices`, `Store.migrate`, `fail`) | [docs/architecture.md](docs/architecture.md#one-application-contained-modules) |
 | Tool ids, plugin loading, permission matching, session driver contract | [docs/opencode.md](docs/opencode.md) |
 | Knowledge scope, kinds, refresh | [docs/knowledge.md](docs/knowledge.md) |
+| People, person tokens, linking, the client config (`~/.config/aivi.json`) | [docs/people.md](docs/people.md) |
 | What a project is, home layout, docs convention, who works in one | [docs/projects.md](docs/projects.md) |
 | Dreaming run, memory contract, dreamer boundary | [docs/dreaming.md](docs/dreaming.md) |
 | Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |

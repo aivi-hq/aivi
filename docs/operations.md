@@ -144,7 +144,8 @@ printed once, only its hash is kept — then asks where the client setup happens
 `person.token`; 0600), *another machine* prints the token to take to `aivi
 setup` there. It is the only command that mints identity; in a script pass
 `--use this-machine|another` and `--name TEXT` to skip the prompts. A re-run on
-a home that has people refuses.
+a home that has people refuses. People, tokens and the client config are owned
+by [people](people.md).
 
 ## Jobs and runs from the command line
 
