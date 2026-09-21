@@ -29,6 +29,10 @@ jobs:
         with:
           node-version: '26'
       - run: npm ci
+      # The gate before publishing anything: build (tsc -b, dependency order)
+      # and the full check suite. The publish itself builds again per package
+      # via prepack, so changed packages always ship a fresh dist.
+      - run: npm run check
       - uses: changesets/action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
