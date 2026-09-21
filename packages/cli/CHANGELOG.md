@@ -1,5 +1,12 @@
 # @aivi/cli
 
+## 0.2.1
+
+### Patch Changes
+
+- [#5](https://github.com/aivi-hq/aivi/pull/5) [`e2bff0d`](https://github.com/aivi-hq/aivi/commit/e2bff0d518d0700373d545cd2fdf16be940f821a) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The published `aivi` bin gains its shebang — without it the global command
+  could not execute at all (the shell tried to run the JavaScript as a script).
+
 ## 0.2.0
 
 ### Minor Changes
