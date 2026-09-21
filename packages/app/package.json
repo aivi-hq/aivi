@@ -24,13 +24,9 @@
     "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/browser": "^0.1.0",
-    "@aivi/channel-discord": "^0.1.0",
-    "@aivi/channel-slack": "^0.1.0",
     "@aivi/core": "^0.1.0",
     "@aivi/host": "^0.1.0",
     "@aivi/knowledge": "^0.1.0",
-    "@aivi/linear": "^0.1.0",
     "@clack/prompts": "1.8.1",
     "zod": "4.1.13"
   }

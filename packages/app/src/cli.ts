@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
-import type { ConsoleFormat, LinearConfig, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
+import type { ConsoleFormat, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
 import {
   addProject,
   configureLogging,
@@ -30,7 +30,6 @@ import {
 import type { HostModule, HostResources } from '@aivi/host';
 import { connectOpenCode, createHostClient, runHost, Store, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
-import type { LinearClient } from '@aivi/linear';
 import * as p from '@clack/prompts';
 import { z } from 'zod';
 
@@ -174,7 +173,7 @@ async function main(): Promise<void> {
   // flag is asked here, and a flag that is given skips its prompt. The core
   // calls — resolve teams, clone, write the config — are the same ones.
   const projectsCreate = async (): Promise<void> => {
-    if (!linear || !loaded.config.linear) {
+    if (!loaded.config.linear) {
       throw new Error(
         'The Linear module is not configured in config.json (no `linear` block), so there is nothing to set up',
       );
@@ -221,7 +220,8 @@ async function main(): Promise<void> {
       if (p.isCancel(picked)) return stop('no app chosen');
       app = picked;
     }
-    const client = await linearClientFor(linear, linearConfig, app, log);
+    const linear = await import('@aivi/linear');
+    const client = await linear.clientFor(linearConfig, app, log);
     const fetchSpinner = p.spinner();
     fetchSpinner.start('Asking the app which teams it can see');
     let teams: Awaited<ReturnType<typeof client.listTeams>>;
@@ -335,11 +335,10 @@ async function main(): Promise<void> {
   };
 
   // A modules block that is present and not false enables its module; the schema checked its pool.
+  // The packages themselves load lazily, only in the commands that need them, so an installation
+  // without a channel package runs every other command untouched.
   const discordConfig = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
-  const discord = discordConfig ? await import('@aivi/channel-discord') : undefined;
   const slackConfig = typeof loaded.config.modules.slack === 'object' ? loaded.config.modules.slack : undefined;
-  const slack = slackConfig ? await import('@aivi/channel-slack') : undefined;
-  const linear = loaded.config.linear ? await import('@aivi/linear') : undefined;
 
   // Commands that need no database.
   switch (`${command} ${subcommand ?? ''}`.trim()) {
@@ -377,12 +376,13 @@ async function main(): Promise<void> {
       // Resolve the teams before cloning: a wrong key must not leave a half-added project.
       let teamIds: string[] = [];
       if (tokens.length) {
-        if (!linear || !loaded.config.linear) {
+        if (!loaded.config.linear) {
           throw new Error(
             'The Linear module is not configured in config.json (no `linear` block), so there is no app to ask for teams',
           );
         }
-        const client = await linearClientFor(linear, loaded.config.linear, values.app, log);
+        const linear = await import('@aivi/linear');
+        const client = await linear.clientFor(loaded.config.linear, values.app, log);
         teamIds = linear.resolveTeams(await client.listTeams(), tokens);
       }
       const added = await addProject(configPath, argument, values.id ? { id: values.id } : {});
@@ -443,8 +443,8 @@ async function main(): Promise<void> {
   const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
   try {
     if (command === 'discord') {
-      if (!discord || !discordConfig)
-        throw new Error('Discord is not enabled in config.json (no modules.discord block)');
+      if (!discordConfig) throw new Error('Discord is not enabled in config.json (no modules.discord block)');
+      const discord = await import('@aivi/channel-discord');
       if (subcommand === 'register') {
         await discord.registerDiscordCommands(discordConfig);
         print({ registered: true });
@@ -466,7 +466,8 @@ async function main(): Promise<void> {
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
     }
     if (command === 'slack') {
-      if (!slack || !slackConfig) throw new Error('Slack is not enabled in config.json (no modules.slack block)');
+      if (!slackConfig) throw new Error('Slack is not enabled in config.json (no modules.slack block)');
+      const slack = await import('@aivi/channel-slack');
       const inbox = slack.openSlackStore(store, slackConfig);
       if (subcommand === 'status') {
         print({ turns: inbox.list(), leases: store.leases() });
@@ -485,7 +486,8 @@ async function main(): Promise<void> {
       );
     }
     if (command === 'linear') {
-      if (!linear || !loaded.config.linear) throw new Error('Linear is not configured in config.json');
+      if (!loaded.config.linear) throw new Error('Linear is not configured in config.json');
+      const linear = await import('@aivi/linear');
       const inbox = linear.openLinearStore(store);
       if (subcommand === 'status') {
         print({ conversations: linear.describeWorkers(inbox), leases: store.leases() });
@@ -650,9 +652,9 @@ async function main(): Promise<void> {
     }
     if (command === 'serve') {
       const modules: HostModule[] = [];
-      if (discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
-      if (slack && slackConfig) modules.push(slack.createSlackModule(slackConfig));
-      if (linear && loaded.config.linear) modules.push(linear.createLinearModule(loaded.config.linear));
+      if (discordConfig) modules.push((await import('@aivi/channel-discord')).createDiscordModule(discordConfig));
+      if (slackConfig) modules.push((await import('@aivi/channel-slack')).createSlackModule(slackConfig));
+      if (loaded.config.linear) modules.push((await import('@aivi/linear')).createLinearModule(loaded.config.linear));
       const abort = new AbortController();
       const stop = () => abort.abort();
       process.once('SIGINT', stop);
@@ -727,24 +729,6 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
       : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };
 }
-
-/** The client to ask for teams: the one configured app, or the one `--app` names.
- * requireLinearSecrets names the missing LINEAR_* variables when secrets are absent. */
-async function linearClientFor(
-  linear: typeof import('@aivi/linear'),
-  config: LinearConfig,
-  app: string | undefined,
-  log: Logger,
-): Promise<LinearClient> {
-  const ids = Object.keys(config.apps);
-  if (!ids.length) throw new Error('linear.apps is empty: configure a Linear app before pointing projects at teams');
-  if (ids.length > 1 && !app) throw new Error(`Several Linear apps are configured (${ids.join(', ')}): pass --app`);
-  const id = app ?? ids[0]!;
-  if (!config.apps[id]) throw new Error(`Unknown Linear app ${id}. Configured: ${ids.join(', ')}`);
-  const creds = linear.requireLinearSecrets(config).find(cred => cred.id === id);
-  return new linear.LinearClient(creds!, { log });
-}
-
 function hostUrl(loaded: LoadedConfig): string {
   const { bind, port } = loaded.config.host;
   const host = ['0.0.0.0', '::', '[::]'].includes(bind) ? '127.0.0.1' : bind;
