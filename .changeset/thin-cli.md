@@ -1,5 +1,5 @@
 ---
-'aivi': minor
+'@aivi/cli': minor
 ---
 
 New: the thin `aivi` CLI. `aivi server create` writes the home structure,

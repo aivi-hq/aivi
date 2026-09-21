@@ -1,5 +1,5 @@
 ---
-'aivi': minor
+'@aivi/cli': minor
 '@aivi/core': minor
 '@aivi/channel-discord': minor
 '@aivi/channel-slack': minor
