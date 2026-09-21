@@ -1,5 +1,13 @@
 # aivi
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/aivi-banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/aivi-banner-light.svg">
+    <img src=".github/assets/aivi-banner-light.svg" alt="Aivi — Your virtual colleague" width="680">
+  </picture>
+</p>
+
 An always-on teammate built around OpenCode v2. OpenCode stays the runtime for
 agents, sessions, providers, tools, skills, and permissions. aivi adds what a
 team needs around it: a shared knowledge server, scheduled work, and channels
@@ -25,17 +33,17 @@ is no build step. From here on: [getting started](docs/getting-started.md)
 
 ## Packages
 
-| Package | Responsibility |
-| --- | --- |
-| `@aivi/app` | `aivi` CLI; composes configured modules and launches the host |
-| `@aivi/core` | Config and access-policy schemas, knowledge kinds, contracts, logger |
-| `@aivi/host` | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection, session driver, dreaming, the channel module contract with the shared inbox, engine and turn runner, report routing |
-| `@aivi/knowledge` | QMD-backed document indexing and scoped keyword search |
-| `@aivi/browser` | Chrome DevTools MCP, persistent profile, session-owned tabs |
-| `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads |
-| `@aivi/channel-slack` | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads |
-| `@aivi/linear` | Linear module: one app receiving every webhook, the assistant for people, workers in git worktrees, the Linear MCP proxy ([linear](docs/linear.md)) |
-| `@aivi/opencode` | OpenCode plugin: `knowledge_search`, `knowledge_projects`, `aivi_sources`, `aivi_status`, `aivi_context`, `aivi_jobs`, `aivi_browser` |
+| Package                 | Responsibility                                                                                                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@aivi/app`             | `aivi` CLI; composes configured modules and launches the host                                                                                                                                      |
+| `@aivi/core`            | Config and access-policy schemas, knowledge kinds, contracts, logger                                                                                                                               |
+| `@aivi/host`            | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection, session driver, dreaming, the channel module contract with the shared inbox, engine and turn runner, report routing |
+| `@aivi/knowledge`       | QMD-backed document indexing and scoped keyword search                                                                                                                                             |
+| `@aivi/browser`         | Chrome DevTools MCP, persistent profile, session-owned tabs                                                                                                                                        |
+| `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads                                                                                                        |
+| `@aivi/channel-slack`   | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads                                                                                             |
+| `@aivi/linear`          | Linear module: one app receiving every webhook, the assistant for people, workers in git worktrees, the Linear MCP proxy ([linear](docs/linear.md))                                                |
+| `@aivi/opencode`        | OpenCode plugin: `knowledge_search`, `knowledge_projects`, `aivi_sources`, `aivi_status`, `aivi_context`, `aivi_jobs`, `aivi_browser`                                                              |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
 services over the authenticated host API. Linear will be another in-process

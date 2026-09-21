@@ -57,6 +57,17 @@ in [plans/linear.md](plans/linear.md); configuration fields are in
    since git checks a branch out once. `source/` is never worked in — except
    by a lane that says `worktree: false`, which runs its agent in the
    checkout on main, with the agent file's own `edit` deny as the only guard.
+   The worktree then says who launched it: the checkout enables git's
+   `worktreeConfig` extension (git refuses per-worktree settings without it),
+   and the worktree itself sets `user.name` and `user.email` to
+   `identity.github` plus `agent.autonomous = true`. A worker's commit is the
+   bot's alone — author *and* committer, whatever the shell says — and the
+   commit plugin adds no co-author trailer. The checkout stays unmarked, so a
+   `worktree: false` lane keeps the attended behavior where the person is the
+   author and the agent a co-author. Marking happens whenever a worktree is
+   used, so one kept from an earlier session is marked as well, and a worktree
+   that cannot be marked refuses the worker instead of committing as whoever
+   owns the machine.
 5. **The turn.** One conversation turn of the channel machinery
    ([channels](channels.md)): the lane's agent, the worktree (or checkout) as
    directory, the prompt = a line saying which issue, project, lane, worktree
@@ -131,7 +142,7 @@ webhooks and the workers it serves.
 One app in Linear — the 95% case:
 
 1. **One app.** In Linear, **Settings → API → Applications → New**. Name it
-   `aivi.name` (the persona; aivi cannot set the name — use the name from
+   `identity.name` (the persona; aivi cannot set the name — use the name from
    config here). Enable **Client credentials**. Under **Webhooks**, set the
    URL to `<public base>/v1/linear/webhooks/app/<app id>` and enable both the
    **Issues** data-change category and **Agent session events**. Copy the

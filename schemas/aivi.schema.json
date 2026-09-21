@@ -915,11 +915,42 @@
       ],
       "additionalProperties": false
     },
-    "name": {
-      "description": "The persona: one name on every platform (the Linear application, the Discord and Slack bot usernames, what colleagues ping). Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms — the operator uses this name in each console.",
-      "default": "aivi",
-      "type": "string",
-      "minLength": 1
+    "identity": {
+      "description": "Who aivi is: the persona every platform shows, and who a worker it launched commits as.",
+      "default": {},
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The persona: one name on every platform (the Linear application, the Discord and Slack bot usernames, what colleagues ping). Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms — the operator uses this name in each console.",
+          "default": "aivi",
+          "type": "string",
+          "minLength": 1
+        },
+        "github": {
+          "description": "Who aivi commits as in work it launched. Only needed to override the app.",
+          "type": "object",
+          "properties": {
+            "user": {
+              "description": "The git author name of a worker commit. Default: `opencode.coauthor` in the global git config, else the aivi app.",
+              "type": "string",
+              "minLength": 1
+            },
+            "email": {
+              "description": "The git author email, same order as `user`. GitHub links the commit from this email, so the default is the app’s noreply address.",
+              "type": "string",
+              "minLength": 1
+            },
+            "app": {
+              "description": "The GitHub App id. Nothing reads it yet; whoever mints an installation token to act on GitHub as the app signs a JWT issued to this.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "scheduler": {
       "default": {

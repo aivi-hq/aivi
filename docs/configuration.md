@@ -29,16 +29,19 @@ The home is also the OpenCode location: agents live in `<home>/.opencode/agents/
 
 ## The soul
 
-`<home>/soul.md` says who aivi is: name, voice, standing promises, "I route
-rather than do". aivi's plugin injects it into **every** agent's prompt (the
-installation is a dedicated machine, so every agent there is an aivi agent) —
-injected, never copied into agent files, so an agent-file edit cannot delete
-it, and a `soul.md` edit takes effect without a restart. It is injected once
-per session as part of the agent definition, so it costs nothing per message.
-Keep it short: name, voice, red lines. Anything specific to one place (how to
-behave on Discord, what a Linear refusal means) belongs in that platform's
-agent file; facts aivi *learns* belong in memory. The soul is who aivi *says*
-it is; knowledge and dreaming carry who aivi *knows*. A soul file that starts
+`<home>/soul.md` says how aivi speaks: voice, standing promises, "I route
+rather than do". What aivi is **called** is not in it: the plugin states
+`identity.name` as one line, `Your name is aivi.`, ahead of the soul, so the
+persona has exactly one place to change. aivi's plugin injects both into
+**every** agent's prompt (the installation is a dedicated machine, so every
+agent there is an aivi agent) — injected, never copied into agent files, so an
+agent-file edit cannot delete it, and an edit to `soul.md` or to
+`identity.name` takes effect without a restart. It is injected once per session
+as part of the agent definition, so it costs nothing per message. Keep it
+short: voice, red lines. Anything specific to one place (how to behave on
+Discord, what a Linear refusal means) belongs in that platform's agent file;
+facts aivi *learns* belong in memory. The soul is who aivi *says* it is;
+knowledge and dreaming carry who aivi *knows*. A soul file that starts
 containing facts is the wrong file growing.
 
 ## Fields
@@ -46,7 +49,9 @@ containing facts is the wrong file growing.
 | Field | Default / purpose |
 | --- | --- |
 | `version` | Required; `1` |
-| `name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Agent-file and handle names derive from its slug; the display name stays free-form. aivi cannot set names on the platforms: the operator uses this name in each console |
+| `identity.name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Agent-file and handle names derive from its slug; the display name stays free-form. The plugin says it to every agent (`Your name is aivi.`) ahead of the soul, so `soul.md` never repeats it. aivi cannot set names on the platforms: the operator uses this name in each console |
+| `identity.github` | Who a **worker aivi launched** commits as, as a `{user, email}` pair: name the pair or neither, never half. Default: `opencode.coauthor` in the machine's git config, else the aivi app `aivi-agent[bot] <331678708+aivi-agent[bot]@users.noreply.github.com>`. GitHub resolves a bot commit's avatar and link from the email *inside the commit*, never from who pushed, so no token and no app installation is involved ([linear](linear.md)) |
+| `identity.github.app` | The GitHub App id. Nothing reads it yet: whoever mints an installation token to act on GitHub as the app signs a JWT issued to this |
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |

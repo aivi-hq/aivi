@@ -1,7 +1,9 @@
 {
   "$schema": "../schemas/aivi.schema.json",
   "version": 1,
-  "name": "aivi",
+  "identity": {
+    "name": "aivi"
+  },
   "host": {
     "port": 4100
   },

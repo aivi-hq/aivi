@@ -301,16 +301,15 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
 
   // A team no project maps: the assistant answers from the home, the delegate is un-taken.
   await created('as-3', 'eng-3');
-  await until(
-    () => opencode.sessions.size >= 2 && [...opencode.sessions.values()].some(s => s.agent === 'assistant'),
-    'the assistant session ran',
-  );
+  // The prompt is the last thing a dispatch posts (create the session, read it back, then prompt),
+  // so waiting for it covers the session too. The stored turn would not: it exists the moment the
+  // webhook is routed, long before anything reached OpenCode.
+  await until(() => opencode.prompts.length === 3, 'the assistant turn reached OpenCode');
   const assistantSession = [...opencode.sessions.values()].find(s => s.agent === 'assistant')!;
   assert.equal(assistantSession.directory, home, 'no project: the assistant runs in the home');
   assert.deepEqual(linear.delegated.at(-1), ['eng-3', null], 'the wrong delegation was un-taken');
-  await until(() => inbox.list().length === 3, 'the assistant turn exists');
   assert.match(
-    opencode.prompts.at(-1)!.text,
+    opencode.prompts[2]!.text,
     /was delegated to you, but its lane \("In Progress"\) is not mapped to any agent/,
   );
 

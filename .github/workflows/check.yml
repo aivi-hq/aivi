@@ -1,5 +1,16 @@
 name: Check
-on: [push, pull_request]
+# A branch is checked by its pull request, which runs on the merge into the base
+# branch; main is checked again once the merge lands. Both, unfiltered, would run
+# every push twice.
+on:
+  pull_request:
+  push:
+    branches: [main]
+# One commit per ref is worth checking: a newer push to the same pull request
+# supersedes the run of the commit nobody is merging any more.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
