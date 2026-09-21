@@ -9,6 +9,7 @@
     { "path": "packages/channel-slack/tsconfig.build.json" },
     { "path": "packages/linear/tsconfig.build.json" },
     { "path": "packages/opencode/tsconfig.build.json" },
-    { "path": "packages/app/tsconfig.build.json" }
+    { "path": "packages/app/tsconfig.build.json" },
+    { "path": "packages/cli/tsconfig.build.json" }
   ]
 }
