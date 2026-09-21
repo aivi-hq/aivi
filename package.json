@@ -19,7 +19,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "npm run build -s && npm run typecheck && node --test packages/*/test/*.test.ts",
     "check": "npm test && npm run schema:check && npm run smoke",

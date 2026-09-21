@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core/tsconfig.build.json" },
+    { "path": "packages/host/tsconfig.build.json" },
+    { "path": "packages/knowledge/tsconfig.build.json" },
+    { "path": "packages/browser/tsconfig.build.json" },
+    { "path": "packages/channel-discord/tsconfig.build.json" },
+    { "path": "packages/channel-slack/tsconfig.build.json" },
+    { "path": "packages/linear/tsconfig.build.json" },
+    { "path": "packages/opencode/tsconfig.build.json" },
+    { "path": "packages/app/tsconfig.build.json" }
+  ]
+}

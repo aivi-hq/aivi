@@ -22,7 +22,7 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "node ../../scripts/build.mjs"
+    "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
     "@aivi/core": "^0.1.0",
