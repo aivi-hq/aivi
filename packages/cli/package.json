@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "aivi": "./dist/main.js"
+    "aivi": "dist/main.js"
   },
   "files": [
     "dist"
