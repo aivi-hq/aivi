@@ -1,10 +1,27 @@
 {
   "name": "@aivi/app",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "bin": {
-    "aivi": "./src/cli.ts"
+    "aivi": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=26.0.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/app"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/build.mjs"
   },
   "dependencies": {
     "@aivi/browser": "0.1.0",

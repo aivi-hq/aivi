@@ -27,8 +27,9 @@ npm run check
 npm run aivi -- serve
 ```
 
-`npm run aivi` uses `example/`, a complete home with everything enabled; there
-is no build step. From here on: [getting started](docs/getting-started.md)
+`npm run aivi` uses `example/`, a complete home with everything enabled; it
+builds first (incremental, TypeScript 7) and runs the compiled `dist/` — the
+same artifact npm publishes. From here on: [getting started](docs/getting-started.md)
 (searching, the librarian in OpenCode, a project, a chat channel).
 
 ## Packages

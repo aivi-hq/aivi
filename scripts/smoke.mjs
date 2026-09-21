@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const cli = fileURLToPath(new URL('../packages/app/src/cli.ts', import.meta.url));
+const cli = fileURLToPath(new URL('../packages/app/dist/cli.js', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));
 const config = join(directory, 'aivi.json');
 let daemon;

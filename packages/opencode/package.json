@@ -1,11 +1,30 @@
 {
   "name": "@aivi/opencode",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
+    ".": "./dist/index.js",
     "./server": "./server.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "server.js"
+  ],
+  "engines": {
+    "node": ">=26.0.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/opencode"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/build.mjs"
   },
   "dependencies": {
     "@aivi/core": "0.1.0",
@@ -16,6 +35,5 @@
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.10"
-  },
-  "main": "./src/index.ts"
+  }
 }

@@ -1,10 +1,27 @@
 {
   "name": "@aivi/linear",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=26.0.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/linear"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/build.mjs"
   },
   "dependencies": {
     "@aivi/core": "0.1.0",

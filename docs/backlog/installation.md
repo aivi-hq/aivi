@@ -3,6 +3,10 @@
 Status: needed before anyone else installs aivi. Decide the distribution
 channel first; the rest follows from it.
 
+Update 2026-09-21: the git-checkout decision below is superseded — packages
+compile to `dist/` (TypeScript 7) and publish to npm, and the installation
+becomes an npm package environment. The research below stays valid.
+
 ## Goal
 
 A developer who has never heard of aivi (or OpenCode) can get a running

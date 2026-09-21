@@ -15,8 +15,10 @@ cp example/aivi.example.json example/aivi.json
 npm run aivi -- config check
 ```
 
-There is no build step: every package runs from its TypeScript sources through
-Node's type stripping, and `npm run typecheck` (`tsc --noEmit`) is a check.
+Packages compile to `dist/` with TypeScript 7 (`npm run build`, incremental);
+`npm run aivi` builds first and runs the compiled CLI — the same artifact npm
+publishes, so local and installed behavior are identical. `npm run typecheck`
+(`tsc --noEmit`) checks the sources against the built declarations.
 
 aivi reads one **home** directory: `aivi.json`, `.env`, `projects/`, `memory/`
 and `state/` together. Installed copies use `~/.aivi`; in this repo `npm run

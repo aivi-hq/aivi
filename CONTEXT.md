@@ -167,11 +167,12 @@ runs in one process; adapters are optional modules with a start/stop contract.
   run copies ([configuration](docs/configuration.md#home)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
-- **No build step.** Packages run from `src/*.ts` via Node's type stripping;
-  `tsc --noEmit` checks. This commits the installation to a git checkout in
-  `~/.aivi` with a `~/.local/bin` symlink, never `npm install -g` (Node does
-  not strip types under `node_modules`)
-  ([installation](docs/backlog/installation.md#decision-2026-09-15-the-installation-is-a-git-checkout)).
+- **One compiled shape, locally and on npm.** Packages compile to `dist/`
+  with TypeScript 7 (`npm run build`, incremental), and every `exports` map
+  points at `dist/`: dev, tests and consumers run the identical artifact,
+  nothing is rewritten at publish. The git-checkout installation decision is
+  superseded; packages publish to npm
+  ([installation](docs/backlog/installation.md)).
 - **Blocked runs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
 - **An agent session is a conversation.** The Linear module runs on the
@@ -254,7 +255,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 `packages/{core,host,knowledge,browser,channel-discord,channel-slack,linear,opencode,app}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
-client against a mock server). No `dist/`: sources run as they are.
+client against a mock server). `dist/` is built by `npm run build`
+(TypeScript 7, incremental); tests still run from sources under Node's type
+stripping.
 `scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
 `AIVI_HOME`): `aivi.json` (the live config, never version-controlled), `.env`,
 `projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
