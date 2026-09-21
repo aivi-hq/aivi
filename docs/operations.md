@@ -7,8 +7,7 @@ behaviour are in [architecture](architecture.md).
 
 ## Startup
 
-Startup validates the auth mode and token first (so a missing `AIVI_TOKEN`
-never launches QMD or Chrome), acquires installation ownership, initializes
+Startup acquires installation ownership, initializes
 shared services, reconciles the job definitions it owns (`jobs[]` from
 `aivi.json` and the system jobs `retention` and `projects-sync` seeded from `scheduler.*`;
 `Store.syncJobs`), refreshes the search index when configured, opens the API on
@@ -35,8 +34,8 @@ OpenCode runs as its own background service; aivi discovers it through the SDK's
 service registration at the start of each job or conversation turn (one file
 read), so an `opencode service restart` is picked up by the next turn. With
 `opencode.lifecycle: "own"` (default) `aivi serve` restarts a running service
-once at startup and starts a missing one whenever needed, handing it
-`AIVI_TOKEN`; `ensure` only starts, `discover` never touches it. aivi never
+once at startup and starts a missing one whenever needed, so a new plugin build
+is live; `ensure` only starts, `discover` never touches it. aivi never
 manages OpenCode's installation. QMD uses its
 library API inside aivi, with no QMD server or separate launch command. Only the
 configured Discord module loads discord.js, only the configured Slack module

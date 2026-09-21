@@ -16,7 +16,7 @@ import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencod
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
-import { createHostServer, type HostAuth, PublicRoutes } from './server.ts';
+import { createHostServer, PublicRoutes } from './server.ts';
 import type { Store } from './store.ts';
 import type { TaskClaims } from './tasks.ts';
 import { TaskRegistry } from './tasks.ts';
@@ -93,7 +93,6 @@ export interface RunHostOptions {
   resources: () => Promise<HostResources>;
   modules?: HostModule[];
   signal: AbortSignal;
-  auth: HostAuth;
   /** Environment variable names shell tasks must not inherit (the keys of `<home>/.env`); aivi's fixed secrets are always hidden. */
   protectedEnv?: Iterable<string>;
   log?: Logger;
@@ -104,7 +103,7 @@ export interface RunHostOptions {
 
 /** Composition and ownership only: no service locator, decorators, or plugin registry. */
 export async function runHost(options: RunHostOptions): Promise<void> {
-  const { loaded, store, signal, auth } = options;
+  const { loaded, store, signal } = options;
   const modules = options.modules ?? [];
   const log = (options.log ?? getLogger(['aivi'])).getChild('host');
   const abort = new AbortController();
@@ -148,7 +147,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     // the fresh one has the current plugin build and aivi's token. Failure to do so is not fatal;
     // the next turn simply discovers whatever is running.
     try {
-      if (await restartOpenCode(loaded.config.opencode, process.env)) log.info('opencode.restarted');
+      if (await restartOpenCode(loaded.config.opencode)) log.info('opencode.restarted');
     } catch (error) {
       log.warn('opencode.restart.failed', { error });
     }
@@ -156,7 +155,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     const http = createHostServer({
       store,
       loaded,
-      auth,
       knowledge,
       browser,
       routes,
@@ -173,11 +171,11 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       http.listen(port, bind, yes);
     });
     http.on('error', fail);
-    log.info('api.listening', { bind, port, auth: auth.mode });
-    if (auth.mode === 'none' && !isLoopback(bind))
-      log.warn('api.unauthenticated', {
+    log.info('api.listening', { bind, port });
+    if (!isLoopback(bind))
+      log.warn('api.open', {
         bind,
-        hint: 'Anyone who can reach this address can search knowledge and use the browser.',
+        hint: 'Anyone who can reach this address can search knowledge, use the browser and run jobs.',
       });
 
     const services: HostServices = {

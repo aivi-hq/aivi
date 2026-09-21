@@ -111,7 +111,7 @@ test('plugin registers its tools with root object schemas and disposes its regis
   assert.equal(disposed, true);
 });
 
-test('plugin loads without AIVI_TOKEN and reports a clear error when the host rejects a call', async t => {
+test('plugin loads without a token and reports a clear error when the host rejects a call', async t => {
   withToken(t, undefined);
   const server = createServer((_request, response) => {
     response.statusCode = 401;
@@ -127,7 +127,7 @@ test('plugin loads without AIVI_TOKEN and reports a clear error when the host re
     if (tool.name === 'status') status = tool;
   });
   assert.ok(status, 'plugin must still register tools without a token');
-  await assert.rejects(status.execute({}, { sessionID: 's' }), /401.*AIVI_TOKEN/);
+  await assert.rejects(status.execute({}, { sessionID: 's' }), /401.*bearer token that names a person/);
 });
 
 test('browser tool lives under aivi (not OpenCode’s browser namespace) and forwards the runtime session ID', async t => {

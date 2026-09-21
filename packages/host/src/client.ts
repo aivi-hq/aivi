@@ -10,7 +10,7 @@ import type {
 } from '@aivi/core';
 
 export interface HostClientOptions {
-  /** Bearer token for hosts running with `host.auth.mode: "token"`. Omit for `mode: "none"`. */
+  /** Bearer token identifying the caller (a person token). Omit to stay anonymous. */
   token?: string | undefined;
 }
 
@@ -102,6 +102,6 @@ async function describeFailure(response: Response): Promise<string> {
     // Non-JSON error body; the status is enough.
   }
   if (response.status === 401)
-    return `aivi host rejected the request (401)${detail}. Set AIVI_TOKEN in the OpenCode server environment or run the host with auth mode "none".`;
+    return `aivi host rejected the request (401)${detail}. This endpoint needs a bearer token that names a person.`;
   return `aivi host returned HTTP ${response.status}${detail}`;
 }

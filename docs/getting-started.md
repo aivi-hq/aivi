@@ -26,8 +26,8 @@ edit — and `example/aivi.example.json` is the tracked template the checks
 read. Its [README](../example/README.md) lists what is in there, including
 how to provide or disable Discord and Slack.
 
-Start the host. Either have fnox inject an `AIVI_TOKEN` of at least 24
-characters, or set `host.auth.mode` to `"none"` for a trusted machine:
+Start the host. No token is needed: commands are open, and a bearer only
+identifies the caller (see [secrets](configuration.md#secrets)):
 
 ```sh
 npm run aivi -- serve
@@ -49,9 +49,8 @@ The CLI sends searches to the running host; it does not open another index.
 
 ## The librarian in OpenCode
 
-1. With `host.auth.mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode
-   **server** environment and `opencode service restart`; with
-   `opencode.lifecycle: "own"` (the default) `aivi serve` does both for you.
+1. With `opencode.lifecycle: "own"` (the default) `aivi serve` restarts the
+   service for you after a plugin change.
    Whatever started the service, restart it after every change to the plugin
    or the host client: the long-running service keeps `@aivi/host/client` in
    its module cache, so a plugin that registers a new tool can still call a

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -47,9 +46,8 @@ try {
     'the key deduplicates',
   );
 
-  const token = randomBytes(32).toString('hex');
   daemon = spawn(process.execPath, [cli, 'serve'], {
-    env: { ...env, AIVI_TOKEN: token },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   stopped = once(daemon, 'exit');
@@ -78,17 +76,19 @@ try {
   });
   // The queued one-off is due now: the serving loop dispatches it on its first pass.
   await until(() =>
-    fetch(`http://127.0.0.1:${listening.port}/v1/status`, {
-      headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(5000),
-    })
+    fetch(`http://127.0.0.1:${listening.port}/v1/status`, { signal: AbortSignal.timeout(5000) })
       .then(response => response.json())
       .then(status => status.counts.succeeded === 1),
   );
   assert.equal(
-    (await fetch(`http://127.0.0.1:${listening.port}/v1/status`)).status,
-    401,
-    'token mode rejects anonymous callers',
+    (
+      await fetch(`http://127.0.0.1:${listening.port}/v1/status`, {
+        headers: { authorization: 'Bearer aivi-not-a-real-token' },
+        signal: AbortSignal.timeout(5000),
+      })
+    ).status,
+    200,
+    'an unknown bearer is accepted, anonymous',
   );
   assert.equal((await fetch(`http://127.0.0.1:${listening.port}/health`)).status, 200, 'liveness is public');
   daemon.kill('SIGTERM');
@@ -108,44 +108,10 @@ try {
   assert.equal(run('runs', 'list', '--state', 'succeeded').length, 1);
   assert.equal(run('status').counts.succeeded, 1);
 
-  // Auth mode "none" serves without a token, for trusted networks.
-  await writeFile(
-    config,
-    JSON.stringify({
-      version: 1,
-      host: { port: 0, auth: { mode: 'none' } },
-      opencode: { lifecycle: 'discover' },
-      knowledge: [{ id: 'demo', path: '.' }],
-    }),
-  );
-  daemon = spawn(process.execPath, [cli, 'serve'], {
-    env: { ...env, AIVI_TOKEN: '' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  stopped = once(daemon, 'exit');
-  const open = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Host startup timed out')), 10000);
-    let buffer = '';
-    daemon.once('exit', code => {
-      clearTimeout(timeout);
-      reject(new Error(`Host exited during startup: ${code}`));
-    });
-    daemon.stdout.on('data', chunk => {
-      buffer += chunk;
-      if (buffer.includes('\n')) {
-        clearTimeout(timeout);
-        resolve(JSON.parse(buffer.split('\n')[0]).listening);
-      }
-    });
-  });
-  assert.equal(
-    (await fetch(`http://127.0.0.1:${open.port}/v1/status`, { signal: AbortSignal.timeout(5000) })).status,
-    200,
-  );
   daemon.kill('SIGTERM');
   assert.equal((await stopped)[0], 0);
   console.log(
-    'CLI smoke passed: jobs add → serve dispatches the queued run → token & open modes → graceful shutdown → reopen',
+    'CLI smoke passed: jobs add → serve dispatches the queued run → open commands → graceful shutdown → reopen',
   );
 } finally {
   if (daemon && daemon.exitCode === null && daemon.signalCode === null) {

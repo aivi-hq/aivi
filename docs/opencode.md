@@ -110,7 +110,7 @@ for a server elsewhere, with `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` if that
 server requires basic auth. `opencode.lifecycle` decides the rest. `own`
 (default): when `aivi serve` starts it replaces a running service through the
 SDK (`Service.stop` with `pty: "handoff"`, then `Service.ensure`), so the
-service carries the current plugin build and aivi's `AIVI_TOKEN`; aivi is then
+service carries the current plugin build; aivi is then
 the one process to supervise. This happens once, before any module or job, when
 aivi has no work of its own; a turn in flight in the old service at that instant
 is cut short, its session is not. Later, a missing service is started on the

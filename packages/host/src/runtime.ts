@@ -28,7 +28,6 @@ export interface ExecutorDeps {
 
 /** Secrets aivi reads from its own environment; a shell task never sees them unless its `env` sets them on purpose. */
 export const SECRET_ENV = [
-  'AIVI_TOKEN',
   'DISCORD_BOT_TOKEN',
   'DISCORD_TOKEN',
   'SLACK_BOT_TOKEN',

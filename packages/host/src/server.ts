@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type {
   BrowserService,
@@ -7,6 +6,7 @@ import type {
   LoadedConfig,
   Logger,
   ModuleHealth,
+  Person,
   Status,
 } from '@aivi/core';
 import {
@@ -22,20 +22,17 @@ import {
 import { type JobHandler, JobRefused } from './jobs.ts';
 import type { Store } from './store.ts';
 
-export type HostAuth = { mode: 'none' } | { mode: 'token'; token: string };
-
-export const MIN_TOKEN_LENGTH = 24;
-
-/** Build the auth policy from config plus environment; fails fast with an actionable message. */
-export function resolveHostAuth(mode: 'none' | 'token', token: string | undefined): HostAuth {
-  if (mode === 'none') return { mode: 'none' };
-  if (!token)
-    throw new Error(
-      'AIVI_TOKEN is required while host.auth.mode is "token". Set it in the environment (fnox) or set host.auth.mode to "none" on a trusted network.',
-    );
-  if (token.length < MIN_TOKEN_LENGTH)
-    throw new Error(`AIVI_TOKEN must contain at least ${MIN_TOKEN_LENGTH} characters`);
-  return { mode: 'token', token };
+/**
+ * The person a request's bearer names, for association (whose job, whose link,
+ * whose memory). Auth is `none`: a request never needs a bearer, and an
+ * unknown or absent one stays anonymous — only endpoints whose answer must be
+ * attached to a person (whoami, link creation) reject it.
+ */
+export function bearerPerson(store: Store, authorization: string | null | undefined): Person | null {
+  const header = authorization ?? '';
+  const secret = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : header;
+  if (!secret) return null;
+  return store.personForToken(secret)?.person ?? null;
 }
 
 export function status(store: Store, loaded: LoadedConfig, now = Date.now(), modules: ModuleHealth[] = []): Status {
@@ -100,7 +97,6 @@ export class PublicRoutes {
 export interface HostServerOptions {
   store: Store;
   loaded: LoadedConfig;
-  auth: HostAuth;
   knowledge?: KnowledgeService | undefined;
   browser?: BrowserService | undefined;
   /** `POST /v1/jobs`; absent when the host runs without one (tests). */
@@ -123,7 +119,6 @@ const MAX_PUBLIC_BODY = 1024 * 1024;
 export function createHostServer({
   store,
   loaded,
-  auth,
   knowledge,
   browser,
   jobs,
@@ -133,13 +128,6 @@ export function createHostServer({
   routes,
   log = getLogger(['aivi']),
 }: HostServerOptions) {
-  const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
-  const authorized = (request: IncomingMessage) => {
-    if (!expected) return true;
-    const provided = Buffer.from(request.headers.authorization ?? '');
-    return provided.length === expected.length && timingSafeEqual(provided, expected);
-  };
-
   return createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
     response.setHeader('cache-control', 'no-store');
@@ -157,10 +145,6 @@ export function createHostServer({
     const publicRoute = routes?.get(url.pathname);
     if (publicRoute) {
       handlePublic(request, publicRoute, send);
-      return;
-    }
-    if (!authorized(request)) {
-      send(401, { error: 'Unauthorized' });
       return;
     }
 

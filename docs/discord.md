@@ -133,11 +133,9 @@ OpenCode location; `directory` overrides that for an agent defined elsewhere).
 Discord and native chat run the same agent file.
 
 `DISCORD_BOT_TOKEN` comes from the environment (`<home>/.env`, see
-[secrets](configuration.md#secrets)) and, with `host.auth.mode: "token"`, so
-does `AIVI_TOKEN` (host API). Make `AIVI_TOKEN` available to the native OpenCode
-server process as well so its plugin can call the host. The host discovers the
-running `opencode service` on its own. Configure your provider/model in native
-OpenCode for the librarian location.
+[secrets](configuration.md#secrets)). The host API takes no token; the host
+discovers the running `opencode service` on its own. Configure your
+provider/model in native OpenCode for the librarian location.
 
 `reportChannels` lists channel IDs where job outcomes may be posted
 (`report: { "to": "channel", "module": "discord", "channel": … }`); with an

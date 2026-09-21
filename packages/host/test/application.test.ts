@@ -21,7 +21,6 @@ const loaded = () => ({
   sources: [],
   projects: [],
 });
-const auth = { mode: 'token' as const, token: 'test-token-for-local-host-only' };
 const noOpenCode = async () => {
   throw new Error('OpenCode must not be contacted in this test');
 };
@@ -74,7 +73,6 @@ test('one host starts modules with shared services and stops them in reverse ord
     store,
     resources,
     modules,
-    auth,
     signal: abort.signal,
     onReady: () => {
       events.push('ready');
@@ -129,7 +127,7 @@ test('a configuration error at module start unwinds earlier modules and releases
     },
   ];
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, auth, signal: new AbortController().signal }),
+    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
     /start failed/,
   );
   assert.deepEqual(events, ['stop', 'close']);
@@ -177,7 +175,6 @@ test('a composed module seeds its system jobs and claims operations under its ow
     store,
     resources,
     modules,
-    auth,
     signal: abort.signal,
     onReady: () => abort.abort(),
   });
@@ -206,7 +203,7 @@ test('two system job definitions sharing an id is fatal, not a silent overwrite'
     },
   }));
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, auth, signal: new AbortController().signal }),
+    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
     /Two system job definitions claim job id linear-sweep/,
   );
   store.acquireDaemon('another');
@@ -233,7 +230,7 @@ test('two modules claiming one operation name take the host down with the clash 
     },
   }));
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, auth, signal: new AbortController().signal }),
+    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
     /Operation "shared.thing" is already claimed by first/,
   );
   store.acquireDaemon('another');
@@ -263,7 +260,7 @@ test('the failure that ended the host survives a failing cleanup step', async t 
     },
   ];
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, auth, signal: new AbortController().signal }),
+    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
     (error: unknown) =>
       error instanceof AggregateError &&
       error.errors.map(e => (e as Error).message).join(',') === 'start failed,close failed',
@@ -282,7 +279,7 @@ test('duplicate host is rejected before initializing shared services', async t =
     throw new Error('must not run');
   };
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, auth, signal: new AbortController().signal }),
+    runHost({ loaded: loaded(), store, resources, signal: new AbortController().signal }),
     /already owns/,
   );
   assert.equal(called, false);
@@ -353,7 +350,6 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
     store,
     resources: async () => ({ knowledge }),
     modules: [module],
-    auth,
     signal: abort.signal,
     onReady: () => {
       // Created after the loop went to sleep: only a wake makes it run before the safety-net tick.
@@ -402,7 +398,6 @@ test('a module whose start fails is retried with backoff while the host serves; 
     store,
     resources: async () => ({ knowledge }),
     modules: [flaky, steady],
-    auth,
     signal: abort.signal,
     moduleRetry: { baseMs: 20, maxMs: 100 },
     onReady: a => {
@@ -410,9 +405,7 @@ test('a module whose start fails is retried with backoff while the host serves; 
     },
   });
   const fetchStatus = async () =>
-    (await (
-      await fetch(`http://127.0.0.1:${address!.port}/v1/status`, { headers: { authorization: `Bearer ${auth.token}` } })
-    ).json()) as {
+    (await (await fetch(`http://127.0.0.1:${address!.port}/v1/status`)).json()) as {
       modules: { id: string; state: string; attempts: number; lastError: string | null }[];
     };
   const started = Date.now();

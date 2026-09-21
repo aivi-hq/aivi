@@ -7,7 +7,7 @@ import { JobRefused } from '../src/jobs.ts';
 import { createHostServer, PublicRoutes } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 
-test('read API authenticates callers, scopes sources, and refuses job operations without a handler', async t => {
+test('the read API scopes sources and refuses job operations without a handler; commands are open', async t => {
   const store = new Store(':memory:');
   const loaded: LoadedConfig = {
     path: '/aivi.json',
@@ -22,12 +22,10 @@ test('read API authenticates callers, scopes sources, and refuses job operations
       { id: 'memory', path: '/memory/old', kind: 'memory', scope: 'project', projectId: 'old' },
     ],
   };
-  const token = 'test-only-token-never-for-deployment';
   const searches: unknown[] = [];
   const server = createHostServer({
     store,
     loaded,
-    auth: { mode: 'token', token },
     knowledge: {
       async search(request) {
         searches.push(request);
@@ -49,8 +47,8 @@ test('read API authenticates callers, scopes sources, and refuses job operations
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
-  const client = createHostClient(base, { token });
-  assert.equal((await fetch(`${base}/v1/status`)).status, 401);
+  const client = createHostClient(base);
+  assert.equal((await fetch(`${base}/v1/status`)).status, 200, 'commands are open');
   assert.equal((await fetch(`${base}/health`)).status, 200, 'liveness is public');
   assert.equal((await client.status()).sources, 3);
   assert.equal((await client.sources({ projects: [] })).length, 1);
@@ -60,26 +58,17 @@ test('read API authenticates callers, scopes sources, and refuses job operations
     ['adrs'],
     'kind filter',
   );
-  assert.equal(
-    (await fetch(`${base}/v1/sources?kind=gossip`, { headers: { authorization: `Bearer ${token}` } })).status,
-    400,
-  );
+  assert.equal((await fetch(`${base}/v1/sources?kind=gossip`)).status, 400);
   await assert.rejects(client.sources({ projects: ['typo'] }), /HTTP 400: Unknown project: typo/);
   assert.deepEqual(await client.context('ses_x'), { text: '🧠 **Context** for ses_x' });
   await assert.rejects(client.context('ses_gone'), /HTTP 502: Could not read that session/);
-  assert.equal((await fetch(`${base}/v1/context`, { headers: { authorization: `Bearer ${token}` } })).status, 400);
+  assert.equal((await fetch(`${base}/v1/context`)).status, 400);
   assert.deepEqual(await client.projects(), [
     { id: 'app', sources: [{ id: 'adrs', kind: 'decision' }] },
     { id: 'old', removed: true, sources: [{ id: 'memory', kind: 'memory' }] },
   ]);
-  assert.equal(
-    (await fetch(`${base}/v1/jobs`, { method: 'POST', headers: { authorization: `Bearer ${token}` } })).status,
-    503,
-  );
-  assert.equal(
-    (await fetch(`${base}/v1/sources?includeCore=no`, { headers: { authorization: `Bearer ${token}` } })).status,
-    400,
-  );
+  assert.equal((await fetch(`${base}/v1/jobs`, { method: 'POST' })).status, 503);
+  assert.equal((await fetch(`${base}/v1/sources?includeCore=no`)).status, 400);
   assert.deepEqual(
     await client.search({ query: 'deployment', projects: [], includeCore: false, limit: 3, kinds: ['memory'] }),
     [],
@@ -87,18 +76,20 @@ test('read API authenticates callers, scopes sources, and refuses job operations
   assert.deepEqual(searches, [{ query: 'deployment', projects: [], includeCore: false, limit: 3, kinds: ['memory'] }]);
   await assert.rejects(client.search({ query: 'deployment', projects: ['typo'] }), /HTTP 400: Unknown project/);
   assert.equal(searches.length, 1);
-  assert.equal((await fetch(`${base}/v1/knowledge/search?q=deployment`)).status, 401);
+  assert.equal(
+    (await fetch(`${base}/v1/status`, { headers: { authorization: 'Bearer aivi-not-a-real-token' } })).status,
+    200,
+    'an unknown bearer is accepted, anonymous',
+  );
 });
 
-test('browser API requires authenticated bounded JSON and uses the shared browser service', async t => {
+test('the browser API takes bounded JSON and uses the shared browser service', async t => {
   const store = new Store(':memory:');
   const loaded = { path: '/config', config: configSchema.parse({ version: 1 }), sources: [], projects: [] };
-  const token = 'browser-api-test-token-never-for-deployment';
   const calls: unknown[] = [];
   const server = createHostServer({
     store,
     loaded,
-    auth: { mode: 'token', token },
     browser: {
       async execute(session, request) {
         calls.push({ session, request });
@@ -115,9 +106,8 @@ test('browser API requires authenticated bounded JSON and uses the shared browse
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
-  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-  assert.equal((await fetch(`${base}/v1/browser`, { method: 'POST', body: '{}' })).status, 401);
-  assert.equal((await fetch(`${base}/v1/browser`, { headers })).status, 405);
+  const headers = { 'content-type': 'application/json' };
+  assert.equal((await fetch(`${base}/v1/browser`)).status, 405);
   assert.equal(
     (
       await fetch(`${base}/v1/browser`, {
@@ -133,23 +123,22 @@ test('browser API requires authenticated bounded JSON and uses the shared browse
       .status,
     413,
   );
-  assert.deepEqual(await createHostClient(base, { token }).browser('native-session', { action: 'tabs' }), { tabs: [] });
+  assert.deepEqual(await createHostClient(base).browser('native-session', { action: 'tabs' }), { tabs: [] });
   assert.deepEqual(calls, [{ session: 'native-session', request: { action: 'tabs' } }]);
 });
 
-test('auth mode none serves authenticated routes without a token and resolveHostAuth fails fast', async t => {
-  const { resolveHostAuth } = await import('../src/server.ts');
-  assert.throws(() => resolveHostAuth('token', undefined), /AIVI_TOKEN is required/);
-  assert.throws(() => resolveHostAuth('token', 'short'), /at least 24/);
-  assert.deepEqual(resolveHostAuth('none', undefined), { mode: 'none' });
+test('commands are open: anonymous and unknown bearers are accepted; a known bearer names its person', async t => {
+  const { bearerPerson } = await import('../src/server.ts');
   const store = new Store(':memory:');
+  const nemo = store.createPerson({ name: 'Nemo' });
+  const { secret } = store.mintToken(nemo.id, 'laptop');
   const loaded = {
     path: '/config',
-    config: configSchema.parse({ version: 1, host: { auth: { mode: 'none' } } }),
+    config: configSchema.parse({ version: 1 }),
     sources: [],
     projects: [],
   };
-  const server = createHostServer({ store, loaded, auth: { mode: 'none' } });
+  const server = createHostServer({ store, loaded });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -157,8 +146,22 @@ test('auth mode none serves authenticated routes without a token and resolveHost
   });
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  const client = createHostClient(`http://127.0.0.1:${address.port}`);
-  assert.equal((await client.status()).sources, 0);
+  const base = `http://127.0.0.1:${address.port}`;
+  assert.equal((await createHostClient(base).status()).sources, 0, 'anonymous is served');
+  assert.equal(
+    (await fetch(`${base}/v1/status`, { headers: { authorization: 'Bearer aivi-unknown' } })).status,
+    200,
+    'an unknown bearer is accepted, anonymous',
+  );
+  assert.equal(
+    (await fetch(`${base}/v1/status`, { headers: { authorization: `Bearer ${secret}` } })).status,
+    200,
+    'a person token is served too',
+  );
+  assert.deepEqual(bearerPerson(store, `Bearer ${secret}`), nemo);
+  assert.deepEqual(bearerPerson(store, 'Bearer aivi-unknown'), null);
+  assert.deepEqual(bearerPerson(store, undefined), null);
+  assert.deepEqual(bearerPerson(store, ''), null);
 });
 
 test('jobs API validates the body, maps refusals to their status, and status lists upcoming and recent work', async t => {
@@ -183,12 +186,10 @@ test('jobs API validates the body, maps refusals to their status, and status lis
   const done = store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'done');
   const claimed = store.claim('host', 1, { 'local-model': 1 })!;
   store.finish(claimed.id, 'host', 'failed', null, 'boom');
-  const token = 'test-only-token-never-for-deployment';
   const requests: unknown[] = [];
   const server = createHostServer({
     store,
     loaded,
-    auth: { mode: 'token', token },
     jobs: async request => {
       requests.push(request);
       if (request.action === 'run') throw new JobRefused('Jobs do not create jobs', 403);
@@ -204,7 +205,7 @@ test('jobs API validates the body, maps refusals to their status, and status lis
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
-  const client = createHostClient(base, { token });
+  const client = createHostClient(base);
   const status = await client.status();
   assert.deepEqual(
     status.upcoming.map(u => [u.id, u.source, u.kind, u.title]),
@@ -215,14 +216,13 @@ test('jobs API validates the body, maps refusals to their status, and status lis
     [[done.id, done.jobId, 'failed', 'boom']],
   );
 
-  assert.equal((await fetch(`${base}/v1/jobs`, { method: 'POST' })).status, 401);
   const post = (body: unknown, type = 'application/json') =>
     fetch(`${base}/v1/jobs`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': type },
+      headers: { 'content-type': type },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     });
-  assert.equal((await fetch(`${base}/v1/jobs`, { headers: { authorization: `Bearer ${token}` } })).status, 405);
+  assert.equal((await fetch(`${base}/v1/jobs`)).status, 405);
   assert.equal((await post('x', 'text/plain')).status, 415);
   assert.equal((await post({ action: 'create' })).status, 400, 'sessionId is required');
   assert.equal((await post({ action: 'create', sessionId: 's', prompt: 'p', at: '1h', bogus: 1 })).status, 400);
@@ -260,7 +260,6 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   const server = createHostServer({
     store,
     loaded: { path: '/aivi.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] },
-    auth: { mode: 'token', token: 'test-only-token-never-for-deployment' },
     routes,
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -282,9 +281,9 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   assert.deepEqual(seen, [{ method: 'POST', body: raw, header: 'abc' }], 'the body arrives byte for byte');
   assert.equal(
     (await fetch(`${base}/v1/linear/webhooks/other`, { method: 'POST' })).status,
-    401,
-    'unknown paths still need the token',
+    405,
+    'unknown POST paths never reach a route',
   );
   unregister();
-  assert.equal((await fetch(`${base}/v1/linear/webhooks/dev`, { method: 'POST' })).status, 401, 'unregistered is gone');
+  assert.equal((await fetch(`${base}/v1/linear/webhooks/dev`, { method: 'POST' })).status, 405, 'unregistered is gone');
 });

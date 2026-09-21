@@ -88,8 +88,8 @@ runs in one process; adapters are optional modules with a start/stop contract.
   replace-on-version-mismatch machinery never runs against a server aivi
   found, and the server's version is logged once per process. aivi owns the
   local service's lifecycle by default (`opencode.lifecycle:
-  'own'`): one restart at `aivi serve` startup so the current plugin build and
-  `AIVI_TOKEN` are in, a start whenever it is missing, never a stop later.
+  'own'`): one restart at `aivi serve` startup so the current plugin build is
+  in, a start whenever it is missing, never a stop later.
   `ensure` and `discover` are the smaller degrees; the example home uses
   `discover` so tests never touch a developer's OpenCode.
 - **No polling, no periodic timers.** The loop sleeps until `Store.nextDue()`

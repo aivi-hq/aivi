@@ -191,8 +191,8 @@ task; **check a box in the same commit that lands it**; mark exactly one box
 compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
-**Where we are:** boxes 1–2 landed 2026-09-21 (branch `feat/client-identity`).
-Next: box 3 — optional-bearer resolution in `server.ts` (auth `none`).
+**Where we are:** boxes 1–3 landed 2026-09-21 (branch `feat/client-identity`).
+Next: box 4 — `GET /v1/whoami` (person + `roles: ["operator"]` stub).
 
 ### Session A — identity core (aivi repo)
 
@@ -203,10 +203,15 @@ Next: box 3 — optional-bearer resolution in `server.ts` (auth `none`).
        a person (FK); `createPerson/people/person/mintToken/personForToken`
        (secret shown once, stored hashed); types in `@aivi/core`; test in
        `packages/host/test/store.test.ts`.
-- [ ] 3. Host: optional-bearer resolution in `server.ts` (known token →
-       attach person; unknown/none → anonymous, accepted); delete
-       `host.auth.mode` + the `AIVI_TOKEN` env comparison; rewrite the
-       example home to the new story; test.
+- [x] 3. Host: `bearerPerson(store, authorization)` in `server.ts` — known
+       token → its person, unknown/none → null; the router no longer rejects,
+       nothing 401s until whoami. Deleted `HostAuth`/`resolveHostAuth`/
+       `MIN_TOKEN_LENGTH`, the `auth` config field (schema regenerated) and
+       every `AIVI_TOKEN` handoff (service env, secrets filter, CLI, client
+       error text); example `.env.example` = third-party secrets only;
+       non-loopback bind warns `api.open`; smoke is one open serve; owning
+       docs rewritten (configuration, operations, architecture, opencode,
+       getting-started, discord, CONTEXT).
 - [ ] 4. Host: `GET /v1/whoami` → person + `roles: ["operator"]` stub; 401
        only when no bearer resolves; client method; mock test.
 - [ ] 5. CLI: `aivi server create` — init `~/.aivi`, create operator person

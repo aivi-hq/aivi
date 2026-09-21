@@ -28,7 +28,7 @@ import {
   writeProjectLinear,
 } from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
-import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, status } from '@aivi/host';
+import { connectOpenCode, createHostClient, runHost, Store, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
 import type { LinearClient } from '@aivi/linear';
 import * as p from '@clack/prompts';
@@ -80,8 +80,8 @@ The live aivi.json is yours and aivi's to edit; it stays out of version control.
 Options: --log-level debug|info|warn|error
          --log-format auto|pretty|json (auto: pretty on a terminal, JSON lines when piped;
          the log file under state/logs/ is always JSON lines, so jq never needs to know)
-Secrets come from the environment: AIVI_TOKEN (host.auth.mode "token"),
-DISCORD_BOT_TOKEN, SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD
+Secrets come from the environment: DISCORD_BOT_TOKEN,
+SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD
 (only with opencode.url).
 <home>/.env is loaded without overriding existing variables; fnox exec works too.
 No secrets in config files.
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
   // The CLI writes to SQLite directly; the running host learns about it through this poke and nothing
   // else, so a poke that cannot be delivered is said out loud rather than swallowed.
   const poke = async () => {
-    await createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN })
+    await createHostClient(hostUrl(loaded))
       .wake()
       .catch(error =>
         console.error(
@@ -414,7 +414,7 @@ async function main(): Promise<void> {
     case 'knowledge search': {
       if (!argument) throw new Error('Provide a search query');
       if (values['core-only'] && values.project?.length) throw new Error('Choose --core-only or --project');
-      const client = createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN });
+      const client = createHostClient(hostUrl(loaded));
       print(
         await client.search({
           query: argument,
@@ -611,8 +611,6 @@ async function main(): Promise<void> {
       }
     }
     if (command === 'serve') {
-      // Fail on a missing token before touching the daemon lock, QMD, or Chrome.
-      const auth = resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
       const modules: HostModule[] = [];
       if (discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
       if (slack && slackConfig) modules.push(slack.createSlackModule(slackConfig));
@@ -626,7 +624,6 @@ async function main(): Promise<void> {
           loaded,
           store,
           modules,
-          auth,
           protectedEnv,
           log,
           signal: abort.signal,

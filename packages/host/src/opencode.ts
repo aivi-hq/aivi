@@ -27,9 +27,6 @@ export interface ConnectHooks {
   stop?: typeof Service.stop;
 }
 
-/** The environment aivi hands a service it starts: the plugin inside needs the same token as every other caller. */
-const serviceEnv = (env: OpenCodeEnv) => (env.AIVI_TOKEN ? { env: { AIVI_TOKEN: env.AIVI_TOKEN } } : {});
-
 const serviceFile = () =>
   join(process.env.XDG_STATE_HOME ?? join(homedir(), '.local', 'state'), 'opencode', 'service.json');
 
@@ -126,7 +123,7 @@ const logVersion = (endpoint: DiscoveredEndpoint, log: Logger): void => {
  * is. The `version` predicate accepts every server version, so the SDK's
  * replace-on-mismatch machinery stays out of aivi's operation. With
  * `lifecycle` `ensure` or `own`, a missing service is started through the
- * SDK, inheriting our environment plus `AIVI_TOKEN`.
+ * SDK, inheriting our environment.
  */
 export async function connectOpenCode(
   config: Config['opencode'],
@@ -148,7 +145,7 @@ export async function connectOpenCode(
   const ensure = hooks.ensure ?? Service.ensure;
   let endpoint: DiscoveredEndpoint | undefined = await discover({ version });
   if (!endpoint && config.lifecycle !== 'discover') {
-    endpoint = await ensure({ ...serviceEnv(env), version, onStart: reason => hooks.onStart?.(reason) });
+    endpoint = await ensure({ version, onStart: reason => hooks.onStart?.(reason) });
   }
   if (!endpoint) {
     throw new Error(
@@ -162,17 +159,13 @@ export async function connectOpenCode(
 
 /**
  * `lifecycle: "own"` at `aivi serve` startup: replace a running local service
- * with a fresh one that carries aivi's environment and the current plugin
- * build. Persistent terminals are handed off (SDK `pty: "handoff"`); OpenCode
- * sessions are durable, so only a turn in flight at that instant is cut short.
+ * with a fresh one that carries the current plugin build. Persistent terminals
+ * are handed off (SDK `pty: "handoff"`); OpenCode sessions are durable, so only
+ * a turn in flight at that instant is cut short.
  * Called before anything dispatches, when aivi itself has no running work.
  * Returns false when nothing was running (ensure alone handles that case).
  */
-export async function restartOpenCode(
-  config: Config['opencode'],
-  env: OpenCodeEnv = process.env,
-  hooks: ConnectHooks = {},
-): Promise<boolean> {
+export async function restartOpenCode(config: Config['opencode'], hooks: ConnectHooks = {}): Promise<boolean> {
   if (config.url || config.lifecycle !== 'own') return false;
   const discover = hooks.discover ?? discoverTolerant;
   const stop = hooks.stop ?? Service.stop;
@@ -180,6 +173,6 @@ export async function restartOpenCode(
   if (!(await discover())) return false;
   hooks.onStart?.('restart');
   await stop({ pty: 'handoff' });
-  await ensure({ ...serviceEnv(env), onStart: () => {} });
+  await ensure({ onStart: () => {} });
   return true;
 }
