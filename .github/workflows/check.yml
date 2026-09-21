@@ -6,6 +6,11 @@ on:
   pull_request:
   push:
     branches: [main]
+# One commit per ref is worth checking: a newer push to the same pull request
+# supersedes the run of the commit nobody is merging any more.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
