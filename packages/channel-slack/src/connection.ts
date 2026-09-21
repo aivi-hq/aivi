@@ -58,7 +58,7 @@ export function requireSlackTokens(env: NodeJS.ProcessEnv = process.env): { bot:
   const app = env.SLACK_APP_TOKEN;
   if (!bot || !app)
     throw new ConfigurationError(
-      'SLACK_BOT_TOKEN (xoxb-…) and SLACK_APP_TOKEN (xapp-…) are required (a .env next to aivi.json is loaded automatically)',
+      'SLACK_BOT_TOKEN (xoxb-…) and SLACK_APP_TOKEN (xapp-…) are required (a .env next to config.json is loaded automatically)',
     );
   return { bot, app };
 }

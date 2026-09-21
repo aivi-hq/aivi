@@ -3,6 +3,10 @@
 Status: needed before anyone else installs aivi. Decide the distribution
 channel first; the rest follows from it.
 
+Update 2026-09-21: the git-checkout decision below is superseded — packages
+compile to `dist/` (TypeScript 7) and publish to npm, and the installation
+becomes an npm package environment. The research below stays valid.
+
 ## Goal
 
 A developer who has never heard of aivi (or OpenCode) can get a running
@@ -51,7 +55,7 @@ Superseding the npm recommendation below (kept for its research):
 1. OpenCode v2 installed and its background service running (`opencode service`).
 2. aivi installed with its native dependencies (QMD → `better-sqlite3`,
    `node-llama-cpp`, tree-sitter; Chrome DevTools MCP for browser control).
-3. An `aivi.json`, a `.env` with secrets, at least one agent directory
+3. An `config.json`, a `.env` with secrets, at least one agent directory
    (librarian) with the aivi plugin configured.
 4. aivi running at login and restarting on failure (launchd on macOS,
    systemd user unit on Linux).
@@ -79,8 +83,8 @@ default branch). Optionally also publish to npm from the same workflow.
   OpenCode's installer and `opencode service start`; the default should only
   verify and print instructions.
 - Where config and state live for an installed copy: done (2026-09-15).
-  The CLI reads one home, `~/.aivi/` or `AIVI_HOME` (`aivi.json`, `.env`,
-  `state/`); there is no config-path option, and the live `aivi.json` is
+  The CLI reads one home, `~/.aivi/` or `AIVI_HOME` (`config.json`, `.env`,
+  `state/`); there is no config-path option, and the live `config.json` is
   never under version control ([configuration](../configuration.md#home)).
   `aivi init` should write a starter config and a librarian agent directory
   there.
@@ -251,7 +255,7 @@ work; npm downloads the N-API prebuilds.
    `npm publish -ws --provenance` with dist-tag `latest` for `vX.Y.Z` and `next` for
    `vX.Y.Z-<pre>`. The install script and `docs/install.md` ship from the same tag.
 3. `install.sh` (`curl -fsSL <raw url>/install.sh | bash`):
-   - create `~/.aivi/{bin,node,versions,state,logs,agents}`; never overwrite `aivi.json`/`.env`;
+   - create `~/.aivi/{bin,node,versions,state,logs,agents}`; never overwrite `config.json`/`.env`;
    - ensure Node 26: use `node` on PATH if it satisfies `>=26 <27`, else download the
      official nodejs.org tarball for `darwin-arm64|darwin-x64|linux-x64|linux-arm64` into
      `~/.aivi/node/` (as Hermes does); no Homebrew, no sudo;
@@ -267,14 +271,14 @@ work; npm downloads the N-API prebuilds.
    `curl -fsSL https://opencode.ai/v2/install | bash -s -- --no-modify-path` (optionally
    `--version` pinned to the tested release) then `opencode service start`; on no, or when
    not a TTY without `--install-opencode`, exit 1 with "OpenCode v2 is a hard requirement
-   and must be on your PATH". Then write `~/.aivi/aivi.json` (projects, knowledge sources,
+   and must be on your PATH". Then write `~/.aivi/config.json` (projects, knowledge sources,
    `host.auth.mode: token`), `~/.aivi/.env` (0600, generated `AIVI_TOKEN`), and
    `~/.aivi/agents/librarian/opencode.jsonc` listing `"@aivi/opencode@<same version>"`.
 5. `aivi doctor`: Node version, OpenCode major 2 + `opencode service status`, plugin present
    (`opencode plugin list`), native modules load, `~/.aivi` permissions, service unit state.
 6. `aivi service install|start|stop|status|logs` (macOS first): plist
    `~/Library/LaunchAgents/ai.aivi.host.plist` running `~/.aivi/bin/aivi
-   ~/.aivi/aivi.json serve` with `KeepAlive`, `RunAtLoad`, logs in `~/.aivi/logs/`, explicit
+   ~/.aivi/config.json serve` with `KeepAlive`, `RunAtLoad`, logs in `~/.aivi/logs/`, explicit
    `PATH` containing `~/.opencode/bin` and `~/.aivi/node/bin`. Linux: systemd user unit
    plus a `loginctl enable-linger` hint.
 
@@ -282,7 +286,7 @@ work; npm downloads the N-API prebuilds.
 
 ```
 ~/.aivi/
-  aivi.json            config (projects, knowledge sources, modules)
+  config.json            config (projects, knowledge sources, modules)
   .env                 secrets, 0600
   bin/aivi             launcher on PATH
   node/                private Node 26 (absent when system Node 26 is used)
@@ -300,7 +304,7 @@ work; npm downloads the N-API prebuilds.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/<org>/aivi/main/install.sh | bash
-# answers: install OpenCode v2? [Y] -> writes ~/.aivi/aivi.json, .env, agents/librarian
+# answers: install OpenCode v2? [Y] -> writes ~/.aivi/config.json, .env, agents/librarian
 aivi doctor
 aivi service install      # or: aivi serve (foreground)
 opencode ~/.aivi/agents/librarian
@@ -310,10 +314,10 @@ Later: `aivi update`, `aivi update --channel next`, `aivi rollback`, `aivi servi
 
 ### How `aivi update` works
 
-1. Read `update.channel` from `~/.aivi/aivi.json` (default `stable`); resolve the target
+1. Read `update.channel` from `~/.aivi/config.json` (default `stable`); resolve the target
    with `npm view aivi@latest version` (or `@next`). `--check` stops here; an equal version
    is a no-op unless `--force`.
-2. Snapshot `~/.aivi/state/*.db` and `aivi.json` to `~/.aivi/state/snapshots/<ts>/`
+2. Snapshot `~/.aivi/state/*.db` and `config.json` to `~/.aivi/state/snapshots/<ts>/`
    (schema migrations are forward-only, so this is the rollback for state).
 3. `npm install --prefix ~/.aivi/versions/<target> --omit=dev aivi@<target>`; on failure
    delete the directory, leave `current` untouched, exit non-zero.

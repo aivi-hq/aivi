@@ -151,7 +151,7 @@ channel ids (channel details → bottom of the About tab). DM channel ids are
 not configured; the `dm.users` allow-list decides who may DM.
 
 The example template enables Slack with placeholder ids; copy
-`example/aivi.example.json` to `example/aivi.json` and edit the ids there. A
+`example/config.example.json` to `example/config.json` and edit the ids there. A
 `modules.slack` block is the whole module setup, and its presence enables the
 module (`false` is an explicit off):
 

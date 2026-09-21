@@ -7,10 +7,9 @@ behaviour are in [architecture](architecture.md).
 
 ## Startup
 
-Startup validates the auth mode and token first (so a missing `AIVI_TOKEN`
-never launches QMD or Chrome), acquires installation ownership, initializes
+Startup acquires installation ownership, initializes
 shared services, reconciles the job definitions it owns (`jobs[]` from
-`aivi.json` and the system jobs `retention` and `projects-sync` seeded from `scheduler.*`;
+`config.json` and the system jobs `retention` and `projects-sync` seeded from `scheduler.*`;
 `Store.syncJobs`), refreshes the search index when configured, opens the API on
 `host.bind:host.port`, then starts modules in order and announces readiness
 once each has had its first attempt. From then on the loop sleeps until the
@@ -35,8 +34,8 @@ OpenCode runs as its own background service; aivi discovers it through the SDK's
 service registration at the start of each job or conversation turn (one file
 read), so an `opencode service restart` is picked up by the next turn. With
 `opencode.lifecycle: "own"` (default) `aivi serve` restarts a running service
-once at startup and starts a missing one whenever needed, handing it
-`AIVI_TOKEN`; `ensure` only starts, `discover` never touches it. aivi never
+once at startup and starts a missing one whenever needed, so a new plugin build
+is live; `ensure` only starts, `discover` never touches it. aivi never
 manages OpenCode's installation. QMD uses its
 library API inside aivi, with no QMD server or separate launch command. Only the
 configured Discord module loads discord.js, only the configured Slack module
@@ -136,6 +135,18 @@ can then continue in the same session. Platform-specific parameters (id
 formats, reply splitting, binding rotation) are in [discord](discord.md#queue-and-recovery)
 and [slack](slack.md#queue-and-recovery).
 
+## First run: `server create`
+
+`aivi server create` initializes the home (an `config.json` starter, `state/` with
+`aivi.sqlite`), creates the operator person and their token — the secret is
+printed once, only its hash is kept — then asks where the client setup happens:
+*this machine* writes the client config (`~/.config/aivi.json`: `url`, `home`,
+`person.token`; 0600), *another machine* prints the token to take to `aivi
+setup` there. It is the only command that mints identity; in a script pass
+`--use this-machine|another` and `--name TEXT` to skip the prompts. A re-run on
+a home that has people refuses. People, tokens and the client config are owned
+by [people](people.md).
+
 ## Jobs and runs from the command line
 
 Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
@@ -148,7 +159,7 @@ now, whose run is queued at once. `--title` labels it, `--resource` picks the
 pool, `--key` deduplicates identical requests (a changed payload under the
 same key is rejected). Operator jobs (source `operator`, ids `job-…`) and
 agent jobs are paused, resumed and removed with `jobs pause|resume|remove ID`;
-configured and system ones are edited in `aivi.json`. `jobs run ID` queues one
+configured and system ones are edited in `config.json`. `jobs run ID` queues one
 run now, refused while one is outstanding. `jobs list` shows every definition
 with its source, state, next occurrence and last run; `jobs show ID` adds its
 runs.
@@ -161,6 +172,31 @@ ID, result, transition history). `runs cancel ID` only cancels queued work.
 The CLI writes to SQLite directly and pokes the running host (`POST /v1/wake`)
 so it dispatches without waiting; when the host is not reachable the command
 says so and the change takes effect at the next dispatch.
+
+## Running as a service
+
+`aivi service install` writes a per-user LaunchAgent (macOS,
+`~/Library/LaunchAgents/ai.aivi.server.plist`, `ProcessType=Interactive`,
+`KeepAlive`, logs under `<home>/state/logs/`) or a systemd user unit (Linux,
+`~/.config/systemd/user/aivi.service`), then starts it. The unit runs the same
+command as foreground `aivi serve`, so nothing about the server changes —
+`aivi service start|stop|restart|status` control it, `service logs` follows the
+log, `service uninstall` removes it. A headless Linux machine needs
+`loginctl enable-linger` or the service stops with the session.
+
+## Updates
+
+`aivi update` brings the installed server and plugins to their newest releases.
+The channel comes from `config.json` (`update.channel`, default `stable`). The
+command resolves the target version, checks its Node requirement (provisioning
+`<home>/runtime/` first when the machine's Node is unsuitable), stops the
+server, installs with npm, restarts and probes `/health` before calling it
+done. npm is the compatibility resolver: a plugin whose `@aivi/host` peer range
+excludes the new host fails the install, is pinned at its current version —
+logged as **disabled: no compatible release** — and is re-checked on every
+future update. There is no rollback; sessions resume because state is SQLite
+and OpenCode's own. `aivi upgrade` updates the CLI itself through its install
+method (npm today).
 
 ## Projects
 

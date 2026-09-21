@@ -1,9 +1,13 @@
 {
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
+    "@changesets/changelog-github": "1.0.1",
+    "@changesets/cli": "3.0.3",
     "@types/node": "26.5.1",
+    "@types/plist": "3.0.5",
+    "@types/semver": "7.8.0",
     "lefthook": "2.1.14",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=26.0.0 <27"
@@ -17,14 +21,15 @@
   },
   "private": true,
   "scripts": {
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run typecheck && node --test packages/*/test/*.test.ts",
+    "test": "npm run build -s && npm run typecheck && node --test packages/*/test/*.test.ts",
     "check": "npm test && npm run schema:check && npm run smoke",
-    "aivi": "AIVI_HOME=${AIVI_HOME:-example} node packages/app/src/cli.ts",
-    "schema": "node scripts/schema.mjs --write",
-    "schema:check": "node scripts/schema.mjs --check",
-    "smoke": "node scripts/smoke.mjs",
-    "smoke:browser": "node scripts/browser-smoke.mjs",
+    "aivi": "npm run build -s && AIVI_HOME=${AIVI_HOME:-example} node packages/app/dist/cli.js",
+    "schema": "npm run build -s && node scripts/schema.mjs --write",
+    "schema:check": "npm run build -s && node scripts/schema.mjs --check",
+    "smoke": "npm run build -s && node scripts/smoke.mjs",
+    "smoke:browser": "npm run build -s && node scripts/browser-smoke.mjs",
     "live:opencode": "node scripts/live-opencode.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

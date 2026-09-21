@@ -71,7 +71,7 @@ function setup(store: Store, url: string, enabled = true) {
   });
   const handler = createJobHandler({
     store,
-    loaded: { path: '/aivi.json', config, projects: [], sources: [] },
+    loaded: { path: '/config.json', config, projects: [], sources: [] },
     channels,
     opencode: () => connectOpenCode(config.opencode, {}),
     now: () => NOW,

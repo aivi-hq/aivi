@@ -34,18 +34,18 @@ test('projects add clones into <home>/projects/<id>/source, which is the whole r
   await run('git', ['-C', upstream, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init']);
   const home = join(root, 'home');
   await mkdir(home);
-  await writeFile(join(home, 'aivi.json'), JSON.stringify({ version: 1 }));
+  await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1 }));
 
-  const added = await addProject(join(home, 'aivi.json'), upstream);
+  const added = await addProject(join(home, 'config.json'), upstream);
   assert.deepEqual(added, {
     id: 'acme-site',
     directory: join(home, 'projects/acme-site/source'),
     sources: ['docs', 'adr', 'memory'],
   });
-  await assert.rejects(addProject(join(home, 'aivi.json'), upstream), /already exists/);
-  await assert.rejects(addProject(join(home, 'aivi.json'), upstream, { id: 'Bad Id' }), /must match/);
+  await assert.rejects(addProject(join(home, 'config.json'), upstream), /already exists/);
+  await assert.rejects(addProject(join(home, 'config.json'), upstream, { id: 'Bad Id' }), /must match/);
   let cloned = false;
-  const second = await addProject(join(home, 'aivi.json'), upstream, {
+  const second = await addProject(join(home, 'config.json'), upstream, {
     id: 'second',
     clone: async (_url, directory) => {
       cloned = true;
@@ -63,7 +63,7 @@ test('projects add clones into <home>/projects/<id>/source, which is the whole r
 test('remove deletes the checkout and keeps memory; purge shows first and deletes only with confirm', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-projects-rm-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, 'aivi.json');
+  const config = join(root, 'config.json');
   await writeFile(config, JSON.stringify({ version: 1 }));
   await mkdir(join(root, 'projects/site/source/docs'), { recursive: true });
   await mkdir(join(root, 'projects/site/worktrees/eng-1'), { recursive: true });
@@ -99,7 +99,7 @@ test('remove deletes the checkout and keeps memory; purge shows first and delete
 test('writeProjectLinear writes teams, keeps everything else, and restores a config that stops loading', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-projects-linear-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, 'aivi.json');
+  const config = join(root, 'config.json');
   await writeFile(config, `${JSON.stringify({ version: 1, knowledge: [{ id: 'company', path: 'kb' }] }, null, 2)}\n`);
   await mkdir(join(root, 'projects/site/source'), { recursive: true });
 

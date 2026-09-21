@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Job, JobSource, JobState, Report, Run, RunState, Task } from '@aivi/core';
+import type { Job, JobSource, JobState, Person, PersonToken, Report, Run, RunState, Task } from '@aivi/core';
 import { formatInstant, jobSchema, nextOccurrence } from '@aivi/core';
 
 type Row = Record<string, unknown>;
@@ -56,7 +56,7 @@ const run = (r: Row): Run => ({
   report: r.report === null || r.report === undefined ? null : (JSON.parse(String(r.report)) as Report),
 });
 
-const HOST_SCHEMA_VERSION = 7;
+const HOST_SCHEMA_VERSION = 9;
 
 /** Pre-v6 reports overloaded `channel`: a session id for `to: "session"`, a platform channel id for a module name. */
 function migrateReport(raw: unknown): Report | null {
@@ -75,7 +75,7 @@ export interface JobEntry {
   /** The next occurrence to materialize; null once a one-off has fired or when nothing is left. */
   nextAt: number | null;
   createdAt: number;
-  /** Idempotency key of a job created outside aivi.json (a tool message id, a CLI `--key`). */
+  /** Idempotency key of a job created outside config.json (a tool message id, a CLI `--key`). */
   dedupeKey: string | null;
 }
 const jobEntry = (r: Row): JobEntry => ({
@@ -85,6 +85,19 @@ const jobEntry = (r: Row): JobEntry => ({
   nextAt: r.next_at === null ? null : Number(r.next_at),
   createdAt: Number(r.created_at),
   dedupeKey: r.dedupe_key === null ? null : String(r.dedupe_key),
+});
+const person = (r: Row): Person => ({
+  id: String(r.id),
+  name: String(r.name),
+  email: r.email === null ? null : String(r.email),
+  roles: JSON.parse(String(r.roles ?? '[]')) as string[],
+  createdAt: Number(r.created_at),
+});
+const token = (r: Row): PersonToken => ({
+  hash: String(r.token_hash),
+  personId: String(r.person_id),
+  label: String(r.label),
+  createdAt: Number(r.created_at),
 });
 export interface AddJobOptions {
   /** Identical requests with the same key create one job; a different task under the same key is refused. */
@@ -104,9 +117,9 @@ const requestFingerprint = ({ id: _id, at: _at, ...rest }: Job) => hash(rest);
 
 /**
  * Durable host state in one SQLite file. Host tables (jobs, runs, leases,
- * daemon, audit) are only touched through this class. Adapters may own their
- * own namespaced tables in the same database: declare them with `migrate()`
- * and access them through `db`, never host tables.
+ * daemon, audit, people, tokens) are only touched through this class. Adapters
+ * may own their own namespaced tables in the same database: declare them with
+ * `migrate()` and access them through `db`, never host tables.
  */
 export class Store {
   readonly db: DatabaseSync;
@@ -178,6 +191,22 @@ export class Store {
         this.db.exec('PRAGMA user_version=6');
       }
       if (version < 7) this.migrateToJobsAndRuns(Date.now());
+      if (version < 8)
+        this.db.exec(`
+        CREATE TABLE people(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, created_at INTEGER NOT NULL);
+        CREATE TABLE tokens(token_hash TEXT PRIMARY KEY,
+          person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+          label TEXT NOT NULL, created_at INTEGER NOT NULL);
+        PRAGMA user_version=8;
+      `);
+      if (version < 9) {
+        this.db.exec(`
+        ALTER TABLE people ADD COLUMN roles TEXT NOT NULL DEFAULT '[]';
+        PRAGMA user_version=9;
+      `);
+        // The stub said every person was an operator; make the truth true.
+        this.db.exec(`UPDATE people SET roles='["operator"]'`);
+      }
     });
   }
   /**
@@ -393,7 +422,7 @@ export class Store {
     return spec.at !== undefined ? Date.parse(spec.at) : nextOccurrence(spec.cron!, spec.timezone, now);
   }
   /**
-   * Reconcile the definitions the operator owns: `config` (aivi.json) and
+   * Reconcile the definitions the operator owns: `config` (config.json) and
    * `system` (what the host seeds from its settings). Agent and operator jobs
    * are left alone. A config job that disappeared is paused; a system job that
    * disappeared is removed.
@@ -446,7 +475,7 @@ export class Store {
     }
   }
   /**
-   * A job created outside aivi.json: by an agent through the tool or by the
+   * A job created outside config.json: by an agent through the tool or by the
    * operator CLI. A one-off whose instant has already come is materialized at
    * once; a later one waits for `materializeDue`.
    */
@@ -485,7 +514,7 @@ export class Store {
   private mutable(id: string): JobEntry {
     const entry = this.job(id);
     if (entry.source === 'config' || entry.source === 'system')
-      throw new Error(`Job ${id} is defined in aivi.json; edit the configuration instead`);
+      throw new Error(`Job ${id} is defined in config.json; edit the configuration instead`);
     return entry;
   }
   /** Pause (`false`) or resume (`true`) an agent or operator job. Resuming re-anchors to the next occurrence. */
@@ -829,5 +858,67 @@ export class Store {
       );
       return { runs, jobs };
     });
+  }
+  /** Create a person; the id is minted here. aivi itself is never a person. */
+  createPerson(
+    { name, email = null, roles = ['member'] }: { name: string; email?: string | null; roles?: string[] },
+    now = Date.now(),
+  ): Person {
+    const id = `person-${randomUUID().slice(0, 8)}`;
+    this.db
+      .prepare('INSERT INTO people(id,name,email,roles,created_at) VALUES(?,?,?,?,?)')
+      .run(id, name, email, JSON.stringify(roles), now);
+    return { id, name, email, roles, createdAt: now };
+  }
+  person(id: string): Person | null {
+    const row = this.db.prepare('SELECT * FROM people WHERE id=?').get(id);
+    return row ? person(row) : null;
+  }
+  people(): Person[] {
+    return (this.db.prepare('SELECT * FROM people ORDER BY created_at,id').all() as Row[]).map(person);
+  }
+  /**
+   * Mint a person token: the raw secret (the bearer) starts `aivi-` and is
+   * returned once; only its SHA-256 hash is kept. Every token belongs to a
+   * person — the foreign key refuses anything else.
+   */
+  mintToken(personId: string, label: string, now = Date.now()): { token: PersonToken; secret: string } {
+    if (!this.person(personId)) throw new Error(`Unknown person ${personId}`);
+    for (;;) {
+      const secret = `aivi-${randomBytes(16).toString('hex')}`;
+      const digest = createHash('sha256').update(secret).digest('hex');
+      try {
+        this.db
+          .prepare('INSERT INTO tokens(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
+          .run(digest, personId, label, now);
+        return { token: { hash: digest, personId, label, createdAt: now }, secret };
+      } catch (error) {
+        // A hash collision is a 2^-128 coincidence; mint again.
+        if ((error as { code?: string }).code !== 'SQLITE_CONSTRAINT_UNIQUE') throw error;
+      }
+    }
+  }
+  /** The lookup behind every request: a known bearer names its person; unknown or absent stays anonymous. */
+  personForToken(secret: string): { person: Person; token: PersonToken } | null {
+    const digest = createHash('sha256').update(secret).digest('hex');
+    const row = this.db
+      .prepare(
+        `SELECT t.*, p.name AS person_name, p.email AS person_email, p.roles AS person_roles, p.created_at AS person_created
+         FROM tokens t JOIN people p ON p.id=t.person_id WHERE t.token_hash=?`,
+      )
+      .get(digest) as
+      | (Row & { person_name: string; person_email: string | null; person_roles: string; person_created: number })
+      | undefined;
+    if (!row) return null;
+    return {
+      person: {
+        id: String(row.person_id),
+        name: row.person_name,
+        email: row.person_email,
+        roles: JSON.parse(String(row.person_roles ?? '[]')) as string[],
+        createdAt: row.person_created,
+      },
+      token: token(row),
+    };
   }
 }

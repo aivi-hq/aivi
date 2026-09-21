@@ -56,7 +56,7 @@ The full argument lives in the plan file; what landed, each with its tests:
       humans); `linear status` lists conversations (workers and assistant
       sessions) with their agent; `--lane` reads `LANE:AGENT`.
 - [x] `example/`: `soul.md`, the assistant's agent file (`aivi.md`), a
-      `linear` block in `aivi.example.json`, `.env.example` with the bare
+      `linear` block in `config.example.json`, `.env.example` with the bare
       names as the one-app path.
 - [x] Docs: `linear.md`, `configuration.md` (`name`, the soul, the Linear
       section), `CONTEXT.md`, `AGENTS.md`, this file, backlogs
@@ -189,7 +189,7 @@ Renames from today's validation-only config: `linear.applications` → `linear.a
   which two `mv`s to run.
 - **No `@linear/sdk`.** Six GraphQL operations over `fetch` keep the
   dependency footprint where the principles want it.
-- **Configuration lives in `aivi.json`** (`linear` on, `projects.<id>.linear`
+- **Configuration lives in `config.json`** (`linear` on, `projects.<id>.linear`
   lanes), not a separate module file: it is routing config validated together
   with projects, and small. Presence of `linear` enables the module.
 

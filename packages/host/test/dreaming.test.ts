@@ -234,7 +234,7 @@ test('the dreaming operation resolves its args against the home and demands a se
   t.after(() => rm(root, { recursive: true, force: true }));
   const write = (memoryDirectory?: string) =>
     writeFile(
-      join(root, 'aivi.json'),
+      join(root, 'config.json'),
       JSON.stringify({
         version: 1,
         knowledge: [{ id: 'k', path: 'knowledge' }],
@@ -254,7 +254,7 @@ test('the dreaming operation resolves its args against the home and demands a se
   // The claimant parses and resolves its own args; wrong ones fail the run with a readable reason.
   const runDreaming = async (memoryDirectory?: string) => {
     await write(memoryDirectory);
-    const loaded = await loadConfig(join(root, 'aivi.json'));
+    const loaded = await loadConfig(join(root, 'config.json'));
     const store = new Store(':memory:');
     t.after(() => store.close());
     const execute = createExecutor(loaded, {

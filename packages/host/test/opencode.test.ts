@@ -12,12 +12,12 @@ const never = async (): Promise<never> => {
   throw new Error('must not be called');
 };
 
-test('a missing service is started through the SDK with AIVI_TOKEN in its environment; "discover" never starts one', async () => {
+test('a missing service is started through the SDK; "discover" never starts one', async () => {
   const calls: unknown[] = [];
   const started: string[] = [];
   const client = await connectOpenCode(
     { lifecycle: 'ensure' },
-    { AIVI_TOKEN: 'token-for-the-plugin-inside-opencode' },
+    {},
     {
       discover: async () => undefined,
       ensure: async options => {
@@ -29,7 +29,7 @@ test('a missing service is started through the SDK with AIVI_TOKEN in its enviro
     },
   );
   assert.ok(client.session, 'a client for the started service');
-  assert.deepEqual((calls[0] as { env: unknown }).env, { AIVI_TOKEN: 'token-for-the-plugin-inside-opencode' });
+  assert.equal((calls[0] as { env?: unknown }).env, undefined, 'the service starts with no injected env');
   assert.deepEqual(started, ['missing']);
 
   await assert.rejects(
@@ -49,18 +49,18 @@ test('"own" replaces a running service at startup with pty handoff; other lifecy
       events.push(`stop:${options?.pty}`);
     },
     ensure: async (options?: { env?: Record<string, string> }) => {
-      events.push(`ensure:${options?.env?.AIVI_TOKEN ?? '-'}`);
+      events.push(`ensure:${options?.env === undefined ? '-' : 'env'}`);
       return endpoint;
     },
     onStart: (reason: string) => events.push(`start:${reason}`),
   };
-  assert.equal(await restartOpenCode({ lifecycle: 'own' }, { AIVI_TOKEN: 't' }, hooks), true);
-  assert.deepEqual(events, ['start:restart', 'stop:handoff', 'ensure:t']);
+  assert.equal(await restartOpenCode({ lifecycle: 'own' }, hooks), true);
+  assert.deepEqual(events, ['start:restart', 'stop:handoff', 'ensure:-']);
   events.length = 0;
-  assert.equal(await restartOpenCode({ lifecycle: 'own' }, {}, { ...hooks, discover: async () => undefined }), false);
-  assert.equal(await restartOpenCode({ lifecycle: 'ensure' }, {}, hooks), false);
-  assert.equal(await restartOpenCode({ lifecycle: 'discover' }, {}, hooks), false);
-  assert.equal(await restartOpenCode({ url: 'http://elsewhere:1', lifecycle: 'own' }, {}, hooks), false);
+  assert.equal(await restartOpenCode({ lifecycle: 'own' }, { ...hooks, discover: async () => undefined }), false);
+  assert.equal(await restartOpenCode({ lifecycle: 'ensure' }, hooks), false);
+  assert.equal(await restartOpenCode({ lifecycle: 'discover' }, hooks), false);
+  assert.equal(await restartOpenCode({ url: 'http://elsewhere:1', lifecycle: 'own' }, hooks), false);
   assert.deepEqual(events, [], 'nothing stopped or started');
 });
 
@@ -95,7 +95,7 @@ test('tolerant discovery accepts any listening server and reports its version', 
   assert.ok(probes >= 1);
 });
 
-test('the SDK is handed a version predicate that logs once and accepts every version', async t => {
+test('the SDK is handed a version predicate that logs once and accepts every version', async _t => {
   const infos: unknown[] = [];
   const log = {
     info: (event: string, fields: unknown) => infos.push([event, fields]),
@@ -116,7 +116,7 @@ test('the SDK is handed a version predicate that logs once and accepts every ver
       return endpoint;
     },
   };
-  await connectOpenCode({ lifecycle: 'ensure' }, { AIVI_TOKEN: 't' }, hooks, log as never);
+  await connectOpenCode({ lifecycle: 'ensure' }, {}, hooks, log as never);
   assert.deepEqual(seen, [true, true, true], 'every version is accepted, whatever it is');
   const versions = infos.filter(entry => (entry as [string])[0] === 'opencode.version');
   assert.deepEqual(

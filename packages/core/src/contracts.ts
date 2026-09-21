@@ -27,7 +27,7 @@ export interface Run {
   error: string | null;
   report: Report | null;
 }
-/** Who defined a job: `aivi.json`, an agent through `aivi_jobs`, the operator CLI, or the host itself (retention). */
+/** Who defined a job: `config.json`, an agent through `aivi_jobs`, the operator CLI, or the host itself (retention). */
 export type JobSource = 'config' | 'agent' | 'operator' | 'system';
 /** A definition's own state; `done` and `missed` only happen to one-offs. */
 export type JobState = 'active' | 'paused' | 'done' | 'missed';
@@ -155,6 +155,42 @@ export interface ProjectSummary {
   removed?: true;
   sources: { id: string; kind: KnowledgeKind }[];
 }
+/** A human colleague aivi knows by name; aivi's own work is never a person. */
+export interface Person {
+  id: string;
+  name: string;
+  email: string | null;
+  /** What the person may do remotely: membership array, `operator` manages
+   *  people and maintenance, everything else reads and asks. Open set — a new
+   *  role is data, not a migration. */
+  roles: string[];
+  createdAt: number;
+}
+/**
+ * A bearer credential that identifies one person for association (whose job,
+ * whose link, whose memory). Only the hash is stored; the secret is shown
+ * once at mint. A token never authorizes — it answers "which person is this".
+ */
+export interface PersonToken {
+  hash: string;
+  personId: string;
+  label: string;
+  createdAt: number;
+}
+/** Who the caller is: the one endpoint that cannot be served anonymously. */
+export interface Whoami {
+  person: { id: string; name: string };
+  roles: string[];
+}
+/** Validation for the operator's people management arriving over the API. */
+export const personCreateSchema = z.strictObject({
+  name: z.string().trim().min(1).max(80),
+  email: z.email().optional(),
+  roles: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
+});
+export const personTokenCreateSchema = z.strictObject({
+  label: z.string().trim().min(1).max(80),
+});
 export interface HostClient {
   browser(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   status(): Promise<Status>;
@@ -164,6 +200,12 @@ export interface HostClient {
   context(sessionId: string): Promise<{ text: string }>;
   search(request: SearchRequest): Promise<SearchHit[]>;
   jobs(request: JobRequest): Promise<JobResponse>;
+  /** The person the bearer names; the one endpoint a request cannot make anonymously. */
+  whoami(): Promise<Whoami>;
+  /** Operator people management; ungated until the api-only session enforces roles. */
+  people(): Promise<Person[]>;
+  createPerson(input: { name: string; email?: string; roles?: string[] }): Promise<Person>;
+  createPersonToken(personId: string, label: string): Promise<{ token: PersonToken; secret: string }>;
   /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */
   wake(): Promise<{ woken: boolean }>;
 }

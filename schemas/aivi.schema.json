@@ -17,10 +17,7 @@
     "host": {
       "default": {
         "bind": "127.0.0.1",
-        "port": 4100,
-        "auth": {
-          "mode": "token"
-        }
+        "port": 4100
       },
       "type": "object",
       "properties": {
@@ -34,39 +31,6 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 65535
-        },
-        "auth": {
-          "default": {
-            "mode": "token"
-          },
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "const": "token"
-                }
-              },
-              "required": [
-                "mode"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "const": "none"
-                }
-              },
-              "required": [
-                "mode"
-              ],
-              "additionalProperties": false
-            }
-          ]
         }
       },
       "additionalProperties": false
@@ -913,6 +877,21 @@
       "required": [
         "apps"
       ],
+      "additionalProperties": false
+    },
+    "update": {
+      "description": "Update preferences; the default channel is stable.",
+      "type": "object",
+      "properties": {
+        "channel": {
+          "description": "What `aivi update` resolves: the npm latest dist-tag. The enum exists so future channels (a GitHub feed, an RC tag) are a schema change, not a redesign.",
+          "default": "stable",
+          "type": "string",
+          "enum": [
+            "stable"
+          ]
+        }
+      },
       "additionalProperties": false
     },
     "identity": {

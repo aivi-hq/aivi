@@ -159,7 +159,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   config.opencode.url = opencode.url;
   const loaded = {
     config,
-    path: join(home, 'aivi.json'),
+    path: join(home, 'config.json'),
     projects: [
       {
         id: 'website',
@@ -402,7 +402,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
   config.opencode.url = opencode.url;
   const loaded = {
     config,
-    path: join(root, 'home/aivi.json'),
+    path: join(root, 'home/config.json'),
     projects: [
       {
         id: 'site',
@@ -510,7 +510,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   });
   const loaded = {
     config,
-    path: join(root, 'home/aivi.json'),
+    path: join(root, 'home/config.json'),
     projects: [
       {
         id: 'api',

@@ -161,8 +161,8 @@ for a shared knowledge server) and exposes status, source discovery, scoped
 knowledge search, optional permission-gated browser operations, and one job
 mutation: `POST /v1/jobs`, the back end of the `aivi_jobs` tool.
 `/health` and module webhook routes (`HostServices.routes`, verified by the
-platform's own signature) are public; everything else requires the bearer
-token unless `host.auth.mode` is `none`. The jobs route is a deliberate revision of the
+platform's own signature) are public; everything else is open too — a bearer
+token only identifies the caller for association, it never locks a route. The jobs route is a deliberate revision of the
 earlier "no job mutations over the API" rule (2026-09-15): it is limited to what
 an agent may do for a person who asked (its own agent and directory by default,
 a report the destination accepts, only `prompt` and `shell` tasks, refused from job

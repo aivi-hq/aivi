@@ -2,26 +2,38 @@
 
 ## Home
 
-aivi reads one directory, the **home**: `~/.aivi` by default, or `AIVI_HOME`.
-It holds `aivi.json`, `.env`, and `state/` (SQLite, the search index, dreaming
-transcripts). There is no config-path option. The live `aivi.json` is the file
+aivi reads one directory, the **home**: `~/.aivi` by default, or `AIVI_HOME`
+(leading over the `home` field in `~/.config/aivi.json`). It holds
+`config.json`, `.env`, and `state/` (SQLite, the search index, dreaming
+transcripts). There is no config-path option. The live `config.json` is the
+file
 you and aivi edit, so it never goes under version control; a home that lives
 in a git repository tracks only a template, and the first run copies it. In
 this repository `npm run aivi` sets `AIVI_HOME=example`; that home has every
 feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` and the two Slack
 tokens in `example/.env` unless the `modules.discord` and `modules.slack`
 blocks are removed or set to `false`. The tracked template is
-`example/aivi.example.json`:
+`example/config.example.json`:
 
 ```sh
-cp example/aivi.example.json example/aivi.json   # then put your ids in it
+cp example/config.example.json example/config.json   # then put your ids in it
 ```
 
-`aivi.json` is installation configuration and describes the projects too; a
+`config.json` is installation configuration and describes the projects too; a
 project's checkout carries nothing of aivi's ([projects](projects.md)).
 OpenCode's own files stay in their native locations.
 Unknown fields and invalid combinations fail validation; nothing silently falls
 back to another project or resource pool.
+
+Two more directories live in the home, owned by the CLI rather than aivi:
+
+- `app/` — the installed packages: one `package.json` and lockfile whose
+  dependencies are the server (`@aivi/host`) and the enabled channel plugins.
+  `config.json` records what is *desired*; `app/package.json` records what is
+  *installed*.
+- `runtime/` — a managed Node installation, only when the machine's Node does
+  not satisfy the server's requirement.
+
 
 Paths in installation config and in task files resolve relative to the home.
 Project source paths resolve relative to the checkout, `<home>/projects/<id>/source`.
@@ -55,9 +67,8 @@ containing facts is the wrong file growing.
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
-| `host.auth.mode` | `token` (default): callers send `AIVI_TOKEN` as a bearer token. `none`: trust the network (loopback, Tailscale, LAN you control) |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
-| `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, always with `AIVI_TOKEN` in its environment, so a new plugin build is live and the plugin can authenticate. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
+| `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
 | `projectDefaults.linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
@@ -70,7 +81,7 @@ containing facts is the wrong file growing.
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
-| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/aivi.example.json` writes the default out explicitly, in its `maintenance` pool |
+| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/config.example.json` writes the default out explicitly, in its `maintenance` pool |
 | `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that fast-forwards every project's `source/` to its upstream and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
 | `scheduler.timezone` | Host-wide default for derived schedules (`retention`, `projects-sync`); default the host's own timezone. A schedule's own `timezone` wins over it |
 | `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). A bare operation name is shorthand for its invocation: `"task": "system.check"` is `{ "kind": "invocation", "name": "system.check" }`; use the explicit shape when the operation takes `args`. The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
@@ -86,7 +97,7 @@ and exists so such a capability can be *scheduled* like any other job.
 
 | Kind | Fields | Outcome |
 | --- | --- | --- |
-| `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`AIVI_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
+| `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
 | `prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](opencode.md) |
 | `invocation` | `name` (the operation to invoke), `args` (opaque to everyone but the operation, which parses them and fails the run when they are wrong) | Runs the operation that *claimed* the name. Each name is claimed exactly once: a second claimant is a fatal configuration error at startup, and a run of an unclaimed name fails with its name in the reason |
 
@@ -305,23 +316,33 @@ authorised with the primary's app-actor token
 `npm run aivi -- --help` lists them; what each does and when to use it is in
 [operations](operations.md#jobs-and-runs-from-the-command-line).
 
+## Update channel
+
+`update.channel` picks what `aivi update` resolves. `stable` (the npm `latest`
+dist-tag) is the only channel: a nightly would mean releasing from main, which
+is not wanted. The enum exists so a future channel is a schema change, not a
+redesign. There is no rollback: `aivi update` stops the server, installs,
+restarts and probes `/health`; sessions resume because state is SQLite and
+OpenCode's own.
+
 ## Secrets
 
 Secrets never live in JSON files. They come from the process environment, and
 the CLI loads dotenv-style files without overriding variables that are already
-set: `<home>/.env`. `fnox exec` works the same way. Variables: `AIVI_TOKEN`, `DISCORD_BOT_TOKEN`,
+set: `<home>/.env`. `fnox exec` works the same way. Variables: `DISCORD_BOT_TOKEN`,
 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` (Slack's bot and app-level tokens),
 `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), and for
 Linear the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
 `LINEAR_WEBHOOK_SECRET` (the primary app) plus `LINEAR_<APP>_…` per extra app
 ([Linear](#linear)).
 
-With `host.auth.mode: "token"`, `AIVI_TOKEN` (at least 24 characters) must be
-present in the host environment and in the OpenCode server's environment for the
-plugin. With `mode: "none"` no token is needed anywhere; the host logs a warning
-when it binds beyond loopback without auth. Per-device tokens and SSO (via a
-reverse proxy) are planned as further modes. The plugin never receives an API
-for reading host secrets.
+The host API itself takes no token: auth is `none`, commands are open. A bearer
+token only *identifies* the caller (whose job, whose link, whose memory — a
+person token); an unknown or missing one is anonymous and still served. The
+host logs a warning when it binds beyond loopback, because anyone who can reach
+the address can use the commands. The plugin never receives an API for reading
+host secrets. A person's own credentials live in the client config
+(`~/.config/aivi.json`), owned by [people](people.md).
 
 The host discovers OpenCode through the SDK's service registration
 (`~/.local/state/opencode/service.json`), so the random service port and its
@@ -336,7 +357,7 @@ One JSON schema covers the whole file; it is generated into
 `schemas/aivi.schema.json` by `npm run schema`, and `npm run check` fails when
 it is stale. Point your editor at it for autocompletion and field
 descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
-config file) in `aivi.json`. Runtime validation additionally checks cron
+config file) in `config.json`. Runtime validation additionally checks cron
 expressions, timezones, uniqueness, that every project override has a
 checkout, that every enabled module and system job names an existing resource
 pool, and Linear app references.

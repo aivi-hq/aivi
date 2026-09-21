@@ -11,23 +11,25 @@ Use Node 26 and npm. From the repository root:
 ```sh
 npm ci
 npm run check
-cp example/aivi.example.json example/aivi.json
+cp example/config.example.json example/config.json
 npm run aivi -- config check
 ```
 
-There is no build step: every package runs from its TypeScript sources through
-Node's type stripping, and `npm run typecheck` (`tsc --noEmit`) is a check.
+Packages compile to `dist/` with TypeScript 7 (`npm run build`, incremental);
+`npm run aivi` builds first and runs the compiled CLI — the same artifact npm
+publishes, so local and installed behavior are identical. `npm run typecheck`
+(`tsc --noEmit`) checks the sources against the built declarations.
 
-aivi reads one **home** directory: `aivi.json`, `.env`, `projects/`, `memory/`
+aivi reads one **home** directory: `config.json`, `.env`, `projects/`, `memory/`
 and `state/` together. Installed copies use `~/.aivi`; in this repo `npm run
 aivi` points `AIVI_HOME` at `example/`, a complete home with everything
-enabled. The live `example/aivi.json` is git-ignored — it is the config you
-edit — and `example/aivi.example.json` is the tracked template the checks
+enabled. The live `example/config.json` is git-ignored — it is the config you
+edit — and `example/config.example.json` is the tracked template the checks
 read. Its [README](../example/README.md) lists what is in there, including
 how to provide or disable Discord and Slack.
 
-Start the host. Either have fnox inject an `AIVI_TOKEN` of at least 24
-characters, or set `host.auth.mode` to `"none"` for a trusted machine:
+Start the host. No token is needed: commands are open, and a bearer only
+identifies the caller (see [secrets](configuration.md#secrets)):
 
 ```sh
 npm run aivi -- serve
@@ -49,9 +51,8 @@ The CLI sends searches to the running host; it does not open another index.
 
 ## The librarian in OpenCode
 
-1. With `host.auth.mode: "token"`, export the same `AIVI_TOKEN` in the OpenCode
-   **server** environment and `opencode service restart`; with
-   `opencode.lifecycle: "own"` (the default) `aivi serve` does both for you.
+1. With `opencode.lifecycle: "own"` (the default) `aivi serve` restarts the
+   service for you after a plugin change.
    Whatever started the service, restart it after every change to the plugin
    or the host client: the long-running service keeps `@aivi/host/client` in
    its module cache, so a plugin that registers a new tool can still call a
@@ -82,7 +83,7 @@ described: [projects](projects.md).
 ## A chat channel
 
 For Discord, fill in the IDs in the `modules.discord` block of
-`example/aivi.json`, put `DISCORD_BOT_TOKEN` in `example/.env`, and run
+`example/config.json`, put `DISCORD_BOT_TOKEN` in `example/.env`, and run
 `serve` as above (slash commands are registered at start)
 ([Discord setup](discord.md#setup)). For Slack, create the app from the
 manifest in [Slack setup](slack.md#setup), fill in the `modules.slack` block,

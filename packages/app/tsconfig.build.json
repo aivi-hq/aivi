@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.build.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../core/tsconfig.build.json" },
+    { "path": "../host/tsconfig.build.json" },
+    { "path": "../knowledge/tsconfig.build.json" },
+    { "path": "../browser/tsconfig.build.json" },
+    { "path": "../channel-discord/tsconfig.build.json" },
+    { "path": "../channel-slack/tsconfig.build.json" },
+    { "path": "../linear/tsconfig.build.json" }
+  ]
+}

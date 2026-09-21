@@ -13,3 +13,7 @@ aivi.json
 # The live home's projects are its own checkouts: never repo content, never linted.
 example/projects/
 example/state/
+
+# Build output: compiled packages (every exports map points at dist/) and
+# their build info.
+dist/

@@ -103,7 +103,7 @@ function threadName(text: string): string {
 function requireToken(): string {
   const token = process.env.DISCORD_BOT_TOKEN ?? process.env.DISCORD_TOKEN;
   if (!token)
-    throw new ConfigurationError('DISCORD_BOT_TOKEN is required (a .env next to aivi.json is loaded automatically)');
+    throw new ConfigurationError('DISCORD_BOT_TOKEN is required (a .env next to config.json is loaded automatically)');
   return token;
 }
 

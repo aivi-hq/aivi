@@ -1,0 +1,31 @@
+{
+  "name": "aivi",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "aivi": "./dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=26.0.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "tsc -b ../../tsconfig.build.json"
+  },
+  "dependencies": {
+    "plist": "5.0.0",
+    "semver": "7.8.5",
+    "zod": "4.1.13"
+  }
+}

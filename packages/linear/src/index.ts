@@ -12,6 +12,7 @@ export type { LinearMcpOptions } from './mcp.ts';
 export { LinearMcp } from './mcp.ts';
 export type { LinearAppRuntime } from './module.ts';
 export {
+  clientFor,
   conversationFor,
   conversationParts,
   createLinearModule,

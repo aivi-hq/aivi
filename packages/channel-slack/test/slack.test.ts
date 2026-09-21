@@ -240,7 +240,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   const opencode = await fakeOpenCode(t, 'Answer');
   const loaded = {
     config: configSchema.parse({ version: 1, opencode: { url: opencode.url } }),
-    path: '/aivi.json',
+    path: '/config.json',
     projects: [{ id: 'demo', directory: '/demo' }],
     sources: [],
   };
@@ -442,7 +442,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
 test('a queued message shows the hourglass until its turn starts; a turn that never started asks to resend', async t => {
   const store = new Store(':memory:');
   const woken = new Set<() => void>();
-  const loaded = { config: configSchema.parse({ version: 1 }), path: '/aivi.json', projects: [], sources: [] };
+  const loaded = { config: configSchema.parse({ version: 1 }), path: '/config.json', projects: [], sources: [] };
   const slack = fakeConnection();
   const abort = new AbortController();
   const services: HostServices = {
@@ -504,7 +504,7 @@ test('progress: the placeholder goes into the thread, stays quiet inside its win
   const opencode = await fakeOpenCode(t, 'Answer', () => gate);
   const loaded = {
     config: configSchema.parse({ version: 1, opencode: { url: opencode.url } }),
-    path: '/aivi.json',
+    path: '/config.json',
     projects: [],
     sources: [],
   };
@@ -559,7 +559,7 @@ test('progress: the placeholder goes into the thread, stays quiet inside its win
 
 test('progress when the turn cannot run: the notice edits the placeholder instead of posting beside it', async t => {
   const store = new Store(':memory:');
-  const loaded = { config: configSchema.parse({ version: 1 }), path: '/aivi.json', projects: [], sources: [] };
+  const loaded = { config: configSchema.parse({ version: 1 }), path: '/config.json', projects: [], sources: [] };
   const slack = fakeConnection();
   const abort = new AbortController();
   const services: HostServices = {
@@ -616,7 +616,7 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
   const opencode = await fakeOpenCode(t, 'Answer', () => gate);
   const loaded = {
     config: configSchema.parse({ version: 1, opencode: { url: opencode.url } }),
-    path: '/aivi.json',
+    path: '/config.json',
     projects: [],
     sources: [],
   };

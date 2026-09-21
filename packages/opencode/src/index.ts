@@ -9,7 +9,7 @@ import { Plugin } from '@opencode/plugin';
 const DEFAULT_HOST_URL = 'http://127.0.0.1:4100';
 
 /**
- * The aivi home, which holds `<home>/soul.md` and `<home>/aivi.json`. The aivi
+ * The aivi home, which holds `<home>/soul.md` and `<home>/config.json`. The aivi
  * home is the OpenCode location, so the default needs no configuration;
  * `AIVI_HOME`, or the plugin's `soul` option (a file: its directory is the
  * home), say otherwise.
@@ -21,7 +21,7 @@ function aiviHome(options: Record<string, unknown>, location: { directory?: stri
 }
 
 /**
- * The persona name, read straight out of `<home>/aivi.json` rather than through
+ * The persona name, read straight out of `<home>/config.json` rather than through
  * the host: the plugin is a guest in someone else's process and must state who
  * aivi is even while the operator is mid-edit on a config the host would
  * refuse. `''` when there is nothing to say.
@@ -29,7 +29,7 @@ function aiviHome(options: Record<string, unknown>, location: { directory?: stri
 function personaName(home: string): string {
   let identity: { name?: unknown } | undefined;
   try {
-    identity = (JSON.parse(readFileSync(join(home, 'aivi.json'), 'utf8')) as { identity?: typeof identity }).identity;
+    identity = (JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) as { identity?: typeof identity }).identity;
   } catch {
     return '';
   }
@@ -266,7 +266,7 @@ export default Plugin.define({
       let watcher: FSWatcher | undefined;
       try {
         watcher = watch(home, (_event, filename) => {
-          if (filename && filename !== 'soul.md' && filename !== 'aivi.json') return;
+          if (filename && filename !== 'soul.md' && filename !== 'config.json') return;
           clearTimeout(timer);
           timer = setTimeout(() => void ctx.agent.reload(), 100);
         });

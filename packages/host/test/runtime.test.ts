@@ -94,7 +94,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
     config.scheduler,
     createExecutor(
       {
-        path: '/aivi.json',
+        path: '/config.json',
         config,
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -135,7 +135,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
     config.scheduler,
     createExecutor(
       {
-        path: '/aivi.json',
+        path: '/config.json',
         config,
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -180,7 +180,7 @@ test('a turn that times out while session.wait is pending reports the timeout, n
   const config = configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } });
   const execute = createExecutor(
     {
-      path: '/aivi.json',
+      path: '/config.json',
       config,
       projects: [],
       sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -222,7 +222,7 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
     config.scheduler,
     createExecutor(
       {
-        path: '/aivi.json',
+        path: '/config.json',
         config,
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -268,7 +268,7 @@ test('a dreaming job persists its session id before the first request and blocks
     config.scheduler,
     createExecutor(
       {
-        path: '/aivi.json',
+        path: '/config.json',
         config,
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -291,7 +291,7 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   t.after(() => store.close());
   const config = configSchema.parse({ version: 1, stateDirectory: '/tmp' });
   const loaded = {
-    path: '/aivi.json',
+    path: '/config.json',
     config,
     projects: [],
     sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -335,7 +335,7 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
 test('shell tasks inherit the host environment minus aivi secrets and .env keys; task env is merged on top', async t => {
   const store = new Store(':memory:');
   const previous = { AIVI_TOKEN: process.env.AIVI_TOKEN, FROM_DOTENV: process.env.FROM_DOTENV };
-  process.env.AIVI_TOKEN = 'host-secret-token-that-is-long';
+  process.env.AIVI_TOKEN = 'not-aivis-secret-anymore';
   process.env.FROM_DOTENV = 'dotenv-secret';
   t.after(() => {
     store.close();
@@ -363,7 +363,7 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
     config.scheduler,
     createExecutor(
       {
-        path: '/aivi.json',
+        path: '/config.json',
         config,
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -384,7 +384,7 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
   const done = store.run(job.id);
   assert.equal(done.state, 'succeeded');
   assert.deepEqual(JSON.parse((done.result as { stdout: string }).stdout), {
-    token: null,
+    token: 'not-aivis-secret-anymore',
     dotenv: null,
     path: 'string',
     extra: 'from-task',
@@ -405,7 +405,7 @@ test('a command that cannot start fails instead of blocking capacity', async t =
     config.scheduler,
     createExecutor(
       {
-        path: '/aivi.json',
+        path: '/config.json',
         config,
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -446,7 +446,7 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
     config.scheduler,
     createExecutor(
       {
-        path: '/aivi.json',
+        path: '/config.json',
         config,
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
@@ -473,7 +473,7 @@ test('invocations dispatch to their claimant: the host claims its five, an uncla
   const config = configSchema.parse({ version: 1 });
   const tasks = new TaskRegistry();
   const execute = createExecutor(
-    { path: '/aivi.json', config, projects: [], sources: [] },
+    { path: '/config.json', config, projects: [], sources: [] },
     {
       store,
       events: quiet,

@@ -20,6 +20,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   // Rebuild the v1 shape by hand: one schedule-less job in the old `jobs` table.
   old.db.exec(`
     DROP TABLE runs; DROP TABLE jobs; DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job;
+    DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
     CREATE TABLE schedules(id TEXT PRIMARY KEY, spec TEXT NOT NULL, fingerprint TEXT NOT NULL,
       next_at INTEGER NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
@@ -35,7 +36,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   const upgraded = new Store(path);
   t.after(() => upgraded.close());
   assert.equal(upgraded.run('run-1').state, 'queued');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 7);
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 9);
   assert.equal(upgraded.run('run-1').report, null);
   assert.equal(upgraded.history('run-1')[0]!.action, 'enqueued');
   assert.equal(upgraded.acquireLease('discord:one', 'discord', 'local-model', 1, pools), true);
@@ -59,6 +60,7 @@ test('schema v7 gives every one-off its own job definition and keeps schedule an
       source TEXT NOT NULL DEFAULT 'config' CHECK(source IN ('config','agent')));
     INSERT INTO schedules SELECT id,spec,fingerprint,next_at,1,source FROM jobs;
     DROP TABLE jobs; DROP TABLE runs;
+    DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
       task TEXT NOT NULL, resource TEXT NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','blocked','cancelled')),
@@ -306,7 +308,7 @@ test('system jobs are seeded by sync, listed with the others, and removed when t
     () => store.syncJobs([{ ...daily(), id: 'retention' }], [], start),
     /already exists with source system/,
   );
-  assert.throws(() => store.setJobEnabled('retention', false), /defined in aivi.json/);
+  assert.throws(() => store.setJobEnabled('retention', false), /defined in config.json/);
   store.materializeDue(store.job('retention').nextAt!);
   const queued = store.runs({ jobId: 'retention' })[0]!;
   store.syncJobs([daily()], [], start + 1);
@@ -365,8 +367,8 @@ test('agent-created jobs live beside config ones: sync never touches them, mutat
     () => store.syncJobs([{ ...daily(), id: 'agent-1' }], [], start + 2),
     /already exists with source agent/,
   );
-  assert.throws(() => store.setJobEnabled('daily', false), /defined in aivi.json/);
-  assert.throws(() => store.removeJob('daily'), /defined in aivi.json/);
+  assert.throws(() => store.setJobEnabled('daily', false), /defined in config.json/);
+  assert.throws(() => store.removeJob('daily'), /defined in config.json/);
   assert.throws(() => store.addJob(agent.spec, 'agent', start), /already exists/);
 
   // Pause cancels queued runs; resume re-anchors to the next future occurrence.
@@ -458,4 +460,30 @@ test('prune deletes finished runs with their audit rows and finished one-off job
   assert.equal(store.job(stuck.jobId).state, 'active');
   assert.equal(store.run(fresh.id).state, 'succeeded');
   assert.equal(store.job('daily').state, 'active', 'recurring definitions stay');
+});
+
+test('every token belongs to a person and is stored only as a hash', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const nemo = store.createPerson({ name: 'Nemo', email: 'nemo@example.com' }, start);
+  assert.match(nemo.id, /^person-[0-9a-f]{8}$/);
+  assert.deepEqual(store.person(nemo.id), nemo);
+  assert.equal(store.person('person-none'), null);
+  const { token, secret } = store.mintToken(nemo.id, 'laptop', start + 1000);
+  assert.match(secret, /^aivi-[0-9a-f]{32}$/);
+  assert.notEqual(token.hash, secret, 'the secret never sits in the database');
+  assert.deepEqual(store.personForToken(secret), { person: nemo, token });
+  assert.equal(store.personForToken('aivi-never-minted'), null);
+  // The foreign key is the rule: no token row without its person.
+  assert.throws(
+    () =>
+      store.db
+        .prepare('INSERT INTO tokens(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
+        .run('x'.repeat(64), 'person-none', 'ghost', start),
+    /FOREIGN KEY/,
+  );
+  assert.throws(() => store.mintToken('person-none', 'ghost'), /Unknown person/);
+  assert.deepEqual(store.people(), [nemo]);
+  const ada = store.createPerson({ name: 'Ada' }, start + 1);
+  assert.deepEqual(store.people(), [nemo, ada]);
 });

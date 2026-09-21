@@ -7,9 +7,9 @@ import { loadConfig, reportSchema, taskSchema } from '@aivi/core';
 const example = resolve(import.meta.dirname, '../../../example');
 
 // The README sends newcomers through this home; a schema change that breaks it must fail here, not on their
-// machine. The tests load the tracked template: the live example/aivi.json is the developer's own, ignored config.
+// machine. The tests load the tracked template: the live example/config.json is the developer's own, ignored config.
 test('the example home template loads through the real loaders with every feature enabled', async () => {
-  const loaded = await loadConfig(join(example, 'aivi.example.json'));
+  const loaded = await loadConfig(join(example, 'config.example.json'));
   assert.equal(loaded.config.stateDirectory, join(example, 'state'), 'state lives in the home');
   assert.ok(loaded.sources.length > 0);
   const discord = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;

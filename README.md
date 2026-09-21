@@ -27,14 +27,16 @@ npm run check
 npm run aivi -- serve
 ```
 
-`npm run aivi` uses `example/`, a complete home with everything enabled; there
-is no build step. From here on: [getting started](docs/getting-started.md)
+`npm run aivi` uses `example/`, a complete home with everything enabled; it
+builds first (incremental, TypeScript 7) and runs the compiled `dist/` — the
+same artifact npm publishes. From here on: [getting started](docs/getting-started.md)
 (searching, the librarian in OpenCode, a project, a chat channel).
 
 ## Packages
 
 | Package                 | Responsibility                                                                                                                                                                                     |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aivi`                  | The thin CLI: installs the server into `<home>/app` (`server create`), forwards every command to it, runs it in the background (`service`), updates it (`update`/`upgrade`)                            |
 | `@aivi/app`             | `aivi` CLI; composes configured modules and launches the host                                                                                                                                      |
 | `@aivi/core`            | Config and access-policy schemas, knowledge kinds, contracts, logger                                                                                                                               |
 | `@aivi/host`            | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection, session driver, dreaming, the channel module contract with the shared inbox, engine and turn runner, report routing |
@@ -75,6 +77,14 @@ unscheduled ideas: `docs/backlog/`.
 `npm run agentic:verify` runs Biome and `npm run check` (build, tests against
 real SQLite, real QMD and the real v2 client on a mock server, schema check,
 CLI and daemon smoke). Live gates: `npm run live:opencode`, `npm run smoke:browser`.
+
+## Releases
+
+Versions are independent per package, managed with
+[Changesets](.changeset/README.md): run `npx changeset` in a PR that changes a
+package, describe the change and the bump level. Merging to `main` opens a
+Version PR; merging that publishes the changed packages to npm with
+provenance — no tags, no manual publishing.
 
 New here? [Getting started](docs/getting-started.md) to run it,
 [operations](docs/operations.md) to keep it running,

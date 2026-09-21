@@ -48,8 +48,9 @@ a server is alive when it answers HTTP on its registered endpoint, whatever
 its version — the SDK's replace-on-mismatch machinery is never allowed to
 kill a running server, and version skew is logged, never fatal. When a server
 release moves an endpoint aivi uses, bump the family in the same commit.
-There is no build: packages run from `src/*.ts` (type stripping),
-so keep to erasable TypeScript syntax and `.ts` import specifiers. Test
+Packages compile to `dist/` with TypeScript 7 (`npm run build`); dev and
+publish run the same compiled artifact, so keep to erasable TypeScript syntax
+and `.ts` import specifiers. Test
 lifecycle, persistence, and configuration changes at the actual boundaries they
 affect. Live OpenCode, Discord and macOS Chrome verification are
 separate gates; mock tests do not establish those.

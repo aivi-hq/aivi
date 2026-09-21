@@ -11,7 +11,7 @@ that project's memory in the home.
 
 ```
 <home>/
-  aivi.json                 org config; projects and the docs convention
+  config.json                 org config; projects and the docs convention
   memory/facts.md           org memory
   projects/<id>/            everything about one project:
     source/                   the clean git checkout
@@ -34,7 +34,7 @@ and per project, both with source id `memory`, which is reserved).
 
 ## Configuration
 
-Most projects need no configuration at all. `projects.<id>` in `aivi.json`
+Most projects need no configuration at all. `projects.<id>` in `config.json`
 only overrides:
 
 ```json

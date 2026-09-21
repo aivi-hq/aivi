@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type {
   BrowserService,
@@ -7,6 +6,7 @@ import type {
   LoadedConfig,
   Logger,
   ModuleHealth,
+  Person,
   Status,
 } from '@aivi/core';
 import {
@@ -14,6 +14,8 @@ import {
   getLogger,
   jobRequestSchema,
   knowledgeKindSchema,
+  personCreateSchema,
+  personTokenCreateSchema,
   projectSummaries,
   searchSchema,
   selectSources,
@@ -22,20 +24,17 @@ import {
 import { type JobHandler, JobRefused } from './jobs.ts';
 import type { Store } from './store.ts';
 
-export type HostAuth = { mode: 'none' } | { mode: 'token'; token: string };
-
-export const MIN_TOKEN_LENGTH = 24;
-
-/** Build the auth policy from config plus environment; fails fast with an actionable message. */
-export function resolveHostAuth(mode: 'none' | 'token', token: string | undefined): HostAuth {
-  if (mode === 'none') return { mode: 'none' };
-  if (!token)
-    throw new Error(
-      'AIVI_TOKEN is required while host.auth.mode is "token". Set it in the environment (fnox) or set host.auth.mode to "none" on a trusted network.',
-    );
-  if (token.length < MIN_TOKEN_LENGTH)
-    throw new Error(`AIVI_TOKEN must contain at least ${MIN_TOKEN_LENGTH} characters`);
-  return { mode: 'token', token };
+/**
+ * The person a request's bearer names, for association (whose job, whose link,
+ * whose memory). Auth is `none`: a request never needs a bearer, and an
+ * unknown or absent one stays anonymous — only endpoints whose answer must be
+ * attached to a person (whoami, link creation) reject it.
+ */
+export function bearerPerson(store: Store, authorization: string | null | undefined): Person | null {
+  const header = authorization ?? '';
+  const secret = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : header;
+  if (!secret) return null;
+  return store.personForToken(secret)?.person ?? null;
 }
 
 export function status(store: Store, loaded: LoadedConfig, now = Date.now(), modules: ModuleHealth[] = []): Status {
@@ -100,7 +99,6 @@ export class PublicRoutes {
 export interface HostServerOptions {
   store: Store;
   loaded: LoadedConfig;
-  auth: HostAuth;
   knowledge?: KnowledgeService | undefined;
   browser?: BrowserService | undefined;
   /** `POST /v1/jobs`; absent when the host runs without one (tests). */
@@ -123,7 +121,6 @@ const MAX_PUBLIC_BODY = 1024 * 1024;
 export function createHostServer({
   store,
   loaded,
-  auth,
   knowledge,
   browser,
   jobs,
@@ -133,13 +130,6 @@ export function createHostServer({
   routes,
   log = getLogger(['aivi']),
 }: HostServerOptions) {
-  const expected = auth.mode === 'token' ? Buffer.from(`Bearer ${auth.token}`) : undefined;
-  const authorized = (request: IncomingMessage) => {
-    if (!expected) return true;
-    const provided = Buffer.from(request.headers.authorization ?? '');
-    return provided.length === expected.length && timingSafeEqual(provided, expected);
-  };
-
   return createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
     response.setHeader('cache-control', 'no-store');
@@ -159,11 +149,29 @@ export function createHostServer({
       handlePublic(request, publicRoute, send);
       return;
     }
-    if (!authorized(request)) {
-      send(401, { error: 'Unauthorized' });
+
+    if (url.pathname === '/v1/people' || (url.pathname.startsWith('/v1/people/') && url.pathname.endsWith('/tokens'))) {
+      // Managing people names who you are and requires the operator role; the
+      // store-direct path on the server itself is the operator at the console.
+      const person = bearerPerson(store, request.headers.authorization);
+      if (!person?.roles.includes('operator')) {
+        send(
+          person ? 403 : 401,
+          person
+            ? { error: 'Only an operator manages people' }
+            : { error: 'Managing people names who you are; send a bearer token' },
+        );
+        return;
+      }
+      if (url.pathname === '/v1/people') {
+        if (request.method === 'POST') handlePeople(request, response, send);
+        else if (request.method === 'GET') send(200, store.people());
+        else send(405, { error: 'Use GET to list people or POST to create one' });
+      } else {
+        handlePersonToken(url, request, response, send);
+      }
       return;
     }
-
     if (url.pathname === '/v1/browser') {
       handleBrowser(request, response, send);
       return;
@@ -182,6 +190,17 @@ export function createHostServer({
     }
     if (request.method !== 'GET') {
       send(405, { error: 'Method not allowed' });
+      return;
+    }
+    if (url.pathname === '/v1/whoami') {
+      const person = bearerPerson(store, request.headers.authorization);
+      if (!person) {
+        send(401, { error: 'whoami names a person; send a bearer token that resolves to one' });
+        return;
+      }
+      // The roles are the person's own, read from the store; whoami still
+      // refuses to name an anonymous caller.
+      send(200, { person: { id: person.id, name: person.name }, roles: person.roles });
       return;
     }
     if (url.pathname === '/v1/status') {
@@ -372,6 +391,66 @@ export function createHostServer({
     })().catch(error => {
       log.warn('jobs.interrupted', { error });
       if (!response.headersSent) send(400, { error: 'Job request interrupted' });
+    });
+  }
+
+  function handlePeople(request: IncomingMessage, response: ServerResponse, send: Send) {
+    if (request.method !== 'POST') {
+      send(405, { error: 'Use POST to create a person' });
+      return;
+    }
+    void (async () => {
+      const body = await readJson(request, MAX_JOB_BODY);
+      if (typeof body === 'string') {
+        send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Person request is too large' : body });
+        return;
+      }
+      const parsed = personCreateSchema.safeParse(body);
+      if (!parsed.success) {
+        send(400, {
+          error: `Invalid person: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+        });
+        return;
+      }
+      send(
+        200,
+        store.createPerson({
+          name: parsed.data.name,
+          email: parsed.data.email ?? null,
+          ...(parsed.data.roles ? { roles: parsed.data.roles } : {}),
+        }),
+      );
+    })().catch(() => {
+      if (!response.headersSent) send(400, { error: 'Person request interrupted' });
+    });
+  }
+
+  function handlePersonToken(url: URL, request: IncomingMessage, response: ServerResponse, send: Send) {
+    if (request.method !== 'POST') {
+      send(405, { error: 'Use POST to mint a person token' });
+      return;
+    }
+    void (async () => {
+      const personId = decodeURIComponent(url.pathname.slice('/v1/people/'.length, -'/tokens'.length));
+      if (!store.person(personId)) {
+        send(404, { error: `Unknown person ${personId}` });
+        return;
+      }
+      const body = await readJson(request, MAX_JOB_BODY);
+      if (typeof body === 'string') {
+        send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Token request is too large' : body });
+        return;
+      }
+      const parsed = personTokenCreateSchema.safeParse(body);
+      if (!parsed.success) {
+        send(400, {
+          error: `Invalid token request: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+        });
+        return;
+      }
+      send(200, store.mintToken(personId, parsed.data.label));
+    })().catch(() => {
+      if (!response.headersSent) send(400, { error: 'Token request interrupted' });
     });
   }
 

@@ -10,7 +10,7 @@ import { Store } from '../src/store.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 const loaded = {
-  path: '/aivi.json',
+  path: '/config.json',
   config: configSchema.parse({ version: 1 }),
   projects: [
     { id: 'demo', directory: '/home/projects/demo' },

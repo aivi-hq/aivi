@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
-import type { ConsoleFormat, LinearConfig, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
+import type { ConsoleFormat, LoadedConfig, Logger, LogLevel, RunState } from '@aivi/core';
 import {
   addProject,
   configureLogging,
@@ -28,15 +28,19 @@ import {
   writeProjectLinear,
 } from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
-import { connectOpenCode, createHostClient, resolveHostAuth, runHost, Store, status } from '@aivi/host';
+import { connectOpenCode, createHostClient, runHost, Store, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
-import type { LinearClient } from '@aivi/linear';
 import * as p from '@clack/prompts';
 import { z } from 'zod';
 
 const usage = `aivi <command>
 
   serve                        Start the host: API, scheduler, knowledge, configured modules
+  server create                First run: init the home, create your person and its token;
+                               where will you use aivi? [--use this-machine|another] [--name TEXT] skips the prompts
+  people create NAME           A person for records to belong to [--email E] [--role operator]
+  people list                  People and their ids
+  people token PERSON          Mint a bearer for that person [--label L]; shown once
   status                       Inspect durable queue counts
   config check                 Validate core and per-project configuration
   sources [--project ID]       List configured knowledge sources
@@ -75,13 +79,13 @@ const usage = `aivi <command>
   linear resolve ID            Release a blocked worker --reason TEXT --confirm-stopped
   opencode check               Probe the OpenCode v2 service the host would use
 
-Home: ~/.aivi (override with AIVI_HOME) holds aivi.json, .env, and state/.
-The live aivi.json is yours and aivi's to edit; it stays out of version control.
+Home: ~/.aivi (override with AIVI_HOME) holds config.json, .env, and state/.
+The live config.json is yours and aivi's to edit; it stays out of version control.
 Options: --log-level debug|info|warn|error
          --log-format auto|pretty|json (auto: pretty on a terminal, JSON lines when piped;
          the log file under state/logs/ is always JSON lines, so jq never needs to know)
-Secrets come from the environment: AIVI_TOKEN (host.auth.mode "token"),
-DISCORD_BOT_TOKEN, SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD
+Secrets come from the environment: DISCORD_BOT_TOKEN,
+SLACK_BOT_TOKEN/SLACK_APP_TOKEN, OPENCODE_USERNAME/OPENCODE_PASSWORD
 (only with opencode.url).
 <home>/.env is loaded without overriding existing variables; fnox exec works too.
 No secrets in config files.
@@ -118,13 +122,18 @@ async function main(): Promise<void> {
       reason: { type: 'string' },
       'confirm-stopped': { type: 'boolean' },
       confirm: { type: 'boolean' },
+      use: { type: 'string' },
+      name: { type: 'string' },
+      email: { type: 'string' },
+      label: { type: 'string' },
+      role: { type: 'string' },
     },
   });
   if (values.help || !positionals.length) {
     console.log(usage);
     return;
   }
-  // One home holds everything: aivi.json, .env, state/. Paths in the config resolve against it.
+  // One home holds everything: config.json, .env, state/. Paths in the config resolve against it.
   const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
   // Logging is configured once, here, for the whole process: stderr mirrors the run — pretty
   // on a terminal, JSON lines when piped — and serve additionally appends JSON lines to
@@ -138,17 +147,21 @@ async function main(): Promise<void> {
     ...(positionals[0] === 'serve' ? { logFile: resolve(home, 'state', 'logs', 'aivi.log') } : {}),
   });
   const log = getLogger(['aivi']);
-  const configPath = resolve(home, 'aivi.json');
-  if (!existsSync(configPath))
-    throw new Error(`No aivi.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
-  const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
-  const loaded = await loadConfig(configPath);
+  const configPath = resolve(home, 'config.json');
   const [command = '', subcommand, argument] = positionals;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  if (command === 'server' && subcommand === 'create') {
+    print(await serverCreate({ home, configPath, use: values.use, name: values.name }));
+    return;
+  }
+  if (!existsSync(configPath))
+    throw new Error(`No config.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
+  const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
+  const loaded = await loadConfig(configPath);
   // The CLI writes to SQLite directly; the running host learns about it through this poke and nothing
   // else, so a poke that cannot be delivered is said out loud rather than swallowed.
   const poke = async () => {
-    await createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN })
+    await createHostClient(hostUrl(loaded))
       .wake()
       .catch(error =>
         console.error(
@@ -161,9 +174,9 @@ async function main(): Promise<void> {
   // flag is asked here, and a flag that is given skips its prompt. The core
   // calls — resolve teams, clone, write the config — are the same ones.
   const projectsCreate = async (): Promise<void> => {
-    if (!linear || !loaded.config.linear) {
+    if (!loaded.config.linear) {
       throw new Error(
-        'The Linear module is not configured in aivi.json (no `linear` block), so there is nothing to set up',
+        'The Linear module is not configured in config.json (no `linear` block), so there is nothing to set up',
       );
     }
     if (!process.stdin.isTTY)
@@ -188,7 +201,7 @@ async function main(): Promise<void> {
       values.id ??
       (await p.text({
         message:
-          "Project id — aivi's name for this checkout: the directory <home>/projects/<id> and the projects.<id> entry in aivi.json. Linear never sees it.",
+          "Project id — aivi's name for this checkout: the directory <home>/projects/<id> and the projects.<id> entry in config.json. Linear never sees it.",
         placeholder: suggested,
         validate: value => {
           const v = (value ?? '').trim();
@@ -208,7 +221,8 @@ async function main(): Promise<void> {
       if (p.isCancel(picked)) return stop('no app chosen');
       app = picked;
     }
-    const client = await linearClientFor(linear, linearConfig, app, log);
+    const linear = await import('@aivi/linear');
+    const client = await linear.clientFor(linearConfig, app, log);
     const fetchSpinner = p.spinner();
     fetchSpinner.start('Asking the app which teams it can see');
     let teams: Awaited<ReturnType<typeof client.listTeams>>;
@@ -322,11 +336,10 @@ async function main(): Promise<void> {
   };
 
   // A modules block that is present and not false enables its module; the schema checked its pool.
+  // The packages themselves load lazily, only in the commands that need them, so an installation
+  // without a channel package runs every other command untouched.
   const discordConfig = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
-  const discord = discordConfig ? await import('@aivi/channel-discord') : undefined;
   const slackConfig = typeof loaded.config.modules.slack === 'object' ? loaded.config.modules.slack : undefined;
-  const slack = slackConfig ? await import('@aivi/channel-slack') : undefined;
-  const linear = loaded.config.linear ? await import('@aivi/linear') : undefined;
 
   // Commands that need no database.
   switch (`${command} ${subcommand ?? ''}`.trim()) {
@@ -364,12 +377,13 @@ async function main(): Promise<void> {
       // Resolve the teams before cloning: a wrong key must not leave a half-added project.
       let teamIds: string[] = [];
       if (tokens.length) {
-        if (!linear || !loaded.config.linear) {
+        if (!loaded.config.linear) {
           throw new Error(
-            'The Linear module is not configured in aivi.json (no `linear` block), so there is no app to ask for teams',
+            'The Linear module is not configured in config.json (no `linear` block), so there is no app to ask for teams',
           );
         }
-        const client = await linearClientFor(linear, loaded.config.linear, values.app, log);
+        const linear = await import('@aivi/linear');
+        const client = await linear.clientFor(loaded.config.linear, values.app, log);
         teamIds = linear.resolveTeams(await client.listTeams(), tokens);
       }
       const added = await addProject(configPath, argument, values.id ? { id: values.id } : {});
@@ -414,7 +428,7 @@ async function main(): Promise<void> {
     case 'knowledge search': {
       if (!argument) throw new Error('Provide a search query');
       if (values['core-only'] && values.project?.length) throw new Error('Choose --core-only or --project');
-      const client = createHostClient(hostUrl(loaded), { token: process.env.AIVI_TOKEN });
+      const client = createHostClient(hostUrl(loaded));
       print(
         await client.search({
           query: argument,
@@ -430,7 +444,8 @@ async function main(): Promise<void> {
   const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
   try {
     if (command === 'discord') {
-      if (!discord || !discordConfig) throw new Error('Discord is not enabled in aivi.json (no modules.discord block)');
+      if (!discordConfig) throw new Error('Discord is not enabled in config.json (no modules.discord block)');
+      const discord = await import('@aivi/channel-discord');
       if (subcommand === 'register') {
         await discord.registerDiscordCommands(discordConfig);
         print({ registered: true });
@@ -452,7 +467,8 @@ async function main(): Promise<void> {
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
     }
     if (command === 'slack') {
-      if (!slack || !slackConfig) throw new Error('Slack is not enabled in aivi.json (no modules.slack block)');
+      if (!slackConfig) throw new Error('Slack is not enabled in config.json (no modules.slack block)');
+      const slack = await import('@aivi/channel-slack');
       const inbox = slack.openSlackStore(store, slackConfig);
       if (subcommand === 'status') {
         print({ turns: inbox.list(), leases: store.leases() });
@@ -471,7 +487,8 @@ async function main(): Promise<void> {
       );
     }
     if (command === 'linear') {
-      if (!linear || !loaded.config.linear) throw new Error('Linear is not configured in aivi.json');
+      if (!loaded.config.linear) throw new Error('Linear is not configured in config.json');
+      const linear = await import('@aivi/linear');
       const inbox = linear.openLinearStore(store);
       if (subcommand === 'status') {
         print({ conversations: linear.describeWorkers(inbox), leases: store.leases() });
@@ -522,7 +539,7 @@ async function main(): Promise<void> {
             report,
             resource: fileResource,
           } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
-          // Paths in task files resolve against the home, like paths in aivi.json.
+          // Paths in task files resolve against the home, like paths in config.json.
           // Invocation args belong to the claimant: they resolve when the operation runs.
           if (task.kind === 'prompt') task.directory = resolve(home, task.directory);
           if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home, task.cwd);
@@ -610,13 +627,44 @@ async function main(): Promise<void> {
         }
       }
     }
+    if (command === 'people') {
+      // Managing people is an operator act; the bearer comes from the client config.
+      const client = createHostClient(hostUrl(loaded), {
+        token: readClientConfigToken(),
+      });
+      if (subcommand === 'create') {
+        if (!argument) throw new Error('Provide a name: aivi people create NAME [--email E] [--role operator]');
+        print(
+          await client.createPerson({
+            name: argument,
+            ...(values.email ? { email: values.email } : {}),
+            ...(values.role ? { roles: [values.role] } : {}),
+          }),
+        );
+        return;
+      }
+      if (subcommand === 'list') {
+        print(await client.people());
+        return;
+      }
+      if (subcommand === 'token') {
+        if (!argument) throw new Error('Provide the person id: aivi people token PERSON [--label L]');
+        const minted = await client.createPersonToken(argument, values.label ?? 'cli');
+        print({
+          person: argument,
+          label: minted.token.label,
+          token: minted.secret,
+          next: 'Shown once: this is the bearer for `aivi setup`.',
+        });
+        return;
+      }
+      throw new Error(`Unknown people command.\n${usage}`);
+    }
     if (command === 'serve') {
-      // Fail on a missing token before touching the daemon lock, QMD, or Chrome.
-      const auth = resolveHostAuth(loaded.config.host.auth.mode, process.env.AIVI_TOKEN);
       const modules: HostModule[] = [];
-      if (discord && discordConfig) modules.push(discord.createDiscordModule(discordConfig));
-      if (slack && slackConfig) modules.push(slack.createSlackModule(slackConfig));
-      if (linear && loaded.config.linear) modules.push(linear.createLinearModule(loaded.config.linear));
+      if (discordConfig) modules.push((await import('@aivi/channel-discord')).createDiscordModule(discordConfig));
+      if (slackConfig) modules.push((await import('@aivi/channel-slack')).createSlackModule(slackConfig));
+      if (loaded.config.linear) modules.push((await import('@aivi/linear')).createLinearModule(loaded.config.linear));
       const abort = new AbortController();
       const stop = () => abort.abort();
       process.once('SIGINT', stop);
@@ -626,7 +674,6 @@ async function main(): Promise<void> {
           loaded,
           store,
           modules,
-          auth,
           protectedEnv,
           log,
           signal: abort.signal,
@@ -692,24 +739,6 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
       : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };
 }
-
-/** The client to ask for teams: the one configured app, or the one `--app` names.
- * requireLinearSecrets names the missing LINEAR_* variables when secrets are absent. */
-async function linearClientFor(
-  linear: typeof import('@aivi/linear'),
-  config: LinearConfig,
-  app: string | undefined,
-  log: Logger,
-): Promise<LinearClient> {
-  const ids = Object.keys(config.apps);
-  if (!ids.length) throw new Error('linear.apps is empty: configure a Linear app before pointing projects at teams');
-  if (ids.length > 1 && !app) throw new Error(`Several Linear apps are configured (${ids.join(', ')}): pass --app`);
-  const id = app ?? ids[0]!;
-  if (!config.apps[id]) throw new Error(`Unknown Linear app ${id}. Configured: ${ids.join(', ')}`);
-  const creds = linear.requireLinearSecrets(config).find(cred => cred.id === id);
-  return new linear.LinearClient(creds!, { log });
-}
-
 function hostUrl(loaded: LoadedConfig): string {
   const { bind, port } = loaded.config.host;
   const host = ['0.0.0.0', '::', '[::]'].includes(bind) ? '127.0.0.1' : bind;
@@ -722,3 +751,112 @@ main()
     process.exitCode = 1;
   })
   .finally(() => closeLogging());
+
+/**
+ * `aivi server create` — bootstrap, and the only command that mints identity:
+ * initialize the home, create the operator person and its token (the secret is
+ * printed once; only its hash is kept), then decide where the client setup
+ * happens. The question is asked before anything is minted, so a cancel leaves
+ * nothing behind. A flag given skips its prompt.
+ */
+async function serverCreate(options: {
+  home: string;
+  configPath: string;
+  use?: string | undefined;
+  name?: string | undefined;
+}): Promise<Record<string, unknown>> {
+  const { home, configPath } = options;
+  const use = options.use;
+  if (use !== undefined && use !== 'this-machine' && use !== 'another')
+    throw new Error(`Unknown --use ${use}. Use this-machine or another.`);
+  if (use === undefined && !process.stdin.isTTY)
+    throw new Error(
+      'server create needs an interactive terminal; in a script use: aivi server create --use this-machine|another [--name TEXT]',
+    );
+  if (use === undefined) p.intro('aivi server create');
+  const stopped = (why: string) => {
+    p.cancel(`Setup stopped: ${why}. Nothing was created.`);
+    process.exitCode = 1;
+  };
+  const where =
+    use ??
+    (await p.select({
+      message: 'Where will you use aivi?',
+      options: [
+        { value: 'this-machine', label: 'This machine — set up the client here too' },
+        { value: 'another', label: 'Another machine — print the token and take it there' },
+      ],
+    }));
+  if (p.isCancel(where)) {
+    stopped('no answer');
+    return {};
+  }
+  let name = options.name?.trim();
+  if (!name) {
+    const answered =
+      use === undefined
+        ? await p.text({ message: 'Your name — aivi associates records with it', placeholder: 'Operator' })
+        : undefined;
+    if (answered !== undefined && p.isCancel(answered)) {
+      stopped('no name');
+      return {};
+    }
+    name = (answered as string | undefined)?.trim() || 'Operator';
+  }
+
+  mkdirSync(home, { recursive: true });
+  if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  const loaded = await loadConfig(configPath);
+  const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
+  try {
+    if (store.people().length > 0)
+      throw new Error('This home already has people. Use `aivi people create` for the next person.');
+    const person = store.createPerson({ name, roles: ['operator'] });
+    const { secret } = store.mintToken(person.id, 'operator');
+    const url = hostUrl(loaded);
+    const clientConfig = where === 'this-machine' ? writeClientConfig(url, home, secret) : undefined;
+    if (use === undefined)
+      p.outro(
+        where === 'this-machine'
+          ? `Home ready at ${home}; client config written.`
+          : `Home ready at ${home}; take the token to your laptop.`,
+      );
+    return {
+      home,
+      url,
+      person: person.id,
+      token: secret,
+      ...(clientConfig ? { clientConfig } : {}),
+      next:
+        where === 'this-machine'
+          ? 'Signed in. Run `aivi setup` to install the OpenCode plugins.'
+          : 'On your laptop run `aivi setup` and paste this url and token.',
+    };
+  } finally {
+    store.close();
+  }
+}
+
+/** The bearer for commands that act as the operator over HTTP; absent when this
+ *  machine has not signed in. */
+function readClientConfigToken(): string | undefined {
+  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  if (!existsSync(path)) return undefined;
+  const config = JSON.parse(readFileSync(path, 'utf8')) as { person?: { token?: string } };
+  return config.person?.token;
+}
+
+/** The one client config file, identical shape everywhere; 0600. An existing person token is never overwritten. */
+function writeClientConfig(url: string, home: string, token: string): string {
+  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  let current: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    current = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    if ((current.person as { token?: string } | undefined)?.token)
+      throw new Error(`${path} already signs a person in; delete or edit it before signing in here`);
+  }
+  const next = { ...current, configVersion: 1, url, home, person: { token } };
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return path;
+}

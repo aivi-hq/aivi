@@ -160,7 +160,7 @@ One app in Linear — the 95% case:
    `LINEAR_<FACE>_*` secrets, `apps.<face>: {}`, and `linear.primary` naming
    the data-carrying app (required once several apps are configured).
 
-In `aivi.json`: `projects.<id>.linear.teams` (the Linear team ids this
+In `config.json`: `projects.<id>.linear.teams` (the Linear team ids this
 repository works) with `lanes` (empty by default: the listener delegates
 nothing until you map a lane; hand delegation always works; `null` marks a
 lane humans work). `projectDefaults.linear.lanes` is the company-wide

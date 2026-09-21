@@ -60,7 +60,7 @@ const invocationTaskSchema = z.strictObject({
   args: z.record(z.string(), z.unknown()).optional(),
 });
 export const taskSchema = z.discriminatedUnion('kind', [shellTaskSchema, promptTaskSchema, invocationTaskSchema]);
-/** The tasks a person writes in aivi.json or a task file; what `aivi_jobs` accepts and nothing else. */
+/** The tasks a person writes in config.json or a task file; what `aivi_jobs` accepts and nothing else. */
 export const userTaskSchema = z.discriminatedUnion('kind', [shellTaskSchema, promptTaskSchema]);
 export type Task = z.infer<typeof taskSchema>;
 /** Display label for a task: the operation name for an invocation, the kind for anything else. */
@@ -72,7 +72,7 @@ export const runsPruneArgsSchema = z.strictObject({
   /** Finished runs (and the finished one-off jobs they belonged to) older than this are deleted; blocked and active work never is. */
   olderThanDays: z.number().int().min(1),
 });
-/** Args of the host's `dreaming` operation; paths resolve against the aivi home, like task paths in aivi.json. */
+/** Args of the host's `dreaming` operation; paths resolve against the aivi home, like task paths in config.json. */
 export const dreamingArgsSchema = z.strictObject({
   agent: z
     .string()
@@ -332,20 +332,14 @@ export const linearSecretNames = (app: string) => {
   };
 };
 /**
- * Where the host API listens and how callers authenticate.
- * `bind` defaults to loopback; use a LAN/tailnet address or `0.0.0.0` to let
- * remote OpenCode installs reach the knowledge server. Auth `none` trusts the
- * network; `token` requires `AIVI_TOKEN` (>= 24 chars) as a bearer token.
+ * Where the host API listens. `bind` defaults to loopback; use a LAN/tailnet
+ * address or `0.0.0.0` to let remote clients reach the API. Commands are open:
+ * a bearer token identifies the caller for association, it never locks
+ * anything.
  */
 export const hostSchema = z.strictObject({
   bind: z.string().min(1).default('127.0.0.1'),
   port: z.number().int().min(0).max(65535).default(4100),
-  auth: z
-    .discriminatedUnion('mode', [
-      z.strictObject({ mode: z.literal('token') }),
-      z.strictObject({ mode: z.literal('none') }),
-    ])
-    .default({ mode: 'token' }),
 });
 /**
  * How to reach OpenCode v2. Without `url`, the host discovers the local
@@ -353,7 +347,7 @@ export const hostSchema = z.strictObject({
  * `lifecycle` says how much of that service aivi owns: `discover` never starts
  * or stops it; `ensure` starts one when none is running; `own` (default) also
  * restarts a running one when `aivi serve` starts, so a new plugin build is
- * picked up and the service carries aivi's `AIVI_TOKEN`. With `url`, supply
+ * picked up. With `url`, supply
  * `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` if that server requires HTTP basic
  * auth; `lifecycle` is ignored.
  */
@@ -620,7 +614,7 @@ export const configSchema = z
     $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
     version: z.literal(1),
     stateDirectory: z.string().default('state'),
-    host: hostSchema.default({ bind: '127.0.0.1', port: 4100, auth: { mode: 'token' } }),
+    host: hostSchema.default({ bind: '127.0.0.1', port: 4100 }),
     opencode: opencodeSchema.default({ lifecycle: 'own' }),
     knowledge: z
       .array(source)
@@ -683,6 +677,17 @@ export const configSchema = z
       })
       .optional(),
     linear: linearSchema.optional(),
+    update: z
+      .strictObject({
+        channel: z
+          .enum(['stable'])
+          .default('stable')
+          .describe(
+            'What `aivi update` resolves: the npm latest dist-tag. The enum exists so future channels (a GitHub feed, an RC tag) are a schema change, not a redesign.',
+          ),
+      })
+      .optional()
+      .describe('Update preferences; the default channel is stable.'),
     identity: identitySchema
       .prefault({})
       .describe('Who aivi is: the persona every platform shows, and who a worker it launched commits as.'),

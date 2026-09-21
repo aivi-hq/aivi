@@ -1,0 +1,7 @@
+{
+  "changelog": ["@changesets/changelog-github", { "repo": "aivi-hq/aivi" }],
+  "commit": false,
+  "access": "public",
+  "baseBranch": "main",
+  "ignore": []
+}

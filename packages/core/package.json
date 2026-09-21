@@ -1,11 +1,28 @@
 {
   "name": "@aivi/core",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./kinds": "./src/kinds.ts"
+    ".": "./dist/index.js",
+    "./kinds": "./dist/kinds.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=26.0.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
     "@logtape/file": "2.3.6",

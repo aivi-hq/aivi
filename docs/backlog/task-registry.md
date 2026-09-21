@@ -45,7 +45,7 @@ execution back to the registering module.
   (`runsPruneArgsSchema`, `dreamingArgsSchema`) because the host package has
   no zod dependency.
 - Who may author what: `aivi_jobs` (agent-created) accepts only `prompt` and
-  `shell` (`userTaskSchema`). Hand-written `aivi.json` jobs may write an
+  `shell` (`userTaskSchema`). Hand-written `config.json` jobs may write an
   invocation — that is how the dreaming job is opted into, the owner's own
   example (`task: { kind: "invoke", on: "dreaming" }` settled it).
 - One `taskLabel(task)` in core: every view (CLI `jobs list`, `/status`,

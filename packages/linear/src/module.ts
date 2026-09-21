@@ -1,4 +1,4 @@
-import type { LinearConfig, Project } from '@aivi/core';
+import type { LinearConfig, Logger, Project } from '@aivi/core';
 import {
   assistantAgent,
   errorMessage,
@@ -77,6 +77,18 @@ export interface LinearAppRuntime {
  * keeps the bare `LINEAR_*` names; every other app — a face — uses
  * `LINEAR_<APP>_*`.
  */
+/** The client to ask for teams: the one configured app, or the one `--app` names.
+ * requireLinearSecrets names the missing LINEAR_* variables when secrets are absent. */
+export function clientFor(config: LinearConfig, app: string | undefined, log: Logger): LinearClient {
+  const ids = Object.keys(config.apps);
+  if (!ids.length) throw new Error('linear.apps is empty: configure a Linear app before pointing projects at teams');
+  if (ids.length > 1 && !app) throw new Error(`Several Linear apps are configured (${ids.join(', ')}): pass --app`);
+  const id = app ?? ids[0]!;
+  if (!config.apps[id]) throw new Error(`Unknown Linear app ${id}. Configured: ${ids.join(', ')}`);
+  const creds = requireLinearSecrets(config).find(cred => cred.id === id);
+  return new LinearClient(creds!, { log });
+}
+
 export function requireLinearSecrets(config: LinearConfig, env: NodeJS.ProcessEnv = process.env) {
   const primary = primaryLinearApp(config);
   if (!primary)
