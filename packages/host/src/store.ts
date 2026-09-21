@@ -116,7 +116,7 @@ const requestFingerprint = ({ id: _id, at: _at, ...rest }: Job) => hash(rest);
 
 /**
  * Durable host state in one SQLite file. Host tables (jobs, runs, leases,
- * daemon, audit, persons, tokens) are only touched through this class. Adapters
+ * daemon, audit, people, tokens) are only touched through this class. Adapters
  * may own their own namespaced tables in the same database: declare them with
  * `migrate()` and access them through `db`, never host tables.
  */
@@ -192,9 +192,9 @@ export class Store {
       if (version < 7) this.migrateToJobsAndRuns(Date.now());
       if (version < 8)
         this.db.exec(`
-        CREATE TABLE person(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, created_at INTEGER NOT NULL);
-        CREATE TABLE token(token_hash TEXT PRIMARY KEY,
-          person_id TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+        CREATE TABLE people(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, created_at INTEGER NOT NULL);
+        CREATE TABLE tokens(token_hash TEXT PRIMARY KEY,
+          person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
           label TEXT NOT NULL, created_at INTEGER NOT NULL);
         PRAGMA user_version=8;
       `);
@@ -853,15 +853,15 @@ export class Store {
   /** Create a person; the id is minted here. aivi itself is never a person. */
   createPerson({ name, email = null }: { name: string; email?: string | null }, now = Date.now()): Person {
     const id = `person-${randomUUID().slice(0, 8)}`;
-    this.db.prepare('INSERT INTO person(id,name,email,created_at) VALUES(?,?,?,?)').run(id, name, email, now);
+    this.db.prepare('INSERT INTO people(id,name,email,created_at) VALUES(?,?,?,?)').run(id, name, email, now);
     return { id, name, email, createdAt: now };
   }
   person(id: string): Person | null {
-    const row = this.db.prepare('SELECT * FROM person WHERE id=?').get(id);
+    const row = this.db.prepare('SELECT * FROM people WHERE id=?').get(id);
     return row ? person(row) : null;
   }
   people(): Person[] {
-    return (this.db.prepare('SELECT * FROM person ORDER BY created_at,id').all() as Row[]).map(person);
+    return (this.db.prepare('SELECT * FROM people ORDER BY created_at,id').all() as Row[]).map(person);
   }
   /**
    * Mint a person token: the raw secret (the bearer) starts `aivi-` and is
@@ -875,7 +875,7 @@ export class Store {
       const digest = createHash('sha256').update(secret).digest('hex');
       try {
         this.db
-          .prepare('INSERT INTO token(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
+          .prepare('INSERT INTO tokens(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
           .run(digest, personId, label, now);
         return { token: { hash: digest, personId, label, createdAt: now }, secret };
       } catch (error) {
@@ -890,7 +890,7 @@ export class Store {
     const row = this.db
       .prepare(
         `SELECT t.*, p.name AS person_name, p.email AS person_email, p.created_at AS person_created
-         FROM token t JOIN person p ON p.id=t.person_id WHERE t.token_hash=?`,
+         FROM tokens t JOIN people p ON p.id=t.person_id WHERE t.token_hash=?`,
       )
       .get(digest) as (Row & { person_name: string; person_email: string | null; person_created: number }) | undefined;
     if (!row) return null;

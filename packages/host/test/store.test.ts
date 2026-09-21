@@ -20,7 +20,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   // Rebuild the v1 shape by hand: one schedule-less job in the old `jobs` table.
   old.db.exec(`
     DROP TABLE runs; DROP TABLE jobs; DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job;
-    DROP TABLE IF EXISTS person; DROP TABLE IF EXISTS token;
+    DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
     CREATE TABLE schedules(id TEXT PRIMARY KEY, spec TEXT NOT NULL, fingerprint TEXT NOT NULL,
       next_at INTEGER NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
@@ -60,7 +60,7 @@ test('schema v7 gives every one-off its own job definition and keeps schedule an
       source TEXT NOT NULL DEFAULT 'config' CHECK(source IN ('config','agent')));
     INSERT INTO schedules SELECT id,spec,fingerprint,next_at,1,source FROM jobs;
     DROP TABLE jobs; DROP TABLE runs;
-    DROP TABLE IF EXISTS person; DROP TABLE IF EXISTS token;
+    DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
       task TEXT NOT NULL, resource TEXT NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','blocked','cancelled')),
@@ -478,7 +478,7 @@ test('every token belongs to a person and is stored only as a hash', async t => 
   assert.throws(
     () =>
       store.db
-        .prepare('INSERT INTO token(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
+        .prepare('INSERT INTO tokens(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
         .run('x'.repeat(64), 'person-none', 'ghost', start),
     /FOREIGN KEY/,
   );

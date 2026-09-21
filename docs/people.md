@@ -33,8 +33,8 @@ can reach the address can use the commands.
 
 ## Persons and tokens (aivi.sqlite)
 
-- `person {id, name, email?, created_at}` — ids are minted `person-<8>`.
-- `token {token_hash, person_id, label, created_at}` — every token belongs to
+- `people {id, name, email?, created_at}` — ids are minted `person-<8>`.
+- `tokens {token_hash, person_id, label, created_at}` — every token belongs to
   a person (the foreign key refuses anything else). The secret starts `aivi-`
   and is shown once at mint; only its SHA-256 hash is kept. A token is the
   bearer a client sends; it does not expire yet (revoke/rotate is backlog).

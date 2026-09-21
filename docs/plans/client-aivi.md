@@ -116,8 +116,8 @@ their channel identity to their person.
 
 ## Mechanisms
 
-1. **`person` + `token` tables (aivi.sqlite, real migration).**
-   `person {id, name, email?, created}`; `token {token_hash, person_id,
+1. **`people` + `tokens` tables (aivi.sqlite, real migration).**
+   `people {id, name, email?, created}`; `tokens {token_hash, person_id,
    label, created}` — every token belongs to a person, always. Bearer
    resolution in `server.ts`: known hash → attach person to the request;
    unknown or none → proceed anonymous. Nothing rejects except at
@@ -203,7 +203,10 @@ file over memory.
        v8 — the single SQLite lives in host, not core); every token row has
        a person (FK); `createPerson/people/person/mintToken/personForToken`
        (secret shown once, stored hashed); types in `@aivi/core`; test in
-       `packages/host/test/store.test.ts`.
+       `packages/host/test/store.test.ts`. (Same-day rename: the tables are
+       `people`/`tokens`, plural like `jobs`/`runs`; entity words — ids
+       `person-<8>`, column `person_id`, methods `createPerson`/`person(id)`
+       — stay singular.)
 - [x] 3. Host: `bearerPerson(store, authorization)` in `server.ts` — known
        token → its person, unknown/none → null; the router no longer rejects,
        nothing 401s until whoami. Deleted `HostAuth`/`resolveHostAuth`/
