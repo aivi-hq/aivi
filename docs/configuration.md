@@ -318,9 +318,10 @@ authorised with the primary's app-actor token
 
 ## Update channel
 
-`update.channel` picks what `aivi update` resolves: `stable` (the default, the
-npm `latest` dist-tag) or `nightly` (GitHub prerelease builds; the feed does
-not exist yet). There is no rollback: `aivi update` stops the server, installs,
+`update.channel` picks what `aivi update` resolves. `stable` (the npm `latest`
+dist-tag) is the only channel: a nightly would mean releasing from main, which
+is not wanted. The enum exists so a future channel is a schema change, not a
+redesign. There is no rollback: `aivi update` stops the server, installs,
 restarts and probes `/health`; sessions resume because state is SQLite and
 OpenCode's own.
 

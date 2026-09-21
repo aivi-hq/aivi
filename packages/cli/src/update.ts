@@ -55,7 +55,7 @@ export interface UpdateOptions {
   nodePath: string;
 }
 
-const CHANNELS = ['stable', 'nightly'] as const;
+const CHANNELS = ['stable'] as const;
 
 async function healthUrl(home: string): Promise<string> {
   const config = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) as {
@@ -81,8 +81,6 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
   const rawConfig = JSON.parse(readFileSync(configPath, 'utf8')) as { update?: { channel?: string } };
   const channel = rawConfig.update?.channel ?? 'stable';
   if (!CHANNELS.includes(channel as (typeof CHANNELS)[number])) throw new Error(`Unknown update channel: ${channel}`);
-  if (channel === 'nightly')
-    throw new Error('The nightly channel needs the GitHub prerelease feed; it does not exist yet.');
 
   const installed = installedDependencies(appDir);
   if (!installed['@aivi/app']) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi server create\`.`);

@@ -680,10 +680,10 @@ export const configSchema = z
     update: z
       .strictObject({
         channel: z
-          .enum(['stable', 'nightly'])
+          .enum(['stable'])
           .default('stable')
           .describe(
-            'What `aivi update` resolves: `stable` is the npm latest dist-tag; `nightly` needs the GitHub prerelease feed, which does not exist yet.',
+            'What `aivi update` resolves: the npm latest dist-tag. The enum exists so future channels (a GitHub feed, an RC tag) are a schema change, not a redesign.',
           ),
       })
       .optional()

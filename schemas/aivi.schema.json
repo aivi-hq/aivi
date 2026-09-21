@@ -884,12 +884,11 @@
       "type": "object",
       "properties": {
         "channel": {
-          "description": "What `aivi update` resolves: `stable` is the npm latest dist-tag; `nightly` needs the GitHub prerelease feed, which does not exist yet.",
+          "description": "What `aivi update` resolves: the npm latest dist-tag. The enum exists so future channels (a GitHub feed, an RC tag) are a schema change, not a redesign.",
           "default": "stable",
           "type": "string",
           "enum": [
-            "stable",
-            "nightly"
+            "stable"
           ]
         }
       },
