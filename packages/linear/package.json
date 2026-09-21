@@ -24,8 +24,8 @@
     "prepack": "node ../../scripts/build.mjs"
   },
   "dependencies": {
-    "@aivi/core": "0.1.0",
-    "@aivi/host": "0.1.0",
+    "@aivi/core": "^0.1.0",
+    "@aivi/host": "^0.1.0",
     "zod": "4.1.13"
   }
 }

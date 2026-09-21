@@ -77,6 +77,14 @@ unscheduled ideas: `docs/backlog/`.
 real SQLite, real QMD and the real v2 client on a mock server, schema check,
 CLI and daemon smoke). Live gates: `npm run live:opencode`, `npm run smoke:browser`.
 
+## Releases
+
+Versions are independent per package, managed with
+[Changesets](.changeset/README.md): run `npx changeset` in a PR that changes a
+package, describe the change and the bump level. Merging to `main` opens a
+Version PR; merging that publishes the changed packages to npm with
+provenance — no tags, no manual publishing.
+
 New here? [Getting started](docs/getting-started.md) to run it,
 [operations](docs/operations.md) to keep it running,
 [configuration](docs/configuration.md) for every field. Working on it? Start

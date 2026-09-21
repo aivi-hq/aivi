@@ -1,0 +1,31 @@
+name: Release
+# Changesets flow: merged PRs carry changeset files; on push to main the
+# action opens a Version PR (bumps versions, writes changelogs, updates
+# internal ranges); merging it publishes every changed package to npm with
+# provenance. Auth is npm trusted publishing (OIDC) — no token is stored;
+# each package must list this repository and this workflow as a trusted
+# publisher with direct `npm publish` allowed.
+on:
+  push:
+    branches: [main]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - run: npm ci
+      - uses: changesets/action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        with:
+          publish: npx changeset publish

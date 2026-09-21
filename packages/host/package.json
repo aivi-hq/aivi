@@ -25,7 +25,7 @@
     "prepack": "node ../../scripts/build.mjs"
   },
   "dependencies": {
-    "@aivi/core": "0.1.0",
+    "@aivi/core": "^0.1.0",
     "@opencode/client": "2.0.10"
   }
 }
