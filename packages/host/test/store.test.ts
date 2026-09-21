@@ -36,7 +36,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   const upgraded = new Store(path);
   t.after(() => upgraded.close());
   assert.equal(upgraded.run('run-1').state, 'queued');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 8);
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 9);
   assert.equal(upgraded.run('run-1').report, null);
   assert.equal(upgraded.history('run-1')[0]!.action, 'enqueued');
   assert.equal(upgraded.acquireLease('discord:one', 'discord', 'local-model', 1, pools), true);

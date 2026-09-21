@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,7 +85,10 @@ test('server create without a flag needs an interactive terminal or --use; --use
 
 test('people commands talk HTTP to the running host', async t => {
   const store = new Store(':memory:');
-  const { home, env, cleanup } = await scratch();
+  const { home, xdg, env, cleanup } = await scratch();
+  const operator = store.createPerson({ name: 'Ada', roles: ['operator'] });
+  const { secret } = store.mintToken(operator.id, 'laptop');
+  writeFileSync(join(xdg, 'aivi.json'), JSON.stringify({ configVersion: 1, home, person: { token: secret } }));
   const server = createHostServer({
     store,
     loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), sources: [], projects: [] },
@@ -103,7 +106,7 @@ test('people commands talk HTTP to the running host', async t => {
   const person = JSON.parse(created.stdout);
   assert.match(person.id, /^person-[0-9a-f]{8}$/);
   const listed = await run(['people', 'list'], env);
-  assert.deepEqual(JSON.parse(listed.stdout), [person]);
+  assert.deepEqual(JSON.parse(listed.stdout), [operator, person]);
   const minted = await run(['people', 'token', person.id, '--label', 'laptop'], env);
   assert.equal(minted.status, 0, minted.stderr);
   const token = JSON.parse(minted.stdout);

@@ -53,13 +53,13 @@ API today: `/health`, `/v1/people` (POST), `/v1/people/:id/tokens`,
 - [ ] 3. CLI: replace command bodies with registry calls. Transport
       resolution per command (home → in-process, else HTTP). Output
       formatting stays in the CLI.
-- [ ] 4. Roles: `person.role` (`operator` | `member`), default `member`.
-      Maintenance operations (projects mutate, jobs/runs mutate and resolve,
-      people, knowledge index) require `operator`; reads are open to any
-      known person; anonymous stays anonymous. Enforced in the ops dispatcher
-      and at the existing mutating routes. The in-process path bypasses roles
-      by design: the operator at the console is trusted
-      ([people](../people.md)).
+- [ ] 4. Roles: **store landed 2026-09-21** — `person.roles` (open string
+      array, JSON column, migration granted `operator` to everyone existing;
+      new people default `member`), `whoami` answers the real roles, and the
+      people routes (`GET/POST /v1/people`, token minting) require an
+      operator bearer; `aivi people create NAME --role operator` grants the
+      role at creation. Remaining: enforcement for every other mutating
+      operation moves into the ops dispatcher when it exists (step 2).
 - [ ] 5. `service`-adjacent commands (`service install`, `update`, `upgrade`,
       `server create`) stay CLI-local: they run before/around a server and
       need the machine. Document that boundary here.

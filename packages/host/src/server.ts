@@ -150,14 +150,26 @@ export function createHostServer({
       return;
     }
 
-    if (url.pathname === '/v1/people') {
-      if (request.method === 'POST') handlePeople(request, response, send);
-      else if (request.method === 'GET') send(200, store.people());
-      else send(405, { error: 'Use GET to list people or POST to create one' });
-      return;
-    }
-    if (url.pathname.startsWith('/v1/people/') && url.pathname.endsWith('/tokens')) {
-      handlePersonToken(url, request, response, send);
+    if (url.pathname === '/v1/people' || (url.pathname.startsWith('/v1/people/') && url.pathname.endsWith('/tokens'))) {
+      // Managing people names who you are and requires the operator role; the
+      // store-direct path on the server itself is the operator at the console.
+      const person = bearerPerson(store, request.headers.authorization);
+      if (!person?.roles.includes('operator')) {
+        send(
+          person ? 403 : 401,
+          person
+            ? { error: 'Only an operator manages people' }
+            : { error: 'Managing people names who you are; send a bearer token' },
+        );
+        return;
+      }
+      if (url.pathname === '/v1/people') {
+        if (request.method === 'POST') handlePeople(request, response, send);
+        else if (request.method === 'GET') send(200, store.people());
+        else send(405, { error: 'Use GET to list people or POST to create one' });
+      } else {
+        handlePersonToken(url, request, response, send);
+      }
       return;
     }
     if (url.pathname === '/v1/browser') {
@@ -186,9 +198,9 @@ export function createHostServer({
         send(401, { error: 'whoami names a person; send a bearer token that resolves to one' });
         return;
       }
-      // The v1 stub: the operator is the only user, so every valid token is operator. Real per-person
-      // roles arrive with the api-only session (docs/plans/client-aivi.md).
-      send(200, { person: { id: person.id, name: person.name }, roles: ['operator'] });
+      // The roles are the person's own, read from the store; whoami still
+      // refuses to name an anonymous caller.
+      send(200, { person: { id: person.id, name: person.name }, roles: person.roles });
       return;
     }
     if (url.pathname === '/v1/status') {
@@ -400,7 +412,14 @@ export function createHostServer({
         });
         return;
       }
-      send(200, store.createPerson({ name: parsed.data.name, email: parsed.data.email ?? null }));
+      send(
+        200,
+        store.createPerson({
+          name: parsed.data.name,
+          email: parsed.data.email ?? null,
+          ...(parsed.data.roles ? { roles: parsed.data.roles } : {}),
+        }),
+      );
     })().catch(() => {
       if (!response.headersSent) send(400, { error: 'Person request interrupted' });
     });

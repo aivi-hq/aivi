@@ -209,12 +209,15 @@ runs in one process; adapters are optional modules with a start/stop contract.
   machine's git config, else the aivi app. The project's `source/` is never
   marked, so attended work keeps a human author with the agent as co-author
   ([linear](docs/linear.md), [configuration](docs/configuration.md#fields)).
-- **Tokens identify, never authorize.** Auth is `none`: commands are open, and
-  a bearer only names the caller for association — whose job, whose link,
-  whose memory; unknown or missing stays anonymous. Only whoami and link
-  creation reject anonymous callers, because their answers must be attached to
-  a person. A non-loopback bind warns that anyone who can reach the address
-  can use the commands, until the api-only session enforces roles
+- **Tokens identify, never authorize — except people management.** Auth is
+  `none`: commands are open, and a bearer only names the caller for
+  association — whose job, whose link, whose memory; unknown or missing stays
+  anonymous. Only whoami and link creation reject anonymous callers, because
+  their answers must be attached to a person, and managing people requires
+  the `operator` role (an open string array on the person; everyone who
+  existed when roles arrived is one). The rest is ungated until the ops
+  dispatcher enforces roles per operation. A non-loopback bind warns that
+  anyone who can reach the address can use the commands
   ([people](docs/people.md)).
 - **The lane map is a convention with per-project deviations.**
   `projectDefaults.linear.lanes` is the company-wide base and a project wins

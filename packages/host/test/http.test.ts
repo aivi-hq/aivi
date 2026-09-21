@@ -180,20 +180,39 @@ test('people management creates, lists and mints tokens over the API', async t =
   });
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  const client = createHostClient(`http://127.0.0.1:${address.port}`);
+  const base = `http://127.0.0.1:${address.port}`;
+  // Fixed instants in the past: people() ordering is created_at,id, and the
+  // assertion must never depend on the wall clock or a UUID tiebreak.
+  const now = 1_700_000_000_000;
+  const anonymous = createHostClient(base);
+  await assert.rejects(anonymous.createPerson({ name: 'Nemo' }), /401.*names who you are/);
+  await assert.rejects(anonymous.people(), /401.*names who you are/);
+
+  const member = store.createPerson({ name: 'Member' }, now + 1000);
+  const memberToken = store.mintToken(member.id, 'laptop').secret;
+  const memberClient = createHostClient(base, { token: memberToken });
+  await assert.rejects(memberClient.createPerson({ name: 'Nemo' }), /403.*Only an operator/);
+  await assert.rejects(memberClient.people(), /403.*Only an operator/);
+
+  const operator = store.createPerson({ name: 'Ada', roles: ['operator'] }, now);
+  const operatorToken = store.mintToken(operator.id, 'laptop').secret;
+  const client = createHostClient(base, { token: operatorToken });
   const nemo = await client.createPerson({ name: 'Nemo', email: 'nemo@example.com' });
   assert.match(nemo.id, /^person-[0-9a-f]{8}$/);
-  assert.deepEqual(await client.people(), [nemo]);
+  assert.deepEqual(nemo.roles, ['member'], 'new people are members unless the operator says otherwise');
+  assert.deepEqual(await client.people(), [operator, member, nemo]);
   const minted = await client.createPersonToken(nemo.id, 'laptop');
   assert.match(minted.secret, /^aivi-[0-9a-f]{32}$/);
   assert.deepEqual(store.personForToken(minted.secret)!.person.id, nemo.id);
   await assert.rejects(client.createPersonToken('person-none', 'x'), /HTTP 404: Unknown person/);
   await assert.rejects(client.createPerson({ name: '' }), /HTTP 400: Invalid person/);
+  const promoted = await client.createPerson({ name: 'Ada2', roles: ['operator'] });
+  assert.deepEqual(promoted.roles, ['operator']);
 });
 
 test('whoami names the caller and refuses to guess', async t => {
   const store = new Store(':memory:');
-  const nemo = store.createPerson({ name: 'Nemo' });
+  const nemo = store.createPerson({ name: 'Nemo', roles: ['operator'] });
   const { secret } = store.mintToken(nemo.id, 'laptop');
   const loaded = {
     path: '/config',

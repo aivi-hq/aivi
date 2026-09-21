@@ -56,7 +56,7 @@ const run = (r: Row): Run => ({
   report: r.report === null || r.report === undefined ? null : (JSON.parse(String(r.report)) as Report),
 });
 
-const HOST_SCHEMA_VERSION = 8;
+const HOST_SCHEMA_VERSION = 9;
 
 /** Pre-v6 reports overloaded `channel`: a session id for `to: "session"`, a platform channel id for a module name. */
 function migrateReport(raw: unknown): Report | null {
@@ -90,6 +90,7 @@ const person = (r: Row): Person => ({
   id: String(r.id),
   name: String(r.name),
   email: r.email === null ? null : String(r.email),
+  roles: JSON.parse(String(r.roles ?? '[]')) as string[],
   createdAt: Number(r.created_at),
 });
 const token = (r: Row): PersonToken => ({
@@ -198,6 +199,14 @@ export class Store {
           label TEXT NOT NULL, created_at INTEGER NOT NULL);
         PRAGMA user_version=8;
       `);
+      if (version < 9) {
+        this.db.exec(`
+        ALTER TABLE people ADD COLUMN roles TEXT NOT NULL DEFAULT '[]';
+        PRAGMA user_version=9;
+      `);
+        // The stub said every person was an operator; make the truth true.
+        this.db.exec(`UPDATE people SET roles='["operator"]'`);
+      }
     });
   }
   /**
@@ -851,10 +860,15 @@ export class Store {
     });
   }
   /** Create a person; the id is minted here. aivi itself is never a person. */
-  createPerson({ name, email = null }: { name: string; email?: string | null }, now = Date.now()): Person {
+  createPerson(
+    { name, email = null, roles = ['member'] }: { name: string; email?: string | null; roles?: string[] },
+    now = Date.now(),
+  ): Person {
     const id = `person-${randomUUID().slice(0, 8)}`;
-    this.db.prepare('INSERT INTO people(id,name,email,created_at) VALUES(?,?,?,?)').run(id, name, email, now);
-    return { id, name, email, createdAt: now };
+    this.db
+      .prepare('INSERT INTO people(id,name,email,roles,created_at) VALUES(?,?,?,?,?)')
+      .run(id, name, email, JSON.stringify(roles), now);
+    return { id, name, email, roles, createdAt: now };
   }
   person(id: string): Person | null {
     const row = this.db.prepare('SELECT * FROM people WHERE id=?').get(id);
@@ -889,16 +903,19 @@ export class Store {
     const digest = createHash('sha256').update(secret).digest('hex');
     const row = this.db
       .prepare(
-        `SELECT t.*, p.name AS person_name, p.email AS person_email, p.created_at AS person_created
+        `SELECT t.*, p.name AS person_name, p.email AS person_email, p.roles AS person_roles, p.created_at AS person_created
          FROM tokens t JOIN people p ON p.id=t.person_id WHERE t.token_hash=?`,
       )
-      .get(digest) as (Row & { person_name: string; person_email: string | null; person_created: number }) | undefined;
+      .get(digest) as
+      | (Row & { person_name: string; person_email: string | null; person_roles: string; person_created: number })
+      | undefined;
     if (!row) return null;
     return {
       person: {
         id: String(row.person_id),
         name: row.person_name,
         email: row.person_email,
+        roles: JSON.parse(String(row.person_roles ?? '[]')) as string[],
         createdAt: row.person_created,
       },
       token: token(row),

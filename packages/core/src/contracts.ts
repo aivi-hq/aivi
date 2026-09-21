@@ -160,6 +160,10 @@ export interface Person {
   id: string;
   name: string;
   email: string | null;
+  /** What the person may do remotely: membership array, `operator` manages
+   *  people and maintenance, everything else reads and asks. Open set — a new
+   *  role is data, not a migration. */
+  roles: string[];
   createdAt: number;
 }
 /**
@@ -182,6 +186,7 @@ export interface Whoami {
 export const personCreateSchema = z.strictObject({
   name: z.string().trim().min(1).max(80),
   email: z.email().optional(),
+  roles: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
 });
 export const personTokenCreateSchema = z.strictObject({
   label: z.string().trim().min(1).max(80),
@@ -199,7 +204,7 @@ export interface HostClient {
   whoami(): Promise<Whoami>;
   /** Operator people management; ungated until the api-only session enforces roles. */
   people(): Promise<Person[]>;
-  createPerson(input: { name: string; email?: string }): Promise<Person>;
+  createPerson(input: { name: string; email?: string; roles?: string[] }): Promise<Person>;
   createPersonToken(personId: string, label: string): Promise<{ token: PersonToken; secret: string }>;
   /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */
   wake(): Promise<{ woken: boolean }>;

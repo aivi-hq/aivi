@@ -19,21 +19,27 @@ Two words that must not blur:
   exception, and they associate by the paste-a-code ritual precisely because
   there is no bearer there.
 
-## Auth: commands are open
+## Auth: commands are open, roles gate people management
 
 Auth is `none`, final ([architecture](architecture.md)): a request with an
 unknown or missing bearer is accepted with no person attached. Tokens
-**identify, never authorize**. Exactly two endpoints reject anonymous callers,
-because their answers must be attached to a person: `GET /v1/whoami` (it is
-the person lookup) and link creation. `whoami` answers
-`{ person: {id, name}, roles: ["operator"] }` — the roles are a v1 stub that
-is simply true today (one user, local); real per-person roles arrive with the
-api-only session. Until then a non-loopback bind logs a warning: anyone who
-can reach the address can use the commands.
+**identify, never authorize** — with one exception landed 2026-09-21:
+**people management is operator-only**. `whoami` still rejects anonymous
+callers (it is the person lookup) and answers the caller's real roles:
+`{ person: {id, name}, roles: ["operator"] }`. Roles are an **open string
+array** on the person (`roles` column, JSON): `operator` manages people and
+maintenance, the default for a new person is `member`; a future role is data,
+not a migration. The store migration granted `operator` to everyone who
+existed when the column arrived (the v1 stub was simply true). Enforcement
+widens with the ops dispatcher ([plans/operator-api](plans/operator-api.md));
+until then a non-loopback bind logs a warning: anyone who can reach the
+address can use the commands.
 
 ## Persons and tokens (aivi.sqlite)
 
-- `people {id, name, email?, created_at}` — ids are minted `person-<8>`.
+- `people {id, name, email?, roles, created_at}` — ids are minted `person-<8>`;
+  a new person is `["member"]` unless created with explicit roles, and
+  `aivi people create NAME --role operator` grants the role at creation.
 - `tokens {token_hash, person_id, label, created_at}` — every token belongs to
   a person (the foreign key refuses anything else). The secret starts `aivi-`
   and is shown once at mint; only its SHA-256 hash is kept. A token is the

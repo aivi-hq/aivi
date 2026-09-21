@@ -38,7 +38,7 @@ const usage = `aivi <command>
   serve                        Start the host: API, scheduler, knowledge, configured modules
   server create                First run: init the home, create your person and its token;
                                where will you use aivi? [--use this-machine|another] [--name TEXT] skips the prompts
-  people create NAME           A person for records to belong to [--email E]
+  people create NAME           A person for records to belong to [--email E] [--role operator]
   people list                  People and their ids
   people token PERSON          Mint a bearer for that person [--label L]; shown once
   status                       Inspect durable queue counts
@@ -126,6 +126,7 @@ async function main(): Promise<void> {
       name: { type: 'string' },
       email: { type: 'string' },
       label: { type: 'string' },
+      role: { type: 'string' },
     },
   });
   if (values.help || !positionals.length) {
@@ -627,10 +628,19 @@ async function main(): Promise<void> {
       }
     }
     if (command === 'people') {
-      const client = createHostClient(hostUrl(loaded));
+      // Managing people is an operator act; the bearer comes from the client config.
+      const client = createHostClient(hostUrl(loaded), {
+        token: readClientConfigToken(),
+      });
       if (subcommand === 'create') {
-        if (!argument) throw new Error('Provide a name: aivi people create NAME [--email E]');
-        print(await client.createPerson({ name: argument, ...(values.email ? { email: values.email } : {}) }));
+        if (!argument) throw new Error('Provide a name: aivi people create NAME [--email E] [--role operator]');
+        print(
+          await client.createPerson({
+            name: argument,
+            ...(values.email ? { email: values.email } : {}),
+            ...(values.role ? { roles: [values.role] } : {}),
+          }),
+        );
         return;
       }
       if (subcommand === 'list') {
@@ -801,7 +811,7 @@ async function serverCreate(options: {
   try {
     if (store.people().length > 0)
       throw new Error('This home already has people. Use `aivi people create` for the next person.');
-    const person = store.createPerson({ name });
+    const person = store.createPerson({ name, roles: ['operator'] });
     const { secret } = store.mintToken(person.id, 'operator');
     const url = hostUrl(loaded);
     const clientConfig = where === 'this-machine' ? writeClientConfig(url, home, secret) : undefined;
@@ -825,6 +835,15 @@ async function serverCreate(options: {
   } finally {
     store.close();
   }
+}
+
+/** The bearer for commands that act as the operator over HTTP; absent when this
+ *  machine has not signed in. */
+function readClientConfigToken(): string | undefined {
+  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  if (!existsSync(path)) return undefined;
+  const config = JSON.parse(readFileSync(path, 'utf8')) as { person?: { token?: string } };
+  return config.person?.token;
 }
 
 /** The one client config file, identical shape everywhere; 0600. An existing person token is never overwritten. */
