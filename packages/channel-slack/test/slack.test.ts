@@ -495,7 +495,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   assert.equal(store.leases().length, 0);
 });
 
-test('progress: the placeholder goes into the thread, is updated through chat.update and removed when the answer lands', async t => {
+test('progress: the placeholder goes into the thread, stays quiet inside its window, and goes when the answer lands', async t => {
   const store = new Store(':memory:');
   let release!: () => void;
   const gate = new Promise<void>(resolve => {
@@ -546,13 +546,54 @@ test('progress: the placeholder goes into the thread, is updated through chat.up
     listeners.get(session)!({ type, data: { sessionID: session, ...data } } as SessionEvent);
   emit('session.tool.input.started', { id: 't1', name: 'execute' });
   emit('session.tool.called', { id: 't1', input: { code: 'return tools.knowledge.search({ query: "leave" })' } });
-  await until(() => slack.edits.length === 1, 'the first edit lands after the throttle window (2 s)');
-  assert.deepEqual(slack.edits, [`${HOME}:1001.0 🔧 searching knowledge "leave"\n… knowledge.search "leave"`]);
+  // The burst lands in the window the placeholder just opened, so nothing is edited yet. What one
+  // edit says, and that it lands when the window closes, is the host's own progress test — it runs
+  // this reporter on a 100 ms window, which is the honest way to watch a 2 s throttle.
+  assert.equal(slack.edits.length, 0, 'the window stays quiet');
   release();
-  await until(() => slack.edits.length === 2, 'the placeholder is removed');
+  await until(() => slack.edits.length === 1, 'the placeholder is removed');
   assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'Answer', threadTs: '30.0' });
-  assert.equal(slack.edits[1], `${HOME}:1001.0 deleted`);
+  assert.equal(slack.edits[0], `${HOME}:1001.0 deleted`);
   assert.ok(!listeners.has(session), 'the watch is released with the turn');
+});
+
+test('progress when the turn cannot run: the notice edits the placeholder instead of posting beside it', async t => {
+  const store = new Store(':memory:');
+  const loaded = { config: configSchema.parse({ version: 1 }), path: '/aivi.json', projects: [], sources: [] };
+  const slack = fakeConnection();
+  const abort = new AbortController();
+  const services: HostServices = {
+    loaded,
+    store,
+    knowledge: { search: async () => [], index: async () => ({}), close: async () => {} },
+    opencode: async () => {
+      throw new Error('No running OpenCode v2 service found');
+    },
+    events: noEvents,
+    signal: abort.signal,
+    log: getLogger(['aivi']),
+    channels: new Channels(),
+    routes: new PublicRoutes(),
+    tasks: new TaskRegistry().forModule('test'),
+    wake: () => {},
+    onWake: () => () => {},
+    fail: error => assert.fail(String(error)),
+  };
+  const running = await createSlackModule({ ...config, progress: 'status' }, slack.connection).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+
+  await slack.event(message({ type: 'app_mention', channel: HOME, ts: '31.0', text: `<@${BOT}> are you there` }));
+  // Slack's delivery has no notice of its own, so the failure becomes the placeholder through
+  // chat.update: one message in the thread, not a placeholder left behind beside the bad news.
+  await until(() => slack.edits.length === 1, 'the notice is an edit of the placeholder');
+  assert.deepEqual(slack.posts, [{ channel: HOME, text: '⏳ thinking…', threadTs: '31.0' }]);
+  assert.equal(
+    slack.edits[0],
+    `${HOME}:1001.0 I could not reach my agent runtime just now. Please send that again in a moment.`,
+  );
 });
 
 test('the manifest in docs/slack.md carries the shared command table, so the doc and the handlers cannot drift', async () => {
