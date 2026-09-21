@@ -25,6 +25,11 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+test('the published bin starts with a shebang, or the global command cannot execute', () => {
+  const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+  assert.ok(source.startsWith('#!/usr/bin/env node'), 'bin entry points at this file: it needs a shebang');
+});
+
 test('the client config saves 0600, preserves unknown fields and never drops the person', () => {
   const path = join(directory, 'xdg', 'aivi.json');
   saveClientConfig({ home: '/home/me/.aivi', appDir: '/home/me/.aivi/app', installMethod: 'npm' });

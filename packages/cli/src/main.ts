@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /** The thin aivi CLI. It installs and controls the server; the server does the
  *  assistant work. The CLI owns `server create`, `update`, `upgrade` and the
  *  service commands, and forwards every other command into the installed app —
