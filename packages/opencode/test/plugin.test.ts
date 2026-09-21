@@ -20,12 +20,15 @@ type AgentEditorFake = { list(): AgentLike[]; update(id: string, fn: (a: AgentLi
 /** A fake agent domain: records the transform callbacks so tests can replay them like the registry does. */
 function fakeAgentDomain(agents: Map<string, AgentLike>) {
   const callbacks: ((editor: AgentEditorFake) => void)[] = [];
-  let reloads = 0;
+  /** Who is waiting for `agent.reload()`; a reload releases the first one still waiting. */
+  const waiting: (() => void)[] = [];
   return {
     callbacks,
-    get reloads() {
-      return reloads;
-    },
+    /**
+     * Resolves at the next `agent.reload()`. A test asks before it touches a file, so it
+     * waits for the reload and for nothing else: no polling, no allowance for the machine.
+     */
+    reloaded: () => new Promise<void>(resolve => void waiting.push(resolve)),
     domain: {
       transform: async (callback: (editor: AgentEditorFake) => void) => {
         const editor: AgentEditorFake = {
@@ -40,10 +43,23 @@ function fakeAgentDomain(agents: Map<string, AgentLike>) {
         return { dispose: async () => {} };
       },
       reload: async () => {
-        reloads++;
+        waiting.shift()?.();
       },
     },
   };
+}
+
+/** Replay the recorded transform over a rebuilt agent, as a registry rebuild does. */
+function rebuild(fake: ReturnType<typeof fakeAgentDomain>, system = 'x') {
+  const fresh = new Map<string, AgentLike>([['fresh', { id: 'fresh', system }]]);
+  fake.callbacks.at(-1)?.({
+    list: () => [...fresh.keys()].map(id => ({ id, system: fresh.get(id)!.system })),
+    update: (id, fn) => {
+      const agent = fresh.get(id);
+      if (agent) fn(agent);
+    },
+  });
+  return fresh.get('fresh')!.system;
 }
 
 function setupWith(
@@ -209,22 +225,15 @@ test('the soul is appended to every agent at each replay, never twice, and an ed
   assert.equal(agents.get('librarian')!.system, 'base prompt\n\nI am aivi. I route rather than do.');
   assert.equal(agents.get('worker')!.system, 'I am aivi. I route rather than do.');
 
-  // The registry replays the transform over a rebuilt (fresh) state: appending stays idempotent.
-  const fresh = new Map<string, AgentLike>([['fresh', { id: 'fresh', system: 'x' }]]);
-  fake.callbacks.at(-1)?.({
-    list: () => [...fresh.keys()].map(id => ({ id, system: fresh.get(id)!.system })),
-    update: (id, fn) => {
-      const agent = fresh.get(id);
-      if (agent) fn(agent);
-    },
-  });
-  assert.equal(fresh.get('fresh')!.system, 'x\n\nI am aivi. I route rather than do.', 'appended once, not twice');
+  // The registry replays the transform over a rebuilt state: appending stays idempotent.
+  assert.equal(rebuild(fake), 'x\n\nI am aivi. I route rather than do.', 'appended once, not twice');
 
-  // A soul.md edit is seen without a restart: the watcher invalidates the registry.
-  const reloadsBefore = fake.reloads;
+  // A soul.md edit reaches the agents without a restart: the plugin reloads the registry on the
+  // file change, and the replay after the reload carries the new text.
+  const reloaded = fake.reloaded();
   await writeFile(soulFile, 'I am aivi, renewed.');
-  for (let i = 0; i < 100 && fake.reloads === reloadsBefore; i++) await new Promise(r => setTimeout(r, 20));
-  assert.ok(fake.reloads > reloadsBefore, 'the edit triggered agent.reload()');
+  await reloaded;
+  assert.equal(rebuild(fake), 'x\n\nI am aivi, renewed.', 'the reload carried the edit');
 });
 
 test('the persona name is said from aivi.json, watched like the soul, and read past what the host would accept', async t => {
@@ -249,32 +258,18 @@ test('the persona name is said from aivi.json, watched like the soul, and read p
   // One place states the name: the config, so soul.md never repeats it.
   assert.equal(agents.get('librarian')!.system, 'base prompt\n\nYour name is Clawd.\n\nI route rather than do.');
 
-  /** Replay the recorded transform over a fresh agent, as a registry rebuild does. */
-  const rebuild = (system: string) => {
-    const fresh = new Map<string, AgentLike>([['fresh', { id: 'fresh', system }]]);
-    fake.callbacks.at(-1)?.({
-      list: () => [...fresh.keys()].map(id => ({ id, system: fresh.get(id)!.system })),
-      update: (id, fn) => {
-        const agent = fresh.get(id);
-        if (agent) fn(agent);
-      },
-    });
-    return fresh.get('fresh')!.system;
-  };
-
-  // The name is config, so it changes without a restart: aivi.json is watched too.
-  const reloadsBefore = fake.reloads;
+  // The name is config, so it changes without a restart: aivi.json is watched like the soul.
+  const reloaded = fake.reloaded();
   await writeFile(join(root, 'aivi.json'), JSON.stringify({ version: 1, identity: { name: 'Cline' } }));
-  for (let i = 0; i < 100 && fake.reloads === reloadsBefore; i++) await new Promise(r => setTimeout(r, 20));
-  assert.ok(fake.reloads > reloadsBefore, 'the edit triggered agent.reload()');
-  assert.equal(rebuild('x'), 'x\n\nYour name is Cline.\n\nI route rather than do.');
+  await reloaded;
+  assert.equal(rebuild(fake), 'x\n\nYour name is Cline.\n\nI route rather than do.');
 
   // A config the host would refuse still says who aivi is: the plugin reads the
   // one field it states, and validates nothing else.
   await writeFile(join(root, 'aivi.json'), '{"version": 99, "identity": {"name": "Clawd"}}');
-  assert.equal(rebuild('x'), 'x\n\nYour name is Clawd.\n\nI route rather than do.');
+  assert.equal(rebuild(fake), 'x\n\nYour name is Clawd.\n\nI route rather than do.');
 
   // A half-written file costs the name line and nothing else.
   await writeFile(join(root, 'aivi.json'), 'half-written {');
-  assert.equal(rebuild('x'), 'x\n\nI route rather than do.', 'the soul lands even when the config cannot be read');
+  assert.equal(rebuild(fake), 'x\n\nI route rather than do.', 'the soul lands even when the config cannot be read');
 });
