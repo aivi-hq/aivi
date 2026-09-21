@@ -173,6 +173,11 @@ export interface PersonToken {
   label: string;
   createdAt: number;
 }
+/** Who the caller is: the one endpoint that cannot be served anonymously. */
+export interface Whoami {
+  person: { id: string; name: string };
+  roles: string[];
+}
 export interface HostClient {
   browser(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   status(): Promise<Status>;
@@ -182,6 +187,8 @@ export interface HostClient {
   context(sessionId: string): Promise<{ text: string }>;
   search(request: SearchRequest): Promise<SearchHit[]>;
   jobs(request: JobRequest): Promise<JobResponse>;
+  /** The person the bearer names; the one endpoint a request cannot make anonymously. */
+  whoami(): Promise<Whoami>;
   /** Ask the running host to dispatch now; used after the CLI changed the queue directly. */
   wake(): Promise<{ woken: boolean }>;
 }

@@ -168,6 +168,17 @@ export function createHostServer({
       send(405, { error: 'Method not allowed' });
       return;
     }
+    if (url.pathname === '/v1/whoami') {
+      const person = bearerPerson(store, request.headers.authorization);
+      if (!person) {
+        send(401, { error: 'whoami names a person; send a bearer token that resolves to one' });
+        return;
+      }
+      // The v1 stub: the operator is the only user, so every valid token is operator. Real per-person
+      // roles arrive with the api-only session (docs/plans/client-aivi.md).
+      send(200, { person: { id: person.id, name: person.name }, roles: ['operator'] });
+      return;
+    }
     if (url.pathname === '/v1/status') {
       send(200, status(store, loaded, Date.now(), health?.() ?? []));
       return;

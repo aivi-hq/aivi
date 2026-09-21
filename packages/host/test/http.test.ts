@@ -164,6 +164,38 @@ test('commands are open: anonymous and unknown bearers are accepted; a known bea
   assert.deepEqual(bearerPerson(store, ''), null);
 });
 
+test('whoami names the caller and refuses to guess', async t => {
+  const store = new Store(':memory:');
+  const nemo = store.createPerson({ name: 'Nemo' });
+  const { secret } = store.mintToken(nemo.id, 'laptop');
+  const loaded = {
+    path: '/config',
+    config: configSchema.parse({ version: 1 }),
+    sources: [],
+    projects: [],
+  };
+  const server = createHostServer({ store, loaded });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  assert.equal((await fetch(`${base}/v1/whoami`)).status, 401, 'anonymous cannot be named');
+  assert.equal(
+    (await fetch(`${base}/v1/whoami`, { headers: { authorization: 'Bearer aivi-unknown' } })).status,
+    401,
+    'an unknown token cannot be named',
+  );
+  assert.deepEqual(await createHostClient(base, { token: secret }).whoami(), {
+    person: { id: nemo.id, name: 'Nemo' },
+    roles: ['operator'],
+  });
+  await assert.rejects(createHostClient(base).whoami(), /401.*whoami names a person/);
+});
+
 test('jobs API validates the body, maps refusals to their status, and status lists upcoming and recent work', async t => {
   const store = new Store(':memory:');
   const loaded: LoadedConfig = {

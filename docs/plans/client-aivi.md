@@ -191,8 +191,8 @@ task; **check a box in the same commit that lands it**; mark exactly one box
 compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
-**Where we are:** boxes 1–3 landed 2026-09-21 (branch `feat/client-identity`).
-Next: box 4 — `GET /v1/whoami` (person + `roles: ["operator"]` stub).
+**Where we are:** boxes 1–4 landed 2026-09-21 (branch `feat/client-identity`).
+Next: box 5 — CLI `aivi server create` (the only direct-store command).
 
 ### Session A — identity core (aivi repo)
 
@@ -212,8 +212,9 @@ Next: box 4 — `GET /v1/whoami` (person + `roles: ["operator"]` stub).
        non-loopback bind warns `api.open`; smoke is one open serve; owning
        docs rewritten (configuration, operations, architecture, opencode,
        getting-started, discord, CONTEXT).
-- [ ] 4. Host: `GET /v1/whoami` → person + `roles: ["operator"]` stub; 401
-       only when no bearer resolves; client method; mock test.
+- [x] 4. `GET /v1/whoami` → `{ person: {id, name}, roles: ["operator"] }`
+       (stub); 401 for anonymous and unknown bearers, the only such route;
+       `Whoami` type + `whoami()` on `HostClient`; test in `http.test.ts`.
 - [ ] 5. CLI: `aivi server create` — init `~/.aivi`, create operator person
        + token, ask "this machine / another" → chain into setup or print
        token + instructions; the only direct-store command; test.

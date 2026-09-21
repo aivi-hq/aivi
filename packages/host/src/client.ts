@@ -7,6 +7,7 @@ import type {
   SearchHit,
   SourceSelection,
   Status,
+  Whoami,
 } from '@aivi/core';
 
 export interface HostClientOptions {
@@ -73,6 +74,7 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
     context: sessionId =>
       request<{ text: string }>(`/v1/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
     wake: () => request<{ woken: boolean }>('/v1/wake', { method: 'POST', timeoutMs: 3_000 }),
+    whoami: () => get<Whoami>('/v1/whoami'),
     jobs(body) {
       // Creating a job checks the calling session and agent against OpenCode; a few seconds at most.
       return request<JobResponse>('/v1/jobs', {
