@@ -1,5 +1,13 @@
 # @aivi/cli
 
+## 0.5.0
+
+### Minor Changes
+
+- [#13](https://github.com/aivi-hq/aivi/pull/13) [`9f4d557`](https://github.com/aivi-hq/aivi/commit/9f4d557467d1efc928d211ab8f9d5ad19a094fc2) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi install discord|slack|NPM-SPEC` adds a plugin to the server home and lets it configure itself, replacing the manual config entry for the channels. npm installs the package into `<home>/app` (`--save-exact`, so `aivi update` carries it along), then the plugin's own `./setup` entry runs: it prints how to create the platform app, asks for the tokens (hidden), verifies each against the platform before anything is written — Discord's application id is derived from the bot, Slack's tokens answer `auth.test` and `apps.connections.open` — and writes its `modules.*` block into `config.json` and its secrets into `.env` (0600, never echoed; a write that leaves the config unloadable is restored). Then aivi restarts and the command ends in a verified truth: the module's own state from `/v1/status` ("Discord is running."). An already configured module is never clobbered, a foreground server is never restarted behind the operator's back, and a package without a `./setup` export is still installed, told as having no setup command. The contract is one subpath — any package exporting `./setup` with a default function installs this way; the plumbing (`aivi plugin setup SPEC`, not person-facing) and the write helpers (`writeConfigBlock`, `upsertEnvFile`) live in the app and core packages.
+
+- [#11](https://github.com/aivi-hq/aivi/pull/11) [`aeb4ffc`](https://github.com/aivi-hq/aivi/commit/aeb4ffc30479bfd879ef2d575bcff2ba509b684c) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi uninstall` deletes what aivi created on this machine and then the CLI itself. It is not interactive: it prints the absolute paths it would delete — the home, the client config, the background service, aivi's OpenCode plugin, and this CLI with the install method that answers for it — and deletes nothing until `--confirm`. Only a home with a `config.json` in it is ever deleted, so a wrong `AIVI_HOME` or a stale `home` field deletes nothing. The service goes before the home, `opencode plugin remove @aivi/opencode` goes with it, and `opencode-attribution` stays unless `--with-attribution`. `aivi upgrade` and `aivi uninstall` read one install-method table (npm today), so they can never disagree about what is installed.
+
 ## 0.4.0
 
 ### Minor Changes
