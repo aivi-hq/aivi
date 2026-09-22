@@ -30,6 +30,12 @@ export interface ChannelModule {
   accepts(channel: string): boolean;
   /** The platform channel a conversation lives in (a thread's parent, a DM itself), for "post it to this channel". */
   channelOf(sessionId: string): Promise<string | undefined>;
+  /**
+   * How a person spends a link code on this platform, shown by `aivi link`
+   * ("DM the bot: /link <code>."). Redemption itself is the shared
+   * `redeemLink` helper — this is only the wording.
+   */
+  linkHint?: string;
 }
 
 /**

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { loadClientConfig } from './client-config.ts';
 import { forward } from './forward.ts';
 import { homeForCreate, requireHome } from './home.ts';
+import { link } from './link.ts';
 import {
   serviceInstall,
   serviceLogs,
@@ -33,6 +34,7 @@ const usage = `aivi <command>
   setup                       Sign in to an existing host, or create the server here.
                               [--connect --url URL --token TOKEN] for a host
                               [--use this-machine|another] [--plugin @aivi/channel-discord …] [--name TEXT] to create
+  link [PLATFORM]             Mint a one-time code that links a channel account to your person
   serve                       Start the server in the foreground
   update                      Update the installed server and plugins (channel: config.json update.channel)
   upgrade                     Update this CLI through its install method (npm today)
@@ -57,6 +59,10 @@ export async function main(argv: string[]): Promise<void> {
   }
   if (command === 'setup') {
     await setup(argv.slice(2), { home: homeForCreate() });
+    return;
+  }
+  if (command === 'link') {
+    await link(argv.slice(2));
     return;
   }
   if (command === 'server' && subcommand === 'create') {

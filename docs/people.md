@@ -88,15 +88,22 @@ until the api-only session):
 - `aivi people list`
 - `aivi people token PERSON [--label L]` — mints another bearer; shown once.
 
-## Link codes (Discord, Slack, Linear)
+## Link codes (Discord, Slack)
 
-`aivi link <platform>` asks the host for a one-time code (`aivi-<random>`,
-hashed, ~15 minutes), and the person pastes it anywhere the bot reads. The
-inbox matches codes **before** a message becomes a turn, binds
-`{module, channel user id} → person`, and confirms. After the binding, that
-channel identity is the person for everything said there. Email linking is
-deferred: the shape is a link token sent to an inbox, with a callback URL on
-the public Linear route.
+`aivi link [PLATFORM]` mints a one-time code (5 digits, hashed, 15 minutes,
+one active per person — re-minting replaces it) and prints where to spend it.
+On the channel, `/link <code>` consumes it: the identity comes from the
+platform, the code is the evidence, and the host binds
+`{channel, user id} → person` and confirms. A refusal — unknown, expired, or
+an account that is already bound — never consumes the code, and re-binding is
+refused outright: there is no unlink yet (historic sessions keep their
+association), so a binding lasts until that exists. From then on the account
+speaks as its person: the turn prompt carries the person's name and the
+session is stamped `metadata.aivi.person`. Expired codes are swept by the
+retention job. An agent tool (`aivi_link`) so linking also works from natural
+language may come later; Linear needs its own redemption path and is not
+linked this way yet. Email linking is deferred: the shape is a link token
+sent to an inbox, with a callback URL on the public Linear route.
 
 ## Backlog
 

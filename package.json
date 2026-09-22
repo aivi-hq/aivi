@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run build -s && npm run typecheck && node --test packages/*/test/*.test.ts",
+    "test": "npm run build -s && npm run typecheck && node --test --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
     "check": "npm test && npm run schema:check && npm run smoke",
     "aivi": "npm run build -s && AIVI_HOME=${AIVI_HOME:-example} node packages/app/dist/cli.js",
     "schema": "npm run build -s && node scripts/schema.mjs --write",

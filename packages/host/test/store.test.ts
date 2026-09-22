@@ -21,6 +21,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   old.db.exec(`
     DROP TABLE runs; DROP TABLE jobs; DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job;
     DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
+    DROP TABLE IF EXISTS link_codes; DROP TABLE IF EXISTS channel_identities;
     CREATE TABLE schedules(id TEXT PRIMARY KEY, spec TEXT NOT NULL, fingerprint TEXT NOT NULL,
       next_at INTEGER NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
@@ -36,7 +37,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   const upgraded = new Store(path);
   t.after(() => upgraded.close());
   assert.equal(upgraded.run('run-1').state, 'queued');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 9);
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 10);
   assert.equal(upgraded.run('run-1').report, null);
   assert.equal(upgraded.history('run-1')[0]!.action, 'enqueued');
   assert.equal(upgraded.acquireLease('discord:one', 'discord', 'local-model', 1, pools), true);
@@ -61,6 +62,7 @@ test('schema v7 gives every one-off its own job definition and keeps schedule an
     INSERT INTO schedules SELECT id,spec,fingerprint,next_at,1,source FROM jobs;
     DROP TABLE jobs; DROP TABLE runs;
     DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
+    DROP TABLE IF EXISTS link_codes; DROP TABLE IF EXISTS channel_identities;
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
       task TEXT NOT NULL, resource TEXT NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','blocked','cancelled')),
@@ -452,7 +454,7 @@ test('prune deletes finished runs with their audit rows and finished one-off job
   );
   const fresh = cycle(start + 40 * day, 'succeeded');
   const result = store.prune(start + 30 * day);
-  assert.deepEqual(result, { runs: 3, jobs: 1 });
+  assert.deepEqual(result, { runs: 3, jobs: 1, linkCodes: 0 });
   assert.throws(() => store.run(oldRun.id), /Unknown run/);
   assert.equal(store.history(oldRun.id).length, 0);
   assert.throws(() => store.job(oldOneOff.jobId), /Unknown job/);
@@ -486,4 +488,47 @@ test('every token belongs to a person and is stored only as a hash', async t => 
   assert.deepEqual(store.people(), [nemo]);
   const ada = store.createPerson({ name: 'Ada' }, start + 1);
   assert.deepEqual(store.people(), [nemo, ada]);
+});
+
+test('link codes: minted hashed, consumed once, already-bound refused without consuming', () => {
+  const store = new Store(':memory:');
+  const ada = store.createPerson({ name: 'Ada', roles: [] });
+  assert.throws(() => store.mintLinkCode('person-none'), /Unknown person/);
+  const first = store.mintLinkCode(ada.id, 15 * 60_000, start);
+  assert.match(first.code, /^\d{5}$/);
+  // One active code per person: a new mint replaces the old one.
+  const second = store.mintLinkCode(ada.id, 15 * 60_000, start + 1);
+  assert.equal(
+    store.redeemLinkCode(first.code, 'discord', 'u1', start + 2).reason,
+    'unknown',
+    'the replaced code is gone',
+  );
+  // Redemption binds the channel account and consumes the code.
+  const outcome = store.redeemLinkCode(second.code, 'discord', 'u1', start + 3);
+  assert.deepEqual(outcome.reason === 'bound' ? outcome.person.id : null, ada.id);
+  assert.deepEqual(store.identityFor('discord', 'u1')?.id, ada.id);
+  assert.equal(store.identityFor('discord', 'u2'), null);
+  assert.equal(store.redeemLinkCode(second.code, 'discord', 'u2', start + 4).reason, 'unknown', 'one-time use');
+  // Relinking is refused, and the refusal does not consume: another account may still use the code.
+  const again = store.mintLinkCode(ada.id, 15 * 60_000, start + 5);
+  const refused = store.redeemLinkCode(again.code, 'discord', 'u1', start + 6);
+  assert.deepEqual(refused.reason === 'already' ? refused.person.id : null, ada.id);
+  assert.equal(store.identityFor('discord', 'u1')?.id, ada.id, 'the binding is unchanged');
+  assert.equal(store.redeemLinkCode(again.code, 'slack', 'u9', start + 7).reason, 'bound');
+  // An expired code is refused, and age, not the mint instant, decides.
+  const stale = store.mintLinkCode(ada.id, 1000, start - 5000);
+  assert.equal(store.redeemLinkCode(stale.code, 'discord', 'fresh', start).reason, 'expired');
+  // Retention sweeps expired codes; live ones survive. (Minting replaced ada's
+  // stale code, so the sweep needs another person's to find.)
+  const live = store.mintLinkCode(ada.id, 15 * 60_000, start + 8);
+  const bob = store.createPerson({ name: 'Bob', roles: [] });
+  const bobStale = store.mintLinkCode(bob.id, 1000, start - 5000);
+  assert.deepEqual(store.prune(start + 9), { runs: 0, jobs: 0, linkCodes: 1 });
+  assert.equal(
+    store.redeemLinkCode(bobStale.code, 'discord', 'bob', start + 10).reason,
+    'unknown',
+    'the sweep took it',
+  );
+  assert.equal(store.redeemLinkCode(live.code, 'discord', 'new', start + 10).reason, 'bound');
+  store.close();
 });

@@ -14,6 +14,7 @@ import {
   isChatCommand,
   OFFLINE_NOTICE,
   ONLINE_NOTICE,
+  redeemLink,
   splitReply,
   status,
   steerTurn,
@@ -56,6 +57,70 @@ export function slackManifestCommands(prefix = '{prefix}'): string {
       '      should_escape: false',
     ].join('\n');
   }).join('\n');
+}
+
+/**
+ * The whole Slack app manifest as JSON, ready to paste into Slack's app setup.
+ * Generated from the shared command table, so it cannot drift from what the
+ * module registers; `name` is the persona (config.json `identity.name`).
+ */
+export function slackManifest(
+  prefix = 'aivi',
+  info: { name?: string; description?: string; backgroundColor?: string } = {},
+): Record<string, unknown> {
+  const name = info.name?.trim() || 'aivi';
+  return {
+    display_information: {
+      name,
+      description: info.description ?? "The team's librarian",
+      background_color: info.backgroundColor ?? '#4c7185',
+    },
+    features: {
+      app_home: {
+        home_tab_enabled: false,
+        messages_tab_enabled: true,
+        messages_tab_read_only_enabled: false,
+      },
+      bot_user: {
+        display_name: name,
+        always_online: true,
+      },
+      slash_commands: CHAT_COMMANDS.map(command => ({
+        command: `/${prefix}-${command.name}`,
+        description: command.description,
+        ...(usageHint(command) ? { usage_hint: usageHint(command) } : {}),
+        should_escape: false,
+      })),
+    },
+    oauth_config: {
+      scopes: {
+        bot: [
+          'commands',
+          'app_mentions:read',
+          'chat:write',
+          'channels:history',
+          'groups:history',
+          'im:history',
+          'im:read',
+          'im:write',
+          'reactions:write',
+          'users:read',
+        ],
+      },
+      pkce_enabled: false,
+    },
+    settings: {
+      event_subscriptions: {
+        bot_events: ['app_mention', 'message.channels', 'message.groups', 'message.im'],
+      },
+      interactivity: { is_enabled: true },
+      org_deploy_enabled: false,
+      socket_mode_enabled: true,
+      token_rotation_enabled: false,
+      app_level_token_rotation_enabled: false,
+      is_mcp_enabled: false,
+    },
+  };
 }
 
 /** A conversation is a DM channel, a whole channel, or a thread as `channel:thread_ts`. */
@@ -153,6 +218,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       services.loaded,
       services.opencode,
       services.events,
+      services.store,
       services.log,
     );
     const names = new Map<string, Promise<string>>();
@@ -254,6 +320,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       if (!authorized(config, route)) return reply('This user or conversation is not enabled for aivi.');
       if (name === 'help') return reply(helpText(spell));
       if (name === 'jobs') return reply(describeJobs(services.store));
+      if (name === 'link') return reply(redeemLink(services.store, SLACK.id, command.user_id, command.text));
       if (name === 'search') {
         // `QUERY [project]`: the last word is a project only when it names a configured one.
         const words = command.text.trim().split(/\s+/).filter(Boolean);
@@ -375,6 +442,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
     // (script jobs). A job's outcome for a session this module owns comes back into its thread as a turn.
     const unregister = services.channels.register({
       id: SLACK.id,
+      linkHint: `In Slack, run /${config.commandPrefix}-link <code> anywhere.`,
       accepts: channel => config.reportChannels.includes(channel),
       ownsSession: session => store.channelOf(session) !== null,
       async channelOf(session) {

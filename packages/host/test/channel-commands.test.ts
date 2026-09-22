@@ -7,6 +7,7 @@ import {
   describeJobs,
   helpText,
   isChatCommand,
+  redeemLink,
   steerTurn,
   stopTurn,
   usageHint,
@@ -129,7 +130,7 @@ async function mockOpenCode(t: { after(fn: () => Promise<void>): void }) {
 test('the command table feeds /help and the platform manifests: names, one usage hint, short descriptions', () => {
   assert.deepEqual(
     CHAT_COMMANDS.map(c => c.name),
-    ['new', 'status', 'context', 'search', 'model', 'stop', 'steer', 'jobs', 'help'],
+    ['new', 'status', 'context', 'search', 'model', 'stop', 'steer', 'jobs', 'link', 'help'],
   );
   assert.ok(
     CHAT_COMMANDS.every(c => c.description.length < 100),
@@ -324,4 +325,17 @@ test('/stop and /steer act on the running turn only: interrupt after the engine 
   assert.deepEqual([one.state, one.error], ['discarded', STOPPED_REASON]);
   assert.deepEqual(sent, [STOPPED_NOTICE]);
   assert.deepEqual(core.leases(), []);
+});
+
+test('redeemLink answers in words; the host decides and the module only sends', () => {
+  const store = new Store(':memory:');
+  const ada = store.createPerson({ name: 'Ada', roles: [] });
+  assert.match(redeemLink(store, 'discord', 'u1', '12345'), /did not match/);
+  const { code } = store.mintLinkCode(ada.id);
+  assert.match(redeemLink(store, 'discord', 'u1', ` ${code} `), /belongs to Ada/, 'whitespace is tolerated');
+  const second = store.mintLinkCode(ada.id);
+  assert.match(redeemLink(store, 'discord', 'u1', second.code), /already linked to Ada/);
+  // The refused relink did not consume: the code still works for another account.
+  assert.match(redeemLink(store, 'discord', 'u2', second.code), /belongs to Ada/);
+  store.close();
 });

@@ -7,6 +7,7 @@ export {
   describeJobs,
   helpText,
   isChatCommand,
+  redeemLink,
   steerTurn,
   stopTurn,
   usageHint,

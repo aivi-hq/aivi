@@ -283,6 +283,14 @@ work starts at box 8 as written.
        told there is no person to bind); inbox code-match before a message
        becomes a turn; discord/slack/linear bind handlers; confirmation
        reply; `aivi link <platform>`; tests.
+       ▶ Landed 2026-09-22 with a deviation: redemption is the shared
+       `redeemLink` helper called from the `/link` slash command (host-authored
+       reply, added to `CHAT_COMMANDS`), not an inbox pre-turn scan — and
+       `link` never reached a person before this, so the CLI mints it
+       (`POST /v1/links`), 5 digits, hashed, 15 min, one-time, re-bind refused
+       (no unlink). Discord + Slack only; Linear needs its own redemption
+       path (box 22). Turn runner stamps `metadata.aivi.person` and speaks the
+       person's name. Natural-language redemption via an `aivi_link` tool: later.
 - [ ] 14. Docs of this session: `people.md`, `opencode.md` (remote plugin),
        `channels.md` (code matching), `configuration.md` (config file,
        0600, token-never-logged); `agentic:verify` per commit.

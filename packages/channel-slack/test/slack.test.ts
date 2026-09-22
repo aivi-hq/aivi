@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import type { KnowledgeService, Run } from '@aivi/core';
 import { configSchema, getLogger, slackConfigSchema } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
-import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry } from '@aivi/host';
+import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, usageHint } from '@aivi/host';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import {
   conversationParts,
@@ -13,6 +13,7 @@ import {
   openSlackStore,
   routeMessage,
   SLACK,
+  slackManifest,
   slackManifestCommands,
 } from '../src/module.ts';
 
@@ -605,6 +606,30 @@ test('the manifest in docs/slack.md carries the shared command table, so the doc
     /^ {4}- command: \/spider-new\n {6}description: Start a fresh conversation\n {6}should_escape: false\n/,
   );
   assert.match(slackManifestCommands(), /usage_hint: "\[model\]"/, 'a hint that YAML would read as a list is quoted');
+});
+
+test('the JSON manifest agrees with the YAML snippet: one command table, two spellings', () => {
+  const json = slackManifest('aivi', { name: 'Aivi' }) as {
+    display_information: { name: string };
+    features: {
+      bot_user: { display_name: string };
+      slash_commands: { command: string; description: string; usage_hint?: string; should_escape: boolean }[];
+    };
+  };
+  assert.equal(json.display_information.name, 'Aivi');
+  assert.equal(json.features.bot_user.display_name, 'Aivi', 'the bot answers under the persona name');
+  const commands = json.features.slash_commands;
+  assert.deepEqual(
+    commands.map(c => c.command),
+    CHAT_COMMANDS.map(c => `/aivi-${c.name}`),
+  );
+  for (const c of commands) assert.equal(c.should_escape, false);
+  // Every field the YAML snippet carries is in the JSON too.
+  for (const command of CHAT_COMMANDS) {
+    const dumped = commands.find(c => c.command === `/aivi-${command.name}`)!;
+    assert.equal(dumped.description, command.description);
+    assert.equal(dumped.usage_hint, usageHint(command) || undefined);
+  }
 });
 
 test('-steer and -stop act on the running turn; -model is refused while it runs', async t => {

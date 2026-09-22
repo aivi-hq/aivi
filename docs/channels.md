@@ -21,6 +21,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
 | `accepts(channel)` | Whether a report to that channel could be delivered; refuses a job before anything is spent |
 | `channelOf(sessionId)` | The platform channel the conversation bound to that session lives in (a thread's parent, a DM itself); "post it to this channel" resolves through it |
+| `linkHint?` | How a person spends a link code on this platform ("DM the bot: /link <code>."), shown by `aivi link` and aggregated by the router for `POST /v1/links`; redemption itself is the shared `redeemLink` helper |
 
 Registering is the whole integration with reports: `Channels` (the router on
 `HostServices.channels`) sends `{ to: "channel", module }` reports to the
@@ -237,6 +238,7 @@ messages.
 | `stop` | `stopTurn`: `ChannelEngine.stopTurn` (the turn is discarded as stopped, the conversation hears "Stopped at your request.") then `session.interrupt` so the agent stops spending; queued messages stay queued and follow. Nothing running → says so |
 | `steer TEXT` | `steerTurn`: `session.prompt` with `delivery: "steer"` into the running turn's session, the speaker line as for a message, and `metadata.aivi.steer = <that turn's message id>` so `finalAnswer` counts it as part of the turn; nothing is queued when no turn runs |
 | `jobs` | `describeJobs`: the next five occurrences (id, title, when) and the last ten runs (job, state, when) from the host store, as short markdown |
+| `link CODE` | `redeemLink`: consumes the one-time code the person minted with `aivi link` and binds `{channel, user id} → person` — the identity comes from the platform, the code is the evidence, the host decides; the reply is host-authored. Refusals (unknown, expired, already bound) never consume the code; a binding is refused while one exists, since there is no unlink yet ([people](people.md#link-codes-discord-slack)) |
 | `help` | `helpText`: one line per command |
 
 ## Live gate

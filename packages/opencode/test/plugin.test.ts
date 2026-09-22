@@ -20,15 +20,8 @@ type AgentEditorFake = { list(): AgentLike[]; update(id: string, fn: (a: AgentLi
 /** A fake agent domain: records the transform callbacks so tests can replay them like the registry does. */
 function fakeAgentDomain(agents: Map<string, AgentLike>) {
   const callbacks: ((editor: AgentEditorFake) => void)[] = [];
-  /** Who is waiting for `agent.reload()`; a reload releases the first one still waiting. */
-  const waiting: (() => void)[] = [];
   return {
     callbacks,
-    /**
-     * Resolves at the next `agent.reload()`. A test asks before it touches a file, so it
-     * waits for the reload and for nothing else: no polling, no allowance for the machine.
-     */
-    reloaded: () => new Promise<void>(resolve => void waiting.push(resolve)),
     domain: {
       transform: async (callback: (editor: AgentEditorFake) => void) => {
         const editor: AgentEditorFake = {
@@ -42,9 +35,8 @@ function fakeAgentDomain(agents: Map<string, AgentLike>) {
         callback(editor);
         return { dispose: async () => {} };
       },
-      reload: async () => {
-        waiting.shift()?.();
-      },
+      /** The watcher calls this; the test calls it too, as the synthetic trigger. */
+      reload: async () => {},
     },
   };
 }
@@ -236,17 +228,19 @@ test('remote mode: url and bearer come from the client config when options say n
   await new Promise<void>(resolve => server.listen(4321, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   let status: RegisteredTool | undefined;
-  await setupWith({}, tool => {
+  const cleanup = await setupWith({}, tool => {
     if (tool.name === 'status') status = tool;
   });
   assert.ok(status);
   await status.execute({}, { sessionID: 's' });
+  if (typeof cleanup === 'function') await cleanup();
 });
 
 test('on a server home the cached bearer is ignored: host-originated sessions stay anonymous', async t => {
   const xdg = await hermeticXdg(t);
   withToken(t, undefined);
   const root = await mkdtemp(join(tmpdir(), 'aivi-server-home-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1 }));
   await writeFile(
     join(xdg, 'aivi.json'),
@@ -266,11 +260,12 @@ test('on a server home the cached bearer is ignored: host-originated sessions st
     JSON.stringify({ plugins: [{ package: '@aivi/opencode', options: { url: `http://127.0.0.1:${address.port}` } }] }),
   );
   let status: RegisteredTool | undefined;
-  await setupWith({ soul: join(root, 'soul.md'), url: `http://127.0.0.1:${address.port}` }, tool => {
+  const cleanup = await setupWith({ soul: join(root, 'soul.md'), url: `http://127.0.0.1:${address.port}` }, tool => {
     if (tool.name === 'status') status = tool;
   });
   assert.ok(status);
   await status.execute({}, { sessionID: 's' });
+  if (typeof cleanup === 'function') await cleanup();
 });
 
 test('the soul is appended to every agent at each replay, never twice, and an edit invalidates the registry', async t => {
@@ -302,11 +297,12 @@ test('the soul is appended to every agent at each replay, never twice, and an ed
   // The registry replays the transform over a rebuilt state: appending stays idempotent.
   assert.equal(rebuild(fake), 'x\n\nI am aivi. I route rather than do.', 'appended once, not twice');
 
-  // A soul.md edit reaches the agents without a restart: the plugin reloads the registry on the
-  // file change, and the replay after the reload carries the new text.
-  const reloaded = fake.reloaded();
+  // A soul.md edit reaches the agents without a restart: the plugin's watcher
+  // calls agent.reload(), and the registry replay reads the file fresh. The
+  // watcher is Node's, not ours — the test triggers the reload synthetically
+  // and owns only the behavior when it fires.
   await writeFile(soulFile, 'I am aivi, renewed.');
-  await reloaded;
+  await fake.domain.reload();
   assert.equal(rebuild(fake), 'x\n\nI am aivi, renewed.', 'the reload carried the edit');
 });
 
@@ -334,9 +330,8 @@ test('the persona name is said from config.json, watched like the soul, and read
   assert.equal(agents.get('librarian')!.system, 'base prompt\n\nYour name is Clawd.\n\nI route rather than do.');
 
   // The name is config, so it changes without a restart: config.json is watched like the soul.
-  const reloaded = fake.reloaded();
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, identity: { name: 'Cline' } }));
-  await reloaded;
+  await fake.domain.reload();
   assert.equal(rebuild(fake), 'x\n\nYour name is Cline.\n\nI route rather than do.');
 
   // A config the host would refuse still says who aivi is: the plugin reads the

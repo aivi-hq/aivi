@@ -38,7 +38,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`, `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
 | model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
-| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/help`): one shared table in the host, each platform only translates |
+| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates |
 | attribution | which names a commit carries: the bot as author/co-author from aivi's identity, the human as author from their own git config — a git fact, it never consults whoami ([people](docs/people.md)) |
 | association | which person a record belongs to: link codes, job ownership, session stamps, memories — a host fact, taken from the calling bearer, never from what a message claimed ([people](docs/people.md)) |
 

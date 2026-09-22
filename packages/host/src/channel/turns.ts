@@ -5,6 +5,7 @@ import type { SessionEvents } from '../events.ts';
 import type { OpenCodeClient } from '../opencode.ts';
 import { reentryPrompt } from '../reports.ts';
 import { connectForTurn, runTurn } from '../session.ts';
+import type { Store } from '../store.ts';
 import type { ChannelPlatform } from './contract.ts';
 import type { Ask } from './engine.ts';
 
@@ -30,6 +31,7 @@ export async function createTurnRunner(
   loaded: LoadedConfig,
   opencode: () => Promise<OpenCodeClient>,
   events: SessionEvents,
+  store: Store,
   log?: Logger,
 ): Promise<Ask> {
   const permissions: { action: string; resource: string; effect: 'allow' }[] = [];
@@ -52,7 +54,10 @@ export async function createTurnRunner(
     // A conversation that adopted a job's session keeps that session's agent and directory.
     const agent = turn.agent ?? config.agent;
     const directory = turn.directory ?? config.directory;
-    const said = `${speakerLine(platform, turn)}\n${turn.text}`;
+    // A linked channel account speaks as its aivi person, in the prompt and
+    // in the metadata, so memories and outcomes know who it was.
+    const who = turn.kind === 'message' ? store.identityFor(platform.id, turn.user) : null;
+    const said = `${speakerLine(platform, { name: who?.name ?? turn.name, user: turn.user })}\n${turn.text}`;
     const text =
       turn.kind === 'job'
         ? reentryPrompt(turn.text)
@@ -67,7 +72,9 @@ export async function createTurnRunner(
         directory,
         create: !turn.ready,
         title: `${platform.label} ${turn.channel}`,
-        sessionMetadata: { aivi: { origin: platform.id, channel: turn.channel } },
+        sessionMetadata: {
+          aivi: { origin: platform.id, channel: turn.channel, ...(who ? { person: who.id } : {}) },
+        },
         permissions,
         messageId: messageIdFor(platform, turn.id),
         // Role behaviour lives in the agent definition; the prompt only carries who said what.
@@ -76,7 +83,13 @@ export async function createTurnRunner(
           aivi:
             turn.kind === 'job'
               ? { origin: 'job-result', channel: turn.channel, run: turn.id.slice('run:'.length) }
-              : { origin: platform.id, channel: turn.channel, user: turn.user, sourceMessage: turn.id },
+              : {
+                  origin: platform.id,
+                  channel: turn.channel,
+                  user: turn.user,
+                  sourceMessage: turn.id,
+                  ...(who ? { person: who.id } : {}),
+                },
         },
         ...(turn.model ? { model: turn.model } : {}),
       },

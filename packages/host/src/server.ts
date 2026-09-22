@@ -111,6 +111,8 @@ export interface HostServerOptions {
   context?: ((sessionID: string, signal: AbortSignal) => Promise<string>) | undefined;
   /** Module webhooks, outside bearer auth; absent from the CLI. */
   routes?: PublicRoutes | undefined;
+  /** The channel modules that can consume a link code, with their redemption hints; absent from the CLI. */
+  linkable?: (() => { id: string; hint?: string }[]) | undefined;
   log?: Logger | undefined;
 }
 
@@ -128,6 +130,7 @@ export function createHostServer({
   health,
   context,
   routes,
+  linkable,
   log = getLogger(['aivi']),
 }: HostServerOptions) {
   return createServer((request, response) => {
@@ -186,6 +189,31 @@ export function createHostServer({
         wake?.();
         send(200, { woken: wake !== undefined });
       }
+      return;
+    }
+    if (url.pathname === '/v1/links') {
+      if (request.method !== 'POST') {
+        send(405, { error: 'Use POST to mint a link code' });
+        return;
+      }
+      const person = bearerPerson(store, request.headers.authorization);
+      if (!person) {
+        send(401, { error: 'Linking names a person; send a bearer token that resolves to one' });
+        return;
+      }
+      const minted = store.mintLinkCode(person.id);
+      const channels = linkable?.() ?? [];
+      // `next` is the one instruction that follows: where this code is spent.
+      send(200, {
+        code: minted.code,
+        expiresAt: new Date(minted.expiresAt).toISOString(),
+        person: person.name,
+        channels,
+        next:
+          channels.length === 1
+            ? `Paste \`/link ${minted.code}\` in the ${channels[0]!.id} channel the bot reads.`
+            : 'Paste `/link <code>` where the bot reads it, or name the channel: aivi link discord.',
+      });
       return;
     }
     if (request.method !== 'GET') {

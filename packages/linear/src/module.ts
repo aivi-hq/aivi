@@ -207,6 +207,7 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       services.loaded,
       services.opencode,
       services.events,
+      services.store,
       services.log,
     );
     engine = new ChannelEngine(

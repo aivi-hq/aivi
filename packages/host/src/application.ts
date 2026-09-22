@@ -161,6 +161,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
       health: () => supervisor?.health() ?? [],
+      linkable: () => channels.linkable(),
       context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
       log,
     });
