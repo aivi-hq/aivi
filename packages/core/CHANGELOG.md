@@ -1,5 +1,19 @@
 # @aivi/core
 
+## 0.5.0
+
+### Minor Changes
+
+- [#20](https://github.com/aivi-hq/aivi/pull/20) [`ad2895a`](https://github.com/aivi-hq/aivi/commit/ad2895a635925a5b23208bd34c915f7fca19f4ba) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Who may talk is no longer config's job: `access.dm` and the per-channel
+  `users` lists are gone, and a person's link is the only admission. A linked
+  account may DM aivi and is heard wherever aivi listens; an unlinked account
+  is ignored in channels, and in a DM it can only redeem a code, answered at
+  most once per start with the link hint. `/link` redeems wherever aivi
+  listens, linked or not. The installers no longer ask for anyone's user id,
+  and `/steer` now speaks as the person and stamps `metadata.aivi.person`, so
+  a session knows who steered it. Breaking, before any live install: configs
+  carrying `access.dm` or `users` fail validation.
+
 ## 0.4.0
 
 ### Minor Changes
