@@ -66,7 +66,8 @@ test('server create for another machine prints the token and writes no client co
   const done = await run(['server', 'create', '--use', 'another', '--name', 'Nemo'], env);
   assert.equal(done.status, 0, done.stderr);
   const out = JSON.parse(done.stdout);
-  assert.match(out.next, /laptop/);
+  assert.match(out.next, /other machine/);
+  assert.match(out.next, /Connect to a host/);
   assert.equal(out.clientConfig, undefined);
   assert.equal(existsSync(join(xdg, 'aivi.json')), false, 'nothing signed in here');
   assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')), { version: 1 });
