@@ -118,6 +118,32 @@ test('people commands talk HTTP to the running host', async t => {
   assert.match(missing.stderr, /HTTP 404/);
 });
 
+test('plugin setup needs a terminal; scripts are told what to do instead', async t => {
+  const { home, xdg, env, cleanup } = await scratch();
+  t.after(cleanup);
+  await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1 }));
+
+  // An installed package with a ./setup entry still refuses to run without a TTY.
+  const guarded = await run(['plugin', 'setup', '@aivi/channel-discord'], env);
+  assert.equal(guarded.status, 1);
+  assert.match(guarded.stderr, /interactive terminal/);
+
+  // A package that is not installed says so in install terms.
+  const missing = await run(['plugin', 'setup', '@acme/nowhere'], env);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /aivi install @acme\/nowhere/);
+
+  // An installed package without a ./setup export has nothing to say at install time.
+  const noSetup = await run(['plugin', 'setup', '@aivi/core'], env);
+  assert.equal(noSetup.status, 1);
+  assert.match(noSetup.stderr, /no setup command/);
+
+  // And the command wants its spec.
+  const bare = await run(['plugin', 'setup'], env);
+  assert.equal(bare.status, 1);
+  assert.match(bare.stderr, /needs the installed package/);
+});
+
 test('slack manifest dumps the whole app manifest as JSON, prefix from the flag, the config or a prompt', async t => {
   const { home, xdg, env, cleanup } = await scratch();
   t.after(cleanup);

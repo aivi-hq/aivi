@@ -170,9 +170,8 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **One compiled shape, locally and on npm.** Packages compile to `dist/`
   with TypeScript 7 (`npm run build`, incremental), and every `exports` map
   points at `dist/`: dev, tests and consumers run the identical artifact,
-  nothing is rewritten at publish. The git-checkout installation decision is
-  superseded; packages publish to npm
-  ([installation](docs/backlog/installation.md)).
+  nothing is rewritten at publish, and nothing ships from a package root. The
+  git-checkout installation decision is superseded; packages publish to npm.
 - **Blocked runs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
 - **An agent session is a conversation.** The Linear module runs on the

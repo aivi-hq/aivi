@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { loadClientConfig } from './client-config.ts';
 import { forward } from './forward.ts';
 import { homeForCreate, homeFromEnvOrConfig, requireHome } from './home.ts';
+import { install } from './install.ts';
 import { link } from './link.ts';
 import {
   serviceInstall,
@@ -36,6 +37,8 @@ const usage = `aivi <command>
                               [--connect --url URL --token TOKEN] for a host
                               [--use this-machine|another] [--plugin @aivi/channel-discord …] [--name TEXT] to create
   link [PLATFORM]             Mint a one-time code that links a channel account to your person
+  install discord|slack|SPEC  Add a plugin to the server home: it installs, configures itself
+                              through its own setup entry, and aivi comes back with it running
   serve                       Start the server in the foreground
   update                      Update the installed server and plugins (channel: config.json update.channel)
   upgrade                     Update this CLI through its install method (npm today)
@@ -67,6 +70,16 @@ export async function main(argv: string[]): Promise<void> {
   }
   if (command === 'link') {
     await link(argv.slice(2));
+    return;
+  }
+  if (command === 'install') {
+    const home = requireHome();
+    const config = loadClientConfig();
+    await install(argv.slice(2), {
+      home,
+      appDir: config?.appDir ?? join(home, 'app'),
+      nodePath: config?.nodePath ?? process.execPath,
+    });
     return;
   }
   if (command === 'server' && subcommand === 'create') {

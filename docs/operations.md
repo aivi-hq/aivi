@@ -166,6 +166,33 @@ no sign-in it asks what the machine should be:
 
 People, tokens and the client config are owned by [people](people.md).
 
+## Plugins: `aivi install`
+
+`aivi install discord` (or `slack`, or any npm package name) adds a plugin to
+the server home and lets the plugin configure itself. Three steps, in order:
+
+1. The package is npm-installed into `<home>/app` with `--save-exact`, so
+   `aivi update` carries it along; an already-installed package is not
+   fetched again.
+2. The plugin's own `./setup` entry runs. Everything platform-specific lives
+   in the plugin: it prints how to create the platform app, asks for the
+   secrets (hidden), verifies each against the platform before anything is
+   written, and writes its `modules.*` block into `config.json` and its
+   tokens into `<home>/.env` (0600, never echoed). A write that leaves
+   `config.json` unloadable is restored to the old bytes; an already
+   configured module is never clobbered. Behind the command sits
+   `aivi plugin setup SPEC`, not a person-facing command, and it needs an
+   interactive terminal.
+3. Aivi is restarted (when it runs as a service) and the command ends only
+   in a verified truth: the module's own state — "Discord is running." A
+   degraded module fails the command with the retry going on; without the
+   service the command says how aivi comes back, and never restarts a
+   foreground server itself.
+
+The contract is one subpath: a package that exports `./setup` with a
+default function is installable this way, whatever its publisher. A package
+without one is still installed, and the command says it has no setup.
+
 ## Jobs and runs from the command line
 
 Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,

@@ -1,0 +1,146 @@
+{
+  "$schema": "../schemas/aivi.schema.json",
+  "version": 1,
+  "identity": {
+    "name": "aivi"
+  },
+  "host": {
+    "port": 4100
+  },
+  "knowledge": [
+    {
+      "id": "company",
+      "path": "knowledge"
+    }
+  ],
+  "projectDefaults": {
+    "linear": {
+      "lanes": {
+        "Dev": "dev",
+        "Review": "dev"
+      }
+    }
+  },
+  "projects": {
+    "demo": {
+      "linear": {
+        "teams": ["REPLACE_WITH_LINEAR_TEAM_ID"],
+        "lanes": {
+          "In Progress": "dev"
+        }
+      }
+    },
+    "peck-track": {
+      "linear": {
+        "teams": ["b3d24fc8-2d31-4147-b9b0-804f64886c75"],
+        "lanes": {
+          "In Review": null,
+          "Release": null,
+          "QA": null,
+          "Triage": null,
+          "Duplicate": null,
+          "Backlog": null,
+          "Todo": null
+        }
+      }
+    }
+  },
+  "scheduler": {
+    "maxConcurrent": 2,
+    "resources": {
+      "local-model": 1,
+      "maintenance": 1
+    }
+  },
+  "jobs": [
+    {
+      "id": "check-sources",
+      "cron": "*/5 * * * *",
+      "timezone": "UTC",
+      "resource": "maintenance",
+      "task": "system.check"
+    },
+    {
+      "id": "refresh-knowledge",
+      "cron": "0 * * * *",
+      "timezone": "UTC",
+      "resource": "maintenance",
+      "task": "knowledge.index"
+    },
+    {
+      "id": "dreaming",
+      "cron": "0 3 * * *",
+      "timezone": "Europe/Amsterdam",
+      "resource": "local-model",
+      "task": {
+        "kind": "invocation",
+        "name": "dreaming",
+        "args": {
+          "origins": ["discord", "slack"]
+        }
+      },
+      "report": {
+        "to": "channel",
+        "module": "discord",
+        "channel": "1539327786433650768",
+        "on": "always"
+      }
+    }
+  ],
+  "search": {
+    "provider": "qmd",
+    "indexOnStart": true
+  },
+  "linear": {
+    "apps": {
+      "dev": {}
+    },
+    "listener": true
+  },
+  "modules": {
+    "discord": {
+      "applicationId": "1539324497071444201",
+      "agent": "librarian",
+      "access": {
+        "dm": {
+          "users": ["366596598169600002", "858645606527533076"]
+        },
+        "channels": [
+          {
+            "id": "1539327786433650768",
+            "users": "anyone"
+          }
+        ]
+      },
+      "reportChannels": ["1539327786433650768"],
+      "messageContent": true,
+      "resource": "local-model",
+      "maxConcurrent": 1,
+      "maxPending": 100,
+      "turnTimeoutMs": 300000
+    },
+    "slack": {
+      "agent": "librarian",
+      "commandPrefix": "spider",
+      "access": {
+        "dm": {
+          "users": ["U58R31DEW"]
+        },
+        "channels": [
+          {
+            "id": "C0C1ZB2K54J",
+            "users": ["U58R31DEW"]
+          }
+        ]
+      },
+      "reportChannels": ["C0C1ZB2K54J"],
+      "resource": "local-model",
+      "maxConcurrent": 1,
+      "maxPending": 100,
+      "turnTimeoutMs": 300000
+    }
+  },
+  "opencode": {
+    "lifecycle": "ensure"
+  }
+}

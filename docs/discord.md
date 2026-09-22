@@ -99,7 +99,12 @@ the host's. This page has what is Discord's.
 
 ## Setup
 
-Run `npm ci` (no build step). Create a Discord application
+The short way: `aivi install discord`. It prints the application steps below,
+verifies the token against Discord, derives the application id from the bot,
+writes the `modules.discord` block and `DISCORD_BOT_TOKEN`, and restarts aivi
+([operations](operations.md#plugins-aivi-install)). The manual path:
+
+Create a Discord application
 and bot, then invite it to your server with `bot` and `applications.commands`.
 Give it access to the selected channels and permission to send messages, add
 reactions, create public threads, and send messages in threads. Private threads also require bot
