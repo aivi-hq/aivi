@@ -48,7 +48,7 @@ stderr — pretty on a terminal, one JSON object per line when piped, which
 `--log-format auto|pretty|json` overrides — and `aivi serve` additionally appends
 JSON lines to `<home>/state/logs/aivi.log` (rotated, so the file is capped)
 whatever the console shows. In the pretty console the category column is the
-activation tree, colored per module: `aivi·host` green, `aivi·host·discord`
+activation tree, colored per module: `aivi·host` blue, `aivi·host·discord`
 purple, `aivi·host·slack` cyan, `aivi·host·linear` indigo, `aivi·host·scheduler`
 deep pink, `aivi·knowledge` amber; the CLI root and dreaming keep the muted
 gray. Message text uses the terminal's own foreground; the log file stays
@@ -161,8 +161,8 @@ no sign-in it asks what the machine should be:
   `--name TEXT` (or `--connect --url URL --token TOKEN`) to skip the
   prompts. A re-run on a home that has people refuses identity minting;
   re-running `aivi setup` signed-in just verifies and refreshes the cached
-  person. `server create` still works as the identity step behind setup and
-  is not a person-facing command.
+  person. The installed app still answers `server create` as the identity
+  step behind setup — hidden plumbing, never a person-facing command.
 
 People, tokens and the client config are owned by [people](people.md).
 
@@ -193,10 +193,26 @@ The contract is one subpath: a package that exports `./setup` with a
 default function is installable this way, whatever its publisher. A package
 without one is still installed, and the command says it has no setup.
 
+A package can also add operator commands to this CLI: a `./cli` subpath that
+default-exports a `PluginCliCommand` ([architecture](architecture.md#one-application-contained-modules))
+is mounted into the CLI whenever the package is installed — `aivi discord`,
+`aivi slack` and `aivi linear` are exactly that, from their own packages. A
+package without one adds nothing; the built-in commands keep their names, so
+a plugin can never shadow `jobs` or `serve`.
+
 ## Jobs and runs from the command line
 
 Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
 `runs …` on executions.
+
+The help is grouped and themed (the wordmark and the brand colors of the
+logs), and every command answers `aivi <command> --help` for itself, so a
+flag's meaning is said once, where it works. Flags belong to their command: a
+flag a command does not know is an error, not a silently ignored word. An
+unknown command is answered with the nearest real one ("did you mean
+`jobs`?"). Help goes to stdout, errors to stderr, and both lose their color
+on a pipe or under `NO_COLOR`; command output on stdout stays plain JSON for
+whoever pipes it.
 
 `jobs add FILE` adds a job from a task file (a bare task, or
 `{ task, report?, resource? }`): `--cron EXPR --timezone TZ` makes it

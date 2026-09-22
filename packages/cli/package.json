@@ -10,7 +10,7 @@
     "templates"
   ],
   "engines": {
-    "node": ">=26.0.0 <27"
+    "node": ">=26.1.0 <27"
   },
   "license": "MIT",
   "repository": {
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@clack/prompts": "1.8.1",
+    "commander": "15.0.0",
     "plist": "5.0.0",
     "semver": "7.8.5",
     "zod": "4.1.13"

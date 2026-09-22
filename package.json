@@ -10,7 +10,7 @@
     "typescript": "7.0.2"
   },
   "engines": {
-    "node": ">=26.0.0 <27"
+    "node": ">=26.1.0 <27"
   },
   "name": "aivi",
   "overrides": {

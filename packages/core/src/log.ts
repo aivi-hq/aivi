@@ -34,14 +34,14 @@ export type ConsoleFormat = 'pretty' | 'json';
 // wins, so a module's engine and turn records inherit its color. Knowledge
 // hangs at root because the CLI builds it before any host exists. Dreaming
 // is pinned to the muted gray — the prefix rule would otherwise dye it host
-// green — and the CLI root reaches the same gray by fallback.
+// blue — and the CLI root reaches the same gray by fallback.
 const CATEGORY_COLORS: NonNullable<PrettyFormatterOptions['categoryColorMap']> = new Map([
   [['aivi', 'host', 'discord'], '#a371f7'],
   [['aivi', 'host', 'slack'], '#36c5f0'],
   [['aivi', 'host', 'linear'], '#5e6ad2'],
   [['aivi', 'knowledge'], '#C69214'],
   [['aivi', 'host', 'scheduler'], '#c51162'],
-  [['aivi', 'host'], '#00CC66'],
+  [['aivi', 'host'], '#3B82FF'],
   [['aivi', 'host', 'dreaming'], '#767676'],
 ]);
 
