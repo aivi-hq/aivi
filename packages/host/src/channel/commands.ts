@@ -66,6 +66,12 @@ export const CHAT_COMMANDS = [
     arguments: [{ name: 'text', description: 'What to say', required: true }],
   },
   { name: 'jobs', description: 'Upcoming job occurrences and recent runs', conversation: false, arguments: [] },
+  {
+    name: 'link',
+    description: 'Link this account to your aivi person with a code from `aivi link`',
+    conversation: false,
+    arguments: [{ name: 'code', description: 'The 5-digit code shown by aivi link', required: true }],
+  },
   { name: 'help', description: 'List aivi’s commands', conversation: false, arguments: [] },
 ] as const satisfies readonly ChatCommand[];
 export type ChatCommandName = (typeof CHAT_COMMANDS)[number]['name'];
@@ -119,6 +125,26 @@ export function describeJobs(store: Store, now = Date.now()): string {
 }
 
 const NOTHING_RUNNING = 'Nothing is running in this conversation.';
+
+/**
+ * `/link CODE`: the person proves they hold their bearer by consuming a code
+ * the host minted for them. The identity comes from the platform (the command
+ * names its caller); the code is the evidence; the host decides. The reply is
+ * host-authored; the module only sends it.
+ */
+export function redeemLink(store: Store, channel: string, user: string, code: string): string {
+  const outcome = store.redeemLinkCode(code.trim(), channel, user);
+  switch (outcome.reason) {
+    case 'bound':
+      return `Linked. This account now belongs to ${outcome.person.name}.`;
+    case 'already':
+      return `This account is already linked to ${outcome.person.name}; unlinking is not supported yet.`;
+    case 'expired':
+      return 'That code expired. Run `aivi link` for a new one; codes last 15 minutes.';
+    case 'unknown':
+      return 'That code did not match. Run `aivi link` and paste the new one.';
+  }
+}
 
 /**
  * `/stop`: end the turn the agent is working on in this conversation. The engine's

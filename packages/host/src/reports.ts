@@ -69,9 +69,11 @@ export function describeOutcome(
     ]
       .filter(Boolean)
       .join('\n');
-  } else if (op === 'runs.prune' && r)
-    body = `Deleted ${String(r.runs)} run(s) and ${String(r.jobs)} finished one-off job(s).`;
-  else body = result === null || result === undefined ? '' : JSON.stringify(result);
+  } else if (op === 'runs.prune' && r) {
+    const codes =
+      typeof r.linkCodes === 'number' && r.linkCodes > 0 ? ` and ${String(r.linkCodes)} expired link code(s)` : '';
+    body = `Deleted ${String(r.runs)} run(s) and ${String(r.jobs)} finished one-off job(s)${codes}.`;
+  } else body = result === null || result === undefined ? '' : JSON.stringify(result);
   if (state !== 'succeeded' && state !== 'missed' && reason) body = body ? `${reason}\n${body}` : reason;
   const foot = run.task.kind === 'prompt' && run.sessionId ? `session ${run.sessionId} in OpenCode` : '';
   const text = [head, body, foot].filter(Boolean).join('\n');

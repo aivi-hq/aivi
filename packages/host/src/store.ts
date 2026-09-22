@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -56,7 +56,7 @@ const run = (r: Row): Run => ({
   report: r.report === null || r.report === undefined ? null : (JSON.parse(String(r.report)) as Report),
 });
 
-const HOST_SCHEMA_VERSION = 9;
+const HOST_SCHEMA_VERSION = 10;
 
 /** Pre-v6 reports overloaded `channel`: a session id for `to: "session"`, a platform channel id for a module name. */
 function migrateReport(raw: unknown): Report | null {
@@ -207,6 +207,18 @@ export class Store {
         // The stub said every person was an operator; make the truth true.
         this.db.exec(`UPDATE people SET roles='["operator"]'`);
       }
+      if (version < 10)
+        this.db.exec(`
+        CREATE TABLE link_codes(code_hash TEXT PRIMARY KEY,
+          person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+          created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+        CREATE INDEX link_codes_person ON link_codes(person_id);
+        CREATE TABLE channel_identities(channel TEXT NOT NULL, user_id TEXT NOT NULL,
+          person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY(channel, user_id));
+        PRAGMA user_version=10;
+      `);
     });
   }
   /**
@@ -843,7 +855,7 @@ export class Store {
    * `olderThan`, then the finished one-off jobs that have no runs left.
    * Blocked and active work, and recurring definitions, are never touched.
    */
-  prune(olderThan: number): { runs: number; jobs: number } {
+  prune(olderThan: number): { runs: number; jobs: number; linkCodes: number } {
     return this.transaction(() => {
       const gone = "state IN ('succeeded','failed','cancelled','missed') AND finished_at<?";
       this.db.prepare(`DELETE FROM audit WHERE run_id IN (SELECT id FROM runs WHERE ${gone})`).run(olderThan);
@@ -856,7 +868,9 @@ export class Store {
           )
           .run(olderThan).changes,
       );
-      return { runs, jobs };
+      // Expired link codes are inert at redeem time; this is only hygiene.
+      const linkCodes = Number(this.db.prepare('DELETE FROM link_codes WHERE expires_at<?').run(olderThan).changes);
+      return { runs, jobs, linkCodes };
     });
   }
   /** Create a person; the id is minted here. aivi itself is never a person. */
@@ -920,5 +934,72 @@ export class Store {
       },
       token: token(row),
     };
+  }
+
+  /**
+   * A link code is how a person proves, on a channel, that they hold their
+   * bearer: they mint it here, then consume it there. Five digits, 15 minutes,
+   * one-time use, only the hash kept; one active code per person — a new mint
+   * replaces the old one.
+   */
+  mintLinkCode(personId: string, ttlMs = 15 * 60_000, now = Date.now()): { code: string; expiresAt: number } {
+    if (!this.person(personId)) throw new Error(`Unknown person ${personId}`);
+    this.db.prepare('DELETE FROM link_codes WHERE person_id=?').run(personId);
+    for (;;) {
+      const code = String(randomInt(0, 100_000)).padStart(5, '0');
+      const digest = createHash('sha256').update(code).digest('hex');
+      try {
+        this.db
+          .prepare('INSERT INTO link_codes(code_hash,person_id,created_at,expires_at) VALUES(?,?,?,?)')
+          .run(digest, personId, now, now + ttlMs);
+        return { code, expiresAt: now + ttlMs };
+      } catch (error) {
+        // A 5-digit space collides occasionally; mint again.
+        if ((error as { code?: string }).code !== 'SQLITE_CONSTRAINT_UNIQUE') throw error;
+      }
+    }
+  }
+  /**
+   * Consume a link code on behalf of a channel account the platform has
+   * identified. The code is the evidence, the identity comes from the
+   * channel, and the host decides: a code that expired or never existed is
+   * refused; an account that is already bound is refused *without* consuming
+   * the code (re-binding needs an unlink, which does not exist yet — historic
+   * sessions keep their association).
+   */
+  redeemLinkCode(
+    code: string,
+    channel: string,
+    userId: string,
+    now = Date.now(),
+  ):
+    | { reason: 'bound'; person: Person }
+    | { reason: 'already'; person: Person }
+    | { reason: 'expired' }
+    | { reason: 'unknown' } {
+    const digest = createHash('sha256').update(code).digest('hex');
+    return this.transaction(() => {
+      const bound = this.identityFor(channel, userId);
+      if (bound) return { reason: 'already', person: bound };
+      const row = this.db.prepare('SELECT * FROM link_codes WHERE code_hash=?').get(digest) as Row | undefined;
+      if (!row) return { reason: 'unknown' };
+      this.db.prepare('DELETE FROM link_codes WHERE code_hash=?').run(digest);
+      if (Number(row.expires_at) <= now) return { reason: 'expired' };
+      const who = this.person(String(row.person_id));
+      if (!who) return { reason: 'unknown' };
+      this.db
+        .prepare('INSERT INTO channel_identities(channel,user_id,person_id,created_at) VALUES(?,?,?,?)')
+        .run(channel, userId, who.id, now);
+      return { reason: 'bound', person: who };
+    });
+  }
+  /** The person a channel account belongs to, once linked; null while anonymous. */
+  identityFor(channel: string, userId: string): Person | null {
+    const row = this.db
+      .prepare(
+        'SELECT p.* FROM channel_identities i JOIN people p ON p.id=i.person_id WHERE i.channel=? AND i.user_id=?',
+      )
+      .get(channel, userId);
+    return row ? person(row) : null;
   }
 }

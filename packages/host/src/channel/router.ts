@@ -34,6 +34,10 @@ export class Channels {
   ownerOf(sessionId: string): string | undefined {
     return [...this.modules.values()].find(m => m.ownsSession(sessionId))?.id;
   }
+  /** The channels that can consume a link code, for `POST /v1/links` and `aivi link`. */
+  linkable(): { id: string; hint?: string }[] {
+    return [...this.modules.values()].map(m => ({ id: m.id, ...(m.linkHint ? { hint: m.linkHint } : {}) }));
+  }
   /** The platform channel of the conversation bound to a session, through the module that owns it. */
   async channelOf(sessionId: string): Promise<{ module: string; channel: string } | undefined> {
     const owner = [...this.modules.values()].find(m => m.ownsSession(sessionId));

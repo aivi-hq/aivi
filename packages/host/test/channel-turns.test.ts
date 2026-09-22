@@ -9,10 +9,12 @@ import type { ChannelPlatform } from '../src/channel/contract.ts';
 import { createTurnRunner, messageIdFor } from '../src/channel/turns.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { TurnNotStarted } from '../src/session.ts';
+import { Store } from '../src/store.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 const config = { agent: 'librarian', directory: '/librarian' };
 const quiet = { watch: () => () => {} };
+const memory = () => new Store(':memory:');
 const turn = {
   id: 'one',
   channel: 'dm',
@@ -91,7 +93,15 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     projects: [],
     sources: [],
   };
-  const ask = await createTurnRunner(platform, config, loaded, () => connectOpenCode(loaded.config.opencode), quiet);
+  const store = memory();
+  const ask = await createTurnRunner(
+    platform,
+    config,
+    loaded,
+    () => connectOpenCode(loaded.config.opencode),
+    quiet,
+    store,
+  );
   let ready = 0;
   assert.equal(
     await ask(turn, AbortSignal.timeout(3000), () => {
@@ -177,7 +187,14 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     describeSpeaker: t => `[Slack message from <@${t.user}>]`,
   };
   assert.equal(messageIdFor(slack, 'C1:1726000000.000100'), 'msg_slack_C1_1726000000_000100');
-  const slackAsk = await createTurnRunner(slack, config, loaded, () => connectOpenCode(loaded.config.opencode), quiet);
+  const slackAsk = await createTurnRunner(
+    slack,
+    config,
+    loaded,
+    () => connectOpenCode(loaded.config.opencode),
+    quiet,
+    memory(),
+  );
   await slackAsk(
     { ...turn, id: 'C1:1.5', ready: true, session: 'ses_slack_test' },
     AbortSignal.timeout(3000),
@@ -199,6 +216,7 @@ test('an unreachable OpenCode is a turn that never started, not a blocked one', 
       throw new Error('No running OpenCode v2 service found');
     },
     quiet,
+    memory(),
   );
   await assert.rejects(
     ask(turn, AbortSignal.timeout(3000), () => {}),
@@ -276,7 +294,14 @@ test('a source whose directory does not exist is skipped, not a module start tha
       },
     ],
   };
-  const ask = await createTurnRunner(platform, config, loaded, () => connectOpenCode(loaded.config.opencode), quiet);
+  const ask = await createTurnRunner(
+    platform,
+    config,
+    loaded,
+    () => connectOpenCode(loaded.config.opencode),
+    quiet,
+    memory(),
+  );
   assert.equal(await ask(turn, AbortSignal.timeout(3000), () => {}), 'Answer');
   const rules = requests.filter(r => r.method === 'PATCH' && r.path.startsWith('/api/session/'));
   assert.equal(rules.length, 1);
@@ -285,4 +310,95 @@ test('a source whose directory does not exist is skipped, not a module start tha
     [`${join(root, 'docs')}/**`],
     'only the existing source is allowed; the missing directory is skipped',
   );
+});
+
+test('a linked channel account speaks as its aivi person, in the prompt and the metadata', async t => {
+  const requests: { path: string; method: string; body: Record<string, any> }[] = [];
+  let metadata: Record<string, unknown> = {};
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = raw ? JSON.parse(raw) : {};
+    requests.push({ path: req.url!, method: req.method!, body });
+    if (req.method === 'PATCH' || req.url!.endsWith('/wait') || req.url!.endsWith('/model')) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.setHeader('content-type', 'application/json');
+    if (req.url!.startsWith('/api/agent'))
+      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+    if (req.url!.endsWith('/permission') && req.method === 'GET') return void res.end(JSON.stringify({ data: [] }));
+    if (req.url!.endsWith('/prompt')) {
+      metadata = body.metadata;
+      return void res.end(JSON.stringify({ data: { id: body.id } }));
+    }
+    if (req.url!.endsWith('/context')) {
+      res.end(
+        JSON.stringify({
+          data: [
+            { type: 'user', id: 'user', text: 'Question', metadata, time: { created: 1 } },
+            {
+              type: 'assistant',
+              id: 'answer',
+              agent: 'librarian',
+              finish: 'stop',
+              time: { created: 2, completed: 3 },
+              content: [{ type: 'text', text: 'Answer' }],
+            },
+            { type: 'idle', id: 'idle', outcome: 'succeeded', time: { created: 4 } },
+          ],
+        }),
+      );
+      return;
+    }
+    res.end(
+      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
+    );
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const loaded = {
+    config: configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } }),
+    path: '/config',
+    projects: [],
+    sources: [],
+  };
+  const store = memory();
+  const person = store.createPerson({ name: 'Ada', roles: [] });
+  const { code } = store.mintLinkCode(person.id);
+  const outcome = store.redeemLinkCode(code, 'discord', 'human');
+  assert.equal(outcome.reason, 'bound');
+  const ask = await createTurnRunner(
+    platform,
+    config,
+    loaded,
+    () => connectOpenCode(loaded.config.opencode),
+    quiet,
+    store,
+  );
+  await ask(turn, AbortSignal.timeout(3000), () => {});
+  const prompt = requests.filter(r => r.path.endsWith('/prompt'))[0]!.body;
+  assert.equal(
+    prompt.text,
+    '[Discord message from Ada (user human)]\nQuestion',
+    'the aivi person name, not the platform handle',
+  );
+  assert.deepEqual(prompt.metadata.aivi, {
+    origin: 'discord',
+    channel: 'dm',
+    user: 'human',
+    sourceMessage: 'one',
+    message: 'msg_discord_one',
+    person: person.id,
+  });
+  const created = requests.find(r => r.path === '/api/session' && r.method === 'POST')!.body;
+  assert.deepEqual(created.metadata, { aivi: { origin: 'discord', channel: 'dm', person: person.id } });
+  // An unlinked user on the same store keeps the platform handle and no person stamp.
+  await ask({ ...turn, id: 'two', ready: true, user: 'stranger' }, AbortSignal.timeout(3000), () => {});
+  const stranger = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
+  assert.equal(stranger.text, '[Discord message from Name (user stranger)]\nQuestion');
+  assert.equal(stranger.metadata.aivi.person, undefined);
 });

@@ -242,6 +242,53 @@ test('whoami names the caller and refuses to guess', async t => {
   await assert.rejects(createHostClient(base).whoami(), /401.*whoami names a person/);
 });
 
+test('a link code is minted over HTTP with the bearer and names where to spend it', async t => {
+  const store = new Store(':memory:');
+  const ada = store.createPerson({ name: 'Ada', roles: ['operator'] });
+  const { secret } = store.mintToken(ada.id, 'laptop');
+  const loaded = {
+    path: '/config',
+    config: configSchema.parse({ version: 1 }),
+    sources: [],
+    projects: [],
+  };
+  const server = createHostServer({
+    store,
+    loaded,
+    linkable: () => [{ id: 'discord', hint: 'In Discord, DM the bot: /link <code>.' }],
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  assert.equal((await fetch(`${base}/v1/links`, { method: 'POST' })).status, 401, 'anonymous has no person to bind');
+  assert.equal(
+    (await fetch(`${base}/v1/links`, { method: 'GET', headers: { authorization: `Bearer ${secret}` } })).status,
+    405,
+  );
+  const minted = (await fetch(`${base}/v1/links`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}` },
+  })) as unknown as {
+    status: number;
+    json: () => Promise<{ code: string; expiresAt: string; person: string; channels: { id: string }[]; next: string }>;
+  };
+  const body = await minted.json();
+  assert.equal(minted.status, 200);
+  assert.match(body.code, /^\d{5}$/);
+  assert.equal(body.person, 'Ada');
+  assert.deepEqual(body.channels, [{ id: 'discord', hint: 'In Discord, DM the bot: /link <code>.' }]);
+  assert.match(body.next, new RegExp(`/link ${body.code}`), 'the one instruction names the code');
+  // The code the HTTP route minted redeems in the store: one hash, no plaintext.
+  const outcome = store.redeemLinkCode(body.code, 'discord', 'u1');
+  assert.equal(outcome.reason, 'bound');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM link_codes').get()!.n, 0, 'one-time use');
+});
+
 test('jobs API validates the body, maps refusals to their status, and status lists upcoming and recent work', async t => {
   const store = new Store(':memory:');
   const loaded: LoadedConfig = {
