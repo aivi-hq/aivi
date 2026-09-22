@@ -17,9 +17,31 @@ installs reach the knowledge server through a small native plugin.
 > [!WARNING]
 > This project is under active development and it will be at least until OpenCode v2 is released. Don't use it. Or do, and suffer lol. Also this project is being used to build itself using exclusively local models because I am insane.
 
-## Try it
+## Quick start
 
-Node 26 and npm, from the repository root:
+Install the CLI, then create a server here or sign this machine in to an
+existing one. `aivi setup` asks which, installs the OpenCode plugins, and
+ends with a verified "Signed in as …" — never a promise it can't keep.
+Requires Node 26.
+
+```sh
+npm i -g @aivi/cli
+aivi setup
+```
+
+Then run the server in the foreground, or install it as a background service
+with `aivi service install`:
+
+```sh
+aivi serve
+```
+
+From here on: [getting started](docs/getting-started.md) (searching, the
+librarian in OpenCode, a project, a chat channel).
+
+## Development
+
+Working on aivi itself? From the repository root:
 
 ```sh
 npm ci
@@ -29,8 +51,7 @@ npm run aivi -- serve
 
 `npm run aivi` uses `example/`, a complete home with everything enabled; it
 builds first (incremental, TypeScript 7) and runs the compiled `dist/` — the
-same artifact npm publishes. From here on: [getting started](docs/getting-started.md)
-(searching, the librarian in OpenCode, a project, a chat channel).
+same artifact npm publishes, so local and installed behavior are identical.
 
 ## Packages
 
@@ -48,8 +69,8 @@ same artifact npm publishes. From here on: [getting started](docs/getting-starte
 | `@aivi/opencode`        | OpenCode plugin: `knowledge_search`, `knowledge_projects`, `aivi_sources`, `aivi_status`, `aivi_context`, `aivi_jobs`, `aivi_browser`                                                              |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
-services over the authenticated host API. Linear will be another in-process
-module with webhook routes on the same listener.
+services over the authenticated host API. Linear is an in-process module with
+a webhook route per app on the same listener (`/v1/linear/webhooks/app/<id>`).
 
 ## Status
 
