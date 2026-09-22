@@ -81,7 +81,12 @@ described: [projects](projects.md).
 
 ## A chat channel
 
-For Discord, fill in the IDs in the `modules.discord` block of
+The short way: `npm run aivi -- install discord` (or `install slack`). The
+plugin prints how to create the platform app, asks for the tokens, verifies
+each, writes `config.json` and `.env` itself, and aivi comes back with the
+module running ([operations](operations.md#plugins-aivi-install)).
+
+By hand: fill in the IDs in the `modules.discord` block of
 `example/config.json`, put `DISCORD_BOT_TOKEN` in `example/.env`, and run
 `serve` as above (slash commands are registered at start)
 ([Discord setup](discord.md#setup)). For Slack, create the app from the

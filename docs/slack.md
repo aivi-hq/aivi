@@ -74,6 +74,11 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 
 ## Setup
 
+The short way: `aivi install slack`. It prints the app manifest itself, asks
+for the two tokens, verifies each against Slack, writes the `modules.slack`
+block and both secrets, and restarts aivi
+([operations](operations.md#plugins-aivi-install)). The manual path:
+
 The fastest path: `aivi slack manifest [--prefix PREFIX]` prints the whole
 app manifest as JSON, generated from the shared command table (the prefix
 defaults to the configured module's, and `identity.name` is the bot's name)
