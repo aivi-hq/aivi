@@ -1,5 +1,13 @@
 # @aivi/linear
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [[`9f4d557`](https://github.com/aivi-hq/aivi/commit/9f4d557467d1efc928d211ab8f9d5ad19a094fc2)]:
+  - @aivi/core@0.3.0
+  - @aivi/host@0.3.1
+
 ## 0.2.1
 
 ### Patch Changes

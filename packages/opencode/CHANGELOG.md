@@ -1,5 +1,14 @@
 # @aivi/opencode
 
+## 0.1.4
+
+### Patch Changes
+
+- [#13](https://github.com/aivi-hq/aivi/pull/13) [`1a1859b`](https://github.com/aivi-hq/aivi/commit/1a1859b39a3c21685f1dba33e4e448c9dd88f9ff) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The plugin loads again from npm. 0.1.3 shipped a root `server.js` that re-exported `./src/index.ts`, while `files` publishes only `dist` — so every install failed with "Cannot find module './src/index.ts'" and registered no aivi tools. Nothing ships from the package root now: `exports["."]` is the only export, and OpenCode's loader reaches it through its fallback candidate. The example home names the build it runs, `../packages/opencode/dist/index.js`, so a fresh clone runs `npm run build` before OpenCode loads the plugin.
+- Updated dependencies [[`9f4d557`](https://github.com/aivi-hq/aivi/commit/9f4d557467d1efc928d211ab8f9d5ad19a094fc2)]:
+  - @aivi/core@0.3.0
+  - @aivi/host@0.3.1
+
 ## 0.1.3
 
 ### Patch Changes

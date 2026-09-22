@@ -1,6 +1,6 @@
 {
   "name": "@aivi/linear",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "exports": {
     ".": "./dist/index.js"
@@ -24,13 +24,13 @@
     "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.2.0",
+    "@aivi/core": "^0.3.0",
     "zod": "4.1.13"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.3.0"
+    "@aivi/host": "^0.3.1"
   },
   "devDependencies": {
-    "@aivi/host": "^0.3.0"
+    "@aivi/host": "^0.3.1"
   }
 }
