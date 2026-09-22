@@ -121,7 +121,7 @@
     },
     "slack": {
       "agent": "librarian",
-      "commandPrefix": "spider",
+      "commandPrefix": "aivi",
       "access": {
         "dm": {
           "users": ["U58R31DEW"]
