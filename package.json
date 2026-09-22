@@ -14,10 +14,10 @@
   },
   "name": "aivi",
   "overrides": {
-    "@opencode/client": "2.0.10",
-    "@opencode/plugin": "2.0.10",
-    "@opencode/schema": "2.0.10",
-    "@opencode/protocol": "2.0.10"
+    "@opencode/client": "2.0.14",
+    "@opencode/plugin": "2.0.14",
+    "@opencode/schema": "2.0.14",
+    "@opencode/protocol": "2.0.14"
   },
   "private": true,
   "scripts": {
