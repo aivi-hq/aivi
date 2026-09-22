@@ -63,22 +63,20 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
 const BOT_OK = { match: /users\/@me/, status: 200, body: { id: '10000000000000001', username: 'clawd' } };
 
 test('discord setup verifies the token, derives the application id and writes both files', async () => {
-  const h = harness(
-    ['tok', 'yes', '20000000000000002', 'yes', '30000000000000003', '', 'yes', 'yes', '40000000000000004', ''],
-    [BOT_OK],
-  );
+  const h = harness(['tok', 'yes', '30000000000000003', '', 'yes', 'yes', '40000000000000004', ''], [BOT_OK]);
   const result = await setup(h.ctx);
   assert.equal(result.module, 'discord');
   assert.match(result.summary, /@clawd/);
+  assert.match(result.summary, /aivi link discord/, 'the summary says how to talk to the bot');
   assert.equal(h.secrets.get('DISCORD_BOT_TOKEN'), 'tok');
   const block = h.blocks[0]!.value as {
     applicationId: string;
-    access: { dm: { users: string[] }; channels: { id: string; trigger?: string }[] };
+    access: { dm?: unknown; channels: { id: string; trigger?: string }[] };
     reportChannels: string[];
     messageContent: boolean;
   };
   assert.equal(block.applicationId, '10000000000000001', 'derived from the bot, never asked');
-  assert.deepEqual(block.access.dm.users, ['20000000000000002']);
+  assert.equal(block.access.dm, undefined, 'people link; the config lists places, not identities');
   assert.deepEqual(
     block.access.channels.map(c => c.id),
     ['30000000000000003'],
@@ -91,7 +89,7 @@ test('discord setup verifies the token, derives the application id and writes bo
 });
 
 test('discord setup without the intent marks channels mention-only', async () => {
-  const h = harness(['tok', 'no', 'yes', '30000000000000003', '', 'no', 'no'], [BOT_OK]);
+  const h = harness(['tok', 'yes', '30000000000000003', '', 'no', 'no'], [BOT_OK]);
   await setup(h.ctx);
   const block = h.blocks[0]!.value as { access: { channels: { trigger: string }[] }; messageContent?: boolean };
   assert.equal(block.access.channels[0]!.trigger, 'mention');
@@ -99,10 +97,12 @@ test('discord setup without the intent marks channels mention-only', async () =>
   assert.equal(h.secrets.has('DISCORD_BOT_TOKEN'), true);
 });
 
-test('discord setup with no channel and no dm refuses: nothing would hear anyone', async () => {
-  const h = harness(['tok', 'no', 'no'], [BOT_OK]);
-  await assert.rejects(setup(h.ctx), /Nothing would hear anyone/);
-  assert.equal(h.blocks.length, 0, 'nothing was written');
+test('discord setup with no channels configures a DM-only bot', async () => {
+  const h = harness(['tok', 'no', 'no', 'no'], [BOT_OK]);
+  const result = await setup(h.ctx);
+  const block = h.blocks[0]!.value as { access: { channels: unknown[] } };
+  assert.deepEqual(block.access.channels, []);
+  assert.match(result.summary, /DMs only/, 'the summary says what it decided');
 });
 
 test('discord setup refuses an already configured module', async () => {
@@ -129,9 +129,13 @@ test('discord setup stops on a cancelled prompt with nothing written', async () 
   assert.equal(h.secrets.size, 0);
 });
 
-test('discord setup asks ids until they match the snowflake shape', async () => {
-  const h = harness(['tok', 'yes', 'short', '20000000000000002', 'no', 'no', 'no'], [BOT_OK]);
+test('discord setup asks channel ids until they match the snowflake shape', async () => {
+  const h = harness(['tok', 'yes', 'short', '30000000000000003', '', 'no', 'no'], [BOT_OK]);
   await setup(h.ctx);
-  const block = h.blocks[0]!.value as { access: { dm: { users: string[] } } };
-  assert.deepEqual(block.access.dm.users, ['20000000000000002'], 'the bad shape never lands');
+  const block = h.blocks[0]!.value as { access: { channels: { id: string }[] } };
+  assert.deepEqual(
+    block.access.channels.map(c => c.id),
+    ['30000000000000003'],
+    'the bad shape never lands',
+  );
 });

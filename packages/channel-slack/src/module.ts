@@ -23,7 +23,7 @@ import {
   usageHint,
 } from '@aivi/host';
 import type { SlackConfig } from './config.ts';
-import { authorized, isDMChannelId } from './config.ts';
+import { authorized, isDMChannelId, reaches } from './config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent } from './connection.ts';
 import { createSocketModeConnection, requireSlackTokens } from './connection.ts';
 
@@ -32,6 +32,9 @@ export const SLACK: ChannelPlatform = { id: 'slack', label: 'Slack', replyLimit:
 const WAITING = 'hourglass_flowing_sand';
 /** Slack has no typing indicator for bots; 👀 on the message says the agent is on it. */
 const WORKING = 'eyes';
+/** What an unlinked account hears once: a link code is its only door, and DMs are where it opens. */
+const linkNeeded = (config: SlackConfig) =>
+  `I don't know you yet. Run \`aivi link slack\` where you work, then send \`/${config.commandPrefix}-link CODE\` to me — from then on I answer as your person.`;
 
 export function bindingFor(config: SlackConfig): string {
   return JSON.stringify({ agent: config.agent, directory: config.directory });
@@ -136,18 +139,27 @@ export interface Routed {
   text: string;
 }
 
+/** A message only a link code could unlock: where to hint is the caller's choice. */
+export interface UnlinkedSender {
+  unlinked: true;
+  isDM: boolean;
+}
+
 /**
  * Map a Slack message onto the shared access route. Mentions are `app_mention`
  * events or `<@bot>` in the text; Slack sends both for one message, so callers
  * dedupe on `channel:ts` before this. Returns null for messages aivi ignores
- * outright (its own, other bots, edits, joins, and other subtypes).
+ * outright (its own, other bots, edits, joins, and other subtypes), and an
+ * `UnlinkedSender` for messages from an account that is not linked to a person
+ * yet — the one silence worth explaining, which is a DM, is the caller's call.
  */
 export function routeMessage(
   config: SlackConfig,
   botUserId: string,
   event: SlackEvent,
   known: (conversation: string) => boolean,
-): Routed | null {
+  linked: (user: string) => boolean,
+): Routed | UnlinkedSender | null {
   if (event.bot_id || event.subtype || !event.user || event.user === botUserId) return null;
   const mention = `<@${botUserId}>`;
   const raw = event.text ?? '';
@@ -162,8 +174,12 @@ export function routeMessage(
     isDM,
     mentioned: event.type === 'app_mention' || raw.includes(mention),
     knownConversation: known(conversation),
+    senderLinked: linked(event.user),
   };
-  if (!authorized(config, route)) return null;
+  if (!authorized(config, route)) {
+    if (!route.senderLinked && reaches(config, route)) return { unlinked: true, isDM };
+    return null;
+  }
   const opensThread = !isDM && !inThread && accessEntry(config.access, route)?.sessions === 'threads';
   return { route, conversation: opensThread ? `${event.channel}:${event.ts}` : conversation, text };
 }
@@ -276,11 +292,27 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       if (seen.size > 1000) seen.delete(seen.values().next().value!);
       return true;
     };
+    // One link hint per account per start: a stranger's tenth DM says nothing new.
+    const hinted = new Set<string>();
     const onEvent = async (event: SlackEvent) => {
       if (abort.signal.aborted) return;
       const id = `${event.channel}:${event.ts}`;
-      const routed = routeMessage(config, botUserId, event, c => store.has(c));
-      if (!routed || !first(id)) return;
+      const routed = routeMessage(
+        config,
+        botUserId,
+        event,
+        c => store.has(c),
+        u => services.store.identityFor(SLACK.id, u) !== null,
+      );
+      if (!routed) return;
+      if ('unlinked' in routed) {
+        if (routed.isDM && !hinted.has(event.user!)) {
+          hinted.add(event.user!);
+          await send(event.channel, linkNeeded(config)).catch(() => {});
+        }
+        return;
+      }
+      if (!first(id)) return;
       const replyTo = routed.route.isDM ? event.channel : routed.conversation;
       if (event.files?.length || !routed.text) {
         await send(replyTo, 'Text messages only for now; paste the relevant text.');
@@ -314,10 +346,19 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         isDM: isDMChannelId(channel),
         mentioned: true, // a slash command is an explicit address
         knownConversation: store.has(channel),
+        senderLinked: services.store.identityFor(SLACK.id, command.user_id) !== null,
       };
       const reply = (text: string) => slack.ephemeral(command.response_url, text);
       const spell = (n: string) => `/${config.commandPrefix}-${n}`;
-      if (!authorized(config, route)) return reply('This user or conversation is not enabled for aivi.');
+      // A link code is its own proof of identity: it redeems wherever aivi listens, linked or not.
+      const admitted = name === 'link' ? reaches(config, route) : authorized(config, route);
+      if (!admitted) {
+        return reply(
+          name !== 'link' && route.isDM && !route.senderLinked
+            ? linkNeeded(config)
+            : 'This user or conversation is not enabled for aivi.',
+        );
+      }
       if (name === 'help') return reply(helpText(spell));
       if (name === 'jobs') return reply(describeJobs(services.store));
       if (name === 'link') return reply(redeemLink(services.store, SLACK.id, command.user_id, command.text));
@@ -385,7 +426,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         const text = command.text.trim();
         if (!text) return reply(`Usage: ${spell('steer')} TEXT`);
         const speaker = { name: await nameOf(command.user_id), user: command.user_id };
-        const result = await steerTurn(store, SLACK, services.opencode, channel, speaker, text);
+        const result = await steerTurn(services.store, store, SLACK, services.opencode, channel, speaker, text);
         if (result.error) log.warn('steer.failed', { error: result.error });
         return reply(result.text);
       }

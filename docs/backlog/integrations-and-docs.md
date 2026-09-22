@@ -36,9 +36,10 @@ for an outside model is in [research-channels.md](research-channels.md)
 
 Done 2026-09-14 against official docs. Baseline for effort estimates is the
 Discord module (`packages/channel-discord`): gateway websocket via discord.js, the
-shared `accessPolicySchema` (`dm.users`, `channels[{id, users, trigger,
-sessions}]`), thread-per-conversation, durable inbox, typing keep-alive,
-`splitReply`, three slash commands, and a `Destinations` entry for job reports.
+shared `accessPolicySchema` (`channels[{id, trigger, sessions}]`; senders are
+admitted by their link, not by config), thread-per-conversation, durable inbox,
+typing keep-alive, `splitReply`, three slash commands, and a `Destinations`
+entry for job reports.
 
 ### Channels at a glance
 

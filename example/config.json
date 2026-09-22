@@ -102,13 +102,9 @@
       "applicationId": "1539324497071444201",
       "agent": "librarian",
       "access": {
-        "dm": {
-          "users": ["366596598169600002", "858645606527533076"]
-        },
         "channels": [
           {
-            "id": "1539327786433650768",
-            "users": "anyone"
+            "id": "1539327786433650768"
           }
         ]
       },
@@ -123,13 +119,9 @@
       "agent": "librarian",
       "commandPrefix": "aivi",
       "access": {
-        "dm": {
-          "users": ["U58R31DEW"]
-        },
         "channels": [
           {
-            "id": "C0C1ZB2K54J",
-            "users": ["U58R31DEW"]
+            "id": "C0C1ZB2K54J"
           }
         ]
       },

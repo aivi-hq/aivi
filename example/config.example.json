@@ -88,13 +88,9 @@
       "applicationId": "10000000000000001",
       "agent": "librarian",
       "access": {
-        "dm": {
-          "users": ["10000000000000002"]
-        },
         "channels": [
           {
-            "id": "10000000000000004",
-            "users": "anyone"
+            "id": "10000000000000004"
           }
         ]
       },
@@ -110,13 +106,9 @@
       "agent": "librarian",
       "commandPrefix": "aivi",
       "access": {
-        "dm": {
-          "users": ["U0000000001"]
-        },
         "channels": [
           {
-            "id": "C0000000001",
-            "users": "anyone"
+            "id": "C0000000001"
           }
         ]
       },

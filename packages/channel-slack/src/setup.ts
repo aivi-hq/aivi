@@ -8,7 +8,7 @@
  * config.json that no longer loads is restored to its old bytes.
  */
 import type { PluginSetup, PluginSetupContext, PluginSetupResult } from '@aivi/core';
-import { isChannelId, isUserId } from './config.ts';
+import { isChannelId } from './config.ts';
 import { slackManifest } from './module.ts';
 
 /** One Slack POST with bearer auth; the API answers 200 plus {ok:false} for a refusal. */
@@ -98,18 +98,8 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   ).trim();
   await slackApi(ctx, 'apps.connections.open', appToken);
   ctx.log('Verified: the app-level token opens Socket Mode.');
-  const wantsDm = await ctx.ask.confirm({ message: 'Let yourself DM the bot?', initial: true });
-  const dmUsers = wantsDm
-    ? [
-        (
-          await ctx.ask.text({
-            message: 'Your Slack member id — your profile → ⋯ → Copy member ID (starts with U)',
-            validate: value => (isUserId(value.trim()) ? undefined : 'A Slack user id starts with U'),
-          })
-        ).trim(),
-      ]
-    : [];
-  const wantsChannels = await ctx.ask.confirm({ message: 'Listen in shared channels too?', initial: !wantsDm });
+  // DMs are open to whoever links (the code is the door); the install only picks the places.
+  const wantsChannels = await ctx.ask.confirm({ message: 'Listen in shared channels?', initial: true });
   const channelIds = wantsChannels
     ? await collectIds(
         ctx,
@@ -119,8 +109,6 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
         'A Slack channel id starts with C or G',
       )
     : [];
-  if (!dmUsers.length && !channelIds.length)
-    throw new Error('Nothing would hear anyone: answer yes to DMs or add at least one channel.');
   const wantsReports = await ctx.ask.confirm({
     message: 'Post scheduled job outcomes to some channels?',
     initial: false,
@@ -138,7 +126,6 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   const block = {
     commandPrefix: prefix,
     access: {
-      ...(dmUsers.length ? { dm: { users: dmUsers } } : {}),
       channels: channelIds.map(id => ({ id })),
     },
     ...(reportChannels.length ? { reportChannels } : {}),
@@ -148,7 +135,13 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   await ctx.writeConfigBlock(['modules', 'slack'], block);
   return {
     module: 'slack',
-    summary: `Slack is configured for workspace ${workspace}: /${prefix}-* commands.`,
+    summary: [
+      `Slack is configured for workspace ${workspace}: /${prefix}-* commands.`,
+      channelIds.length ? '' : 'No shared channels: aivi will answer DMs only.',
+      `To talk to it: start aivi, run \`aivi link slack\`, and send the code with /${prefix}-link.`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
   };
 };
 

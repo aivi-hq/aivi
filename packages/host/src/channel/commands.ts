@@ -178,8 +178,12 @@ export async function stopTurn(
  * `/steer`: put words into the running turn instead of behind it (`delivery: "steer"`).
  * The message carries `metadata.aivi.steer = <running turn's native message id>` so the
  * turn's verification counts it as part of that turn. Nothing is queued when no turn runs.
+ * These words end up in the session like the turn's own, so a linked account speaks as
+ * its person here too: the prompt line and `metadata.aivi.person` follow the same rule
+ * the turn runner uses.
  */
 export async function steerTurn(
+  people: Store,
   store: ConversationStore,
   platform: ChannelPlatform,
   opencode: () => Promise<OpenCodeClient>,
@@ -190,15 +194,22 @@ export async function steerTurn(
 ): Promise<{ text: string; steered: boolean; error?: unknown }> {
   const turn = store.running(channel);
   if (!turn?.ready) return { text: `${NOTHING_RUNNING} Send it as a message instead.`, steered: false };
+  const who = people.identityFor(platform.id, speaker.user);
   try {
     const client = await opencode();
     await client.session.prompt(
       {
         sessionID: turn.session,
-        text: `${speakerLine(platform, speaker)}\n${text}`,
+        text: `${speakerLine(platform, { name: who?.name ?? speaker.name, user: speaker.user })}\n${text}`,
         delivery: 'steer',
         metadata: {
-          aivi: { origin: platform.id, channel, user: speaker.user, steer: messageIdFor(platform, turn.id) },
+          aivi: {
+            origin: platform.id,
+            channel,
+            user: speaker.user,
+            steer: messageIdFor(platform, turn.id),
+            ...(who ? { person: who.id } : {}),
+          },
         },
       },
       { signal },
