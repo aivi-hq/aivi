@@ -35,7 +35,23 @@ try {
   await writeFile(task, JSON.stringify({ kind: 'invocation', name: 'system.check' }));
   // The temp directory is the aivi home: config.json, .env and state/ live there.
   const env = { ...process.env, AIVI_HOME: directory };
-  const run = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8', env }));
+  // The CLI's stderr is captured, not passed through: `jobs add` honestly notes it could not wake
+  // a host smoke has not started yet, and that note is smoke's business, not the operator's.
+  // A run that actually fails still surfaces its stderr in the thrown error.
+  const run = (...args) => {
+    try {
+      return JSON.parse(
+        execFileSync(process.execPath, [cli, ...args], {
+          encoding: 'utf8',
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }),
+      );
+    } catch (error) {
+      const stderr = String(error.stderr ?? '').trim();
+      throw new Error(`smoke: aivi ${args.join(' ')} failed${stderr ? `: ${stderr}` : ''}`);
+    }
+  };
   assert.equal(run('config', 'check').valid, true);
   const added = run('jobs', 'add', task, '--key', 'smoke', '--title', 'Smoke check');
   assert.equal(added.job.source, 'operator');
@@ -110,9 +126,6 @@ try {
 
   daemon.kill('SIGTERM');
   assert.equal((await stopped)[0], 0);
-  console.log(
-    'CLI smoke passed: jobs add → serve dispatches the queued run → open commands → graceful shutdown → reopen',
-  );
 } finally {
   if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
     daemon.kill('SIGKILL');

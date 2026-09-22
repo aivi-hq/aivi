@@ -42,9 +42,9 @@ if (endpoint.auth) {
   report('auth', 'anonymous and bearer rejected, basic accepted');
 }
 const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) });
-const health = await client.server.status();
-assert.ok(health.version, 'server status reports a version');
-report('status', `version=${health.version}`);
+const health = await client.server.info();
+assert.ok(health.version, 'server info reports a version');
+report('server.info', `version=${health.version}`);
 
 // 2. Plugin activation for a directory (optional).
 if (values.plugin) {

@@ -29,9 +29,9 @@
     "@aivi/host": "^0.3.0"
   },
   "peerDependencies": {
-    "@opencode/plugin": "2.0.10"
+    "@opencode/plugin": "2.0.14"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.10"
+    "@opencode/plugin": "2.0.14"
   }
 }
