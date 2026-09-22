@@ -226,7 +226,8 @@ with the table), and `helpText` renders `/help` from it, each platform
 spelling the names its own way (`/new`, `/aivi-new`). Conversation commands
 are refused where a slash command cannot name one conversation (a
 threads-mode channel outside a thread) and pass the same `access` policy as
-messages.
+messages — except `/link`, admitted wherever aivi listens, linked or not:
+redemption is its own proof.
 
 | Command | Host operation |
 | --- | --- |

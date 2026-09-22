@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { discordConfigSchema } from '@aivi/core';
 import { CHAT_COMMANDS } from '@aivi/host';
 import { ApplicationCommandOptionType } from 'discord.js';
-import { authorized } from '../src/config.ts';
+import { authorized, reaches } from '../src/config.ts';
 import { DISCORD, discordCommands } from '../src/module.ts';
 
 const config = discordConfigSchema.parse({
@@ -11,38 +11,41 @@ const config = discordConfigSchema.parse({
   directory: '/librarian',
   messageContent: true,
   access: {
-    dm: { users: ['10000000000000002'] },
     channels: [
-      { id: '10000000000000004', users: 'anyone', trigger: 'mention-to-start' },
-      { id: '10000000000000006', users: ['10000000000000002'], trigger: 'any', sessions: 'channel' },
+      { id: '10000000000000004', trigger: 'mention-to-start' },
+      { id: '10000000000000006', trigger: 'any', sessions: 'channel' },
     ],
   },
 });
 
-test('access policy: allow-listed DMs, mention-triggered public channels, restricted always-on channels, nothing else', () => {
+const ME = '10000000000000002';
+
+test('access policy: linked persons talk anywhere aivi listens, unlinked accounts nowhere', () => {
   const dm = {
     channelId: 'dm',
-    userId: '10000000000000002',
+    userId: ME,
     guildId: null,
     parentId: null,
     isDM: true,
     mentioned: false,
     knownConversation: false,
+    senderLinked: true,
   };
-  assert.equal(authorized(config, dm), true);
-  assert.equal(authorized(config, { ...dm, userId: 'stranger' }), false);
+  assert.equal(authorized(config, dm), true, 'a linked person may DM');
+  assert.equal(authorized(config, { ...dm, senderLinked: false }), false, 'an unlinked account may not');
   assert.equal(authorized(config, { ...dm, guildId: 'g' }), false, 'a DM route must not carry a guild');
-  assert.equal(authorized({ ...config, access: { channels: [] } }, dm), false, 'no dm block means nobody may DM');
   const home = {
     channelId: '10000000000000004',
-    userId: 'stranger',
+    userId: ME,
     guildId: 'g',
     parentId: null,
     isDM: false,
     mentioned: true,
     knownConversation: false,
+    senderLinked: true,
   };
-  assert.equal(authorized(config, home), true, 'anyone may ping the home channel');
+  assert.equal(authorized(config, home), true, 'any linked person may ping the home channel');
+  assert.equal(authorized(config, { ...home, senderLinked: false }), false, 'strangers are ignored in channels');
   assert.equal(authorized(config, { ...home, mentioned: false }), false, 'home channel requires a mention');
   assert.equal(
     authorized(config, { ...home, channelId: 'thread-1', parentId: '10000000000000004' }),
@@ -64,21 +67,11 @@ test('access policy: allow-listed DMs, mention-triggered public channels, restri
     false,
     'plain mention mode always needs a mention',
   );
-  const restricted = { ...home, channelId: '10000000000000006', mentioned: false };
-  assert.equal(
-    authorized(config, { ...restricted, userId: '10000000000000002' }),
-    true,
-    'always-on channel hears listed users without a mention',
-  );
-  assert.equal(authorized(config, restricted), false, 'strangers are ignored in a restricted channel');
+  const always = { ...home, channelId: '10000000000000006', mentioned: false };
+  assert.equal(authorized(config, always), true, 'an always-on channel hears linked persons without a mention');
   assert.equal(authorized(config, { ...home, channelId: 'elsewhere', parentId: null }), false);
   assert.equal(
-    authorized(config, {
-      ...restricted,
-      userId: '10000000000000002',
-      channelId: 'thread-2',
-      parentId: '10000000000000006',
-    }),
+    authorized(config, { ...always, channelId: 'thread-2', parentId: '10000000000000006' }),
     false,
     'channel mode ignores threads',
   );
@@ -94,6 +87,24 @@ test('access policy: allow-listed DMs, mention-triggered public channels, restri
   );
   assert.equal(config.access.channels[0]!.trigger, 'mention-to-start', 'natural thread behaviour is the default');
   assert.deepEqual(DISCORD, { id: 'discord', label: 'Discord', replyLimit: 1900 });
+});
+
+test('reaches: the place decides, the sender does not', () => {
+  const base = {
+    userId: ME,
+    guildId: 'g',
+    parentId: null,
+    isDM: false,
+    mentioned: false,
+    knownConversation: false,
+    senderLinked: false,
+  };
+  assert.equal(reaches(config, { ...base, channelId: '10000000000000004' }), true);
+  assert.equal(reaches(config, { ...base, channelId: 'thread-1', parentId: '10000000000000004' }), true);
+  assert.equal(reaches(config, { ...base, channelId: 'thread-1', parentId: '10000000000000006' }), false);
+  assert.equal(reaches(config, { ...base, channelId: 'elsewhere' }), false);
+  assert.equal(reaches(config, { ...base, channelId: 'dm', guildId: null, isDM: true }), true, 'DMs always reach');
+  assert.equal(reaches(config, { ...base, channelId: 'dm', isDM: true }), false, 'the guild stays checked');
 });
 
 test('slash commands are the shared table, so a command cannot exist without a handler or vice versa', () => {

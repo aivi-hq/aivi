@@ -42,7 +42,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { DiscordConfig, Route } from './config.ts';
-import { authorized } from './config.ts';
+import { authorized, reaches } from './config.ts';
 
 const safeSend = {
   allowedMentions: { parse: [] as never[], repliedUser: false },
@@ -50,6 +50,9 @@ const safeSend = {
 };
 /** Discord's message limit is 2000 UTF-16 units; stay below it with room for formatting. */
 export const DISCORD: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
+/** What an unlinked account hears once: a link code is its only door, and DMs are where it opens. */
+export const LINK_NEEDED =
+  "I don't know you yet. Run `aivi link discord` where you work, then paste `/link CODE` to me — from then on I answer as your person.";
 
 export function bindingFor(config: DiscordConfig): string {
   return JSON.stringify({ application: config.applicationId, agent: config.agent, directory: config.directory });
@@ -238,6 +241,8 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     client.on(Events.ShardDisconnect, () => log.warn('gateway.disconnected'));
     client.on(Events.ShardResume, () => log.info('gateway.resumed'));
 
+    // One link hint per account per start: a stranger's tenth DM says nothing new.
+    const hinted = new Set<string>();
     client.on(Events.MessageCreate, message => {
       void (async () => {
         if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
@@ -250,8 +255,15 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           isDM: message.channel.type === ChannelType.DM,
           mentioned: message.mentions.users.has(client.user!.id),
           knownConversation: store.has(message.channelId),
+          senderLinked: services.store.identityFor(DISCORD.id, message.author.id) !== null,
         };
-        if (!authorized(config, route)) return;
+        if (!authorized(config, route)) {
+          if (route.isDM && !route.senderLinked && !hinted.has(route.userId)) {
+            hinted.add(route.userId);
+            await message.reply({ content: LINK_NEEDED, ...safeSend }).catch(() => {});
+          }
+          return;
+        }
         if (message.attachments.size || !message.content.trim()) {
           await message.reply({ content: 'Text messages only for now; paste the relevant text.', ...safeSend });
           return;
@@ -313,6 +325,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           isDM: interaction.guildId === null,
           mentioned: true, // a slash command is an explicit address
           knownConversation: store.has(interaction.channelId),
+          senderLinked: services.store.identityFor(DISCORD.id, interaction.user.id) !== null,
         };
         if (interaction.isAutocomplete()) {
           // Choices for /model come from OpenCode's catalogue for the conversation's directory; Discord takes 25.
@@ -333,11 +346,14 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
           }
           return;
         }
-        if (!authorized(config, route)) {
-          await interaction.reply({
-            content: 'This user or conversation is not enabled for aivi.',
-            flags: MessageFlags.Ephemeral,
-          });
+        // A link code is its own proof of identity: it redeems wherever aivi listens, linked or not.
+        const admitted = name === 'link' ? reaches(config, route) : authorized(config, route);
+        if (!admitted) {
+          const content =
+            name !== 'link' && route.isDM && !route.senderLinked
+              ? LINK_NEEDED
+              : 'This user or conversation is not enabled for aivi.';
+          await interaction.reply({ content, flags: MessageFlags.Ephemeral });
           return;
         }
         const reply = (content: string) =>

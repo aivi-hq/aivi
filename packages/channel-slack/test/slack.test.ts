@@ -7,6 +7,7 @@ import { configSchema, getLogger, slackConfigSchema } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, usageHint } from '@aivi/host';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
+import type { Routed, UnlinkedSender } from '../src/module.ts';
 import {
   conversationParts,
   createSlackModule,
@@ -26,11 +27,7 @@ const config = slackConfigSchema.parse({
   directory: '/librarian',
   commandPrefix: 'spider',
   access: {
-    dm: { users: [ME] },
-    channels: [
-      { id: HOME, users: 'anyone' },
-      { id: TEAM, users: [ME], trigger: 'any', sessions: 'channel' },
-    ],
+    channels: [{ id: HOME }, { id: TEAM, trigger: 'any', sessions: 'channel' }],
   },
   reportChannels: [HOME],
   // The shared module test asserts every post; progress placeholders have their own test below.
@@ -48,7 +45,11 @@ test('config: Slack ids are checked, defaults match Discord’s, the owner’s s
   assert.equal(config.agent, 'librarian');
   assert.equal(config.maxPending, 100);
   assert.equal(slackConfigSchema.parse({ access: {} }).commandPrefix, 'aivi');
-  assert.throws(() => slackConfigSchema.parse({ access: { dm: { users: ['1234'] } } }), /Slack user id/);
+  assert.throws(
+    () => slackConfigSchema.parse({ access: { dm: { users: ['U0000000001'] } } }),
+    /Unrecognized/,
+    'the old DM allow-list is gone, not ignored',
+  );
   assert.throws(() => slackConfigSchema.parse({ access: { channels: [{ id: 'general' }] } }), /channel id/);
   assert.throws(() => slackConfigSchema.parse({ access: {}, reportChannels: [DM] }), /channel id/);
   assert.throws(() => slackConfigSchema.parse({ access: {}, commandPrefix: 'Spider Bot' }), /commandPrefix/);
@@ -59,44 +60,61 @@ test('config: Slack ids are checked, defaults match Discord’s, the owner’s s
 
 test('routing: DMs, mentions opening threads, threads aivi is in, channel mode, and what is ignored', () => {
   const known = (c: string) => c === `${HOME}:100.1`;
-  const dm = routeMessage(config, BOT, message({ channel: DM, ts: '1.0' }), known)!;
+  const link = (user: string) => user === ME;
+  // Narrowing for sites where only a routed message makes sense; a stranger or silence is a failure.
+  const routed = (r: Routed | UnlinkedSender | null): Routed => {
+    assert.ok(r && !('unlinked' in r));
+    return r;
+  };
+  const dm = routed(routeMessage(config, BOT, message({ channel: DM, ts: '1.0' }), known, link));
   assert.deepEqual([dm.conversation, dm.route.isDM, dm.text], [DM, true, 'hello']);
-  assert.equal(routeMessage(config, BOT, message({ channel: DM, ts: '1.0', user: 'U0000000BAD' }), known), null);
-  assert.equal(routeMessage(config, BOT, message({ channel: DM, ts: '1.0', bot_id: 'B1' }), known), null, 'bots');
-  assert.equal(routeMessage(config, BOT, message({ channel: DM, ts: '1.0', user: BOT }), known), null, 'itself');
+  assert.deepEqual(
+    routeMessage(config, BOT, message({ channel: DM, ts: '1.0', user: 'U0000000BAD' }), known, link),
+    { unlinked: true, isDM: true },
+    'a stranger in a DM is the one silence worth explaining',
+  );
+  assert.equal(routeMessage(config, BOT, message({ channel: DM, ts: '1.0', bot_id: 'B1' }), known, link), null, 'bots');
+  assert.equal(routeMessage(config, BOT, message({ channel: DM, ts: '1.0', user: BOT }), known, link), null, 'itself');
   assert.equal(
-    routeMessage(config, BOT, message({ channel: DM, ts: '1.0', subtype: 'message_changed' }), known),
+    routeMessage(config, BOT, message({ channel: DM, ts: '1.0', subtype: 'message_changed' }), known, link),
     null,
     'edits and other subtypes',
   );
-  assert.equal(routeMessage(config, BOT, message({ channel: HOME, ts: '2.0' }), known), null, 'needs a mention');
-  const opened = routeMessage(config, BOT, message({ channel: HOME, ts: '2.0', text: `<@${BOT}> hi there` }), known)!;
+  assert.equal(routeMessage(config, BOT, message({ channel: HOME, ts: '2.0' }), known, link), null, 'needs a mention');
+  const opened = routed(
+    routeMessage(config, BOT, message({ channel: HOME, ts: '2.0', text: `<@${BOT}> hi there` }), known, link),
+  );
   assert.deepEqual([opened.conversation, opened.route.parentId, opened.text], [`${HOME}:2.0`, null, 'hi there']);
-  const viaEvent = routeMessage(
-    config,
-    BOT,
-    message({ type: 'app_mention', channel: HOME, ts: '2.0', text: 'x' }),
-    known,
-  )!;
+  const viaEvent = routed(
+    routeMessage(config, BOT, message({ type: 'app_mention', channel: HOME, ts: '2.0', text: 'x' }), known, link),
+  );
   assert.equal(viaEvent.conversation, `${HOME}:2.0`, 'an app_mention event is a mention even without the tag');
-  const inThread = routeMessage(config, BOT, message({ channel: HOME, ts: '3.0', thread_ts: '100.1' }), known)!;
+  const inThread = routed(
+    routeMessage(config, BOT, message({ channel: HOME, ts: '3.0', thread_ts: '100.1' }), known, link),
+  );
   assert.deepEqual(
     [inThread.conversation, inThread.route.parentId, inThread.route.knownConversation],
     [`${HOME}:100.1`, HOME, true],
   );
   assert.equal(
-    routeMessage(config, BOT, message({ channel: HOME, ts: '3.0', thread_ts: '200.1' }), known),
+    routeMessage(config, BOT, message({ channel: HOME, ts: '3.0', thread_ts: '200.1' }), known, link),
     null,
     'a thread aivi is not part of still needs a mention',
   );
-  const onlyMention = routeMessage(config, BOT, message({ channel: HOME, ts: '4.0', text: `<@${BOT}>` }), known)!;
+  const onlyMention = routed(
+    routeMessage(config, BOT, message({ channel: HOME, ts: '4.0', text: `<@${BOT}>` }), known, link),
+  );
   assert.equal(onlyMention.text, `<@${BOT}>`, 'a bare mention keeps its text so the empty check can reply');
-  const team = routeMessage(config, BOT, message({ channel: TEAM, ts: '5.0' }), known)!;
+  const team = routed(routeMessage(config, BOT, message({ channel: TEAM, ts: '5.0' }), known, link));
   assert.equal(team.conversation, TEAM, 'channel mode: the channel is the conversation');
-  assert.equal(routeMessage(config, BOT, message({ channel: TEAM, ts: '5.1', thread_ts: '5.0' }), known), null);
-  assert.equal(routeMessage(config, BOT, message({ channel: TEAM, ts: '5.0', user: 'U0000000BAD' }), known), null);
+  assert.equal(routeMessage(config, BOT, message({ channel: TEAM, ts: '5.1', thread_ts: '5.0' }), known, link), null);
+  assert.deepEqual(
+    routeMessage(config, BOT, message({ channel: TEAM, ts: '5.0', user: 'U0000000BAD' }), known, link),
+    { unlinked: true, isDM: false },
+    'strangers are heard nowhere, linked persons everywhere',
+  );
   assert.equal(
-    routeMessage(config, BOT, message({ channel: 'C0000000009', ts: '6.0', text: `<@${BOT}>` }), known),
+    routeMessage(config, BOT, message({ channel: 'C0000000009', ts: '6.0', text: `<@${BOT}>` }), known, link),
     null,
   );
 });
@@ -180,7 +198,13 @@ async function fakeOpenCode(
     res.end(JSON.stringify({ data: { id, ...session, location: { directory: session.directory } } }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  // A failing test body can leave the gated /wait request open; tearing the sockets down
+  // first lets close (and the hooks after it) finish instead of deadlocking on the gate.
+  t.after(() => {
+    const closed = new Promise<void>(resolve => server.close(() => resolve()));
+    server.closeAllConnections();
+    return closed;
+  });
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   return { url: `http://127.0.0.1:${address.port}`, prompts, sessions, interrupted };
@@ -231,6 +255,11 @@ function fakeConnection() {
 }
 
 const noEvents: SessionEvents = { watch: () => () => {} };
+/** Link ME into a fresh store the way a real person does: mint a code, redeem it. */
+function linkMe(store: Store): void {
+  const person = store.createPerson({ name: 'Ada' });
+  store.redeemLinkCode(store.mintLinkCode(person.id).code, 'slack', ME);
+}
 const until = async (check: () => boolean, what: string) => {
   for (let i = 0; i < 200 && !check(); i++) await new Promise(r => setTimeout(r, 10));
   assert.ok(check(), what);
@@ -238,6 +267,7 @@ const until = async (check: () => boolean, what: string) => {
 
 test('the module: a mention opens a thread and is answered there once; duplicates, files, reports, re-entry, commands', async t => {
   const store = new Store(':memory:');
+  linkMe(store);
   const opencode = await fakeOpenCode(t, 'Answer');
   const loaded = {
     config: configSchema.parse({ version: 1, opencode: { url: opencode.url } }),
@@ -293,7 +323,11 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   );
   assert.match(first!.session, /^ses_slack_/);
   assert.equal(opencode.prompts[0]!.id, `msg_slack_${HOME}_10_0`);
-  assert.equal(opencode.prompts[0]!.text, `[Slack message from Me (user ${ME})]\nwhat is aivi?`);
+  assert.equal(
+    opencode.prompts[0]!.text,
+    `[Slack message from Ada (user ${ME})]\nwhat is aivi?`,
+    'a linked account speaks as its person',
+  );
   assert.deepEqual(opencode.sessions.get(first!.session), { agent: 'librarian', directory: '/librarian' });
 
   // A follow-up inside that thread needs no mention; a file-only message gets the text-only reply in the thread.
@@ -304,9 +338,14 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.equal(slack.posts.at(-1)!.text, 'Text messages only for now; paste the relevant text.');
   assert.equal(slack.posts.at(-1)!.threadTs, '10.0');
   assert.equal(inbox.list().length, 2);
-  // Strangers and un-mentioned top-level messages never reach the inbox.
+  // Un-mentioned top-level messages never reach the inbox; a stranger's DM gets one link hint and nothing else.
   await slack.event(message({ channel: HOME, ts: '13.0', text: 'unaddressed' }));
+  const before = slack.posts.length;
   await slack.event(message({ channel: DM, ts: '14.0', user: 'U0000000BAD' }));
+  assert.match(slack.posts.at(-1)!.text, /aivi link slack/, 'the stranger gets one link hint');
+  assert.equal(slack.posts.at(-1)!.channel, DM, 'the hint stays in the DM');
+  await slack.event(message({ channel: DM, ts: '14.5', user: 'U0000000BAD' }));
+  assert.equal(slack.posts.length, before + 1, 'the hint is said once per account');
   assert.equal(inbox.list().length, 2);
 
   // A report opens a thread that adopts the job session; a reply there continues it with that job's agent.
@@ -343,22 +382,22 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   });
   const opener = slack.posts.at(-2)!;
   assert.deepEqual([opener.channel, opener.threadTs, opener.text.length], [HOME, undefined, 3900]);
-  assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'x'.repeat(100), threadTs: '1004.0' });
+  assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'x'.repeat(100), threadTs: '1005.0' });
   assert.equal(channels.ownerOf('ses_aivi_job1'), 'slack');
-  await slack.event(message({ channel: HOME, ts: '15.0', thread_ts: '1004.0', text: 'what did you do?' }));
-  await until(() => slack.posts.length === 6, 'answered in the report thread');
-  assert.equal(opencode.prompts.at(-1)!.metadata.aivi.channel, `${HOME}:1004.0`);
+  await slack.event(message({ channel: HOME, ts: '15.0', thread_ts: '1005.0', text: 'what did you do?' }));
+  await until(() => slack.posts.length === 7, 'answered in the report thread');
+  assert.equal(opencode.prompts.at(-1)!.metadata.aivi.channel, `${HOME}:1005.0`);
   assert.equal(inbox.list().at(-1)!.session, 'ses_aivi_job1');
   // A job result addressed to that session re-enters the thread as a job turn.
   await channels.deliver({ to: 'session', session: 'ses_aivi_job1', on: 'always' }, '✅ done', {
     run,
     state: 'succeeded',
   });
-  await until(() => slack.posts.length === 7, 'the outcome is relayed in the thread');
+  await until(() => slack.posts.length === 8, 'the outcome is relayed in the thread');
   assert.equal(inbox.list().at(-1)!.kind, 'job');
   assert.match(opencode.prompts.at(-1)!.text, /^\[aivi delivers the outcome/);
   assert.equal(opencode.prompts.at(-1)!.id, 'msg_slack_run_run_1');
-  assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'Answer', threadTs: '1004.0' });
+  assert.deepEqual(slack.posts.at(-1), { channel: HOME, text: 'Answer', threadTs: '1005.0' });
 
   // Slash commands: prefix-bound, ephemeral, and thread mode has nothing to reset.
   await slack.command({ command: '/other-status' });
@@ -370,7 +409,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   await slack.command({ command: '/spider-new', channel_id: DM });
   assert.match(slack.ephemerals.at(-1)!, /fresh session/);
   await slack.command({ command: '/spider-status', channel_id: DM, user_id: 'U0000000BAD' });
-  assert.match(slack.ephemerals.at(-1)!, /not enabled/);
+  assert.match(slack.ephemerals.at(-1)!, /aivi link slack/, 'an unlinked DM is told the way in');
   await slack.command({ command: '/spider-search', text: 'working agreements demo' });
   assert.deepEqual(searches.at(-1), { query: 'working agreements', limit: 3, projects: ['demo'] });
   assert.match(slack.ephemerals.at(-1)!, /^A — \/k\/a\.md:1\nhit$/);
@@ -412,7 +451,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   await slack.command({ command: '/spider-model', channel_id: DM });
   assert.match(slack.ephemerals.at(-1)!, /This conversation: `github-copilot\/gpt-5\.2@high` \(pinned with \/model/);
   await slack.event(message({ channel: DM, ts: '16.0', text: 'with the pinned model' }));
-  await until(() => slack.posts.length === 8, 'answered in the DM');
+  await until(() => slack.posts.length === 9, 'answered in the DM');
   const dmSession = inbox.sessionOf(DM)!.session;
   assert.deepEqual(opencode.sessions.get(dmSession)!.model, {
     providerID: 'github-copilot',
@@ -442,6 +481,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
 
 test('a queued message shows the hourglass until its turn starts; a turn that never started asks to resend', async t => {
   const store = new Store(':memory:');
+  linkMe(store);
   const woken = new Set<() => void>();
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/config.json', projects: [], sources: [] };
   const slack = fakeConnection();
@@ -498,6 +538,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
 
 test('progress: the placeholder goes into the thread, stays quiet inside its window, and goes when the answer lands', async t => {
   const store = new Store(':memory:');
+  linkMe(store);
   let release!: () => void;
   const gate = new Promise<void>(resolve => {
     release = resolve;
@@ -560,6 +601,7 @@ test('progress: the placeholder goes into the thread, stays quiet inside its win
 
 test('progress when the turn cannot run: the notice edits the placeholder instead of posting beside it', async t => {
   const store = new Store(':memory:');
+  linkMe(store);
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/config.json', projects: [], sources: [] };
   const slack = fakeConnection();
   const abort = new AbortController();
@@ -634,6 +676,7 @@ test('the JSON manifest agrees with the YAML snippet: one command table, two spe
 
 test('-steer and -stop act on the running turn; -model is refused while it runs', async t => {
   const store = new Store(':memory:');
+  linkMe(store);
   let release!: () => void;
   const gate = new Promise<void>(resolve => {
     release = resolve;

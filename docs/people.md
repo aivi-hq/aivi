@@ -99,7 +99,10 @@ an account that is already bound — never consumes the code, and re-binding is
 refused outright: there is no unlink yet (historic sessions keep their
 association), so a binding lasts until that exists. From then on the account
 speaks as its person: the turn prompt carries the person's name and the
-session is stamped `metadata.aivi.person`. Expired codes are swept by the
+session is stamped `metadata.aivi.person`. The link is also the admission:
+a linked person may DM aivi and is heard in every channel aivi listens in;
+an unlinked account is ignored everywhere except redeeming a code there
+([discord](discord.md#behavior)). Expired codes are swept by the
 retention job. An agent tool (`aivi_link`) so linking also works from natural
 language may come later; Linear needs its own redemption path and is not
 linked this way yet. Email linking is deferred: the shape is a link token

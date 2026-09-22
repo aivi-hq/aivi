@@ -69,22 +69,23 @@ const SOCKETS_OK = { match: /apps\.connections\.open/, status: 200, body: { ok: 
 
 test('slack setup prints the manifest, verifies both tokens and writes both files', async () => {
   const h = harness(
-    ['aivi', 'xoxb-1', 'xapp-1', 'yes', 'U000000001', 'yes', 'C0000000001', '', 'yes', 'C0000000002', ''],
+    ['aivi', 'xoxb-1', 'xapp-1', 'yes', 'C0000000001', '', 'yes', 'C0000000002', ''],
     [AUTH_OK, SOCKETS_OK],
   );
   const result = await setup(h.ctx);
   assert.equal(result.module, 'slack');
   assert.match(result.summary, /Acme/);
   assert.match(result.summary, /\/aivi-/);
+  assert.match(result.summary, /aivi link slack/, 'the summary says how to talk to the bot');
   assert.equal(h.secrets.get('SLACK_BOT_TOKEN'), 'xoxb-1');
   assert.equal(h.secrets.get('SLACK_APP_TOKEN'), 'xapp-1');
   const block = h.blocks[0]!.value as {
     commandPrefix: string;
-    access: { dm: { users: string[] }; channels: { id: string }[] };
+    access: { dm?: unknown; channels: { id: string }[] };
     reportChannels: string[];
   };
   assert.equal(block.commandPrefix, 'aivi');
-  assert.deepEqual(block.access.dm.users, ['U000000001']);
+  assert.equal(block.access.dm, undefined, 'people link; the config lists places, not identities');
   assert.deepEqual(
     block.access.channels.map(c => c.id),
     ['C0000000001'],
@@ -96,10 +97,12 @@ test('slack setup prints the manifest, verifies both tokens and writes both file
   assert.match(note, /"\/aivi-new"/, 'the manifest in the note is the paste-ready JSON');
 });
 
-test('slack setup with no channel and no dm refuses: nothing would hear anyone', async () => {
+test('slack setup with no channels configures a DM-only bot', async () => {
   const h = harness(['aivi', 'xoxb-1', 'xapp-1', 'no', 'no'], [AUTH_OK, SOCKETS_OK]);
-  await assert.rejects(setup(h.ctx), /Nothing would hear anyone/);
-  assert.equal(h.blocks.length, 0);
+  const result = await setup(h.ctx);
+  const block = h.blocks[0]!.value as { access: { channels: unknown[] } };
+  assert.deepEqual(block.access.channels, []);
+  assert.match(result.summary, /DMs only/, 'the summary says what it decided');
 });
 
 test('slack setup never writes on a refused bot token', async () => {
@@ -137,9 +140,13 @@ test('slack setup stops on a cancelled prompt with nothing written', async () =>
   assert.equal(h.blocks.length, 0);
 });
 
-test('slack setup asks ids until they match the platform shape', async () => {
-  const h = harness(['aivi', 'xoxb-1', 'xapp-1', 'yes', 'nope', 'U000000001', 'no', 'no'], [AUTH_OK, SOCKETS_OK]);
+test('slack setup asks channel ids until they match the platform shape', async () => {
+  const h = harness(['aivi', 'xoxb-1', 'xapp-1', 'yes', 'nope', 'C0000000001', '', 'no'], [AUTH_OK, SOCKETS_OK]);
   await setup(h.ctx);
-  const block = h.blocks[0]!.value as { access: { dm: { users: string[] } } };
-  assert.deepEqual(block.access.dm.users, ['U000000001'], 'the bad shape never lands');
+  const block = h.blocks[0]!.value as { access: { channels: { id: string }[] } };
+  assert.deepEqual(
+    block.access.channels.map(c => c.id),
+    ['C0000000001'],
+    'the bad shape never lands',
+  );
 });

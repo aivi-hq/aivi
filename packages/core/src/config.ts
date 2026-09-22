@@ -361,29 +361,21 @@ export const opencodeSchema = z.strictObject({
     ),
 });
 /**
- * Who may talk to aivi through a communication channel (Discord, Slack, …).
+ * Where aivi listens on a communication channel (Discord, Slack, …).
  * Every adapter maps its own identifiers into this one shape:
- * - `dm.users`: people allowed to talk in private; no `dm` means nobody.
- * - `channels[]`: shared places (a channel and its threads). `users` restricts
- *   who is heard there; `trigger` says whether a mention is required.
- * Anyone not matched is ignored before anything reaches the model.
+ * - `channels[]`: shared places (a channel and its threads), each with a
+ *   `trigger` that says whether a mention is required.
+ * Who may talk is not configured here — that is what linking is for: an
+ * account linked to a person talks with that person's access wherever it
+ * goes; an unlinked account is ignored before anything reaches the model,
+ * and its one door is redeeming a link code.
  */
 export const accessPolicySchema = z
   .strictObject({
-    dm: z
-      .strictObject({
-        users: z.array(z.string().min(1)).min(1).describe('User IDs allowed to talk to aivi in private messages.'),
-      })
-      .optional()
-      .describe('Private messages. Omit to refuse all DMs.'),
     channels: z
       .array(
         z.strictObject({
           id: z.string().min(1).describe('Channel ID as the platform reports it.'),
-          users: z
-            .union([z.literal('anyone'), z.array(z.string().min(1)).min(1)])
-            .default('anyone')
-            .describe('"anyone", or the user IDs aivi listens to here.'),
           trigger: z
             .enum(['mention', 'mention-to-start', 'any'])
             .default('mention-to-start')
@@ -405,7 +397,7 @@ export const accessPolicySchema = z
       .describe('Shared places aivi listens in, each with its own rules.'),
   })
   .describe(
-    'Who may talk to aivi through this channel. Unmatched messages are ignored before anything is stored or sent to a model.',
+    'Where aivi listens on this channel. Unmatched messages are ignored before anything is stored or sent to a model.',
   );
 export type AccessPolicy = z.infer<typeof accessPolicySchema>;
 export type AccessChannel = AccessPolicy['channels'][number];
@@ -417,6 +409,8 @@ export interface AccessRoute {
   mentioned: boolean;
   /** aivi already takes part in this conversation (a session exists for it). */
   knownConversation: boolean;
+  /** The sender's account is linked to a person; access is that person's access. */
+  senderLinked: boolean;
 }
 
 /** The channel entry governing a route, or undefined when the place is not configured. */
@@ -427,13 +421,28 @@ export function accessEntry(policy: AccessPolicy, route: AccessRoute): AccessCha
   return entry;
 }
 
+/**
+ * The full gate: only an account linked to a person may talk, and only where
+ * aivi listens. The caller resolves `senderLinked` from the store before
+ * asking; nothing here consults who the sender is beyond that.
+ */
 export function accessAllows(policy: AccessPolicy, route: AccessRoute): boolean {
-  if (route.isDM) return policy.dm?.users.includes(route.userId) ?? false;
+  if (!route.senderLinked) return false;
+  if (route.isDM) return true;
   const entry = accessEntry(policy, route);
   if (!entry) return false;
-  if (entry.users !== 'anyone' && !entry.users.includes(route.userId)) return false;
   if (entry.trigger === 'any' || route.mentioned) return true;
   return entry.trigger === 'mention-to-start' && route.parentId !== null && route.knownConversation;
+}
+
+/**
+ * Whether the route's *place* is one aivi listens in — says nothing about the
+ * sender. It is what a link code may be redeemed in, and what makes silence
+ * worth explaining to an unlinked sender.
+ */
+export function accessReaches(policy: AccessPolicy, route: AccessRoute): boolean {
+  if (route.isDM) return true;
+  return accessEntry(policy, route) !== undefined;
 }
 const snowflake = z.string().regex(/^\d{17,20}$/);
 /**
@@ -448,7 +457,7 @@ export const discordConfigSchema = z
     /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
     directory: z.string().min(1).default('.'),
     resource: z.string().default('local-model'),
-    /** Who may talk to the bot: DM allow-list and shared channels (with their threads). */
+    /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
     access: accessPolicySchema,
     /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "discord" }`). Empty: never post proactively. */
     reportChannels: z.array(snowflake).default([]),
@@ -493,7 +502,7 @@ export const slackConfigSchema = z
       .max(24)
       .default('aivi'),
     resource: z.string().default('local-model'),
-    /** Who may talk to the bot: DM allow-list and shared channels (with their threads). */
+    /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
     access: accessPolicySchema,
     /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "slack" }`). Empty: never post proactively. */
     reportChannels: z.array(channelId).default([]),
@@ -504,21 +513,9 @@ export const slackConfigSchema = z
     turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
   })
   .superRefine((config, ctx) => {
-    for (const [i, user] of (config.access.dm?.users ?? []).entries())
-      if (!isUserId(user))
-        ctx.addIssue({ code: 'custom', path: ['access', 'dm', 'users', i], message: 'Expected a Slack user id (U…)' });
-    for (const [i, channel] of config.access.channels.entries()) {
+    for (const [i, channel] of config.access.channels.entries())
       if (!isChannelId(channel.id))
         ctx.addIssue({ code: 'custom', path: ['access', 'channels', i, 'id'], message: 'Expected a Slack channel id' });
-      if (channel.users !== 'anyone')
-        for (const [j, user] of channel.users.entries())
-          if (!isUserId(user))
-            ctx.addIssue({
-              code: 'custom',
-              path: ['access', 'channels', i, 'users', j],
-              message: 'Expected a Slack user id (U…)',
-            });
-    }
   });
 export type SlackConfig = z.infer<typeof slackConfigSchema>;
 /**

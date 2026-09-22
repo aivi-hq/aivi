@@ -27,19 +27,6 @@ async function fetchBotUser(ctx: PluginSetupContext, token: string): Promise<Dis
   return (await response.json()) as DiscordBotUser;
 }
 
-/** One snowflake, asked until it matches. */
-async function askSnowflake(ctx: PluginSetupContext, message: string): Promise<string> {
-  for (;;) {
-    const answer = (
-      await ctx.ask.text({
-        message,
-        validate: value => (SNOWFLAKE.test(value.trim()) ? undefined : 'A Discord id is 17–20 digits'),
-      })
-    ).trim();
-    if (answer) return answer;
-  }
-}
-
 /** Ids pasted one per answer until an empty one stops the loop. */
 async function collectIds(ctx: PluginSetupContext, first: string, again: string): Promise<string[]> {
   const ids: string[] = [];
@@ -84,11 +71,8 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   const bot = await fetchBotUser(ctx, token);
   ctx.log(`Verified: @${bot.username} — application ${bot.id}.`);
 
-  const wantsDm = await ctx.ask.confirm({ message: 'Let yourself DM the bot?', initial: true });
-  const dmUsers = wantsDm
-    ? [await askSnowflake(ctx, 'Your Discord user id — Developer Mode on, right-click your name → Copy User ID')]
-    : [];
-  const wantsChannels = await ctx.ask.confirm({ message: 'Listen in shared channels too?', initial: !wantsDm });
+  // DMs are open to whoever links (the code is the door); the install only picks the places.
+  const wantsChannels = await ctx.ask.confirm({ message: 'Listen in shared channels?', initial: true });
   const channelIds = wantsChannels
     ? await collectIds(
         ctx,
@@ -96,8 +80,6 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
         'Another channel id (empty line stops)',
       )
     : [];
-  if (!dmUsers.length && !channelIds.length)
-    throw new Error('Nothing would hear anyone: answer yes to DMs or add at least one channel.');
 
   const intent = await ctx.ask.confirm({
     message: 'Did you enable the Message Content intent on the Bot page?',
@@ -116,7 +98,6 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   const block = {
     applicationId: bot.id,
     access: {
-      ...(dmUsers.length ? { dm: { users: dmUsers } } : {}),
       channels: channelIds.map(id => ({ id, ...(intent ? {} : { trigger: 'mention' }) })),
     },
     ...(reportChannels.length ? { reportChannels } : {}),
@@ -126,7 +107,13 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   await ctx.writeConfigBlock(['modules', 'discord'], block);
   return {
     module: 'discord',
-    summary: `Discord is configured for @${bot.username} (application ${bot.id}).`,
+    summary: [
+      `Discord is configured for @${bot.username} (application ${bot.id}).`,
+      channelIds.length ? '' : 'No shared channels: aivi will answer DMs only.',
+      'To talk to it: start aivi, run `aivi link discord`, and paste the code to the bot with /link.',
+    ]
+      .filter(Boolean)
+      .join('\n'),
   };
 };
 

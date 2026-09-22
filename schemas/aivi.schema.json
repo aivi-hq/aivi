@@ -357,28 +357,9 @@
                   "type": "string"
                 },
                 "access": {
-                  "description": "Who may talk to aivi through this channel. Unmatched messages are ignored before anything is stored or sent to a model.",
+                  "description": "Where aivi listens on this channel. Unmatched messages are ignored before anything is stored or sent to a model.",
                   "type": "object",
                   "properties": {
-                    "dm": {
-                      "description": "Private messages. Omit to refuse all DMs.",
-                      "type": "object",
-                      "properties": {
-                        "users": {
-                          "description": "User IDs allowed to talk to aivi in private messages.",
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        }
-                      },
-                      "required": [
-                        "users"
-                      ],
-                      "additionalProperties": false
-                    },
                     "channels": {
                       "description": "Shared places aivi listens in, each with its own rules.",
                       "default": [],
@@ -390,24 +371,6 @@
                             "description": "Channel ID as the platform reports it.",
                             "type": "string",
                             "minLength": 1
-                          },
-                          "users": {
-                            "description": "\"anyone\", or the user IDs aivi listens to here.",
-                            "default": "anyone",
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "const": "anyone"
-                              },
-                              {
-                                "minItems": 1,
-                                "type": "array",
-                                "items": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              }
-                            ]
                           },
                           "trigger": {
                             "description": "\"mention\": every message must address aivi. \"mention-to-start\": a mention opens a conversation; inside a thread aivi already takes part in, every message counts. \"any\": every message counts (needs message content access).",
@@ -516,28 +479,9 @@
                   "type": "string"
                 },
                 "access": {
-                  "description": "Who may talk to aivi through this channel. Unmatched messages are ignored before anything is stored or sent to a model.",
+                  "description": "Where aivi listens on this channel. Unmatched messages are ignored before anything is stored or sent to a model.",
                   "type": "object",
                   "properties": {
-                    "dm": {
-                      "description": "Private messages. Omit to refuse all DMs.",
-                      "type": "object",
-                      "properties": {
-                        "users": {
-                          "description": "User IDs allowed to talk to aivi in private messages.",
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        }
-                      },
-                      "required": [
-                        "users"
-                      ],
-                      "additionalProperties": false
-                    },
                     "channels": {
                       "description": "Shared places aivi listens in, each with its own rules.",
                       "default": [],
@@ -549,24 +493,6 @@
                             "description": "Channel ID as the platform reports it.",
                             "type": "string",
                             "minLength": 1
-                          },
-                          "users": {
-                            "description": "\"anyone\", or the user IDs aivi listens to here.",
-                            "default": "anyone",
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "const": "anyone"
-                              },
-                              {
-                                "minItems": 1,
-                                "type": "array",
-                                "items": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              }
-                            ]
                           },
                           "trigger": {
                             "description": "\"mention\": every message must address aivi. \"mention-to-start\": a mention opens a conversation; inside a thread aivi already takes part in, every message counts. \"any\": every message counts (needs message content access).",

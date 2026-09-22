@@ -17,25 +17,29 @@ the host's. This page has what is Discord's.
   conversation; the channel itself never is) or `sessions: "channel"` (the
   channel is one shared conversation and its threads are ignored). Speakers
   share a conversation's history; prompts carry their Discord IDs.
-- Access is decided before anything is queued, by the shared `access` policy:
+- Access is decided before anything is queued. The config decides *where* aivi
+  listens; the people table decides *who* may talk
+  ([people](people.md)): only accounts linked to a person are heard, and a
+  linked person may DM freely — there is no `dm` block to allow-list.
 
   ```json
   "access": {
-    "dm": { "users": ["<user id>"] },
     "channels": [
-      { "id": "<home channel id>", "users": "anyone" },
-      { "id": "<team channel id>", "users": ["<user id>"], "trigger": "any" }
+      { "id": "<home channel id>" },
+      { "id": "<team channel id>", "trigger": "any" }
     ]
   }
   ```
 
-  No `dm` block means nobody may DM. Channel entries default to
+  A channel entry says aivi listens there. Entries default to
   `sessions: "threads"` and `trigger: "mention-to-start"`: a mention opens a
   thread, and inside a thread aivi takes part in every message counts. Other
   triggers: `mention` (always address aivi) and `any` (every message). Anything
-  but `mention` needs `messageContent: true` (Discord's Message Content intent). Everyone else is silently ignored; bots,
-  webhooks, system messages, and edits are ignored too. The same shape will be
-  used for Slack and other adapters.
+  but `mention` needs `messageContent: true` (Discord's Message Content intent).
+  An unlinked account is ignored in channels; in a DM it is answered once per
+  start with the link hint and only `/link <code>` is taken from it —
+  redemption is its own proof. Bots, webhooks, system messages, and edits are
+  ignored too. The same shape is used for Slack and other adapters.
 - The agent is an ordinary OpenCode agent and its file is the whole boundary.
   Discord runs it exactly as defined; aivi only adds `external_directory`
   allows for the configured knowledge sources, which the agent file cannot
@@ -122,8 +126,7 @@ the module (`false` is an explicit off):
       "applicationId": "10000000000000001",
       "agent": "librarian",
       "access": {
-        "dm": { "users": ["10000000000000002"] },
-        "channels": [{ "id": "10000000000000004", "users": "anyone" }]
+        "channels": [{ "id": "10000000000000004" }]
       },
       "reportChannels": ["10000000000000005"],
       "messageContent": true,

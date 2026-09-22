@@ -41,6 +41,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates |
 | attribution | which names a commit carries: the bot as author/co-author from aivi's identity, the human as author from their own git config — a git fact, it never consults whoami ([people](docs/people.md)) |
 | association | which person a record belongs to: link codes, job ownership, session stamps, memories — a host fact, taken from the calling bearer, never from what a message claimed ([people](docs/people.md)) |
+| link | a channel account bound to a person, minted by `aivi link` and redeemed by `/link`; the binding is also the channel admission — who may talk, while config names only where ([people](docs/people.md)) |
 
 ## Decisions and why
 
@@ -218,6 +219,14 @@ runs in one process; adapters are optional modules with a start/stop contract.
   dispatcher enforces roles per operation. A non-loopback bind warns that
   anyone who can reach the address can use the commands
   ([people](docs/people.md)).
+- **Config names places; the link admits people.** A channel message reaches
+  the agent only when its sender is linked to a person and aivi listens where
+  it landed: any DM, or an `access.channels` entry with its trigger. There are
+  no user ids in config.json — `access.dm` and per-channel `users` are gone
+  (2026-09-22, before any live install). `/link` redeems wherever aivi
+  listens, linked or not: redemption is its own proof. An unlinked DM sender
+  is answered once per start with the link hint; in channels aivi stays
+  silent ([discord](docs/discord.md#behavior)).
 - **The lane map is a convention with per-project deviations.**
   `projectDefaults.linear.lanes` is the company-wide base and a project wins
   one lane at a time over it (merge, where `projectDefaults.knowledge`

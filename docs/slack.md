@@ -18,8 +18,9 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   `sessions: "channel"` (the channel is one shared conversation and its
   threads are ignored). Speakers share a conversation's history; prompts
   carry the speaker's display name (`users.info`) and Slack user id.
-- Access is the shared `access` policy with Slack ids: users `U…`/`W…`,
-  channels `C…`/`G…`; DMs are keyed by the `D…` channel. Triggers work as on
+- Access is the shared `access` policy: the people table admits senders
+  (only linked persons are heard), config names the channels (`C…`/`G…`) aivi
+  listens in; DMs are keyed by the `D…` channel. Triggers work as on
   Discord; Slack always delivers message text, so there is no
   `messageContent` switch. Addressing aivi is an `app_mention` event or
   `<@bot>` in the text; Slack sends both for one message and the module keeps
@@ -160,9 +161,9 @@ Install the app to the workspace, create an **app-level token** with
 `connections:write` (`xapp-…`) and copy the **bot token** (`xoxb-…`). Put
 them in `<home>/.env` as `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`
 ([secrets](configuration.md#secrets)). Invite the bot to every channel it
-should listen in. Collect the ids: your user id (profile → copy member id),
-channel ids (channel details → bottom of the About tab). DM channel ids are
-not configured; the `dm.users` allow-list decides who may DM.
+should listen in. Collect the channel ids (channel details → bottom of the
+About tab). DM channel ids are not configured; a linked person may DM from
+anywhere ([people](people.md#link-codes-discord-slack)).
 
 The example template enables Slack with placeholder ids; copy
 `example/config.example.json` to `example/config.json` and edit the ids there. A
@@ -176,8 +177,7 @@ module (`false` is an explicit off):
       "agent": "librarian",
       "commandPrefix": "aivi",
       "access": {
-        "dm": { "users": ["U0000000001"] },
-        "channels": [{ "id": "C0000000001", "users": "anyone" }]
+        "channels": [{ "id": "C0000000001" }]
       },
       "reportChannels": ["C0000000001"],
       "progress": "status",
