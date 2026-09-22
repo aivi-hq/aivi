@@ -57,10 +57,16 @@ export interface UpdateOptions {
 
 const CHANNELS = ['stable'] as const;
 
-async function healthUrl(home: string): Promise<string> {
-  const config = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) as {
-    host?: { bind?: string; port?: number };
-  };
+/** The host url the server in this home answers on. The app's own defaults
+ *  stand when config.json is missing or unreadable: `aivi uninstall` probes
+ *  here too, and a broken config must not hide a running server. */
+export async function healthUrl(home: string): Promise<string> {
+  let config: { host?: { bind?: string; port?: number } };
+  try {
+    config = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) as typeof config;
+  } catch {
+    config = {};
+  }
   const port = config.host?.port ?? 4100;
   const bind = config.host?.bind ?? '127.0.0.1';
   const host = ['0.0.0.0', '::', '[::]'].includes(bind) ? '127.0.0.1' : bind;
