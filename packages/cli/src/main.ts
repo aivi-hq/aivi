@@ -69,10 +69,7 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  const program = new Command('aivi')
-    .description('the thin CLI: it installs and controls the server; the server does the assistant work')
-    .version(version)
-    .showHelpAfterError('(run `aivi --help` for a list of commands)');
+  const program = new Command('aivi').version(version).showHelpAfterError('(run `aivi --help` for a list of commands)');
 
   // These commands keep their own flag handling (they pass unknown flags to
   // plugins and scripts), so they are declared as catch-alls: commander routes,
@@ -176,13 +173,13 @@ export async function main(argv: string[]): Promise<void> {
 
   program.addHelpText(
     'before',
-    brandBanner(
+    `${brandBanner(
       [
         { text: `aivi v${version} — the always-on teammate around OpenCode` },
         { text: 'The server does the work; this CLI installs and controls it.', muted: true },
       ],
       process.stdout,
-    ),
+    )}\n`,
   );
   program.addHelpText(
     'after',

@@ -4,6 +4,7 @@
  *  does not want it, so the methods here can style unconditionally; styleText
  *  keys off the same stdout the commander detection does. */
 
+import { homedir } from 'node:os';
 import { BRAND, brandBanner, brandStyle } from '@aivi/core';
 import type { Command } from 'commander';
 
@@ -26,13 +27,15 @@ export function applyThemedHelp(command: Command): void {
 }
 
 /** The root's opening screen: the wordmark, the version and one line of
- *  orientation, colored on a terminal, plain text under a pipe. */
+ *  orientation, colored on a terminal, plain text under a pipe. A trailing
+ *  blank line keeps Usage off the mark. */
 export function rootBanner(version: string, home: string, stream: NodeJS.WritableStream): string {
-  return brandBanner(
+  const underHome = home.startsWith(homedir()) ? `~${home.slice(homedir().length)}` : home;
+  return `${brandBanner(
     [
       { text: `aivi v${version} — the always-on teammate around OpenCode` },
-      { text: `Home ${home} · \`aivi <command> --help\` for one command`, muted: true },
+      { text: `Home ${underHome} · \`aivi <command> --help\` for one command`, muted: true },
     ],
     stream,
-  );
+  )}\n`;
 }

@@ -28,7 +28,6 @@ const version = (
 
 async function main(argv: string[]): Promise<void> {
   const program = new Command('aivi')
-    .description('the always-on teammate around OpenCode')
     .version(version)
     .showHelpAfterError('(run `aivi --help` for a list of commands)')
     .option('--log-level <level>', 'debug|info|warn|error', 'info')
