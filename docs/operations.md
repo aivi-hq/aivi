@@ -198,6 +198,15 @@ without one is still installed, and the command says it has no setup.
 Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
 `runs …` on executions.
 
+The help is grouped and themed (the wordmark and the brand colors of the
+logs), and every command answers `aivi <command> --help` for itself, so a
+flag's meaning is said once, where it works. Flags belong to their command: a
+flag a command does not know is an error, not a silently ignored word. An
+unknown command is answered with the nearest real one ("did you mean
+`jobs`?"). Help goes to stdout, errors to stderr, and both lose their color
+on a pipe or under `NO_COLOR`; command output on stdout stays plain JSON for
+whoever pipes it.
+
 `jobs add FILE` adds a job from a task file (a bare task, or
 `{ task, report?, resource? }`): `--cron EXPR --timezone TZ` makes it
 recurring, `--at ISO|30m|2h|1d` a one-off for later, neither a one-off for

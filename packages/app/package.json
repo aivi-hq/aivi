@@ -9,7 +9,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=26.0.0 <27"
+    "node": ">=26.1.0 <27"
   },
   "license": "MIT",
   "repository": {
@@ -29,6 +29,7 @@
     "@aivi/host": "^0.3.1",
     "@aivi/knowledge": "^0.1.2",
     "@clack/prompts": "1.8.1",
+    "commander": "15.0.0",
     "zod": "4.1.13"
   }
 }
