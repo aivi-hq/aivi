@@ -9,8 +9,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { brandBanner } from '@aivi/core';
 import { Command, CommanderError } from 'commander';
+import { brandBanner } from './brand.ts';
 import { loadClientConfig } from './client-config.ts';
 import { forward } from './forward.ts';
 import { homeForCreate, homeFromEnvOrConfig, requireHome } from './home.ts';
