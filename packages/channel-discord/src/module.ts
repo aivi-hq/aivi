@@ -440,6 +440,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
             user: interaction.user.id,
           };
           const result = await steerTurn(
+            services.store,
             store,
             DISCORD,
             services.opencode,

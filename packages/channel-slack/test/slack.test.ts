@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
-import type { KnowledgeService, Run } from '@aivi/core';
+import type { KnowledgeService, Person, Run } from '@aivi/core';
 import { configSchema, getLogger, slackConfigSchema } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, usageHint } from '@aivi/host';
@@ -256,9 +256,10 @@ function fakeConnection() {
 
 const noEvents: SessionEvents = { watch: () => () => {} };
 /** Link ME into a fresh store the way a real person does: mint a code, redeem it. */
-function linkMe(store: Store): void {
+function linkMe(store: Store): Person {
   const person = store.createPerson({ name: 'Ada' });
   store.redeemLinkCode(store.mintLinkCode(person.id).code, 'slack', ME);
+  return person;
 }
 const until = async (check: () => boolean, what: string) => {
   for (let i = 0; i < 200 && !check(); i++) await new Promise(r => setTimeout(r, 10));
@@ -676,7 +677,7 @@ test('the JSON manifest agrees with the YAML snippet: one command table, two spe
 
 test('-steer and -stop act on the running turn; -model is refused while it runs', async t => {
   const store = new Store(':memory:');
-  linkMe(store);
+  const ada = linkMe(store);
   let release!: () => void;
   const gate = new Promise<void>(resolve => {
     release = resolve;
@@ -720,9 +721,11 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
   assert.equal(slack.ephemerals.at(-1), 'Passed on to the agent mid-turn.');
   assert.deepEqual(opencode.prompts.at(-1), {
     id: undefined,
-    text: `[Slack message from Me (user ${ME})]\nalso the appendix`,
+    text: `[Slack message from Ada (user ${ME})]\nalso the appendix`,
     delivery: 'steer',
-    metadata: { aivi: { origin: 'slack', channel: DM, user: ME, steer: `msg_slack_${DM}_40_0` } },
+    metadata: {
+      aivi: { origin: 'slack', channel: DM, user: ME, steer: `msg_slack_${DM}_40_0`, person: ada.id },
+    },
   });
   assert.equal(inbox.list().length, 1, 'a steer is not a queued turn');
 

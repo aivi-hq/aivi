@@ -426,7 +426,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         const text = command.text.trim();
         if (!text) return reply(`Usage: ${spell('steer')} TEXT`);
         const speaker = { name: await nameOf(command.user_id), user: command.user_id };
-        const result = await steerTurn(store, SLACK, services.opencode, channel, speaker, text);
+        const result = await steerTurn(services.store, store, SLACK, services.opencode, channel, speaker, text);
         if (result.error) log.warn('steer.failed', { error: result.error });
         return reply(result.text);
       }

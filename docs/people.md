@@ -98,8 +98,9 @@ platform, the code is the evidence, and the host binds
 an account that is already bound — never consumes the code, and re-binding is
 refused outright: there is no unlink yet (historic sessions keep their
 association), so a binding lasts until that exists. From then on the account
-speaks as its person: the turn prompt carries the person's name and the
-session is stamped `metadata.aivi.person`. The link is also the admission:
+speaks as its person: the turn prompt and `/steer` words carry the person's
+name and the session and messages are stamped `metadata.aivi.person`. The
+link is also the admission:
 a linked person may DM aivi and is heard in every channel aivi listens in;
 an unlinked account is ignored everywhere except redeeming a code there
 ([discord](discord.md#behavior)). Expired codes are swept by the

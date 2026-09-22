@@ -291,7 +291,7 @@ test('/stop and /steer act on the running turn only: interrupt after the engine 
     stopped: false,
   });
   assert.equal(
-    (await steerTurn(store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'also this')).steered,
+    (await steerTurn(core, store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'also this')).steered,
     false,
   );
   assert.equal(requests.length, 0, 'nothing running: OpenCode is not asked');
@@ -301,6 +301,7 @@ test('/stop and /steer act on the running turn only: interrupt after the engine 
   await Promise.resolve();
   const session = store.sessionOf('dm-a')!.session;
   const steered = await steerTurn(
+    core,
     store,
     platform,
     opencode,
@@ -315,6 +316,18 @@ test('/stop and /steer act on the running turn only: interrupt after the engine 
     text: '[Discord message from Me (user u1)]\nalso check the handbook',
     delivery: 'steer',
     metadata: { aivi: { origin: 'discord', channel: 'dm-a', user: 'u1', steer: 'msg_discord_one' } },
+  });
+
+  // Steer words land in the session like the turn's own, so a linked speaker is the person.
+  const ada = core.createPerson({ name: 'Ada' });
+  core.redeemLinkCode(core.mintLinkCode(ada.id).code, 'discord', 'u1');
+  await steerTurn(core, store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'and the appendix');
+  assert.deepEqual(requests.at(-1)!.body, {
+    text: '[Discord message from Ada (user u1)]\nand the appendix',
+    delivery: 'steer',
+    metadata: {
+      aivi: { origin: 'discord', channel: 'dm-a', user: 'u1', steer: 'msg_discord_one', person: ada.id },
+    },
   });
 
   const stopped = await stopTurn(engine, opencode, 'dm-a');
