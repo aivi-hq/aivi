@@ -77,13 +77,13 @@ function installedDependencies(appDir: string): Record<string, string> {
 export async function updateServer(options: UpdateOptions, io: UpdateIo = defaultIo): Promise<void> {
   const { home, appDir } = options;
   const configPath = join(home, 'config.json');
-  if (!existsSync(configPath)) throw new Error(`No config.json in ${home}. Run \`aivi server create\`.`);
+  if (!existsSync(configPath)) throw new Error(`No config.json in ${home}. Run \`aivi setup\`.`);
   const rawConfig = JSON.parse(readFileSync(configPath, 'utf8')) as { update?: { channel?: string } };
   const channel = rawConfig.update?.channel ?? 'stable';
   if (!CHANNELS.includes(channel as (typeof CHANNELS)[number])) throw new Error(`Unknown update channel: ${channel}`);
 
   const installed = installedDependencies(appDir);
-  if (!installed['@aivi/app']) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi server create\`.`);
+  if (!installed['@aivi/app']) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi setup\`.`);
   const currentVersion = JSON.parse(
     readFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), 'utf8'),
   ) as { version: string };

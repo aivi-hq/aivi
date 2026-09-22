@@ -53,26 +53,38 @@ Store methods: `createPerson`, `people`, `person`, `mintToken`,
 One file, identical shape everywhere (`XDG_CONFIG_HOME` wins when set), 0600:
 
 ```json
-{ "configVersion": 1, "url": "http://127.0.0.1:4100", "home": "/home/me/.aivi", "person": { "token": "aivi-…" } }
+{
+  "configVersion": 1,
+  "url": "http://127.0.0.1:4100",
+  "home": "/home/me/.aivi",
+  "person": { "token": "aivi-…", "id": "person-…", "name": "Ada", "roles": ["operator"] }
+}
 ```
 
 - `person.token` — the bearer; the only secret. Absent when the machine has no
   person (channel conversations associate by their channel identity either
   way).
-- `url` — the host API.
+- `person.id`, `person.name`, `person.roles` — a display cache written by
+  `aivi setup` from `whoami`. It never decides anything: real answers come
+  from the host, and cached roles only shape what the CLI lists.
+- `url` — the host API. The OpenCode plugin falls back to it (and to
+  `person.token`) when its options say nothing — see [opencode](opencode.md).
 - `home` — present only on a machine that hosts aivi: "this machine hosts".
   The home lives at `~/.aivi` and never moves.
 
 ## Bootstrap and people commands
 
-`aivi server create` is the only command that mints identity directly:
-initialize the home, create the operator person and their token, then ask
-where the client setup happens — *this machine* writes the client config,
-*another machine* prints the token to take to `aivi setup`
-([operations](operations.md#first-run-server-create)). Every other identity
-command talks HTTP (ungated like everything until the api-only session):
+`aivi setup` is the one entry point: it signs a machine in to a host
+(connect branch) or creates the server and the operator person (create
+branch) — the flow is described in
+[operations](operations.md#first-run-aivi-setup). The identity minting
+itself stays in the installed app's `server create`, which `aivi setup`
+drives. Every other identity command talks HTTP (ungated like everything
+until the api-only session):
 
-- `aivi people create NAME [--email E]`
+- `aivi people create NAME [--email E]` — on a terminal it offers to mint
+  the person's token right away, since nine of ten people are created for
+  exactly that.
 - `aivi people list`
 - `aivi people token PERSON [--label L]` — mints another bearer; shown once.
 

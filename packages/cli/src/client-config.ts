@@ -1,6 +1,6 @@
 /** The one file the CLI owns: `~/.config/aivi.json` (or `$XDG_CONFIG_HOME/aivi.json`),
  *  0600, never hand-edited. It merges the client record — where the host is, which
- *  person signs in — with the installation record aivi writes at `server create`:
+ *  person signs in — with the installation record `aivi setup` writes:
  *  the home, the selected Node, the app directory, the install method. Unknown
  *  fields survive a save so the file can grow without a migration. */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,16 @@ export const clientConfigSchema = z
     configVersion: z.literal(1),
     url: z.string().min(1).optional(),
     home: z.string().min(1).optional(),
-    person: z.object({ token: z.string().min(1) }).optional(),
+    person: z
+      .object({
+        token: z.string().min(1),
+        /** Cached from whoami at setup: display only, never consulted for
+         *  behavior — the server answers permission questions, not this file. */
+        id: z.string().min(1).optional(),
+        name: z.string().min(1).optional(),
+        roles: z.array(z.string()).optional(),
+      })
+      .optional(),
     nodePath: z.string().min(1).optional(),
     appDir: z.string().min(1).optional(),
     installMethod: z.enum(['npm', 'bun', 'brew', 'curl']).optional(),

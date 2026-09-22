@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 export function appCliPath(appDir: string): string {
   const path = join(appDir, 'node_modules', '@aivi', 'app', 'dist', 'cli.js');
-  if (!existsSync(path)) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi server create\` first.`);
+  if (!existsSync(path)) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi setup\` first.`);
   return path;
 }
 

@@ -192,8 +192,17 @@ compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
 **Where we are:** Session A complete (boxes 1–7, 2026-09-21, branch
-`feat/client-identity`). Next: Session B starts at box 8 — the
-`@aivi/client` package (config read/write, HTTP client, types).
+`feat/client-identity`). 2026-09-22, branch `feat/aivi-setup`: box 12's
+`aivi setup` command landed (detect → connect/create, verify-before-write,
+`opencode plugin add` for both plugins, person id/name/roles cache,
+service-install offer; `server create` folded in as the identity step) and
+box 10's credential half landed (plugin reads client-config url + bearer;
+server home ignores the cached bearer). Still open in those boxes: the
+dynamic CLI help, soul-fetch at setup, session person stamping — and box 8
+(`@aivi/client`) was skipped: setup reads the config file directly. The
+decided flow supersedes items 5–6 below where they disagree (setup is the
+single entry; `server create` is no longer person-facing). Next Session B
+work starts at box 8 as written.
 
 ### Session A — identity core (aivi repo)
 
