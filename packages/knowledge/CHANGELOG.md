@@ -1,5 +1,12 @@
 # @aivi/knowledge
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies [[`ad2895a`](https://github.com/aivi-hq/aivi/commit/ad2895a635925a5b23208bd34c915f7fca19f4ba)]:
+  - @aivi/core@0.5.0
+
 ## 0.1.3
 
 ### Patch Changes

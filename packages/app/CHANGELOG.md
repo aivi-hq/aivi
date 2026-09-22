@@ -1,5 +1,15 @@
 # @aivi/app
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [[`ad2895a`](https://github.com/aivi-hq/aivi/commit/ad2895a635925a5b23208bd34c915f7fca19f4ba)]:
+  - @aivi/core@0.5.0
+  - @aivi/host@0.5.0
+  - @aivi/browser@0.1.4
+  - @aivi/knowledge@0.1.4
+
 ## 0.4.0
 
 ### Minor Changes

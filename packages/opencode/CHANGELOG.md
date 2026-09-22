@@ -1,5 +1,13 @@
 # @aivi/opencode
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies [[`ad2895a`](https://github.com/aivi-hq/aivi/commit/ad2895a635925a5b23208bd34c915f7fca19f4ba)]:
+  - @aivi/core@0.5.0
+  - @aivi/host@0.5.0
+
 ## 0.1.5
 
 ### Patch Changes
