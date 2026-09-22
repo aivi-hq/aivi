@@ -52,9 +52,8 @@ stays an idea ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.
 1. Next channels once the research lands
    ([backlog/research-channels.md](backlog/research-channels.md)); Signal and
    Telegram will test the "conversation without threads" case.
-2. Installation and updates for other machines
-   ([backlog/installation.md](backlog/installation.md)); the home layout it
-   must produce is now fixed.
+2. Installation and updates for other machines; the home layout it must
+   produce is now fixed.
 3. Remote access hardening (per-device tokens, SSO via reverse proxy), then
    the Linear live gate (the module is built; what to exercise is in
    [plans/linear.md](plans/linear.md#11-the-single-app-rework-2026-09-19-built)).

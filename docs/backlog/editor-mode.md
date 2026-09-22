@@ -129,8 +129,7 @@ ever enters editor mode.
   auto-rejected for workers) before any destructive action is allowed?
 - If a mode is chosen: is `/editor` DM-only as researched, or may the Linear
   assistant carry it too (a delegation the operator confirms in chat)?
-- Relation to `docs/backlog/installation.md` (`aivi update`, restart) and
-  [dashboard](dashboard.md) (read-only viewing of the same data).
+- Relation to [dashboard](dashboard.md) (read-only viewing of the same data).
 
 ## Research
 

@@ -3,13 +3,11 @@
   "version": "0.1.3",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js",
-    "./server": "./server.js"
+    ".": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [
-    "dist",
-    "server.js"
+    "dist"
   ],
   "engines": {
     "node": ">=26.0.0 <27"

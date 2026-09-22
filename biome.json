@@ -10,7 +10,6 @@
       "packages/*/src/**",
       "packages/*/test/**",
       "scripts/**",
-      "packages/opencode/server.js",
       "*.json",
       "example/**/*.json",
 

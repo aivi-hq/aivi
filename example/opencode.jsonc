@@ -3,7 +3,7 @@
   "default_agent": "librarian",
   "plugins": [
     {
-      "package": "../packages/opencode",
+      "package": "../packages/opencode/dist/index.js",
       "options": { "url": "http://127.0.0.1:4100" }
     }
   ],
