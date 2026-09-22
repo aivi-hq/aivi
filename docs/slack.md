@@ -112,6 +112,10 @@ features:
     - command: /{prefix}-jobs
       description: Upcoming job occurrences and recent runs
       should_escape: false
+    - command: /{prefix}-link
+      description: Link this account to your aivi person with a code from `aivi link`
+      usage_hint: CODE
+      should_escape: false
     - command: /{prefix}-help
       description: List aivi’s commands
       should_escape: false

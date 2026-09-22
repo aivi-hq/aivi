@@ -14,6 +14,7 @@ import {
   isChatCommand,
   OFFLINE_NOTICE,
   ONLINE_NOTICE,
+  redeemLink,
   splitReply,
   status,
   steerTurn,
@@ -153,6 +154,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       services.loaded,
       services.opencode,
       services.events,
+      services.store,
       services.log,
     );
     const names = new Map<string, Promise<string>>();
@@ -254,6 +256,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       if (!authorized(config, route)) return reply('This user or conversation is not enabled for aivi.');
       if (name === 'help') return reply(helpText(spell));
       if (name === 'jobs') return reply(describeJobs(services.store));
+      if (name === 'link') return reply(redeemLink(services.store, SLACK.id, command.user_id, command.text));
       if (name === 'search') {
         // `QUERY [project]`: the last word is a project only when it names a configured one.
         const words = command.text.trim().split(/\s+/).filter(Boolean);
@@ -375,6 +378,7 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
     // (script jobs). A job's outcome for a session this module owns comes back into its thread as a turn.
     const unregister = services.channels.register({
       id: SLACK.id,
+      linkHint: `In Slack, run /${config.commandPrefix}-link <code> anywhere.`,
       accepts: channel => config.reportChannels.includes(channel),
       ownsSession: session => store.channelOf(session) !== null,
       async channelOf(session) {
