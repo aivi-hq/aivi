@@ -1,5 +1,11 @@
 # @aivi/cli
 
+## 0.3.0
+
+### Minor Changes
+
+- [#7](https://github.com/aivi-hq/aivi/pull/7) [`c8fa161`](https://github.com/aivi-hq/aivi/commit/c8fa1619b646bee229e56db5a7819e67329ec63b) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi setup` is the one entry point for client and server; `server create` folds into it and is no longer a person-facing command. Connecting to a host verifies the url and token with `whoami` before anything is written, then installs both OpenCode plugins (`opencode plugin add @aivi/opencode`, `opencode-attribution`). Creating a server now also seeds the home's OpenCode shape (`opencode.jsonc` plus `aivi.md`, `librarian.md` and `dreamer.md` in `.opencode/agents/` — existing files are never overwritten), offers `aivi service install` on the same-machine path, and prints a verified "Signed in as …" instead of an instruction the CLI cannot keep. The client config's `person` gains a display-only `id`/`name`/`roles` cache, written from `whoami`.
+
 ## 0.2.1
 
 ### Patch Changes

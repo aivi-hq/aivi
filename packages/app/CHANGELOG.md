@@ -1,5 +1,13 @@
 # @aivi/app
 
+## 0.2.1
+
+### Patch Changes
+
+- [#7](https://github.com/aivi-hq/aivi/pull/7) [`5ea68da`](https://github.com/aivi-hq/aivi/commit/5ea68da80aaa108a5d43131eb983300496e6c3f4) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `server create` becomes the identity step behind `aivi setup` and its output feeds the flow instead of addressing the person: the `next` instructions name commands that exist (`aivi setup`, `aivi serve`). `aivi people create` on a terminal offers to mint the person's token right away — the common reason to create a person.
+
+- [#7](https://github.com/aivi-hq/aivi/pull/7) [`12dd432`](https://github.com/aivi-hq/aivi/commit/12dd432b92d028b0459ffa450707b3d2b0be3831) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Declare `@aivi/browser` as a dependency: `serve` imports it on the default path (skipped only with `browser: false`), so a fresh `npm install @aivi/app` died with `Cannot find package '@aivi/browser'` before the host ever listened. The monorepo's workspace links hid the gap; an installed home does not have them.
+
 ## 0.2.0
 
 ### Minor Changes
