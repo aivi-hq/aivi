@@ -20,6 +20,7 @@ import {
   matchModels,
   OFFLINE_NOTICE,
   ONLINE_NOTICE,
+  redeemLink,
   splitReply,
   status,
   steerTurn,
@@ -159,6 +160,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       services.loaded,
       services.opencode,
       services.events,
+      services.store,
       services.log,
     );
     // Discord's typing indicator lasts ~10 s; keep it alive while the agent works so people know it is alive.
@@ -344,6 +346,10 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
             : interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
         if (name === 'help') return void (await reply(helpText(n => `/${n}`)));
         if (name === 'jobs') return void (await reply(describeJobs(services.store)));
+        if (name === 'link')
+          return void (await reply(
+            redeemLink(services.store, DISCORD.id, interaction.user.id, interaction.options.getString('code', true)),
+          ));
         if (name === 'search') {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           try {
@@ -503,6 +509,7 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     // this module owns comes back into its thread as a turn, in order with everything said there.
     const unregister = services.channels.register({
       id: DISCORD.id,
+      linkHint: 'In Discord, DM the bot: /link <code>.',
       accepts: channelId => config.reportChannels.includes(channelId),
       ownsSession: session => store.channelOf(session) !== null,
       async channelOf(session) {
