@@ -734,10 +734,23 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
   const knowledge = await createKnowledgeService(loaded, undefined, log.getChild('knowledge'));
   // Browser construction is lazy; no Chrome launch occurs until a tool call.
   const browser =
-    loaded.config.browser !== false
-      ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser)
-      : undefined;
+    loaded.config.browser !== false ? (await importBrowser()).createBrowserService(loaded.config.browser) : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };
+}
+
+/** `@aivi/browser` is a dependency of this package, so a miss here means a
+ *  broken install, not a disabled feature; say so with the repair command
+ *  instead of a bare ERR_MODULE_NOT_FOUND. */
+async function importBrowser(): Promise<typeof import('@aivi/browser')> {
+  try {
+    return await import('@aivi/browser');
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND')
+      throw new Error(
+        'The browser service (@aivi/browser) is missing from this installation. Repair it with `aivi update`.',
+      );
+    throw error;
+  }
 }
 function hostUrl(loaded: LoadedConfig): string {
   const { bind, port } = loaded.config.host;
