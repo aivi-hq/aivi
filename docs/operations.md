@@ -161,8 +161,8 @@ no sign-in it asks what the machine should be:
   `--name TEXT` (or `--connect --url URL --token TOKEN`) to skip the
   prompts. A re-run on a home that has people refuses identity minting;
   re-running `aivi setup` signed-in just verifies and refreshes the cached
-  person. `server create` still works as the identity step behind setup and
-  is not a person-facing command.
+  person. The installed app still answers `server create` as the identity
+  step behind setup — hidden plumbing, never a person-facing command.
 
 People, tokens and the client config are owned by [people](people.md).
 

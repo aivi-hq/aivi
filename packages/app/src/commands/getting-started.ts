@@ -6,10 +6,10 @@ import { serverCreate } from '../identity.ts';
 import { pluginSetup } from '../plugin-setup.ts';
 
 export function registerGettingStarted(program: Command): void {
-  const server = program
-    .command('server')
-    .description('identity and install-time plumbing')
-    .helpGroup('Getting started');
+  // `server create` is the identity step `aivi setup` drives — plumbing, not
+  // a person-facing command, so it keeps out of the help while staying
+  // callable for the flow that spawns it.
+  const server = program.command('server', { hidden: true }).description('identity plumbing behind aivi setup');
   server
     .command('create')
     .description('The identity step behind aivi setup: init the home, create your person and its token')
