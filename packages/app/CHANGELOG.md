@@ -1,5 +1,38 @@
 # @aivi/app
 
+## 0.4.0
+
+### Minor Changes
+
+- [#16](https://github.com/aivi-hq/aivi/pull/16) [`5d865bf`](https://github.com/aivi-hq/aivi/commit/5d865bfcea07feb096370b4fb0a27d8ea831433c) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The CLI's face: both CLIs (the thin client and the server app) move onto
+  commander for parsing, routing and help. Help is grouped by kind and themed in
+  the brand colors, every command answers `aivi <command> --help` for itself,
+  flags are declared per command (an unknown flag in the wrong place is an
+  error), and a typo'd command is answered with the nearest real one. The
+  wordmark banner prints on a terminal; pipes and `NO_COLOR` keep plain text, so
+  stdout stays a machine contract. Colors come from Node's built-in
+  `util.styleText` in the same hex palette the logs use; the Node floor moves to
+  26.1.0 for its hex support. Command bodies are extracted into
+  `packages/app/src/commands/` grouped by category.
+
+- [#16](https://github.com/aivi-hq/aivi/pull/16) [`bc1f731`](https://github.com/aivi-hq/aivi/commit/bc1f7318b2a4a68ee514eb0d4f280c32c1acc252) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - A plugin can extend the operator CLI: where `./setup` is the install-time
+  subpath, `./cli` is the runtime one — a package that default-exports a
+  `PluginCliCommand` from `./cli` is mounted into the server CLI under Channels
+  whenever the package is installed, with parsing and help owned by the app's
+  commander and `run` receiving a `PluginCliContext` (loaded config, store
+  bracket, the shared JSON stdout, the host poke, one prompt). `aivi discord`,
+  `aivi slack` and `aivi linear` now come from their own packages through that
+  contract. The brand color moves to `#3B82FF` — the wordmark and the help terms
+  in the CLI, and the `aivi·host` log category, share it.
+
+### Patch Changes
+
+- Updated dependencies [[`5d865bf`](https://github.com/aivi-hq/aivi/commit/5d865bfcea07feb096370b4fb0a27d8ea831433c), [`bc1f731`](https://github.com/aivi-hq/aivi/commit/bc1f7318b2a4a68ee514eb0d4f280c32c1acc252)]:
+  - @aivi/core@0.4.0
+  - @aivi/host@0.4.0
+  - @aivi/browser@0.1.3
+  - @aivi/knowledge@0.1.3
+
 ## 0.3.0
 
 ### Minor Changes

@@ -1,5 +1,20 @@
 # @aivi/cli
 
+## 0.6.0
+
+### Minor Changes
+
+- [#16](https://github.com/aivi-hq/aivi/pull/16) [`5d865bf`](https://github.com/aivi-hq/aivi/commit/5d865bfcea07feb096370b4fb0a27d8ea831433c) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The CLI's face: both CLIs (the thin client and the server app) move onto
+  commander for parsing, routing and help. Help is grouped by kind and themed in
+  the brand colors, every command answers `aivi <command> --help` for itself,
+  flags are declared per command (an unknown flag in the wrong place is an
+  error), and a typo'd command is answered with the nearest real one. The
+  wordmark banner prints on a terminal; pipes and `NO_COLOR` keep plain text, so
+  stdout stays a machine contract. Colors come from Node's built-in
+  `util.styleText` in the same hex palette the logs use; the Node floor moves to
+  26.1.0 for its hex support. Command bodies are extracted into
+  `packages/app/src/commands/` grouped by category.
+
 ## 0.5.0
 
 ### Minor Changes

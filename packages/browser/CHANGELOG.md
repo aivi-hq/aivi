@@ -1,5 +1,12 @@
 # @aivi/browser
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [[`5d865bf`](https://github.com/aivi-hq/aivi/commit/5d865bfcea07feb096370b4fb0a27d8ea831433c), [`bc1f731`](https://github.com/aivi-hq/aivi/commit/bc1f7318b2a4a68ee514eb0d4f280c32c1acc252)]:
+  - @aivi/core@0.4.0
+
 ## 0.1.2
 
 ### Patch Changes
