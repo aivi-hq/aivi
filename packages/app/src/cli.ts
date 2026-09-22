@@ -58,7 +58,9 @@ async function main(argv: string[]): Promise<void> {
   registerProjects(program);
   registerKnowledge(program);
   registerJobs(program);
-  registerChannels(program);
+  // The plugin commands mount before parsing: their packages are asked for
+  // their ./cli subpath, so `aivi --help` already shows what is installed.
+  await registerChannels(program);
 
   program.addHelpText('before', rootBanner(version, home, process.stdout));
   program.addHelpText(

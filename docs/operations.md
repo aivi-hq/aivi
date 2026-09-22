@@ -48,7 +48,7 @@ stderr — pretty on a terminal, one JSON object per line when piped, which
 `--log-format auto|pretty|json` overrides — and `aivi serve` additionally appends
 JSON lines to `<home>/state/logs/aivi.log` (rotated, so the file is capped)
 whatever the console shows. In the pretty console the category column is the
-activation tree, colored per module: `aivi·host` green, `aivi·host·discord`
+activation tree, colored per module: `aivi·host` blue, `aivi·host·discord`
 purple, `aivi·host·slack` cyan, `aivi·host·linear` indigo, `aivi·host·scheduler`
 deep pink, `aivi·knowledge` amber; the CLI root and dreaming keep the muted
 gray. Message text uses the terminal's own foreground; the log file stays
@@ -192,6 +192,13 @@ the server home and lets the plugin configure itself. Three steps, in order:
 The contract is one subpath: a package that exports `./setup` with a
 default function is installable this way, whatever its publisher. A package
 without one is still installed, and the command says it has no setup.
+
+A package can also add operator commands to this CLI: a `./cli` subpath that
+default-exports a `PluginCliCommand` ([architecture](architecture.md#one-application-contained-modules))
+is mounted into the CLI whenever the package is installed — `aivi discord`,
+`aivi slack` and `aivi linear` are exactly that, from their own packages. A
+package without one adds nothing; the built-in commands keep their names, so
+a plugin can never shadow `jobs` or `serve`.
 
 ## Jobs and runs from the command line
 

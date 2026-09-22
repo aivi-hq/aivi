@@ -3,7 +3,8 @@
   "version": "0.2.2",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./cli": "./dist/cli.js"
   },
   "files": [
     "dist"

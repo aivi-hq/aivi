@@ -1,148 +1,112 @@
-/** Channel modules: Discord, Slack and Linear operator commands. The packages
- *  themselves load lazily, only in the commands that need them. */
+/** Channel commands live in their packages: each enabled module's package is
+ *  asked for its `./cli` subpath (@aivi/host `PluginCliCommand`), and whatever
+ *  answers is mounted into the tree — the app owns parsing and help, the
+ *  package owns the words and the work. The mapping is the same bounded,
+ *  config-driven one the host uses; nothing scans node_modules. A package that
+ *  is not installed is simply absent from the help, like a module that is not
+ *  configured. */
 
+import type { LoadedConfig } from '@aivi/core';
+import { errorMessage } from '@aivi/core';
+import type { PluginCliCommand, PluginCliContext, Store } from '@aivi/host';
 import * as p from '@clack/prompts';
 import type { Command } from 'commander';
-import { context, print, withStore } from '../context.ts';
+import { configPath, context, home, print, withStore } from '../context.ts';
 
-export function registerChannels(program: Command): void {
-  const discordConfig = async () => {
-    const { loaded } = await context();
-    const value = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
-    if (!value) throw new Error('Discord is not enabled in config.json (no modules.discord block)');
-    return value;
-  };
-  const discord = program.command('discord').description('the Discord channel module').helpGroup('Channels');
-  discord
-    .command('register')
-    .description('Register slash commands for the configured application')
-    .action(async () => {
-      const discord = await import('@aivi/channel-discord');
-      await discord.registerDiscordCommands(await discordConfig());
-      print({ registered: true });
-    });
-  discord
-    .command('status')
-    .description('Inspect Discord turns and leases')
-    .action(async () => {
-      const { loaded } = await context();
-      const config = await discordConfig();
-      const discord = await import('@aivi/channel-discord');
-      await withStore(loaded, store => {
-        const inbox = discord.openDiscordStore(store, config);
-        print({ turns: inbox.list(), leases: store.leases() });
-      });
-    });
-  discord
-    .command('resolve <id>')
-    .description('Release a blocked turn')
-    .requiredOption('--reason <text>', 'what was found and done')
-    .requiredOption('--confirm-stopped', 'the external side has stopped')
-    .action(async (id, values) => {
-      const { loaded, poke } = await context();
-      const config = await discordConfig();
-      const discord = await import('@aivi/channel-discord');
-      await withStore(loaded, store => {
-        const inbox = discord.openDiscordStore(store, config);
-        inbox.resolve(id, values.reason);
-        print({ resolved: true });
-      });
-      await poke();
-    });
+/** The module id → package spec mapping, the one the host and the installer keep too. */
+const MODULE_SPECS: Record<string, string> = {
+  discord: '@aivi/channel-discord',
+  slack: '@aivi/channel-slack',
+  linear: '@aivi/linear',
+};
 
-  const slackConfigured = async () => {
-    const { loaded } = await context();
-    const value = typeof loaded.config.modules.slack === 'object' ? loaded.config.modules.slack : undefined;
-    if (!value) throw new Error('Slack is not enabled in config.json (no modules.slack block)');
-    return value;
-  };
-  const slack = program.command('slack').description('the Slack channel module').helpGroup('Channels');
-  slack
-    .command('manifest')
-    .description("The Slack app manifest as JSON, ready to paste into Slack's app setup")
-    .option('--prefix <prefix>', 'the slash command prefix, when Slack is not configured yet')
-    .action(async values => {
-      const { loaded } = await context();
-      const slack = await import('@aivi/channel-slack');
-      // The prefix that matters is the one the configured module runs with;
-      // `--prefix` overrides, and an unconfigured home is prompted — this
-      // command exists to set the app up in the first place.
-      const configured =
-        typeof loaded.config.modules.slack === 'object' ? loaded.config.modules.slack.commandPrefix : undefined;
-      let prefix = values.prefix ?? configured;
-      if (!prefix) {
-        if (!process.stdin.isTTY)
-          throw new Error('Slack is not configured yet; provide the prefix: aivi slack manifest --prefix aivi');
-        const answered = await p.text({
-          message: 'Slash command prefix — the commands become /<prefix>-new, /<prefix>-status, …',
-          placeholder: 'aivi',
-          validate: value =>
-            /^[a-z][a-z0-9_-]*$/.test(String(value ?? '').trim()) ? undefined : 'Lowercase letters, digits, _ or -',
+/** The shape the contract asks for; anything else means "nothing to mount". */
+function isPluginCliCommand(value: unknown): value is PluginCliCommand {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as PluginCliCommand).name === 'string' &&
+    Array.isArray((value as PluginCliCommand).subcommands) &&
+    (value as PluginCliCommand).subcommands.every(sub => typeof sub.name === 'string' && typeof sub.run === 'function')
+  );
+}
+
+/** The capabilities the app lends a plugin's commands: its own context and
+ *  store bracket, the shared streams, the host poke, and one prompt. */
+function pluginCliContext(): PluginCliContext {
+  return {
+    home,
+    configPath,
+    loaded: async (): Promise<LoadedConfig> => (await context()).loaded,
+    withStore: async <T>(fn: (store: Store) => T | Promise<T>) => withStore((await context()).loaded, fn),
+    print,
+    log: message => console.error(message),
+    poke: async () => {
+      await (await context()).poke();
+    },
+    ask: {
+      async text({ message, placeholder, validate }) {
+        // Clack hands the prompt what was typed, maybe nothing; the contract's
+        // validator wants a string, so empty becomes ''.
+        const check = validate ? (value: string | undefined) => validate(value ?? '') : undefined;
+        const answer = await p.text({
+          message,
+          ...(placeholder ? { placeholder } : {}),
+          ...(check ? { validate: check } : {}),
         });
-        if (p.isCancel(answered)) {
-          process.exitCode = 1;
-          return;
-        }
-        prefix = answered.trim();
-      }
-      print(slack.slackManifest(prefix, { name: loaded.config.identity.name }));
-    });
-  slack
-    .command('status')
-    .description('Inspect Slack turns and leases')
-    .action(async () => {
-      const { loaded } = await context();
-      const config = await slackConfigured();
-      const slack = await import('@aivi/channel-slack');
-      await withStore(loaded, store => {
-        const inbox = slack.openSlackStore(store, config);
-        print({ turns: inbox.list(), leases: store.leases() });
-      });
-    });
-  slack
-    .command('resolve <id>')
-    .description('Release a blocked turn')
-    .requiredOption('--reason <text>', 'what was found and done')
-    .requiredOption('--confirm-stopped', 'the external side has stopped')
-    .action(async (id, values) => {
-      const { loaded, poke } = await context();
-      const config = await slackConfigured();
-      const slack = await import('@aivi/channel-slack');
-      await withStore(loaded, store => {
-        const inbox = slack.openSlackStore(store, config);
-        inbox.resolve(id, values.reason);
-        print({ resolved: true });
-      });
-      await poke();
-    });
+        if (p.isCancel(answer)) return undefined;
+        return String(answer).trim();
+      },
+    },
+  };
+}
 
-  const linear = program.command('linear').description('the Linear module').helpGroup('Channels');
-  linear
-    .command('status')
-    .description('Inspect Linear conversations (workers and the assistant) and leases')
-    .action(async () => {
-      const { loaded } = await context();
-      if (!loaded.config.linear) throw new Error('Linear is not configured in config.json');
-      const linearModule = await import('@aivi/linear');
-      await withStore(loaded, store => {
-        const inbox = linearModule.openLinearStore(store);
-        print({ conversations: linearModule.describeWorkers(inbox), leases: store.leases() });
-      });
+const collect = (value: string, previous: string[]): string[] => [...previous, value];
+
+/** Mount one plugin command: the data becomes a commander subtree whose
+ *  actions relay into the subcommand's `run` with the shared context. */
+function mount(program: Command, command: PluginCliCommand): void {
+  const cmd = program
+    .command(command.name)
+    .description(command.description)
+    .helpGroup(command.helpGroup ?? 'Channels');
+  for (const sub of command.subcommands) {
+    const subcommand = cmd.command(`${sub.name}${sub.args ? ` ${sub.args}` : ''}`).description(sub.description);
+    for (const option of sub.options ?? []) {
+      const describe = [option.description, option.required ? '(required)' : ''].join(' ').trim();
+      // The three shapes commander's overloads distinguish: a repeat collector
+      // (which wants its initial list), a valued default, and a bare option.
+      if (option.multiple) {
+        if (option.required) subcommand.requiredOption(option.flags, describe, collect, []);
+        else subcommand.option(option.flags, describe, collect, []);
+      } else if (option.required) subcommand.requiredOption(option.flags, describe);
+      else if (option.default !== undefined) subcommand.option(option.flags, describe, option.default);
+      else subcommand.option(option.flags, describe);
+    }
+    subcommand.action(async (...rest) => {
+      const values = rest[rest.length - 2] as Record<string, unknown>;
+      const operands = rest.slice(0, -2) as string[];
+      await sub.run(pluginCliContext(), operands, values);
     });
-  linear
-    .command('resolve <id>')
-    .description('Release a blocked worker')
-    .requiredOption('--reason <text>', 'what was found and done')
-    .requiredOption('--confirm-stopped', 'the external side has stopped')
-    .action(async (id, values) => {
-      const { loaded, poke } = await context();
-      if (!loaded.config.linear) throw new Error('Linear is not configured in config.json');
-      const linearModule = await import('@aivi/linear');
-      await withStore(loaded, store => {
-        const inbox = linearModule.openLinearStore(store);
-        inbox.resolve(id, values.reason);
-        print({ resolved: true });
-      });
-      await poke();
-    });
+  }
+}
+
+/** Ask every mapped package for its command; the ones that answer join the tree. */
+export async function registerChannels(program: Command): Promise<void> {
+  for (const [moduleId, spec] of Object.entries(MODULE_SPECS)) {
+    let exported: unknown;
+    try {
+      exported = ((await import(`${spec}/cli`)) as { default?: unknown }).default;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      // Not installed, or installed without a ./cli export: no commands to mount.
+      if (code === 'ERR_MODULE_NOT_FOUND' || code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') continue;
+      console.error(`aivi: ${spec}/cli did not load (${errorMessage(error)}); its commands are absent.`);
+      continue;
+    }
+    // The package is the whole boundary: its data is mounted as it stands, and
+    // only the name collision with a built-in would be refused, which none has.
+    if (isPluginCliCommand(exported)) mount(program, exported);
+    else console.error(`aivi: ${spec}/cli exports no command; its commands are absent.`);
+  }
 }

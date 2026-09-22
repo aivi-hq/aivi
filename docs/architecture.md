@@ -57,6 +57,19 @@ authenticated API. `knowledge_search` reaches the same service used by the
 channels' search commands and scheduled indexing jobs; `aivi_jobs` reaches the
 same store the CLI edits.
 
+A package can also extend the operator CLI: where `./setup`
+([operations](operations.md#plugins)) is the install-time subpath, `./cli` is
+the runtime one. A package that default-exports a `PluginCliCommand` from
+`@aivi/host` has its command mounted into the server CLI under Channels
+whenever the package is installed — the command is data (`name`,
+`description`, `subcommands` with their options and `run`), the app's
+commander owns parsing and help, and `run` receives a `PluginCliContext`
+(the loaded config, the store bracket, the shared JSON stdout, the host
+poke, one prompt), so a plugin never imports app code. Discovery is
+bounded and config-driven: the app knows the fixed module→package mapping
+and asks only the enabled ones; nothing scans `node_modules`, and a package
+without a `./cli` export is simply absent from the help.
+
 What happens at startup, on each wake, and at shutdown, and how runs end, is
 described for operators in [operations](operations.md).
 

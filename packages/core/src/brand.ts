@@ -7,8 +7,8 @@ import { styleText } from 'node:util';
  * TERM gets the same words, plain, because stdout stays a machine contract.
  */
 export const BRAND = {
-  /** The aivi green: the wordmark, command and option names in help. */
-  primary: '#00CC66',
+  /** The aivi blue: the wordmark, command and option names in help. */
+  primary: '#3B82FF',
   /** The one muted gray: help titles, secondary lines, the dreaming category. */
   muted: '#767676',
   discord: '#a371f7',
