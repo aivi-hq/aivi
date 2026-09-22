@@ -36,8 +36,8 @@ import { z } from 'zod';
 const usage = `aivi <command>
 
   serve                        Start the host: API, scheduler, knowledge, configured modules
-  server create                First run: init the home, create your person and its token;
-                               where will you use aivi? [--use this-machine|another] [--name TEXT] skips the prompts
+  server create                The identity step behind aivi setup: init the home, create
+                               your person and its token [--use this-machine|another] [--name TEXT]
   people create NAME           A person for records to belong to [--email E] [--role operator]
   people list                  People and their ids
   people token PERSON          Mint a bearer for that person [--label L]; shown once
@@ -634,13 +634,26 @@ async function main(): Promise<void> {
       });
       if (subcommand === 'create') {
         if (!argument) throw new Error('Provide a name: aivi people create NAME [--email E] [--role operator]');
-        print(
-          await client.createPerson({
-            name: argument,
-            ...(values.email ? { email: values.email } : {}),
-            ...(values.role ? { roles: [values.role] } : {}),
-          }),
-        );
+        const created = await client.createPerson({
+          name: argument,
+          ...(values.email ? { email: values.email } : {}),
+          ...(values.role ? { roles: [values.role] } : {}),
+        });
+        print(created);
+        // Nine people in ten are created so they can receive a token; asking
+        // here means nobody has to know `people token` exists.
+        if (process.stdin.isTTY) {
+          const mint = await p.confirm({ message: `Mint a token for ${created.name} now?`, initialValue: true });
+          if (!p.isCancel(mint) && mint) {
+            const minted = await client.createPersonToken(created.id, 'cli');
+            print({
+              person: created.id,
+              label: minted.token.label,
+              token: minted.secret,
+              next: 'Shown once: this is the bearer for `aivi setup`.',
+            });
+          }
+        }
         return;
       }
       if (subcommand === 'list') {
@@ -734,10 +747,23 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
   const knowledge = await createKnowledgeService(loaded, undefined, log.getChild('knowledge'));
   // Browser construction is lazy; no Chrome launch occurs until a tool call.
   const browser =
-    loaded.config.browser !== false
-      ? (await import('@aivi/browser')).createBrowserService(loaded.config.browser)
-      : undefined;
+    loaded.config.browser !== false ? (await importBrowser()).createBrowserService(loaded.config.browser) : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };
+}
+
+/** `@aivi/browser` is a dependency of this package, so a miss here means a
+ *  broken install, not a disabled feature; say so with the repair command
+ *  instead of a bare ERR_MODULE_NOT_FOUND. */
+async function importBrowser(): Promise<typeof import('@aivi/browser')> {
+  try {
+    return await import('@aivi/browser');
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND')
+      throw new Error(
+        'The browser service (@aivi/browser) is missing from this installation. Repair it with `aivi update`.',
+      );
+    throw error;
+  }
 }
 function hostUrl(loaded: LoadedConfig): string {
   const { bind, port } = loaded.config.host;
@@ -753,11 +779,12 @@ main()
   .finally(() => closeLogging());
 
 /**
- * `aivi server create` — bootstrap, and the only command that mints identity:
- * initialize the home, create the operator person and its token (the secret is
- * printed once; only its hash is kept), then decide where the client setup
- * happens. The question is asked before anything is minted, so a cancel leaves
- * nothing behind. A flag given skips its prompt.
+ * The identity step behind `aivi setup` — the only command that mints
+ * identity directly: initialize the home, create the operator person and its
+ * token (the secret is printed once; only its hash is kept), then decide
+ * where the client setup happens. The question is asked before anything is
+ * minted, so a cancel leaves nothing behind. A flag given skips its prompt;
+ * `aivi setup` always gives the flags and says the human-facing words itself.
  */
 async function serverCreate(options: {
   home: string;
@@ -771,9 +798,9 @@ async function serverCreate(options: {
     throw new Error(`Unknown --use ${use}. Use this-machine or another.`);
   if (use === undefined && !process.stdin.isTTY)
     throw new Error(
-      'server create needs an interactive terminal; in a script use: aivi server create --use this-machine|another [--name TEXT]',
+      'setup needs an interactive terminal; in a script use: aivi setup --use this-machine|another [--name TEXT]',
     );
-  if (use === undefined) p.intro('aivi server create');
+  if (use === undefined) p.intro('aivi setup — identity');
   const stopped = (why: string) => {
     p.cancel(`Setup stopped: ${why}. Nothing was created.`);
     process.exitCode = 1;
@@ -825,12 +852,13 @@ async function serverCreate(options: {
       home,
       url,
       person: person.id,
+      name: person.name,
       token: secret,
       ...(clientConfig ? { clientConfig } : {}),
       next:
         where === 'this-machine'
-          ? 'Signed in. Run `aivi setup` to install the OpenCode plugins.'
-          : 'On your laptop run `aivi setup` and paste this url and token.',
+          ? 'Identity ready. `aivi setup` installs the OpenCode plugins and verifies the sign-in.'
+          : 'Install aivi on the other machine (`npm install -g @aivi/cli`), run `aivi setup` there, choose "Connect to a host", and paste this url and token.',
     };
   } finally {
     store.close();

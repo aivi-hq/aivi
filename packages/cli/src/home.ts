@@ -1,6 +1,6 @@
 /** Which home aivi works on. `AIVI_HOME` leads (it is how development and tests
  *  point at a scratch home); otherwise the `home` field of the CLI-owned
- *  `~/.config/aivi.json`, which `server create` writes. For create itself the
+ *  `~/.config/aivi.json`, which `aivi setup` writes. For setup itself the
  *  chain ends at the default `~/.aivi`. */
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -17,6 +17,6 @@ export function homeForCreate(): string {
 
 export function requireHome(): string {
   const home = homeFromEnvOrConfig();
-  if (!home) throw new Error('No aivi home known. Run `aivi server create`, or set AIVI_HOME.');
+  if (!home) throw new Error('No aivi home known. Run `aivi setup`, or set AIVI_HOME.');
   return home;
 }

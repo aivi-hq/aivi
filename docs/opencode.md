@@ -94,6 +94,17 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | `.env` under aivi's session policy | With `read *` allow followed by `*.env` deny, a read of `.env` ends as a tool error (no permission prompt); a sibling file reads fine; the content never enters the transcript. |
 | Event stream (2026-09-15) | `client.event.subscribe()` is `GET /api/event` as `text/event-stream`: global, live-only (no replay), no automatic reconnect; an `AsyncIterable` of events with `type` and `data.sessionID`. During a turn it emits `session.execution.started`, `session.step.started/streamed/ended`, `session.tool.input.started` (`{ sessionID, assistantMessageID, id, name }`), `session.tool.input.ended`, `session.tool.called` (`data.input`), `session.tool.progress`, `session.tool.success` / `session.tool.failed`, `session.text.started/delta/ended`, `session.usage.updated`, `session.execution.succeeded/failed/interrupted`. Under codemode the tool name is `execute` and the aivi tools are calls inside `input.code` (`tools.aivi.status()`, `tools.knowledge.search({…})`); native tools (`read`, `grep`, `glob`, `webfetch`, `bash`) appear by name. `session.log({ follow: true })` yields only `log.synced` and is not usable for progress. The host's one stream and its reconnect loop: [channels](channels.md#progress-while-a-turn-runs). |
 
+## Plugin credentials, client and server
+
+The plugin resolves the host in this order: its `url` option, the `url` in
+the client config (`~/.config/aivi.json`, written by `aivi setup`), then the
+default loopback. The bearer is `AIVI_TOKEN` if set; otherwise the client
+config's `person.token` — except on a server home (a directory holding
+`config.json`), where the cached bearer is ignored: host-originated sessions
+(Discord, jobs) associate by their own identity, and the operator's bearer
+would claim every one of them. On a pure client the cached bearer is what
+makes sessions associate with the person without any env setup.
+
 ## Librarian in native chat
 
 Walkthrough in [getting started](getting-started.md#the-librarian-in-opencode).

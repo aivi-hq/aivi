@@ -1,4 +1,5 @@
-import { type FSWatcher, readFileSync, watch } from 'node:fs';
+import { existsSync, type FSWatcher, readFileSync, watch } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { BrowserRequest, JobRequest } from '@aivi/core';
 import type { KnowledgeKind } from '@aivi/core/kinds';
@@ -34,6 +35,31 @@ function personaName(home: string): string {
     return '';
   }
   return typeof identity?.name === 'string' ? identity.name.trim() : '';
+}
+
+/**
+ * The client config `aivi setup` writes: `~/.config/aivi.json` (or
+ * `XDG_CONFIG_HOME`), holding where the host answers and which person signs
+ * in. Read as just a file — the plugin imports no CLI code, the same
+ * standalone rule the attribution plugin keeps.
+ */
+function clientConfig(): { url?: string; token?: string } {
+  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  try {
+    const file = JSON.parse(readFileSync(path, 'utf8')) as { url?: unknown; person?: { token?: unknown } };
+    return {
+      ...(typeof file.url === 'string' && file.url ? { url: file.url } : {}),
+      ...(typeof file.person?.token === 'string' && file.person.token ? { token: file.person.token } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** The aivi home of a server holds `config.json` next to `.env` and `app/`; a
+ *  machine with only the client config is a client. */
+function isServerHome(home: string): boolean {
+  return existsSync(join(home, 'config.json'));
 }
 
 /**
@@ -133,10 +159,16 @@ const selectionProperties = {
 export default Plugin.define({
   id: 'aivi',
   async setup(ctx) {
-    const baseUrl = typeof ctx.options.url === 'string' ? ctx.options.url : DEFAULT_HOST_URL;
+    const home = aiviHome(ctx.options as Record<string, unknown>, ctx.location as { directory?: string } | undefined);
+    const baseUrl = typeof ctx.options.url === 'string' ? ctx.options.url : (clientConfig()?.url ?? DEFAULT_HOST_URL);
     // A missing token must not prevent the plugin from loading: the host may run with
     // auth mode "none", and a clear per-call error beats silently losing every tool.
-    const client = createHostClient(baseUrl, { token: process.env.AIVI_TOKEN });
+    // On a client machine the bearer comes from the client config `aivi setup`
+    // writes — but never on the server home itself: host-originated sessions
+    // (Discord, jobs) associate by their own identity, and the operator's
+    // cached bearer would claim every one of them.
+    const token = process.env.AIVI_TOKEN ?? (home && isServerHome(home) ? undefined : clientConfig()?.token);
+    const client = createHostClient(baseUrl, { token });
     // Text only: OpenCode 2.0.3 rejects a structured `output` unless the tool declares an output schema
     // ("Tool result declared output without an output schema"); Code Mode parses the JSON text.
     const json = (value: unknown) => ({ content: JSON.stringify(value) });
@@ -240,7 +272,6 @@ export default Plugin.define({
     // and invalidates the registry on change; sessions continue, history is in
     // the store.
     const disposers: (() => unknown)[] = [() => registration.dispose()];
-    const home = aiviHome(ctx.options as Record<string, unknown>, ctx.location as { directory?: string } | undefined);
     if (home && typeof ctx.agent?.transform === 'function') {
       const soul = join(home, 'soul.md');
       const agentTransform = await ctx.agent.transform(editor => {

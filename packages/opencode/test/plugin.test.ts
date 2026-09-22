@@ -90,7 +90,22 @@ function withToken(t: { after(fn: () => void): void }, value: string | undefined
   });
 }
 
+/** The plugin reads `~/.config/aivi.json` for remote credentials; tests must
+ *  never see the machine's own client config. */
+async function hermeticXdg(t: { after(fn: () => void): void }) {
+  const previous = process.env.XDG_CONFIG_HOME;
+  const scratch = await mkdtemp(join(tmpdir(), 'aivi-plugin-xdg-'));
+  process.env.XDG_CONFIG_HOME = scratch;
+  t.after(() => {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previous;
+    return rm(scratch, { recursive: true, force: true });
+  });
+  return scratch;
+}
+
 test('plugin registers its tools with root object schemas and disposes its registration', async t => {
+  await hermeticXdg(t);
   withToken(t, 'test-only-token');
   const tools: RegisteredTool[] = [];
   let disposed = false;
@@ -112,6 +127,7 @@ test('plugin registers its tools with root object schemas and disposes its regis
 });
 
 test('plugin loads without a token and reports a clear error when the host rejects a call', async t => {
+  await hermeticXdg(t);
   withToken(t, undefined);
   const server = createServer((_request, response) => {
     response.statusCode = 401;
@@ -131,6 +147,7 @@ test('plugin loads without a token and reports a clear error when the host rejec
 });
 
 test('browser tool lives under aivi (not OpenCode’s browser namespace) and forwards the runtime session ID', async t => {
+  await hermeticXdg(t);
   withToken(t, 'test-native-browser-token');
   let received: unknown;
   const server = createServer(async (request, response) => {
@@ -162,6 +179,7 @@ test('browser tool lives under aivi (not OpenCode’s browser namespace) and for
 });
 
 test('jobs tool forwards the calling session and message so the host can derive agent, directory and authority', async t => {
+  await hermeticXdg(t);
   withToken(t, 'test-native-jobs-token');
   let received: unknown;
   const server = createServer(async (request, response) => {
@@ -200,7 +218,63 @@ test('jobs tool forwards the calling session and message so the host can derive 
   if (typeof cleanup === 'function') await cleanup();
 });
 
+test('remote mode: url and bearer come from the client config when options say nothing', async t => {
+  const xdg = await hermeticXdg(t);
+  withToken(t, undefined);
+  const url = 'http://127.0.0.1:4321';
+  const token = `aivi-${'f'.repeat(32)}`;
+  await writeFile(
+    join(xdg, 'aivi.json'),
+    JSON.stringify({ configVersion: 1, url, person: { token, id: 'person-1', name: 'Ada', roles: ['operator'] } }),
+  );
+  const server = createServer((request, response) => {
+    assert.equal(request.headers.authorization, `Bearer ${token}`, 'the cached person bearer is sent');
+    response.setHeader('content-type', 'application/json');
+    response.end('{"jobs":0}');
+  });
+  // The client config names this port, so the server must take it.
+  await new Promise<void>(resolve => server.listen(4321, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  let status: RegisteredTool | undefined;
+  await setupWith({}, tool => {
+    if (tool.name === 'status') status = tool;
+  });
+  assert.ok(status);
+  await status.execute({}, { sessionID: 's' });
+});
+
+test('on a server home the cached bearer is ignored: host-originated sessions stay anonymous', async t => {
+  const xdg = await hermeticXdg(t);
+  withToken(t, undefined);
+  const root = await mkdtemp(join(tmpdir(), 'aivi-server-home-'));
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1 }));
+  await writeFile(
+    join(xdg, 'aivi.json'),
+    JSON.stringify({ configVersion: 1, url: 'http://127.0.0.1:4321', person: { token: 'aivi-cached' } }),
+  );
+  const server = createServer((request, response) => {
+    assert.equal(request.headers.authorization, undefined, 'no bearer may leak from the operator into host work');
+    response.setHeader('content-type', 'application/json');
+    response.end('{"jobs":0}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  await writeFile(
+    join(root, 'opencode.jsonc'),
+    JSON.stringify({ plugins: [{ package: '@aivi/opencode', options: { url: `http://127.0.0.1:${address.port}` } }] }),
+  );
+  let status: RegisteredTool | undefined;
+  await setupWith({ soul: join(root, 'soul.md'), url: `http://127.0.0.1:${address.port}` }, tool => {
+    if (tool.name === 'status') status = tool;
+  });
+  assert.ok(status);
+  await status.execute({}, { sessionID: 's' });
+});
+
 test('the soul is appended to every agent at each replay, never twice, and an edit invalidates the registry', async t => {
+  await hermeticXdg(t);
   withToken(t, 'test-soul-token');
   const root = await mkdtemp(join(tmpdir(), 'aivi-soul-'));
   const soulFile = join(root, 'soul.md');
@@ -237,6 +311,7 @@ test('the soul is appended to every agent at each replay, never twice, and an ed
 });
 
 test('the persona name is said from config.json, watched like the soul, and read past what the host would accept', async t => {
+  await hermeticXdg(t);
   withToken(t, 'test-name-token');
   const root = await mkdtemp(join(tmpdir(), 'aivi-name-'));
   const soulFile = join(root, 'soul.md');

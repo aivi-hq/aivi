@@ -135,17 +135,36 @@ can then continue in the same session. Platform-specific parameters (id
 formats, reply splitting, binding rotation) are in [discord](discord.md#queue-and-recovery)
 and [slack](slack.md#queue-and-recovery).
 
-## First run: `server create`
+## First run: `aivi setup`
 
-`aivi server create` initializes the home (an `config.json` starter, `state/` with
-`aivi.sqlite`), creates the operator person and their token — the secret is
-printed once, only its hash is kept — then asks where the client setup happens:
-*this machine* writes the client config (`~/.config/aivi.json`: `url`, `home`,
-`person.token`; 0600), *another machine* prints the token to take to `aivi
-setup` there. It is the only command that mints identity; in a script pass
-`--use this-machine|another` and `--name TEXT` to skip the prompts. A re-run on
-a home that has people refuses. People, tokens and the client config are owned
-by [people](people.md).
+`aivi setup` is the one entry point for client and server. On a machine with
+no sign-in it asks what the machine should be:
+
+- **Connect to an existing aivi host** — a person is minted on the host
+  (`aivi people create NAME`, which offers to mint the token right away;
+  `aivi people token PERSON` mints another bearer). Setup asks for the host
+  url and the token, verifies both (`/health`, then `whoami` — a typo never
+  persists), writes `~/.config/aivi.json` (0600) and installs both OpenCode
+  plugins with `opencode plugin add`. The last line is a verified truth:
+  "Signed in as …".
+- **Create a new aivi server here** — installs the server into
+  `<home>/app` with npm and seeds the home's OpenCode shape
+  (`opencode.jsonc`, `.opencode/agents/` with `aivi.md`, `librarian.md`,
+  `dreamer.md` — files that exist are never overwritten). Then it asks
+  whether *this machine* signs in too or this is a *headless server*:
+  this-machine mints the operator person and token (the secret is printed
+  once, only its hash is kept), installs the plugins, offers
+  `aivi service install` (declined: `aivi serve` in the foreground) and
+  verifies the sign-in with `whoami`; headless prints the url and token to
+  take to `aivi setup` on the client, choosing "Connect to an existing
+  aivi host". In a script pass `--use this-machine|another` and
+  `--name TEXT` (or `--connect --url URL --token TOKEN`) to skip the
+  prompts. A re-run on a home that has people refuses identity minting;
+  re-running `aivi setup` signed-in just verifies and refreshes the cached
+  person. `server create` still works as the identity step behind setup and
+  is not a person-facing command.
+
+People, tokens and the client config are owned by [people](people.md).
 
 ## Jobs and runs from the command line
 

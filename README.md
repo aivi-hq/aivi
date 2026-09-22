@@ -36,7 +36,7 @@ same artifact npm publishes. From here on: [getting started](docs/getting-starte
 
 | Package                 | Responsibility                                                                                                                                                                                     |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@aivi/cli`             | The thin CLI: installs the server into `<home>/app` (`server create`), forwards every command to it, runs it in the background (`service`), updates it (`update`/`upgrade`)                            |
+| `@aivi/cli`             | The thin CLI: one `setup` signs a machine in or creates the server (identity minting stays in the installed app), forwards every command to it, runs it in the background (`service`), updates it (`update`/`upgrade`)                            |
 | `@aivi/app`             | `aivi` CLI; composes configured modules and launches the host                                                                                                                                      |
 | `@aivi/core`            | Config and access-policy schemas, knowledge kinds, contracts, logger                                                                                                                               |
 | `@aivi/host`            | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection, session driver, dreaming, the channel module contract with the shared inbox, engine and turn runner, report routing |

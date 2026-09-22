@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 /** The thin aivi CLI. It installs and controls the server; the server does the
- *  assistant work. The CLI owns `server create`, `update`, `upgrade` and the
- *  service commands, and forwards every other command into the installed app —
- *  it never imports host code. */
+ *  assistant work. The CLI owns `setup` (sign in or create), `update`,
+ *  `upgrade` and the service commands, and forwards every other command into
+ *  the installed app — it never imports host code. */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadClientConfig } from './client-config.ts';
-import { serverCreate } from './create.ts';
 import { forward } from './forward.ts';
 import { homeForCreate, requireHome } from './home.ts';
 import {
@@ -19,6 +18,7 @@ import {
   serviceStop,
   serviceUninstall,
 } from './service.ts';
+import { setup } from './setup.ts';
 import { updateServer } from './update.ts';
 import { upgradeCli } from './upgrade.ts';
 
@@ -30,8 +30,9 @@ const version = (
 
 const usage = `aivi <command>
 
-  server create               Install the server into <home>/app and set up identity
-                              [--plugin @aivi/channel-discord …] [--use this-machine|another] [--name TEXT]
+  setup                       Sign in to an existing host, or create the server here.
+                              [--connect --url URL --token TOKEN] for a host
+                              [--use this-machine|another] [--plugin @aivi/channel-discord …] [--name TEXT] to create
   serve                       Start the server in the foreground
   update                      Update the installed server and plugins (channel: config.json update.channel)
   upgrade                     Update this CLI through its install method (npm today)
@@ -54,9 +55,12 @@ export async function main(argv: string[]): Promise<void> {
     process.stdout.write(`${version}\n`);
     return;
   }
-  if (command === 'server' && subcommand === 'create') {
-    serverCreate(argv.slice(2), { home: homeForCreate() });
+  if (command === 'setup') {
+    await setup(argv.slice(2), { home: homeForCreate() });
     return;
+  }
+  if (command === 'server' && subcommand === 'create') {
+    throw new Error('`server create` is now part of `aivi setup`. Run: aivi setup');
   }
   if (command === 'update') {
     const home = requireHome();
