@@ -74,8 +74,13 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 
 ## Setup
 
-Create a Slack app from this manifest (replace `{prefix}` with your
-`commandPrefix`; the app and bot names are yours):
+The fastest path: `aivi slack manifest [--prefix PREFIX]` prints the whole
+app manifest as JSON, generated from the shared command table (the prefix
+defaults to the configured module's, and `identity.name` is the bot's name)
+— paste it at [Slack's app setup](https://api.slack.com/quickstart) and no
+manual step remains. The YAML below is the same manifest spelled out by hand
+(replace `{prefix}` with your `commandPrefix`; the app and bot names are
+yours):
 
 ```yaml
 display_information:
