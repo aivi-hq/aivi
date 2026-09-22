@@ -73,6 +73,7 @@ const usage = `aivi <command>
   discord register             Register slash commands for the configured application
   discord status               Inspect Discord turns and leases
   discord resolve ID           Release a blocked turn --reason TEXT --confirm-stopped
+  slack manifest                The Slack app manifest as JSON, ready to paste into Slack's app setup [--prefix PREFIX]
   slack status                 Inspect Slack turns and leases
   slack resolve ID             Release a blocked turn --reason TEXT --confirm-stopped
   linear status                Inspect Linear conversations (workers and the assistant) and leases
@@ -127,6 +128,7 @@ async function main(): Promise<void> {
       email: { type: 'string' },
       label: { type: 'string' },
       role: { type: 'string' },
+      prefix: { type: 'string' },
     },
   });
   if (values.help || !positionals.length) {
@@ -467,8 +469,33 @@ async function main(): Promise<void> {
       throw new Error('Discord runs inside `aivi serve`; commands: register, status, resolve');
     }
     if (command === 'slack') {
-      if (!slackConfig) throw new Error('Slack is not enabled in config.json (no modules.slack block)');
       const slack = await import('@aivi/channel-slack');
+      if (subcommand === 'manifest') {
+        // The prefix that matters is the one the configured module runs with;
+        // `--prefix` overrides, and an unconfigured home is prompted — this
+        // command exists to set the app up in the first place.
+        const configured =
+          typeof loaded.config.modules.slack === 'object' ? loaded.config.modules.slack.commandPrefix : undefined;
+        let prefix = values.prefix ?? configured;
+        if (!prefix) {
+          if (!process.stdin.isTTY)
+            throw new Error('Slack is not configured yet; provide the prefix: aivi slack manifest --prefix aivi');
+          const answered = await p.text({
+            message: 'Slash command prefix — the commands become /<prefix>-new, /<prefix>-status, …',
+            placeholder: 'aivi',
+            validate: value =>
+              /^[a-z][a-z0-9_-]*$/.test(String(value ?? '').trim()) ? undefined : 'Lowercase letters, digits, _ or -',
+          });
+          if (p.isCancel(answered)) {
+            process.exitCode = 1;
+            return;
+          }
+          prefix = answered.trim();
+        }
+        print(slack.slackManifest(prefix, { name: loaded.config.identity.name }));
+        return;
+      }
+      if (!slackConfig) throw new Error('Slack is not enabled in config.json (no modules.slack block)');
       const inbox = slack.openSlackStore(store, slackConfig);
       if (subcommand === 'status') {
         print({ turns: inbox.list(), leases: store.leases() });

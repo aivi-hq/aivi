@@ -117,3 +117,50 @@ test('people commands talk HTTP to the running host', async t => {
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /HTTP 404/);
 });
+
+test('slack manifest dumps the whole app manifest as JSON, prefix from the flag, the config or a prompt', async t => {
+  const { home, xdg, env, cleanup } = await scratch();
+  t.after(cleanup);
+  await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1 }));
+
+  // Without a configured module and without --prefix, a script is told what to pass.
+  const guarded = await run(['slack', 'manifest'], env);
+  assert.equal(guarded.status, 1);
+  assert.match(guarded.stderr, /--prefix/);
+
+  // --prefix wins, and the dump is the paste-ready whole manifest.
+  const done = await run(['slack', 'manifest', '--prefix', 'aivi'], env);
+  assert.equal(done.status, 0, done.stderr);
+  const manifest = JSON.parse(done.stdout) as {
+    display_information: { name: string };
+    features: { bot_user: { display_name: string }; slash_commands: { command: string }[] };
+    settings: { socket_mode_enabled: boolean };
+  };
+  assert.equal(manifest.display_information.name, 'aivi', 'the persona name from config.json identity');
+  assert.equal(manifest.features.bot_user.display_name, 'aivi');
+  assert.equal(manifest.settings.socket_mode_enabled, true);
+  assert.equal(manifest.features.slash_commands[0]!.command, '/aivi-new');
+
+  // A configured module's prefix is the default; --prefix overrides it.
+  await writeFile(
+    join(home, 'config.json'),
+    JSON.stringify({
+      version: 1,
+      identity: { name: 'Clawd' },
+      modules: { slack: { commandPrefix: 'spider', access: { channels: [] } } },
+    }),
+  );
+  const configured = await run(['slack', 'manifest'], env);
+  const withConfig = JSON.parse(configured.stdout) as {
+    display_information: { name: string };
+    features: { slash_commands: { command: string }[] };
+  };
+  assert.equal(withConfig.features.slash_commands[0]!.command, '/spider-new', 'the prefix the module runs with');
+  assert.equal(withConfig.display_information.name, 'Clawd');
+  const overridden = await run(['slack', 'manifest', '--prefix', 'aivi'], env);
+  assert.equal(
+    (JSON.parse(overridden.stdout) as { features: { slash_commands: { command: string }[] } }).features
+      .slash_commands[0]!.command,
+    '/aivi-new',
+  );
+});
