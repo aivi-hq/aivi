@@ -1,5 +1,11 @@
 # @aivi/cli
 
+## 0.4.0
+
+### Minor Changes
+
+- [#9](https://github.com/aivi-hq/aivi/pull/9) [`9995936`](https://github.com/aivi-hq/aivi/commit/999593665eb48f39c54d791e3075496c221933c1) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi link [PLATFORM]` mints a one-time link code over HTTP and prints exactly where to spend it — the command runs on the person's machine and needs only the client config, no installed server. With several channel modules running it asks which hint to show; an unknown platform is refused with the list of running ones.
+
 ## 0.3.0
 
 ### Minor Changes

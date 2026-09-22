@@ -1,5 +1,13 @@
 # @aivi/channel-discord
 
+## 0.2.1
+
+### Patch Changes
+
+- [#9](https://github.com/aivi-hq/aivi/pull/9) [`6a86056`](https://github.com/aivi-hq/aivi/commit/6a86056cfef62ec76801080170e2dabc9950420b) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The shared `/link` command works on Discord: it consumes the one-time code from `aivi link` and binds the Discord account to the person, with the host-authored confirmation or refusal. The module describes its redemption in `linkHint` so `aivi link` shows it.
+- Updated dependencies [[`07af4cc`](https://github.com/aivi-hq/aivi/commit/07af4ccc8c55de72872c1ea4c37b623b5f9b8827)]:
+  - @aivi/host@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes

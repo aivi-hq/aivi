@@ -1,5 +1,17 @@
 # @aivi/channel-slack
 
+## 0.3.0
+
+### Minor Changes
+
+- [#9](https://github.com/aivi-hq/aivi/pull/9) [`5db5a01`](https://github.com/aivi-hq/aivi/commit/5db5a0190f091b28f35511358e95ea646be97c2b) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `slackManifest(prefix, info)` generates the whole Slack app manifest as JSON from the shared command table — paste-ready for Slack's app setup, with the persona name as the app and bot display name. The existing YAML snippet stays, and a test keeps both spellings equal.
+
+### Patch Changes
+
+- [#9](https://github.com/aivi-hq/aivi/pull/9) [`d755407`](https://github.com/aivi-hq/aivi/commit/d7554075b5eb78b7fc4a6054fe6e0f340742149a) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The shared `/link` command works on Slack (`/{prefix}-link CODE`): it consumes the one-time code from `aivi link` and binds the Slack account to the person, with the host-authored confirmation or refusal. The manifest in docs/slack.md gains the command, kept current by its test.
+- Updated dependencies [[`07af4cc`](https://github.com/aivi-hq/aivi/commit/07af4ccc8c55de72872c1ea4c37b623b5f9b8827)]:
+  - @aivi/host@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
