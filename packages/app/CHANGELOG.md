@@ -1,5 +1,13 @@
 # @aivi/app
 
+## 0.2.2
+
+### Patch Changes
+
+- [#9](https://github.com/aivi-hq/aivi/pull/9) [`83ee281`](https://github.com/aivi-hq/aivi/commit/83ee281de432bae3ed712c41504614d098525c1f) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi slack manifest [--prefix PREFIX]` prints the whole Slack app manifest as JSON, ready to paste into Slack's app setup. The prefix comes from `--prefix`, else the configured module's `commandPrefix`, else an interactive prompt (a script without a configured module is told what to pass). The display name is the persona from `identity.name`.
+- Updated dependencies [[`07af4cc`](https://github.com/aivi-hq/aivi/commit/07af4ccc8c55de72872c1ea4c37b623b5f9b8827)]:
+  - @aivi/host@0.3.0
+
 ## 0.2.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@aivi/app",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "bin": {
     "aivi": "dist/cli.js"
@@ -26,7 +26,7 @@
   "dependencies": {
     "@aivi/browser": "^0.1.1",
     "@aivi/core": "^0.2.0",
-    "@aivi/host": "^0.2.0",
+    "@aivi/host": "^0.3.0",
     "@aivi/knowledge": "^0.1.1",
     "@clack/prompts": "1.8.1",
     "zod": "4.1.13"
