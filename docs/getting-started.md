@@ -1,7 +1,7 @@
 # Getting started
 
 From a fresh clone to a librarian answering questions, in this repository's
-example home. Installation on another machine is not there yet.
+example home.
 
 ## Run it
 
