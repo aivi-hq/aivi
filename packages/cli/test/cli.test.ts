@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { clientConfigSchema, loadClientConfig, saveClientConfig } from '../src/client-config.ts';
 import { appCliPath, forward } from '../src/forward.ts';
+import type { LinkChannel, LinkResult } from '../src/link.ts';
+import { extractLinkArgs, link } from '../src/link.ts';
 import type { SetupIo } from '../src/setup.ts';
 import { extractSetupFlags, seedHomeOpenCode, setup } from '../src/setup.ts';
 
@@ -211,6 +213,80 @@ test('--connect and --use choose different branches; giving both is refused', as
     setup(['--connect', '--use', 'this-machine'], { home: join(directory, 'home') }, io),
     /different branches/,
   );
+});
+
+test('aivi link mints a code over HTTP and says exactly where to spend it', async () => {
+  saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: TOKEN } });
+  const mints: [string, string][] = [];
+  const logs: string[] = [];
+  await link(['discord'], {
+    mint: async (url, token) => {
+      mints.push([url, token]);
+      return {
+        code: '12345',
+        expiresAt: '2026-09-22T12:34:00.000Z',
+        person: 'Ada',
+        channels: [{ id: 'discord', hint: 'In Discord, DM the bot: /link <code>.' }, { id: 'slack' }],
+        next: 'Paste `/link <code>` where the bot reads it.',
+      };
+    },
+    askPlatform: async () => {
+      throw new Error('no prompt expected');
+    },
+    log: message => logs.push(message),
+  });
+  assert.deepEqual(mints, [['http://127.0.0.1:4100', TOKEN]]);
+  const out = JSON.parse(logs[0]!) as { code: string; channel: string; next: string };
+  assert.equal(out.code, '12345');
+  assert.equal(out.channel, 'discord');
+  assert.match(out.next, /\/link 12345/, 'the hint carries the code itself');
+});
+
+test('aivi link asks which channel when several run, and refuses an unknown one', async () => {
+  saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: TOKEN } });
+  const logs: string[] = [];
+  await link([], {
+    mint: async () => ({
+      code: '54321',
+      expiresAt: '2026-09-22T12:34:00.000Z',
+      person: 'Ada',
+      channels: [{ id: 'discord' }, { id: 'slack', hint: 'In Slack, run /{prefix}-link <code> anywhere.' }],
+      next: 'Paste `/link <code>` where the bot reads it.',
+    }),
+    askPlatform: async (channels: LinkChannel[]) => {
+      assert.deepEqual(
+        channels.map(c => c.id),
+        ['discord', 'slack'],
+      );
+      return 'slack';
+    },
+    log: (message: string) => logs.push(message),
+  });
+  const out = JSON.parse(logs[0]!) as { channel: string; next: string };
+  assert.equal(out.channel, 'slack');
+  assert.match(out.next, /54321/);
+  await assert.rejects(
+    link(['teams'], {
+      mint: async () => ({ code: '1', expiresAt: '', person: '', channels: [], next: '' }),
+      askPlatform: async () => 'discord',
+      log: () => {},
+    }),
+    /No channel module "teams"/,
+  );
+});
+
+test('aivi link without a sign-in says what to run first', async () => {
+  await assert.rejects(
+    link([], {
+      mint: async () => {
+        throw new Error('must not reach the host');
+      },
+      askPlatform: async () => 'discord',
+      log: () => {},
+    }),
+    /aivi setup/,
+  );
+  assert.throws(() => extractLinkArgs(['a', 'b']), /Usage/);
 });
 
 test('seeding the home keeps what exists and fills only the gaps', () => {
