@@ -17,8 +17,12 @@ import { appCliPath } from './forward.ts';
 import { serviceInstall } from './service.ts';
 
 /** Both plugins a signed-in machine needs: the aivi tools and the commit
- *  attribution. `opencode plugin add` is idempotent, so setup may re-run it. */
-const CLIENT_PLUGINS = ['@aivi/opencode', 'opencode-attribution'];
+ *  attribution. `opencode plugin add` is idempotent, so setup may re-run it.
+ *  `aivi uninstall` removes the aivi one and asks about the attribution one,
+ *  which is not aivi's. */
+export const AIVI_PLUGIN = '@aivi/opencode';
+export const ATTRIBUTION_PLUGIN = 'opencode-attribution';
+const CLIENT_PLUGINS = [AIVI_PLUGIN, ATTRIBUTION_PLUGIN];
 
 /** The OpenCode shape of a server home: the service `aivi serve` runs loads
  *  these from the home. A file that exists is never overwritten. */

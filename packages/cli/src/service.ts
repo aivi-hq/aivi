@@ -38,6 +38,16 @@ export function systemdUnitPath(): string {
   return join(homedir(), '.config', 'systemd', 'user', 'aivi.service');
 }
 
+/** The unit file this platform would use, undefined where aivi installs no
+ *  service. `aivi uninstall` names the path before it deletes anything. */
+export function serviceUnitPath(): string | undefined {
+  return process.platform === 'darwin'
+    ? launchdPlistPath()
+    : process.platform === 'linux'
+      ? systemdUnitPath()
+      : undefined;
+}
+
 export function launchdPlist(options: ServiceOptions): string {
   return buildPlistXml({
     Label: SERVICE_LABEL,

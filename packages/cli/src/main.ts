@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /** The thin aivi CLI. It installs and controls the server; the server does the
  *  assistant work. The CLI owns `setup` (sign in or create), `update`,
- *  `upgrade` and the service commands, and forwards every other command into
- *  the installed app — it never imports host code. */
+ *  `upgrade`, `uninstall` and the service commands, and forwards every other
+ *  command into the installed app — it never imports host code. */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadClientConfig } from './client-config.ts';
 import { forward } from './forward.ts';
-import { homeForCreate, requireHome } from './home.ts';
+import { homeForCreate, homeFromEnvOrConfig, requireHome } from './home.ts';
 import { link } from './link.ts';
 import {
   serviceInstall,
@@ -20,6 +20,7 @@ import {
   serviceUninstall,
 } from './service.ts';
 import { setup } from './setup.ts';
+import { uninstall } from './uninstall.ts';
 import { updateServer } from './update.ts';
 import { upgradeCli } from './upgrade.ts';
 
@@ -38,6 +39,9 @@ const usage = `aivi <command>
   serve                       Start the server in the foreground
   update                      Update the installed server and plugins (channel: config.json update.channel)
   upgrade                     Update this CLI through its install method (npm today)
+  uninstall                   Delete the aivi home and the client config, then this CLI. Lists what
+                              would go until --confirm; the attribution plugin stays unless
+                              --with-attribution
   service install|uninstall   Run the server in the background (LaunchAgent / systemd user unit)
   service start|stop|restart|status|logs
   jobs, runs, people, projects, sources, knowledge, status, config,
@@ -80,6 +84,16 @@ export async function main(argv: string[]): Promise<void> {
   }
   if (command === 'upgrade') {
     upgradeCli();
+    return;
+  }
+  if (command === 'uninstall') {
+    // Not interactive: the listing is the confirmation, --confirm is the answer.
+    const done = await uninstall({
+      home: homeFromEnvOrConfig(),
+      confirm: argv.includes('--confirm'),
+      withAttribution: argv.includes('--with-attribution'),
+    });
+    if (!done) process.exitCode = 1;
     return;
   }
   if (command === 'service') {

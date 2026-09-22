@@ -215,7 +215,29 @@ excludes the new host fails the install, is pinned at its current version —
 logged as **disabled: no compatible release** — and is re-checked on every
 future update. There is no rollback; sessions resume because state is SQLite
 and OpenCode's own. `aivi upgrade` updates the CLI itself through its install
-method (npm today).
+method (npm today) — the same install-method table `aivi uninstall` reads, so
+the two can never disagree about what is installed.
+
+## Uninstall
+
+`aivi uninstall` deletes what aivi created on the machine and then the CLI
+itself. It is not interactive: it prints the absolute paths it would delete —
+the home, the client config, the background service, the OpenCode plugin entry,
+and this CLI with the install method that answers for it — and stops without
+deleting anything, exit non-zero, until `--confirm`. It deletes only a home with
+a `config.json` in it, so a wrong `AIVI_HOME` or a stale `home` field in the
+client config deletes nothing.
+
+The order is the one that cannot leave a mess. The service unit goes first: a
+unit whose server is gone gets relaunched forever. Then
+`opencode plugin remove @aivi/opencode`, because OpenCode keeps its plugins in
+its own global config, which the home never takes with it —
+`opencode-attribution` is not aivi's, so it stays unless `--with-attribution`.
+Then the home and the client config. The CLI goes last, because after that
+spawn it can neither say nor read anything more. A server running in the
+foreground is refused, as with `aivi update`: it is the person's own process to
+stop. When no install method aivi knows answers, the files are gone and the
+message says to remove the CLI the way it was installed.
 
 ## Projects
 
