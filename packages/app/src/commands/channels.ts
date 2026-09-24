@@ -93,7 +93,7 @@ function mount(program: Command, command: PluginCliCommand): void {
 
 /** Ask every mapped package for its command; the ones that answer join the tree. */
 export async function registerChannels(program: Command): Promise<void> {
-  for (const [moduleId, spec] of Object.entries(MODULE_SPECS)) {
+  for (const [, spec] of Object.entries(MODULE_SPECS)) {
     let exported: unknown;
     try {
       exported = ((await import(`${spec}/cli`)) as { default?: unknown }).default;

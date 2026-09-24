@@ -119,7 +119,7 @@ test('people commands talk HTTP to the running host', async t => {
 });
 
 test('plugin setup needs a terminal; scripts are told what to do instead', async t => {
-  const { home, xdg, env, cleanup } = await scratch();
+  const { home, env, cleanup } = await scratch();
   t.after(cleanup);
   await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1 }));
 
@@ -145,7 +145,7 @@ test('plugin setup needs a terminal; scripts are told what to do instead', async
 });
 
 test('slack manifest dumps the whole app manifest as JSON, prefix from the flag, the config or a prompt', async t => {
-  const { home, xdg, env, cleanup } = await scratch();
+  const { home, env, cleanup } = await scratch();
   t.after(cleanup);
   await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1 }));
 

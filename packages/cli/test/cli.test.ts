@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { clientConfigSchema, loadClientConfig, saveClientConfig } from '../src/client-config.ts';
 import { appCliPath, forward } from '../src/forward.ts';
-import type { LinkChannel } from '../src/link.ts';
 import { extractLinkArgs, link } from '../src/link.ts';
 import type { SetupIo } from '../src/setup.ts';
 import { extractSetupFlags, seedHomeOpenCode, setup } from '../src/setup.ts';
