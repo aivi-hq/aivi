@@ -134,7 +134,8 @@ with no refresh token; Linear's documented pattern). Writes attribute to the
 app, never a human; personal API keys would never expire but attribute to a
 human: disqualified. OpenCode connects as a remote MCP
 (`type: "remote"`, `url: http://127.0.0.1:4101/mcp` —
-`example/opencode.jsonc`). The MCP lives and dies with `serve`, like the
+what a home's `opencode.jsonc` gains when the `linear` block names `mcp`; see
+the comment setup seeds). The MCP lives and dies with `serve`, like the
 webhooks and the workers it serves.
 
 ## Setup
@@ -153,7 +154,7 @@ One app in Linear — the 95% case:
    `grant_type=client_credentials` and the scopes
    `read,write,app:assignable,app:mentionable`; nothing is persisted.
 3. `soul.md` in the home, and the assistant's agent file shipped in
-   `example/` as the strong default — rename both if you choose another name.
+   `packages/cli/templates/agents/` as the strong default — rename both if you choose another name.
 4. `aivi projects add <git-url> --linear PEC`. Empty lanes means the listener
    delegates nothing; the assistant still answers pings and delegations.
 5. Later, only if a second face in Linear's UI is wanted: another app, its

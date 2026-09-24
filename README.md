@@ -49,9 +49,10 @@ npm run check
 npm run aivi -- serve
 ```
 
-`npm run aivi` uses `example/`, a complete home with everything enabled; it
-builds first (incremental, TypeScript 7) and runs the compiled `dist/` — the
-same artifact npm publishes, so local and installed behavior are identical.
+`npm run aivi` uses `dev/`, a real development home produced by `npm run
+aivi:cli setup` against your local build; it builds first (incremental,
+TypeScript 7) and runs the compiled `dist/` — the same artifact npm publishes,
+so local and installed behavior are identical.
 
 ## Packages
 

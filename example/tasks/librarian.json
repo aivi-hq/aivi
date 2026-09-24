@@ -1,6 +1,0 @@
-{
-  "kind": "prompt",
-  "agent": "librarian",
-  "directory": ".",
-  "prompt": "List the configured aivi knowledge sources and read the company handbook. Summarize its working agreements. Do not change any files."
-}

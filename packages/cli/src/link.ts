@@ -76,7 +76,10 @@ async function mint(url: string, token: string): Promise<LinkResult> {
 
 /** The client config `aivi setup` writes; read as a file, no host imports. */
 function loadClientConfig(): { url?: string; person?: { token?: string } } | undefined {
-  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(process.env.HOME ?? '', '.config'), 'aivi.json');
+  // AIVI_CONFIG moves the whole record (a development home signs in its own copy).
+  const path = process.env.AIVI_CONFIG
+    ? resolve(process.env.AIVI_CONFIG)
+    : resolve(process.env.XDG_CONFIG_HOME ?? resolve(process.env.HOME ?? '', '.config'), 'aivi.json');
   if (!existsSync(path)) return undefined;
   try {
     return JSON.parse(readFileSync(path, 'utf8')) as { url?: string; person?: { token?: string } };

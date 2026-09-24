@@ -21,7 +21,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 
 Mock tests do not establish these; each has its own command.
 
-- OpenCode: `npm run live:opencode -- --plugin "$PWD/example"`
+- OpenCode: `npm run live:opencode -- --plugin "$PWD/dev"`
   (passed 2026-09-15, including `session.list` ordering and the `.env` guard).
 - Browser: `npm run smoke:browser` with Chrome installed (passed 2026-09-15).
 - Discord: `serve` against a test server (commands register at start).

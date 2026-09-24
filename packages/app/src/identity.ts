@@ -98,15 +98,22 @@ export async function serverCreate(options: {
 /** The bearer for commands that act as the operator over HTTP; absent when this
  *  machine has not signed in. */
 export function readClientConfigToken(): string | undefined {
-  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  const path = clientConfigPath();
   if (!existsSync(path)) return undefined;
   const config = JSON.parse(readFileSync(path, 'utf8')) as { person?: { token?: string } };
   return config.person?.token;
 }
 
+/** The one client config file: `~/.config/aivi.json`, `$XDG_CONFIG_HOME/aivi.json`,
+ *  or the file `AIVI_CONFIG` names — the same resolution the thin CLI uses. */
+function clientConfigPath(): string {
+  if (process.env.AIVI_CONFIG) return resolve(process.env.AIVI_CONFIG);
+  return resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+}
+
 /** The one client config file, identical shape everywhere; 0600. An existing person token is never overwritten. */
 function writeClientConfig(url: string, home: string, token: string): string {
-  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  const path = clientConfigPath();
   let current: Record<string, unknown> = {};
   if (existsSync(path)) {
     current = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;

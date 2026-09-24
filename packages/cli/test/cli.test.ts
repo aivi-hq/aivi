@@ -15,7 +15,12 @@ let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   directory = mkdtemp();
-  savedEnv = { AIVI_HOME: process.env.AIVI_HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  savedEnv = {
+    AIVI_CONFIG: process.env.AIVI_CONFIG,
+    AIVI_HOME: process.env.AIVI_HOME,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  };
+  delete process.env.AIVI_CONFIG;
   delete process.env.AIVI_HOME;
   process.env.XDG_CONFIG_HOME = join(directory, 'xdg');
 });
@@ -96,6 +101,17 @@ test('the client config saves 0600, preserves unknown fields and never drops the
   assert.equal(loaded.person?.token, 'aivi-t');
   assert.equal(loaded.installMethod, 'npm');
   assert.equal(loaded.configVersion, 1);
+});
+
+test('AIVI_CONFIG moves the whole client record, leading over XDG_CONFIG_HOME', () => {
+  saveClientConfig({ home: '/dev/home', appDir: '/dev/home/app' });
+  assert.ok(existsSync(join(directory, 'xdg', 'aivi.json')), 'without AIVI_CONFIG the xdg path is used');
+  process.env.AIVI_CONFIG = join(directory, 'dev.json');
+  assert.equal(loadClientConfig(), undefined, 'the overridden path starts empty');
+  saveClientConfig({ home: '/dev/other' });
+  assert.deepEqual(loadClientConfig()!.home, '/dev/other');
+  assert.equal(existsSync(join(directory, 'dev.json')), true);
+  assert.equal(existsSync(join(directory, 'xdg', 'aivi.json')), true, 'the previous record is untouched');
 });
 
 test('unknown fields survive a save', () => {

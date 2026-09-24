@@ -1,0 +1,10 @@
+{
+  "name": "aivi-dev-home",
+  "private": true,
+  "dependencies": {
+    "@aivi/app": "file:../../packages/app",
+    "@aivi/channel-discord": "file:../../packages/channel-discord",
+    "@aivi/channel-slack": "file:../../packages/channel-slack",
+    "@aivi/linear": "file:../../packages/linear"
+  }
+}

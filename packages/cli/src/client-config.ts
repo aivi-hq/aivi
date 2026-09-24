@@ -1,8 +1,10 @@
-/** The one file the CLI owns: `~/.config/aivi.json` (or `$XDG_CONFIG_HOME/aivi.json`),
- *  0600, never hand-edited. It merges the client record — where the host is, which
- *  person signs in — with the installation record `aivi setup` writes:
- *  the home, the selected Node, the app directory, the install method. Unknown
- *  fields survive a save so the file can grow without a migration. */
+/** The one file the CLI owns: `~/.config/aivi.json` (or `$XDG_CONFIG_HOME/aivi.json`,
+ *  or the file `AIVI_CONFIG` names — a development home points the whole client
+ *  record at its own copy), 0600, never hand-edited. It merges the client record —
+ *  where the host is, which person signs in — with the installation record
+ *  `aivi setup` writes: the home, the selected Node, the app directory, the
+ *  install method. Unknown fields survive a save so the file can grow without a
+ *  migration. */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -32,6 +34,7 @@ export const clientConfigSchema = z
 export type ClientConfig = z.infer<typeof clientConfigSchema>;
 
 export function clientConfigPath(): string {
+  if (process.env.AIVI_CONFIG) return resolve(process.env.AIVI_CONFIG);
   return resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
 }
 
