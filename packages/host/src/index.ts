@@ -80,3 +80,5 @@ export type { AddJobOptions, AuditEntry, JobEntry, Lease, RunFilter } from './st
 export { Store } from './store.ts';
 export type { TaskClaims, TaskHandler } from './tasks.ts';
 export { TaskRegistry } from './tasks.ts';
+export type { ToolClaims, ToolHandler } from './tools.ts';
+export { ToolError, ToolRegistry } from './tools.ts';

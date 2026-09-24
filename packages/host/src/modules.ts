@@ -2,6 +2,7 @@ import { setTimeout } from 'node:timers/promises';
 import type { Config, Job, Logger, ModuleHealth } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
 import type { TaskRegistry } from './tasks.ts';
+import type { ToolRegistry } from './tools.ts';
 
 export interface RunningModule {
   stop(): Promise<void>;
@@ -53,6 +54,7 @@ export class ModuleSupervisor<Services> {
   private readonly fatal: (error: unknown) => void;
   private readonly retry: RetryPolicy;
   private readonly tasks?: TaskRegistry | undefined;
+  private readonly tools?: ToolRegistry | undefined;
   constructor(
     services: Services,
     signal: AbortSignal,
@@ -60,6 +62,7 @@ export class ModuleSupervisor<Services> {
     fatal: (error: unknown) => void,
     retry: RetryPolicy = DEFAULT_RETRY,
     tasks?: TaskRegistry | undefined,
+    tools?: ToolRegistry | undefined,
   ) {
     this.services = services;
     this.signal = signal;
@@ -67,16 +70,20 @@ export class ModuleSupervisor<Services> {
     this.fatal = fatal;
     this.retry = retry;
     this.tasks = tasks;
+    this.tools = tools;
   }
 
   /**
-   * The door for one module: everything shared, but `tasks` scoped so its
-   * claims carry the module's own id (the exactly-once rule needs honest
-   * owners). The cast rewrites only that field's narrower shape.
+   * The door for one module: everything shared, but `tasks` and `tools`
+   * scoped so its claims carry the module's own id (the exactly-once rule
+   * needs honest owners). The cast rewrites only those fields' shapes.
    */
   private servicesFor(moduleId: string): Services {
-    if (!this.tasks) return this.services;
-    return { ...this.services, tasks: this.tasks.forModule(moduleId) } as unknown as Services;
+    if (!this.tasks && !this.tools) return this.services;
+    const scoped = { ...this.services } as Record<string, unknown>;
+    if (this.tasks) scoped.tasks = this.tasks.forModule(moduleId);
+    if (this.tools) scoped.tools = this.tools.forModule(moduleId);
+    return scoped as unknown as Services;
   }
 
   async start(modules: HostModule<Services>[]): Promise<void> {

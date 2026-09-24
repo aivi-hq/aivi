@@ -20,6 +20,8 @@ import { createHostServer, PublicRoutes } from './server.ts';
 import type { Store } from './store.ts';
 import type { TaskClaims } from './tasks.ts';
 import { TaskRegistry } from './tasks.ts';
+import type { ToolClaims } from './tools.ts';
+import { ToolRegistry } from './tools.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
 const FAILURE_NUDGE_AT = 3;
@@ -73,6 +75,8 @@ export interface HostServices {
   routes: PublicRoutes;
   /** What `kind: 'invocation'` tasks dispatch to: the host claims its own operations here, modules claim theirs. */
   tasks: TaskClaims;
+  /** The tool surface the OpenCode plugin registers at load: the host claims its own tools here, modules claim theirs. */
+  tools: ToolClaims;
   /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
   wake(): void;
   /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
@@ -138,6 +142,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     );
   const wake = new Wake();
   const tasks = new TaskRegistry();
+  const tools = new ToolRegistry();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
@@ -162,6 +167,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       wake: () => wake.notify(),
       health: () => supervisor?.health() ?? [],
       linkable: () => channels.linkable(),
+      tools,
       context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
       log,
     });
@@ -192,13 +198,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       routes,
       // The supervisor replaces this with each module's own scope before start; nothing else reads it.
       tasks: tasks.forModule('host'),
+      tools: tools.forModule('host'),
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
       fail,
     };
     // An optional module never takes the host down: a failed start is retried in the background
     // and shows as degraded in status; only a ConfigurationError is fatal.
-    supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks);
+    supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks, tools);
     await supervisor.start(modules);
     abort.signal.throwIfAborted();
     options.onReady?.(http.address());

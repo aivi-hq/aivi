@@ -7,6 +7,7 @@ import type {
   PersonToken,
   ProjectSummary,
   SearchHit,
+  ServedTool,
   SourceSelection,
   Status,
   Whoami,
@@ -73,6 +74,25 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       return get<KnowledgeSource[]>(`/v1/sources?${params}`);
     },
     projects: () => get<ProjectSummary[]>('/v1/projects'),
+    async listTools() {
+      return (await get<{ tools: ServedTool[] }>('/v1/tools')).tools;
+    },
+    callTool(id, call) {
+      // One budget per tool comes from its descriptor: a browser action may
+      // wait behind other tabs, a status read must not.
+      return request<unknown>('/v1/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tool: id,
+          sessionId: call.sessionId,
+          ...(call.messageId ? { messageId: call.messageId } : {}),
+          input: call.input,
+        }),
+        timeoutMs: call.timeoutMs ?? 10_000,
+      });
+    },
+    health: () => request<{ ok: true }>('/health', { timeoutMs: 3_000 }),
     context: sessionId =>
       request<{ text: string }>(`/v1/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
     wake: () => request<{ woken: boolean }>('/v1/wake', { method: 'POST', timeoutMs: 3_000 }),

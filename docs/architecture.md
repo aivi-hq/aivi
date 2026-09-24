@@ -36,7 +36,14 @@ client factory, a structured logger, the shutdown signal, the `channels`
 registry where chat modules register ([channels](channels.md)), `routes`
 (webhook paths under `/v1/` a module exposes on the host listener outside
 bearer auth, the platform's signature being the auth; one handler per path,
-the raw body passed for signing), `wake()` and `fail()`. They return an asynchronous `stop` function. They call shared
+the raw body passed for signing), `tasks` (the invocation door: a module
+claims the operations its `kind: 'invocation'` jobs dispatch to, each name
+exactly once), `tools` (the tool door: a module claims a descriptor and
+handler per tool it offers the model — `GET /v1/tools` serves the claims and
+`POST /v1/tools` dispatches to them, each id claimed exactly once; the
+OpenCode plugin registers whatever the list says at its load, see
+[opencode.md](opencode.md#plugin-tools-and-permission-actions)), `wake()` and
+`fail()`. They return an asynchronous `stop` function. They call shared
 services directly, rather than calling the host over HTTP from inside the same
 application.
 
@@ -53,7 +60,10 @@ independently of the host schema. Host tables are only reached through `Store`
 methods; shared capacity uses `acquireLease`/`releaseLease`/`blockLease`.
 
 OpenCode plugins live inside the native runtime, so they use the host's
-authenticated API. `knowledge_search` reaches the same service used by the
+authenticated API. The aivi plugin hardcodes no tools: it registers whatever
+`GET /v1/tools` answers at its load, and every call goes back over that one
+pair of routes ([opencode.md](opencode.md#plugin-tools-and-permission-actions)).
+`knowledge_search` reaches the same service used by the
 channels' search commands and scheduled indexing jobs; `aivi_jobs` reaches the
 same store the CLI edits.
 

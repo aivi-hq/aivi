@@ -12,7 +12,9 @@ connect, and the rule is one line to remove.
 `@aivi/browser` uses the official **Chrome DevTools MCP**, pinned to 1.9.0.
 There is no aivi Playwright dependency or replacement automation engine. One
 stdio MCP child belongs to the host; native OpenCode tools call it through aivi
-as `aivi_browser`. Chrome and the MCP child start lazily on the first browser
+as `aivi_browser`. The tool is a descriptor the host contributes only while
+the browser service exists — a host without one serves no `aivi_browser` and
+no agent sees it. Chrome and the MCP child start lazily on the first browser
 operation.
 
 ## Which Chrome: three choices
