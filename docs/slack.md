@@ -165,7 +165,12 @@ should listen in. Collect the channel ids (channel details → bottom of the
 About tab). DM channel ids are not configured; a linked person may DM from
 anywhere ([people](people.md#link-codes-discord-slack)).
 
-Enable Slack with a `modules.slack` block in `<home>/config.json`, filled with
+The short way is `aivi install slack` ([operations](operations.md#plugins-aivi-install)):
+it runs this package's own setup, which prints the manifest to paste into
+Slack's app setup, asks for the two tokens, verifies each against Slack, and
+writes the `modules.slack` block into `<home>/config.json` and the tokens
+into `.env` itself. By hand, enable Slack with a `modules.slack` block in
+`<home>/config.json`, filled with
 your ids. The block is the whole module setup, and its presence enables the
 module (`false` is an explicit off):
 

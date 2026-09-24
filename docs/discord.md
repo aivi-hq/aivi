@@ -114,7 +114,9 @@ Give it access to the selected channels and permission to send messages, add
 reactions, create public threads, and send messages in threads. Private threads also require bot
 membership/access.
 
-Enable Discord with a `modules.discord` block in `<home>/config.json`, filled
+The short way is `aivi install discord`, which runs the package's own setup
+and writes the block for you. By hand, enable Discord with a
+`modules.discord` block in `<home>/config.json`, filled
 with your ids. The block is the whole module setup, and its presence enables
 the module (`false` is an explicit off):
 
