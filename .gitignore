@@ -11,13 +11,10 @@ node_modules/
 aivi.json
 
 # The dev home is a real home, produced by `npm run aivi:cli setup`: config.json,
-# .env, the installed app/ and state/ are all generated or local — only the
-# README and the app manifest that anchors npm inside dev/ are tracked.
+# .env, app/ (with the manifest setup writes and npm fills), state/ and the
+# client config are all generated or local — only the README is tracked.
 dev/*
 !dev/README.md
-!dev/app
-dev/app/*
-!dev/app/package.json
 
 # Build output: compiled packages (every exports map points at dist/) and
 # their build info.

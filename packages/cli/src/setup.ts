@@ -198,6 +198,11 @@ async function createFlow(
     join(appDir, '.npmrc'),
     '# npm lifecycle scripts aivi allow-lists; empty until one proves necessary.\n',
   );
+  // The manifest npm installs against, written and not left to npm's guess of
+  // the project root: a home that lives inside another package (a repository
+  // checkout, a dotfiles home) must never anchor the install at that ancestor.
+  if (!existsSync(join(appDir, 'package.json')))
+    writeFileSync(join(appDir, 'package.json'), `${JSON.stringify({ name: 'aivi-server', private: true }, null, 2)}\n`);
 
   io.log(`Installing the aivi server into ${appDir}`);
   io.install([flags.appSpec ?? '@aivi/app', ...flags.plugins], appDir);

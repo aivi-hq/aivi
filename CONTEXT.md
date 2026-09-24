@@ -275,8 +275,8 @@ stripping.
 `projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
 `state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
 `dev/` is a real development home, produced by `npm run aivi:cli setup` against
-the local build (only its README and the app manifest that anchors npm inside
-`dev/` are tracked; everything else is generated or git-ignored). `npm run aivi`
+the local build (only its README is tracked; everything else, including the
+app manifest setup writes, is generated or git-ignored). `npm run aivi`
 runs the app CLI against it.
 
 ## Open threads

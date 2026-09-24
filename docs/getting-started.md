@@ -28,8 +28,8 @@ Setup is the real thin CLI pointed at `dev/`: `AIVI_HOME=dev` makes the home,
 answers, which person signs in) inside the dev home, and the `file:` specs
 install your workspace packages instead of the registry — same code path a
 real install runs, your local `dist/` on the end. Everything under `dev/` is
-generated or yours; git tracks only the README and the app manifest that
-anchors npm there. Setup seeds the OpenCode shape (`opencode.jsonc`,
+generated or yours; git tracks only the README. Setup writes the app manifest
+it installs against, seeds the OpenCode shape (`opencode.jsonc`,
 `.opencode/agents/`) and pins `@aivi/opencode` from npm; to run OpenCode
 against your local plugin build instead, replace that spec with
 `../packages/opencode/dist`.

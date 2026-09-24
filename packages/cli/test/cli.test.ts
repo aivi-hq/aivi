@@ -174,6 +174,11 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
   assert.deepEqual(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')), { version: 1 });
   assert.equal(existsSync(join(home, '.env')), true);
   assert.equal(existsSync(join(home, 'app', '.npmrc')), true);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(home, 'app', 'package.json'), 'utf8')),
+    { name: 'aivi-server', private: true },
+    'the manifest npm installs against, so the app dir anchors the install',
+  );
   assert.deepEqual(calls.installs, [['@aivi/app']]);
   assert.deepEqual(calls.identity, [['--use', 'this-machine', '--name', 'Ada']]);
   const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
