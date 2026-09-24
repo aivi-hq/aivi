@@ -53,6 +53,18 @@ export async function link(args: string[], io: LinkIo = defaultIo): Promise<void
   const next = hint
     ? `${hint.replace(/<code>/, result.code)} (${result.expiresAt.slice(0, 16).replace('T', ' ')} UTC)`
     : result.next;
+  if (process.stdout.isTTY) {
+    // The thin CLI ships without @aivi/core, so the terminal gets its own one
+    // line: the code where it is spent, the expiry as the reader's clock shows
+    // it. A pipe keeps the JSON record.
+    const expires = new Date(result.expiresAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (result.channels.length === 0)
+      io.log(
+        `No channel module is running yet. Start aivi, then run aivi link again — codes expire (this one at ${expires}).`,
+      );
+    else io.log(`${(hint ?? result.next).replace(/<code>/g, result.code)}  —  expires ${expires}`);
+    return;
+  }
   io.log(
     JSON.stringify(
       { code: result.code, expiresAt: result.expiresAt, person: result.person, ...(channel ? { channel } : {}), next },

@@ -20,7 +20,10 @@ That is the ordinary thin CLI (`packages/cli`), pointed at this directory by
 never touches a real `~/.aivi` or `~/.config/aivi.json`. The `file:` specs make
 npm install your workspace packages instead of the registry — same code path a
 real install runs, local `dist/` on the end. Drop any `--plugin` you do not
-want; add plugins later with `npm run aivi:cli -- install discord`.
+want; add plugins later with `npm run aivi:cli -- install discord` — once a
+plugin's package is present, `install` runs its own setup wizard (writes
+`config.json` and `.env` here). Without the package it installs from npm, so
+in this home install the `file:` spec at setup first.
 
 Setup seeds the OpenCode shape (`opencode.jsonc`, `.opencode/agents/`) and pins
 `@aivi/opencode` **from npm** in `opencode.jsonc`; to run OpenCode against your
