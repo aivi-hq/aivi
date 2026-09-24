@@ -1,5 +1,29 @@
 # @aivi/host
 
+## 0.6.0
+
+### Minor Changes
+
+- [#22](https://github.com/aivi-hq/aivi/pull/22) [`08a8079`](https://github.com/aivi-hq/aivi/commit/08a8079fe0755789866adf3cdb158884cc61e757) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Link codes are minted for a named channel the person is not linked in yet:
+  `GET /v1/links` lists the running channels with the caller's binding state,
+  `POST /v1/links` requires a `channel` and refuses (404, 409) instead of
+  minting a code nothing can read or one a person cannot spend — one binding
+  per channel per person. `aivi link` picks among the eligible channels
+  (prompting when several) and says so without minting when nothing is
+  eligible; a terminal gets one sentence, a pipe the JSON record.
+
+- [#22](https://github.com/aivi-hq/aivi/pull/22) [`214869d`](https://github.com/aivi-hq/aivi/commit/214869ddfa23280f5649793ccb9bf8c0fbe97fc4) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Command output is readable on a terminal and unchanged JSON in a pipe. Core
+  gains an output renderer (`OutputBlock`, `renderOutput`, `formatTimestamp`,
+  `print`): without a hand-written shape a command's value is shown as colored
+  `util.inspect`; a command may pass blocks (log, heading, divider, table, raw
+  `json`) instead — `aivi slack manifest` renders raw JSON so it stays
+  paste-ready. Help loses its color theme; the wordmark stays.
+
+### Patch Changes
+
+- Updated dependencies [[`214869d`](https://github.com/aivi-hq/aivi/commit/214869ddfa23280f5649793ccb9bf8c0fbe97fc4)]:
+  - @aivi/core@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes
