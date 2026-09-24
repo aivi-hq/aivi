@@ -3,7 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PluginSetup, PluginSetupContext } from '@aivi/core';
-import { errorMessage, PluginSetupCancelled, upsertEnvFile, writeConfigBlock } from '@aivi/core';
+import { errorMessage, PluginSetupCancelled, print, upsertEnvFile, writeConfigBlock } from '@aivi/core';
 import * as p from '@clack/prompts';
 
 /**
@@ -71,7 +71,7 @@ export async function pluginSetup(
   try {
     const result = await (entry as PluginSetup)(ctx);
     // The record on stdout is the machine-readable result; the outro is the human truth.
-    console.log(JSON.stringify(result, null, 2));
+    print(result);
     p.outro(result.summary);
   } catch (error) {
     if (error instanceof PluginSetupCancelled) p.cancel('Setup stopped. Nothing further was written.');

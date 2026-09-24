@@ -6,5 +6,6 @@ export * from './config-write.ts';
 export * from './contracts.ts';
 export * from './kinds.ts';
 export * from './log.ts';
+export * from './output.ts';
 export * from './plugin.ts';
 export * from './projects.ts';

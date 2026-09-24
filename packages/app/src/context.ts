@@ -5,8 +5,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
-import type { LoadedConfig, Logger } from '@aivi/core';
-import { errorMessage, getLogger, loadConfig } from '@aivi/core';
+import type { LoadedConfig, Logger, OutputBlock } from '@aivi/core';
+import { print as corePrint, errorMessage, getLogger, loadConfig } from '@aivi/core';
 import { createHostClient, Store } from '@aivi/host';
 
 /** One home holds everything: config.json, .env, state/. Paths in the config resolve against it. */
@@ -43,7 +43,10 @@ export const context = () =>
     return { loaded, protectedEnv, log, poke };
   })());
 
-export const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+/** What a command puts on stdout: `data` is the machine form every pipe gets;
+ *  `output` is the readable form a terminal gets. One function, so app commands
+ *  and plugin channel commands render the same way. */
+export const print = (value: unknown, output?: OutputBlock[] | string): void => corePrint(value, output);
 
 /** Repeatable options collect into a list: `--lane Dev:dev --lane Review:dev`. */
 export const collect = (value: string, previous: string[]): string[] => [...previous, value];

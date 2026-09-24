@@ -41,11 +41,11 @@ export interface PluginCliCommand {
   subcommands: PluginCliSubcommand[];
 }
 
-import type { LoadedConfig } from '@aivi/core';
+import type { LoadedConfig, OutputBlock } from '@aivi/core';
 import type { Store } from './store.ts';
 
 /** What the app hands a plugin's CLI commands: the same home the built-ins
- *  see, the same JSON stdout contract, and nothing platform-specific. */
+ *  see, the same stdout contract, and nothing platform-specific. */
 export interface PluginCliContext {
   /** The aivi home that owns `config.json` and `.env`. */
   home: string;
@@ -54,8 +54,9 @@ export interface PluginCliContext {
   loaded(): Promise<LoadedConfig>;
   /** The home's SQLite store, open for the callback and closed after. */
   withStore<T>(fn: (store: Store) => T | Promise<T>): Promise<T>;
-  /** The JSON record on stdout — the machine-readable output every command shares. */
-  print(value: unknown): void;
+  /** The record on stdout — JSON whenever stdout is a pipe; on a terminal the
+   *  optional `output` renders as readable blocks (core's `print`). */
+  print(value: unknown, output?: OutputBlock[] | string): void;
   /** A note on stderr: what was saved, what to restart, what survived. */
   log(message: string): void;
   /** Wake the running host so saved work dispatches without waiting. */

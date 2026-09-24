@@ -46,7 +46,10 @@ const slack: PluginCliCommand = {
           }
           prefix = answered.trim();
         }
-        ctx.print(slackManifest(prefix, { name: loaded.config.identity.name }));
+        // A manifest is pasted into Slack's app setup, so a terminal gets raw
+        // JSON text (pretty's quoting would not paste back); a pipe gets the same bytes.
+        const manifest = slackManifest(prefix, { name: loaded.config.identity.name });
+        ctx.print(manifest, [{ type: 'json', value: manifest }]);
       },
     },
     {

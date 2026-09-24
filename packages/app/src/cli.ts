@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** The aivi server CLI's entry: commander's tree, the logging preAction hook,
- *  the themed help, and the register calls that hang the commands on it. The
- *  commands themselves live in commands/, grouped by category; the shared
+ *  and the register calls that hang the commands on it. The commands
+ *  themselves live in commands/, grouped by category; the shared
  *  plumbing in context.ts. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -17,7 +17,7 @@ import { registerPeople } from './commands/people.ts';
 import { registerProjects } from './commands/projects.ts';
 import { registerServer } from './commands/server.ts';
 import { home } from './context.ts';
-import { applyThemedHelp, rootBanner } from './help.ts';
+import { rootBanner } from './help.ts';
 
 // Set once the preAction hook configured logging; the finally below flushes sinks on every exit path.
 let closeLogging: () => Promise<void> = async () => {};
@@ -72,7 +72,6 @@ OPENCODE_USERNAME/OPENCODE_PASSWORD (only with opencode.url).
 <home>/.env is loaded without overriding existing variables; fnox exec works too.
 No secrets in config files.`,
   );
-  applyThemedHelp(program);
 
   try {
     await program.parseAsync(argv, { from: 'user' });
