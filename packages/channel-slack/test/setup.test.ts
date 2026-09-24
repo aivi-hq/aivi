@@ -12,6 +12,7 @@ interface Harness {
   blocks: { path: string[]; value: unknown }[];
   notes: string[];
   logs: string[];
+  printed: unknown[];
 }
 
 function harness(answers: string[], responses: { match: RegExp; status: number; body: unknown }[]): Harness {
@@ -20,12 +21,14 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
   const blocks: { path: string[]; value: unknown }[] = [];
   const notes: string[] = [];
   const logs: string[] = [];
+  const printed: unknown[] = [];
   const ctx: PluginSetupContext = {
     home: '/home',
     configPath: '/home/config.json',
     identityName: 'Clawd',
     config: { version: 1, modules: {} },
     note: (title, lines) => notes.push(`${title}: ${lines}`),
+    print: value => printed.push(value),
     log: message => logs.push(message),
     ask: {
       async text({ validate }) {
@@ -57,7 +60,7 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
       secrets.set(key, value);
     },
   };
-  return { ctx, secrets, blocks, notes, logs };
+  return { ctx, secrets, blocks, notes, logs, printed };
 }
 
 const AUTH_OK = {
@@ -93,8 +96,13 @@ test('slack setup prints the manifest, verifies both tokens and writes both file
   assert.deepEqual(block.reportChannels, ['C0000000002']);
   assert.deepEqual(h.blocks[0]!.path, ['modules', 'slack']);
   const note = h.notes.join('\n');
-  assert.match(note, /app manifest/);
-  assert.match(note, /"\/aivi-new"/, 'the manifest in the note is the paste-ready JSON');
+  assert.match(note, /manifest printed above/, 'the note points at the stdout manifest');
+  const printed = h.printed as { features: { slash_commands: { command: string }[] } }[];
+  assert.match(
+    printed[0]!.features.slash_commands[0]!.command,
+    /^\/aivi-/,
+    'the manifest went to stdout as raw, paste-ready JSON',
+  );
 });
 
 test('slack setup with no channels configures a DM-only bot', async () => {

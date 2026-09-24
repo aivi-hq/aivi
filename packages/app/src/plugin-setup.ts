@@ -44,6 +44,7 @@ export async function pluginSetup(
     identityName: options.identityName,
     config: JSON.parse(await readFile(options.configPath, 'utf8')) as Record<string, unknown>,
     note: (title, lines) => p.note(lines, title),
+    print: (value, output) => print(value, output),
     log: message => console.log(message),
     ask: {
       async text({ message, placeholder, secret, validate }) {

@@ -38,13 +38,15 @@ const slack: PluginCliCommand = {
             message: 'Slash command prefix — the commands become /<prefix>-new, /<prefix>-status, …',
             placeholder: 'aivi',
             validate: value =>
-              /^[a-z][a-z0-9_-]*$/.test(String(value ?? '').trim()) ? undefined : 'Lowercase letters, digits, _ or -',
+              !value.trim() || /^[a-z][a-z0-9_-]*$/.test(String(value ?? '').trim())
+                ? undefined
+                : 'Lowercase letters, digits, _ or -',
           });
           if (answered === undefined) {
             process.exitCode = 1;
             return;
           }
-          prefix = answered.trim();
+          prefix = answered.trim() || 'aivi';
         }
         // A manifest is pasted into Slack's app setup, so a terminal gets raw
         // JSON text (pretty's quoting would not paste back); a pipe gets the same bytes.
