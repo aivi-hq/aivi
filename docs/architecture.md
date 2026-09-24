@@ -14,7 +14,7 @@ plugins can reuse that client without importing the SQLite store.
 
 `@aivi/app` is the composition root: it loads configured modules and launches
 `runHost`. The host owns the shared store, scheduler, native client, knowledge
-service, optional browser service, API listener, startup, and shutdown. Discord receives those services in
+service, API listener, startup, and shutdown. Discord receives those services in
 its `start` method. Linear will be another in-process module with webhook routes
 on the same listener, not another application server.
 
@@ -31,8 +31,8 @@ listener and use the same services. Only a configured module loads its SDK, and
 only enabled search loads QMD.
 
 Modules receive a `HostServices` object containing the loaded installation
-config, store, knowledge service, optional browser service, an `opencode()`
-client factory, a structured logger, the shutdown signal, the `channels`
+config, store, knowledge service, an `opencode()` client factory, a structured
+logger, the shutdown signal, the `channels`
 registry where chat modules register ([channels](channels.md)), `routes`
 (webhook paths under `/v1/` a module exposes on the host listener outside
 bearer auth, the platform's signature being the auth; one handler per path,

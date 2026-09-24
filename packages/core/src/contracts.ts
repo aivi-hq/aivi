@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { BrowserRequest, BrowserResult } from './browser.ts';
 import type { KnowledgeSource, Report, Task } from './config.ts';
 import { knowledgeKindSchema } from './config.ts';
 import type { KnowledgeKind } from './kinds.ts';
@@ -196,7 +195,6 @@ export const personTokenCreateSchema = z.strictObject({
   label: z.string().trim().min(1).max(80),
 });
 export interface HostClient {
-  browser(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   status(): Promise<Status>;
   sources(selection?: SourceSelection): Promise<KnowledgeSource[]>;
   projects(): Promise<ProjectSummary[]>;

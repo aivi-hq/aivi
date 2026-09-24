@@ -1,7 +1,7 @@
 /** The server itself: foreground serve, queue status, configuration and
  *  OpenCode checks. */
 
-import type { LoadedConfig, Logger } from '@aivi/core';
+import type { BrowserConfig, LoadedConfig, Logger } from '@aivi/core';
 import { isTty } from '@aivi/core';
 import type { HostModule, HostResources } from '@aivi/host';
 import { connectOpenCode, runHost, status } from '@aivi/host';
@@ -25,6 +25,11 @@ export function registerServer(program: Command): void {
       if (typeof loaded.config.modules.slack === 'object')
         modules.push((await import('@aivi/channel-slack')).createSlackModule(loaded.config.modules.slack));
       if (loaded.config.linear) modules.push((await import('@aivi/linear')).createLinearModule(loaded.config.linear));
+      // The browser is a composed module like the channels, not a host resource:
+      // its block's presence enables it, and it claims its own `aivi_browser`
+      // tool at start. The package loads lazily, so an install without it runs
+      // every other command untouched.
+      if (typeof loaded.config.browser === 'object') modules.push(await importBrowser(loaded.config.browser));
       const abort = new AbortController();
       const stop = () => abort.abort();
       process.once('SIGINT', stop);
@@ -97,21 +102,16 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
   // Knowledge logs under its own category: the service is built here, before
   // any host exists, and keeps this logger whatever job triggers an index.
   const knowledge = await createKnowledgeService(loaded, undefined, log.getChild('knowledge'));
-  // Presence of the browser block builds the service; `false` or absent builds
-  // nothing and the plugin never sees an aivi_browser tool. The package loads
-  // lazily, like the channels, so an installation without it runs everything
-  // else untouched — until someone configures a browser without installing it.
-  const browserBlock = loaded.config.browser;
-  const browser =
-    typeof browserBlock === 'object' ? (await importBrowser()).createBrowserService(browserBlock) : undefined;
-  return { knowledge, ...(browser ? { browser } : {}) };
+  return { knowledge };
 }
 
 /** The browser block says the operator wants a browser; a missing package is
- *  then a missing install, not a disabled feature: name the command that fixes it. */
-async function importBrowser(): Promise<typeof import('@aivi/browser')> {
+ *  then a missing install, not a disabled feature: name the command that fixes
+ *  it. The module claims its own `aivi_browser` tool at start and closes Chrome
+ *  at stop, so the host holds no browser field. */
+async function importBrowser(config: BrowserConfig): Promise<HostModule> {
   try {
-    return await import('@aivi/browser');
+    return (await import('@aivi/browser')).createBrowserModule(config);
   } catch (error) {
     if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND')
       throw new Error(

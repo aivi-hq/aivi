@@ -10,12 +10,14 @@ agents deny it so unattended sessions are not offered a browser that cannot
 connect, and the rule is one line to remove.
 
 `@aivi/browser` uses the official **Chrome DevTools MCP**, pinned to 1.9.0.
-There is no aivi Playwright dependency or replacement automation engine. One
-stdio MCP child belongs to the host; native OpenCode tools call it through aivi
-as `aivi_browser`. The tool is a descriptor the host contributes only while
-the browser service exists — a host without one serves no `aivi_browser` and
+There is no aivi Playwright dependency or replacement automation engine. The
+browser is a composed module like the channels, not a host resource: it owns
+one stdio MCP child, claims its `aivi_browser` descriptor at its own `tools`
+door at start, and the host serves that claim to the OpenCode plugin like any
+other tool — a host without the module composed serves no `aivi_browser` and
 no agent sees it. Chrome and the MCP child start lazily on the first browser
-operation.
+operation, so composing the module costs nothing until someone acts; stopping
+releases the tool (the plugin's next load will not see it) and closes the child.
 
 ## Which Chrome: three choices
 
@@ -34,13 +36,15 @@ process owns one data directory. aivi can work with either level:
 
 The browser is not part of the core install. `aivi install browser` puts
 `@aivi/browser` into `<home>/app` and writes the launch block; until a
-`browser` block exists in `config.json` there is no browser service and the
-plugin never sees an `aivi_browser` tool. With the block present, the first
-browser call launches Chrome — visible (not headless), with the data directory
-`<home>/state/chrome`. The window is amber and its profile is named "aivi", so
-it is never mistaken for your own Chrome; aivi seeds those two preferences
-before the first start and leaves any colour you pick later alone. `"browser":
-false` is an explicit off, and the tool is then absent rather than failing.
+`browser` block exists in `config.json` the browser module is not composed and
+the plugin never sees an `aivi_browser` tool. Once composed it appears as the
+`browser` module in `/v1/status`, and an install ends with "Browser is running."
+With the block present, the first browser call launches Chrome — visible (not
+headless), with the data directory `<home>/state/chrome`. The window is amber
+and its profile is named "aivi", so it is never mistaken for your own Chrome;
+aivi seeds those two preferences before the first start and leaves any colour
+you pick later alone. `"browser": false` is an explicit off, and the module is
+then not composed rather than failing.
 
 ### Attach to your own Chrome
 

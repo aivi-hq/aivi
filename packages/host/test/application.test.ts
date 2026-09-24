@@ -57,17 +57,7 @@ test('one host starts modules with shared services and stops them in reverse ord
     },
   }));
   const abort = new AbortController();
-  const resources = async (): Promise<HostResources> => ({
-    knowledge,
-    browser: {
-      async execute() {
-        return {};
-      },
-      async close() {
-        events.push('browser.stop');
-      },
-    },
-  });
+  const resources = async (): Promise<HostResources> => ({ knowledge });
   await runHost({
     loaded: loaded(),
     store,
@@ -86,7 +76,6 @@ test('one host starts modules with shared services and stops them in reverse ord
     'ready',
     'future-module.stop',
     'discord.stop',
-    'browser.stop',
     'knowledge.stop',
   ]);
   store.acquireDaemon('another');

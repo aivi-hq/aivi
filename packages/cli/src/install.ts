@@ -23,6 +23,7 @@ export const PLUGIN_ALIASES: Record<string, string> = {
 const MODULE_BY_SPEC: Record<string, string> = {
   '@aivi/channel-discord': 'discord',
   '@aivi/channel-slack': 'slack',
+  '@aivi/browser': 'browser',
 };
 
 export interface InstallOptions {

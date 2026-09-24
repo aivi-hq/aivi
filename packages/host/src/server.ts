@@ -1,17 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type {
-  BrowserService,
-  KnowledgeKind,
-  KnowledgeService,
-  LoadedConfig,
-  Logger,
-  ModuleHealth,
-  Person,
-  Status,
-} from '@aivi/core';
+import type { KnowledgeKind, KnowledgeService, LoadedConfig, Logger, ModuleHealth, Person, Status } from '@aivi/core';
 import {
-  browserEnvelopeSchema,
-  browserRequestSchema,
   getLogger,
   jobRequestSchema,
   knowledgeKindHelp,
@@ -106,7 +95,6 @@ export interface HostServerOptions {
   store: Store;
   loaded: LoadedConfig;
   knowledge?: KnowledgeService | undefined;
-  browser?: BrowserService | undefined;
   /** `POST /v1/jobs`; absent when the host runs without one (tests). */
   jobs?: JobHandler | undefined;
   /** `POST /v1/wake`: the CLI changed the queue in SQLite; dispatch now. */
@@ -128,7 +116,6 @@ export interface HostServerOptions {
   log?: Logger | undefined;
 }
 
-const MAX_BROWSER_BODY = 32 * 1024;
 const MAX_JOB_BODY = 64 * 1024;
 const MAX_PUBLIC_BODY = 1024 * 1024;
 
@@ -145,27 +132,6 @@ const selectionProperties = {
     type: 'array',
     items: { type: 'string', enum: knowledgeKindNames },
     description: `Restrict to kinds of material. ${knowledgeKindHelp}`,
-  },
-} as const;
-
-const browserInput = {
-  type: 'object',
-  required: ['action'],
-  additionalProperties: false,
-  properties: {
-    action: {
-      type: 'string',
-      enum: ['tabs', 'open', 'navigate', 'snapshot', 'click', 'fill', 'press', 'dialog', 'focus', 'close'],
-    },
-    tabId: {
-      type: 'string',
-      description: 'Tab owned by this session (from open/tabs). Required for every action except tabs/open.',
-    },
-    url: { type: 'string', description: 'HTTP(S) URL for open/navigate.' },
-    uid: { type: 'string', description: 'The `id` of a node in the latest snapshot, for click/fill.' },
-    value: { type: 'string', maxLength: 10000, description: 'Text for fill.' },
-    key: { type: 'string', description: 'Key name for press.' },
-    response: { type: 'string', enum: ['accept', 'dismiss'], description: 'Dialog response.' },
   },
 } as const;
 
@@ -227,7 +193,6 @@ export function createHostServer({
   store,
   loaded,
   knowledge,
-  browser,
   jobs,
   wake,
   health,
@@ -372,30 +337,6 @@ export function createHostServer({
           }
         },
       );
-    if (browser)
-      claim(
-        {
-          namespace: 'aivi',
-          name: 'browser',
-          description:
-            'Control this session’s tabs in aivi’s own Chrome (not the OpenCode desktop browser). Start with open or tabs; snapshot returns nodes whose `id` is the uid for click/fill. Refresh snapshot after navigation. The shared profile retains logins; use focus for manual login. Never put passwords or secrets in fill. No automatic retries after uncertain actions.',
-          input: browserInput,
-          timeoutMs: 300_000,
-        },
-        async call => {
-          const parsed = browserRequestSchema.safeParse(call.input);
-          if (!parsed.success) throw new ToolError(400, 'Invalid browser request');
-          try {
-            return await browser.execute(call.sessionId, parsed.data);
-          } catch (error) {
-            log.warn('browser.failed', { session: call.sessionId, action: parsed.data.action, error });
-            throw new ToolError(
-              409,
-              'Browser operation failed. Inspect the owned tabs before retrying; uncertain connections require a host restart.',
-            );
-          }
-        },
-      );
   }
   return createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
@@ -437,10 +378,6 @@ export function createHostServer({
       } else {
         handlePersonToken(url, request, response, send);
       }
-      return;
-    }
-    if (url.pathname === '/v1/browser') {
-      handleBrowser(request, response, send);
       return;
     }
     if (url.pathname === '/v1/tools') {
@@ -649,41 +586,6 @@ export function createHostServer({
           send(503, { error: 'Knowledge search is unavailable' });
         },
       );
-  }
-
-  function handleBrowser(request: IncomingMessage, response: ServerResponse, send: Send) {
-    if (request.method !== 'POST') {
-      send(405, { error: 'Use POST for browser operations' });
-      return;
-    }
-    if (!browser) {
-      send(503, { error: 'Browser is not configured' });
-      return;
-    }
-    void (async () => {
-      const body = await readJson(request, MAX_BROWSER_BODY);
-      if (typeof body === 'string') {
-        send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Browser request is too large' : body });
-        return;
-      }
-      const parsed = browserEnvelopeSchema.safeParse(body);
-      if (!parsed.success) {
-        send(400, { error: 'Invalid browser request' });
-        return;
-      }
-      try {
-        send(200, await browser.execute(parsed.data.sessionId, parsed.data.request));
-      } catch (error) {
-        log.warn('browser.failed', { session: parsed.data.sessionId, action: parsed.data.request.action, error });
-        send(409, {
-          error:
-            'Browser operation failed. Inspect the owned tabs before retrying; uncertain connections require a host restart.',
-        });
-      }
-    })().catch(error => {
-      log.warn('browser.interrupted', { error });
-      if (!response.headersSent) send(400, { error: 'Browser request interrupted' });
-    });
   }
 
   function handleTools(request: IncomingMessage, response: ServerResponse, send: Send) {

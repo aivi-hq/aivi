@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { BrowserService, LoadedConfig } from '@aivi/core';
+import type { LoadedConfig } from '@aivi/core';
 import { configSchema } from '@aivi/core';
 import { createHostClient } from '../src/client.ts';
 import { ConfigurationError } from '../src/modules.ts';
@@ -43,18 +43,11 @@ test('a module door bakes its own id in: it cannot claim or release under anothe
   assert.ok(registry.get('aivi_ping'), 'a module cannot release the host claim');
 });
 
-test('GET /v1/tools serves the host tools id-sorted, optional ones only when they exist', async t => {
+test('GET /v1/tools serves the host tools id-sorted, and a module claim lands beside them', async t => {
   const store = new Store(':memory:');
   const seen: { sessionId: string; action: string }[] = [];
-  const browser: BrowserService = {
-    async execute(sessionId, request) {
-      seen.push({ sessionId, action: request.action });
-      return { tabs: [] };
-    },
-    async close() {},
-  };
   const registry = new ToolRegistry();
-  const server = createHostServer({ store, loaded, tools: registry, browser });
+  const server = createHostServer({ store, loaded, tools: registry });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -64,39 +57,45 @@ test('GET /v1/tools serves the host tools id-sorted, optional ones only when the
   assert.ok(address && typeof address !== 'string');
   const client = createHostClient(`http://127.0.0.1:${address.port}`);
 
+  // The host's own always-present tools; no context or jobs without those options.
+  assert.deepEqual(
+    (await client.listTools()).map(tool => tool.id),
+    ['aivi_sources', 'aivi_status', 'knowledge_projects'],
+  );
+
+  // A module claims its tool at its own door — as the browser module claims
+  // `aivi_browser` — and it sorts into the same list keeping its 300 s budget.
+  registry
+    .forModule('browser')
+    .claim(
+      { namespace: 'aivi', name: 'browse', description: 'Drive Chrome.', input: {}, timeoutMs: 300_000 },
+      async call => {
+        seen.push({ sessionId: call.sessionId, action: String((call.input as { action?: string }).action) });
+        return { tabs: [] };
+      },
+    );
   const served = await client.listTools();
   assert.deepEqual(
     served.map(tool => tool.id),
-    ['aivi_browser', 'aivi_sources', 'aivi_status', 'knowledge_projects'],
-    'sorted by id; no context or jobs without those options',
+    ['aivi_browse', 'aivi_sources', 'aivi_status', 'knowledge_projects'],
+    'a module tool sorts in beside the host tools',
   );
-  assert.deepEqual(
-    served.find(tool => tool.id === 'aivi_browser'),
-    {
-      id: 'aivi_browser',
-      namespace: 'aivi',
-      name: 'browser',
-      description: served.find(tool => tool.id === 'aivi_browser')!.description,
-      input: served.find(tool => tool.id === 'aivi_browser')!.input,
-      timeoutMs: 300_000,
-    },
-    'the browser descriptor carries its own 300 s budget',
-  );
+  assert.equal(served.find(tool => tool.id === 'aivi_browse')!.timeoutMs, 300_000, 'its own budget survives');
 
-  // A module claim shows up in the same list, live: the plugin reads whatever the host offers now.
+  // A second module claim shows up live too: the plugin reads whatever is offered now.
   registry
     .forModule('dreaming')
     .claim({ namespace: 'knowledge', name: 'dream', description: 'Dream.', input: {} }, async () => 42);
   assert.deepEqual(
     (await client.listTools()).map(tool => tool.id),
-    ['aivi_browser', 'aivi_sources', 'aivi_status', 'knowledge_dream', 'knowledge_projects'],
+    ['aivi_browse', 'aivi_sources', 'aivi_status', 'knowledge_dream', 'knowledge_projects'],
   );
 
   const status = (await client.callTool('aivi_status', { sessionId: 'ses_one', input: {} })) as { sources: number };
   assert.equal(status.sources, 1);
 
-  // The envelope session is the owner: it reaches the service untouched by the input.
-  await client.callTool('aivi_browser', { sessionId: 'ses_owner', input: { action: 'tabs' } });
+  // The envelope session is the owner: it reaches the handler untouched by the input.
+  await client.callTool('aivi_browse', { sessionId: 'ses_owner', input: { action: 'tabs' } });
   assert.deepEqual(seen, [{ sessionId: 'ses_owner', action: 'tabs' }]);
 });
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
-import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
+import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { getLogger, systemJobs } from '@aivi/core';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
@@ -62,7 +62,6 @@ export interface HostServices {
   loaded: LoadedConfig;
   store: Store;
   knowledge: KnowledgeService;
-  browser?: BrowserService;
   /** Discovers the OpenCode service on every call. Call once per unit of work and hold the client for its duration. */
   opencode: () => Promise<OpenCodeClient>;
   /** The host's one OpenCode event stream, fanned out by session id; channel progress watches turns through it. */
@@ -86,7 +85,6 @@ export interface HostServices {
 }
 export interface HostResources {
   knowledge: KnowledgeService;
-  browser?: BrowserService;
 }
 export type { RunningModule } from './modules.ts';
 export type HostModule = ModuleContract<HostServices>;
@@ -122,7 +120,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   if (signal.aborted) stop();
 
   let knowledge: KnowledgeService | undefined;
-  let browser: BrowserService | undefined;
   let scheduler: Scheduler | undefined;
   let server: ReturnType<typeof createHostServer> | undefined;
   let supervisor: ModuleSupervisor<HostServices> | undefined;
@@ -161,7 +158,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       store,
       loaded,
       knowledge,
-      browser,
       routes,
       jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
@@ -189,7 +185,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       loaded,
       store,
       knowledge,
-      ...(browser ? { browser } : {}),
       opencode,
       events,
       signal: abort.signal,
@@ -225,7 +220,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     abort.signal.throwIfAborted();
     store.acquireDaemon(owner);
     acquired = true;
-    ({ knowledge, browser } = await options.resources());
+    ({ knowledge } = await options.resources());
     // A result for a session no module owns goes straight into that native session's inbox;
     // OpenCode orders it behind whatever the person is doing. Nobody waits for the answer here.
     const channels = new Channels(async (sessionId, text, context) => {
@@ -299,11 +294,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       await new Promise<void>(yes => http.close(() => yes()));
     }
     // Knowledge closes after modules and in-flight HTTP calls have drained.
-    try {
-      await browser?.close();
-    } catch (error) {
-      errors.push(error);
-    }
     try {
       await knowledge?.close();
     } catch (error) {

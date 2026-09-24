@@ -1,5 +1,4 @@
 import type {
-  BrowserResult,
   HostClient,
   JobResponse,
   KnowledgeSource,
@@ -51,16 +50,6 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
   const get = <T>(path: string) => request<T>(path, { timeoutMs: 10_000 });
 
   return {
-    browser(sessionId, body) {
-      // An accepted operation can wait behind other browser actions. A timeout is an
-      // uncertain outcome, never an invitation to retry a click automatically.
-      return request<BrowserResult>('/v1/browser', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, request: body }),
-        timeoutMs: 300_000,
-      });
-    },
     search(query) {
       const params = new URLSearchParams({ q: query.query });
       if (query.limit !== undefined) params.set('limit', String(query.limit));

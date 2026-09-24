@@ -204,7 +204,8 @@ the configuration switch are in
 
 ## Browser tool
 
-The host contributes the descriptor for `aivi_browser` (permission action
-`aivi_browser`) only while the browser service exists; a host without one
-serves no such tool and no agent sees it. Ownership comes from the native tool context, not tool arguments.
-Configure the host browser service before using it; see [browser setup](browser.md).
+The `browser` module claims the descriptor for `aivi_browser` (permission
+action `aivi_browser`) and the host serves that claim only while the module is
+composed; a host without it serves no such tool and no agent sees it.
+Ownership comes from the native tool context, not tool arguments. Install and
+configure it with `aivi install browser`; see [browser setup](browser.md).
