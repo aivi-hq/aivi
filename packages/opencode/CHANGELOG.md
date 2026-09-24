@@ -1,5 +1,23 @@
 # @aivi/opencode
 
+## 0.2.0
+
+### Minor Changes
+
+- [#22](https://github.com/aivi-hq/aivi/pull/22) [`b965a26`](https://github.com/aivi-hq/aivi/commit/b965a265a70b19557cb55c531a72885b114c4063) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The example home is replaced by `dev/`, a real development home produced by
+  `npm run aivi:cli setup` against the local build (`file:` specs install
+  workspace packages; `AIVI_HOME=dev` and the new `AIVI_CONFIG` — which moves
+  the client config file everywhere it is read, thin CLI, app identity, link,
+  plugin — keep it separate from any real install). Setup now writes the app
+  manifest it installs against, so a home inside another package can never
+  anchor npm at that ancestor. Only the dev README is tracked.
+
+### Patch Changes
+
+- Updated dependencies [[`08a8079`](https://github.com/aivi-hq/aivi/commit/08a8079fe0755789866adf3cdb158884cc61e757), [`214869d`](https://github.com/aivi-hq/aivi/commit/214869ddfa23280f5649793ccb9bf8c0fbe97fc4)]:
+  - @aivi/host@0.6.0
+  - @aivi/core@0.6.0
+
 ## 0.1.6
 
 ### Patch Changes

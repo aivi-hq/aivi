@@ -1,6 +1,6 @@
 {
   "name": "@aivi/app",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "bin": {
     "aivi": "dist/cli.js"
@@ -24,10 +24,10 @@
     "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/browser": "^0.1.4",
-    "@aivi/core": "^0.5.0",
-    "@aivi/host": "^0.5.0",
-    "@aivi/knowledge": "^0.1.4",
+    "@aivi/browser": "^0.1.5",
+    "@aivi/core": "^0.6.0",
+    "@aivi/host": "^0.6.0",
+    "@aivi/knowledge": "^0.1.5",
     "@clack/prompts": "1.8.1",
     "commander": "15.0.0",
     "zod": "4.1.13"

@@ -1,5 +1,25 @@
 # @aivi/cli
 
+## 0.7.0
+
+### Minor Changes
+
+- [#22](https://github.com/aivi-hq/aivi/pull/22) [`b965a26`](https://github.com/aivi-hq/aivi/commit/b965a265a70b19557cb55c531a72885b114c4063) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The example home is replaced by `dev/`, a real development home produced by
+  `npm run aivi:cli setup` against the local build (`file:` specs install
+  workspace packages; `AIVI_HOME=dev` and the new `AIVI_CONFIG` — which moves
+  the client config file everywhere it is read, thin CLI, app identity, link,
+  plugin — keep it separate from any real install). Setup now writes the app
+  manifest it installs against, so a home inside another package can never
+  anchor npm at that ancestor. Only the dev README is tracked.
+
+- [#22](https://github.com/aivi-hq/aivi/pull/22) [`08a8079`](https://github.com/aivi-hq/aivi/commit/08a8079fe0755789866adf3cdb158884cc61e757) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Link codes are minted for a named channel the person is not linked in yet:
+  `GET /v1/links` lists the running channels with the caller's binding state,
+  `POST /v1/links` requires a `channel` and refuses (404, 409) instead of
+  minting a code nothing can read or one a person cannot spend — one binding
+  per channel per person. `aivi link` picks among the eligible channels
+  (prompting when several) and says so without minting when nothing is
+  eligible; a terminal gets one sentence, a pipe the JSON record.
+
 ## 0.6.1
 
 ### Patch Changes
