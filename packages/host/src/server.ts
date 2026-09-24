@@ -192,27 +192,61 @@ export function createHostServer({
       return;
     }
     if (url.pathname === '/v1/links') {
-      if (request.method !== 'POST') {
-        send(405, { error: 'Use POST to mint a link code' });
-        return;
-      }
       const person = bearerPerson(store, request.headers.authorization);
       if (!person) {
         send(401, { error: 'Linking names a person; send a bearer token that resolves to one' });
         return;
       }
-      const minted = store.mintLinkCode(person.id);
-      const channels = linkable?.() ?? [];
-      // `next` is the one instruction that follows: where this code is spent.
-      send(200, {
-        code: minted.code,
-        expiresAt: new Date(minted.expiresAt).toISOString(),
-        person: person.name,
-        channels,
-        next:
-          channels.length === 1
-            ? `Paste \`/link ${minted.code}\` in the ${channels[0]!.id} channel the bot reads.`
-            : 'Paste `/link <code>` where the bot reads it, or name the channel: aivi link discord.',
+      // GET lists the running channels and whether this person already holds a
+      // binding in each; the CLI shows what is eligible before asking to mint.
+      if (request.method === 'GET') {
+        const channels = linkable?.() ?? [];
+        send(200, {
+          channels: channels.map(c => ({
+            channel: c.id,
+            ...(c.hint ? { hint: c.hint } : {}),
+            linked: store.personLinkedIn(c.id, person.id),
+          })),
+        });
+        return;
+      }
+      if (request.method !== 'POST') {
+        send(405, { error: 'Use GET to list channels or POST to mint a link code' });
+        return;
+      }
+      // The mint names its channel: no code exists that no running module could
+      // read, and none is minted for a channel the person is linked in already.
+      void (async () => {
+        const body = await readJson(request, MAX_JOB_BODY);
+        if (typeof body === 'string') {
+          send(body === 'too large' ? 413 : 415, { error: body === 'too large' ? 'Request is too large' : body });
+          return;
+        }
+        const channelId =
+          typeof (body as { channel?: unknown } | null)?.channel === 'string'
+            ? (body as { channel: string }).channel
+            : '';
+        const running = linkable?.().find(c => c.id === channelId);
+        if (!running) {
+          send(404, { error: `No channel module "${channelId || '<none>'}" is running` });
+          return;
+        }
+        if (store.personLinkedIn(running.id, person.id)) {
+          send(409, { error: `Already linked in the ${running.id} channel.` });
+          return;
+        }
+        const minted = store.mintLinkCode(person.id);
+        // `next` is the one instruction that follows: where this code is spent.
+        send(200, {
+          code: minted.code,
+          expiresAt: new Date(minted.expiresAt).toISOString(),
+          person: person.name,
+          next: running.hint
+            ? running.hint.replace(/<code>/, minted.code)
+            : `Paste \`/link ${minted.code}\` in the ${running.id} channel the bot reads.`,
+        });
+      })().catch(() => {
+        if (!response.headersSent) send(400, { error: 'Link request interrupted' });
       });
       return;
     }

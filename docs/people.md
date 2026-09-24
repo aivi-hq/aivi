@@ -91,10 +91,16 @@ until the api-only session):
 
 ## Link codes (Discord, Slack)
 
-`aivi link [PLATFORM]` mints a one-time code (5 digits, hashed, 15 minutes,
-one active per person — re-minting replaces it) and prints where to spend it.
-On the channel, `/link <code>` consumes it: the identity comes from the
-platform, the code is the evidence, and the host binds
+`aivi link [PLATFORM]` asks the host which channels are running and whether
+the person already holds a binding in each (`GET /v1/links`), then mints a
+one-time code (5 digits, hashed, 15 minutes, one active per person —
+re-minting replaces it) **for a named channel**: the host refuses a mint with
+no running module, for a channel it does not know, or when that person is
+already linked there — one binding per channel per person, so a repeated
+`aivi link discord` after a successful link mint nothing. The host decides;
+the CLI picks among the eligible channels (prompting when several) and prints
+where to spend the code. On the channel, `/link <code>` consumes it: the
+identity comes from the platform, the code is the evidence, and the host binds
 `{channel, user id} → person` and confirms. A refusal — unknown, expired, or
 an account that is already bound — never consumes the code, and re-binding is
 refused outright: there is no unlink yet (historic sessions keep their

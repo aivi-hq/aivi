@@ -265,28 +265,56 @@ test('a link code is minted over HTTP with the bearer and names where to spend i
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
+  const auth = { authorization: `Bearer ${secret}` };
   assert.equal((await fetch(`${base}/v1/links`, { method: 'POST' })).status, 401, 'anonymous has no person to bind');
-  assert.equal(
-    (await fetch(`${base}/v1/links`, { method: 'GET', headers: { authorization: `Bearer ${secret}` } })).status,
-    405,
-  );
-  const minted = (await fetch(`${base}/v1/links`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${secret}` },
-  })) as unknown as {
-    status: number;
-    json: () => Promise<{ code: string; expiresAt: string; person: string; channels: { id: string }[]; next: string }>;
+  // GET lists the running channels with this person's binding state.
+  const listed = (await (await fetch(`${base}/v1/links`, { headers: auth })).json()) as {
+    channels: { channel: string; hint?: string; linked: boolean }[];
   };
-  const body = await minted.json();
+  assert.deepEqual(listed.channels, [
+    { channel: 'discord', hint: 'In Discord, DM the bot: /link <code>.', linked: false },
+  ]);
+  // The mint names its channel: a bodyless POST is malformed, an unknown
+  // channel is refused with nothing minted.
+  assert.equal(
+    (await fetch(`${base}/v1/links`, { method: 'POST', headers: auth })).status,
+    415,
+    'the mint request is malformed without a JSON channel',
+  );
+  const nowhere = await fetch(`${base}/v1/links`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ channel: 'teams' }),
+  });
+  assert.equal(nowhere.status, 404);
+  // A real mint: the instruction carries the code, the channel is named back.
+  const minted = await fetch(`${base}/v1/links`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ channel: 'discord' }),
+  });
+  const body = (await minted.json()) as { code: string; expiresAt: string; person: string; next: string };
   assert.equal(minted.status, 200);
   assert.match(body.code, /^\d{5}$/);
   assert.equal(body.person, 'Ada');
-  assert.deepEqual(body.channels, [{ id: 'discord', hint: 'In Discord, DM the bot: /link <code>.' }]);
   assert.match(body.next, new RegExp(`/link ${body.code}`), 'the one instruction names the code');
   // The code the HTTP route minted redeems in the store: one hash, no plaintext.
   const outcome = store.redeemLinkCode(body.code, 'discord', 'u1');
   assert.equal(outcome.reason, 'bound');
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM link_codes').get()!.n, 0, 'one-time use');
+  // The binding exists, so GET says linked — and a second mint is refused
+  // without consuming anything: one binding per channel per person.
+  const relisted = (await (await fetch(`${base}/v1/links`, { headers: auth })).json()) as {
+    channels: { channel: string; linked: boolean }[];
+  };
+  assert.equal(relisted.channels[0]!.linked, true);
+  const again = await fetch(`${base}/v1/links`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ channel: 'discord' }),
+  });
+  assert.equal(again.status, 409);
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM link_codes').get()!.n, 0, 'the refusal minted nothing');
 });
 
 test('jobs API validates the body, maps refusals to their status, and status lists upcoming and recent work', async t => {
