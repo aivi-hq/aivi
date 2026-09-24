@@ -57,23 +57,26 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     throw new Error(
       'Slack is already configured (the modules.slack block in config.json). Edit that block; install configures a module that is not configured yet.',
     );
-  const prefix = (
-    await ctx.ask.text({
-      message: 'Slash command prefix — the commands become /<prefix>-new, /<prefix>-status, …',
-      placeholder: 'aivi',
-      validate: value => (/^[a-z][a-z0-9_-]*$/.test(value.trim()) ? undefined : 'Lowercase letters, digits, _ or -'),
-    })
-  ).trim();
+  const prefix =
+    (
+      await ctx.ask.text({
+        message: 'Slash command prefix — the commands become /<prefix>-new, /<prefix>-status, …',
+        placeholder: 'aivi',
+        validate: value =>
+          !value.trim() || /^[a-z][a-z0-9_-]*$/.test(value.trim()) ? undefined : 'Lowercase letters, digits, _ or -',
+      })
+    ).trim() || 'aivi';
+  // The manifest goes to stdout as raw JSON text — a person pastes it into
+  // Slack's app setup, so it must not sit inside a bordered note.
+  const manifest = slackManifest(prefix, { name: ctx.identityName });
+  ctx.print(manifest, [{ type: 'json', value: manifest }]);
   ctx.note(
     'Create the Slack app',
     [
-      '1. api.slack.com/apps?new_app=1 → From an app manifest → pick the workspace → paste the manifest below → Create.',
+      '1. api.slack.com/apps?new_app=1 → From an app manifest → pick the workspace → paste the manifest printed above → Create.',
       '2. Install the app to the workspace → copy the Bot User OAuth Token (xoxb-…); you paste it here when asked.',
       '3. Basic Information → App-Level Tokens → Generate Token and Scopes: name it socket, scope connections:write → copy the xapp-… token.',
       `4. In Slack, invite @${ctx.identityName} to every channel it should listen in.`,
-      '',
-      'App manifest — paste this:',
-      JSON.stringify(slackManifest(prefix, { name: ctx.identityName }), null, 2),
     ].join('\n'),
   );
 

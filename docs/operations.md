@@ -205,14 +205,20 @@ a plugin can never shadow `jobs` or `serve`.
 Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
 `runs …` on executions.
 
-The help is grouped and themed (the wordmark and the brand colors of the
-logs), and every command answers `aivi <command> --help` for itself, so a
-flag's meaning is said once, where it works. Flags belong to their command: a
-flag a command does not know is an error, not a silently ignored word. An
-unknown command is answered with the nearest real one ("did you mean
-`jobs`?"). Help goes to stdout, errors to stderr, and both lose their color
-on a pipe or under `NO_COLOR`; command output on stdout stays plain JSON for
-whoever pipes it.
+The help is grouped (the wordmark opens the root help), and every command
+answers `aivi <command> --help` for itself, so a flag's meaning is said once,
+where it works. Flags belong to their command: a flag a command does not know
+is an error, not a silently ignored word. An unknown command is answered with
+the nearest real one ("did you mean `jobs`?"). Help goes to stdout and errors
+to stderr, and both lose their color on a pipe or under `NO_COLOR`.
+
+Command output on stdout has two forms, decided per call by core's `print`:
+whenever stdout is not a terminal it is plain JSON — every field, unchanged,
+the same bytes a script or `| jq` parses. On a terminal a command renders for
+reading: without a hand-written shape the value is shown as `util.inspect`
+("pretty"), and a command may pass blocks (a table, headings, raw `json` text
+for copy-paste) instead. `aivi slack manifest` stays raw JSON on a terminal
+too, because its output is pasted into Slack.
 
 `jobs add FILE` adds a job from a task file (a bare task, or
 `{ task, report?, resource? }`): `--cron EXPR --timezone TZ` makes it

@@ -5,7 +5,7 @@ OpenCode has its own browser tools (`browser.*`), which drive the browser the
 cannot do: unattended sessions (Discord, scheduled jobs, dreaming) on a machine
 with no desktop app attached, and one persistent Chrome profile whose logins
 and tabs are shared, with each tab owned by one session. A person working in
-the desktop app is usually better served by OpenCode's browser; the example
+the desktop app is usually better served by OpenCode's browser; the seeded
 agents deny it so unattended sessions are not offered a browser that cannot
 connect, and the rule is one line to remove.
 

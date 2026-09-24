@@ -93,8 +93,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
   local service's lifecycle by default (`opencode.lifecycle:
   'own'`): one restart at `aivi serve` startup so the current plugin build is
   in, a start whenever it is missing, never a stop later.
-  `ensure` and `discover` are the smaller degrees; the example home uses
-  `discover` so tests never touch a developer's OpenCode.
+  `ensure` and `discover` are the smaller degrees; the default for a real
+  installation is `own`, and a home used by tests sets `discover` so they
+  never touch a developer's OpenCode.
 - **No polling, no periodic timers.** The loop sleeps until `Store.nextDue()`
   and is woken by whatever changed the queue; channel engines tick on the same
   wake; turns take permission prompts (`permission.asked`) and channels take
@@ -108,11 +109,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
   every turn); aivi adds only what the file cannot
   know (`external_directory` for configured sources; dreaming's two `edit`
   targets) and never a deny. Restrict an agent in its own file. The home is
-  the OpenCode location (`<home>/.opencode/agents/`), so example sources need
-  no external rules at all ([opencode.md](docs/opencode.md)).
+  the OpenCode location (`<home>/.opencode/agents/`), so sources inside the
+  home need no external rules at all ([opencode.md](docs/opencode.md)).
 - **Two browsers, on purpose.** OpenCode's `browser.*` drives the desktop
   app's browser; aivi's `aivi_browser` drives one persistent Chrome for
-  unattended sessions and shared logins. The example agents deny the former
+  unattended sessions and shared logins. The seeded agents deny the former
   so Discord and jobs are never offered a browser that cannot connect.
 - **A second chat platform is glue.** The host owns the inbox, the
   claim-with-lease transaction, conversation↔session bindings with adoption and
@@ -273,9 +274,10 @@ stripping.
 `AIVI_HOME`): `config.json` (the live config, never version-controlled), `.env`,
 `projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
 `state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
-`example/` is a home with everything enabled (`npm run aivi` points there);
-its `config.json` is the developer's own and git-ignored, and the tests load the
-tracked template `example/config.example.json`.
+`dev/` is a real development home, produced by `npm run aivi:cli setup` against
+the local build (only its README is tracked; everything else, including the
+app manifest setup writes, is generated or git-ignored). `npm run aivi`
+runs the app CLI against it.
 
 ## Open threads
 

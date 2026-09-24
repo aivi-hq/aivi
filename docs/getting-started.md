@@ -1,7 +1,7 @@
 # Getting started
 
-From a fresh clone to a librarian answering questions, in this repository's
-example home.
+From a fresh clone to a librarian answering questions, in a development home
+you set up yourself.
 
 ## Run it
 
@@ -10,22 +10,36 @@ Use Node 26 and npm. From the repository root:
 ```sh
 npm ci
 npm run check
-cp example/config.example.json example/config.json
-npm run aivi -- config check
+npm run aivi:cli -- setup --use this-machine \
+  --app-spec "file:../../packages/app" \
+  --plugin "file:../../packages/channel-discord" \
+  --plugin "file:../../packages/channel-slack" \
+  --plugin "file:../../packages/linear"
 ```
 
 Packages compile to `dist/` with TypeScript 7 (`npm run build`, incremental);
-`npm run aivi` builds first and runs the compiled CLI — the same artifact npm
-publishes, so local and installed behavior are identical. `npm run typecheck`
-(`tsc --noEmit`) checks the sources against the built declarations.
+`npm run aivi` and `npm run aivi:cli` build first and run the compiled
+artifacts — the same files npm publishes, so local and installed behavior are
+identical. `npm run typecheck` (`tsc --noEmit`) checks the sources against the
+built declarations.
 
-aivi reads one **home** directory: `config.json`, `.env`, `projects/`, `memory/`
-and `state/` together. Installed copies use `~/.aivi`; in this repo `npm run
-aivi` points `AIVI_HOME` at `example/`, a complete home with everything
-enabled. The live `example/config.json` is git-ignored — it is the config you
-edit — and `example/config.example.json` is the tracked template the checks
-read. Its [README](../example/README.md) lists what is in there, including
-how to provide or disable Discord and Slack.
+Setup is the real thin CLI pointed at `dev/`: `AIVI_HOME=dev` makes the home,
+`AIVI_CONFIG=dev/.config/aivi.json` keeps the client record (where the host
+answers, which person signs in) inside the dev home, and the `file:` specs
+install your workspace packages instead of the registry — same code path a
+real install runs, your local `dist/` on the end. Everything under `dev/` is
+generated or yours; git tracks only the README. Setup writes the app manifest
+it installs against, seeds the OpenCode shape (`opencode.jsonc`,
+`.opencode/agents/`) and pins `@aivi/opencode` from npm; to run OpenCode
+against your local plugin build instead, replace that spec with
+`../packages/opencode/dist`.
+
+aivi reads one **home** directory: `config.json`, `.env`, `projects/`,
+`memory/` and `state/` together. Installed copies use `~/.aivi`; in this repo
+`npm run aivi` points `AIVI_HOME` at `dev/`. The live `dev/config.json` is
+yours and aivi's to edit, and stays out of version control. Start from `{ version: 1 }`
+and add what you need, or configure a channel with
+`npm run aivi:cli -- install discord` (or `install slack`).
 
 Start the host. No token is needed: commands are open, and a bearer only
 identifies the caller (see [secrets](configuration.md#secrets)):
@@ -34,19 +48,14 @@ identifies the caller (see [secrets](configuration.md#secrets)):
 npm run aivi -- serve
 ```
 
-The example indexes bundled documents and runs scheduled maintenance. It needs
-no inference model. In another terminal:
+In another terminal:
 
 ```sh
-npm run aivi -- knowledge search "decisions"
-npm run aivi -- knowledge search "decisions" --project demo --no-core
-npm run aivi -- knowledge search "agreements" --core-only
-npm run aivi -- projects list
+npm run aivi -- status
 npm run aivi -- jobs list
 npm run aivi -- runs list
+npm run aivi:cli -- link discord   # mint a link code for your Discord account
 ```
-
-The CLI sends searches to the running host; it does not open another index.
 
 ## The librarian in OpenCode
 
@@ -56,18 +65,17 @@ The CLI sends searches to the running host; it does not open another index.
    or the host client: the long-running service keeps `@aivi/host/client` in
    its module cache, so a plugin that registers a new tool can still call a
    client without that method ("client.jobs is not a function", seen
-   2026-09-15). The example home uses `discover`, so there `opencode service
-   restart` stays manual.
-2. Open `example/` in OpenCode v2. Its `opencode.jsonc` loads the local plugin
-   and selects the `librarian` agent from `.opencode/agents/`.
-3. Ask it to list the projects and read the company handbook.
+   2026-09-15).
+2. Open `dev/` in OpenCode v2. Its `opencode.jsonc` loads the aivi plugin
+   and `.opencode/agents/` carries the `librarian` and `dreamer` agents
+   setup seeded there.
+3. Ask it to list the projects and read a configured document.
 
-The example agent denies shell, edits, and subagent launches; everything else
-is OpenCode's default. The home is the OpenCode location, so the example's
-knowledge, memory and project directories are inside it and need no
-`external_directory` rules. Sources elsewhere get those rules from aivi per
-session ([opencode](opencode.md)). With a running service,
-`npm run live:opencode -- --plugin "$PWD/example"` verifies the real boundary.
+The home is the OpenCode location, so knowledge, memory and project
+directories inside it need no `external_directory` rules. Sources elsewhere
+get those rules from aivi per session ([opencode](opencode.md)). With a
+running service, `npm run live:opencode -- --plugin "$PWD/dev"` verifies the
+real boundary (after the plugin spec points at your local build).
 
 ## A project
 
@@ -75,23 +83,24 @@ session ([opencode](opencode.md)). With a running service,
 npm run aivi -- projects add https://github.com/acme/website.git
 ```
 
-That clones into `example/projects/website/source`; restart `serve` and its `docs/`
+That clones into `dev/projects/website/source`; restart `serve` and its `docs/`
 is searchable with `--project website`. What a project is and how it is
 described: [projects](projects.md).
 
 ## A chat channel
 
-The short way: `npm run aivi -- install discord` (or `install slack`). The
+The short way: `npm run aivi:cli -- install discord` (or `install slack`). The
 plugin prints how to create the platform app, asks for the tokens, verifies
-each, writes `config.json` and `.env` itself, and aivi comes back with the
-module running ([operations](operations.md#plugins-aivi-install)).
+each, writes `dev/config.json` and `dev/.env` itself, and aivi comes back with
+the module running ([operations](operations.md#plugins-aivi-install)).
 
-By hand: fill in the IDs in the `modules.discord` block of
-`example/config.json`, put `DISCORD_BOT_TOKEN` in `example/.env`, and run
-`serve` as above (slash commands are registered at start)
+By hand: put your application and channel IDs in the `modules.discord` block
+of `dev/config.json`, put `DISCORD_BOT_TOKEN` in `dev/.env`, and run `serve`
+as above (slash commands are registered at start)
 ([Discord setup](discord.md#setup)). For Slack, create the app from the
-manifest in [Slack setup](slack.md#setup), fill in the `modules.slack` block,
-and put `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in `example/.env`.
+manifest in [Slack setup](slack.md#setup) (`npm run aivi -- slack manifest`),
+fill in the `modules.slack` block, and put `SLACK_BOT_TOKEN` and
+`SLACK_APP_TOKEN` in `dev/.env`.
 
 ## Then
 

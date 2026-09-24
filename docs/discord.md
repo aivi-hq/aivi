@@ -44,7 +44,7 @@ the host's. This page has what is Discord's.
   Discord runs it exactly as defined; aivi only adds `external_directory`
   allows for the configured knowledge sources, which the agent file cannot
   know. Want no shell, no edits, no browser in Discord? Deny them in the agent
-  file (the example librarian denies edit, shell and subagents). Permission
+  file (the seeded librarian denies edit, shell and subagents). Permission
   prompts are auto-rejected because nobody is at the server to approve them,
   so anything OpenCode would *ask* about is refused.
 - `/new` starts fresh on the next message, preserving old native sessions. It
@@ -114,9 +114,10 @@ Give it access to the selected channels and permission to send messages, add
 reactions, create public threads, and send messages in threads. Private threads also require bot
 membership/access.
 
-The example template enables Discord with placeholder ids; copy
-`example/config.example.json` to `example/config.json` and edit the ids there.
-A `modules.discord` block is the whole module setup, and its presence enables
+The short way is `aivi install discord`, which runs the package's own setup
+and writes the block for you. By hand, enable Discord with a
+`modules.discord` block in `<home>/config.json`, filled
+with your ids. The block is the whole module setup, and its presence enables
 the module (`false` is an explicit off):
 
 ```json
@@ -179,7 +180,7 @@ remains its native execution service.
 
 Channel entries default to `trigger: "mention-to-start"`, which needs
 `messageContent: true` **and** the Message Content intent enabled in the
-Discord developer portal (the example config has it on). Set
+Discord developer portal. Set
 `trigger: "mention"` on a channel to run without that intent; DMs and bot
 mentions are delivered regardless. The module requests no member or presence
 intents. Discord documents the
@@ -226,7 +227,7 @@ driver; only blocked work needs an operator. Use trusted native plugins in the
 librarian location: plugins remain executable OpenCode extensions.
 
 Tests in this package cover Discord routing, the slash command definitions
-against the shared table, and the example config; the shared
+against the shared table, and the seeded agent files; the shared
 inbox, engine and turn runner are tested in the host with the real OpenCode
 client against a mock server. Live status is in the [README](../README.md#status).
 

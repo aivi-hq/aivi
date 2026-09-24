@@ -10,9 +10,11 @@ node_modules/
 # The live aivi config is edited by aivi and its operator; only templates are tracked.
 aivi.json
 
-# The live home's projects are its own checkouts: never repo content, never linted.
-example/projects/
-example/state/
+# The dev home is a real home, produced by `npm run aivi:cli setup`: config.json,
+# .env, app/ (with the manifest setup writes and npm fills), state/ and the
+# client config are all generated or local — only the README is tracked.
+dev/*
+!dev/README.md
 
 # Build output: compiled packages (every exports map points at dist/) and
 # their build info.

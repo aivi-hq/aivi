@@ -26,6 +26,7 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
     identityName: 'Clawd',
     config: { version: 1, modules: {} },
     note: (title, lines) => notes.push(`${title}: ${lines}`),
+    print: () => {},
     log: message => logs.push(message),
     ask: {
       async text({ validate }) {

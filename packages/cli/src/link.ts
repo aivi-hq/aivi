@@ -1,27 +1,32 @@
 /** `aivi link` — mint a one-time code that binds a channel account to the
  *  signed-in person. Pure HTTP: linking runs on the person's machine, which
  *  may have no installed server. The code is spent with `/link` on the
- *  channel; the reply there comes from the host, never from an agent. */
+ *  channel; the reply there comes from the host, never from an agent.
+ *  The host decides what may be minted — a running channel, one the person
+ *  is not linked in yet — and this command only picks among what the host
+ *  reports and renders the answer. */
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as p from '@clack/prompts';
 
 export interface LinkChannel {
-  id: string;
+  channel: string;
   hint?: string;
+  /** This person already holds a binding in the channel. */
+  linked: boolean;
 }
 
-export interface LinkResult {
+export interface LinkMint {
   code: string;
   expiresAt: string;
   person: string;
-  channels: LinkChannel[];
   next: string;
 }
 
 export interface LinkIo {
-  mint(url: string, token: string): Promise<LinkResult>;
+  channels(url: string, token: string): Promise<LinkChannel[]>;
+  mint(url: string, token: string, channel: string): Promise<LinkMint>;
   askPlatform(channels: LinkChannel[]): Promise<string>;
   log(message: string): void;
 }
@@ -36,47 +41,84 @@ export async function link(args: string[], io: LinkIo = defaultIo): Promise<void
   const config = loadClientConfig();
   if (!config?.url || !config.person?.token)
     throw new Error('This machine has not signed in. Run `aivi setup` first; linking names a person.');
-  const result = await io.mint(config.url, config.person.token);
+  const connection = { url: config.url, token: config.person.token };
+  const channels = await io.channels(connection.url, connection.token);
 
-  let channel = platform?.toLowerCase();
-  if (channel !== undefined) {
-    const known = result.channels.find(c => c.id === channel);
+  if (platform !== undefined) {
+    const requested = platform.toLowerCase();
+    const known = channels.find(c => c.channel === requested);
     if (!known)
       throw new Error(
-        `No channel module "${channel}" is running. Available: ${result.channels.map(c => c.id).join(', ') || 'none'}.`,
+        `No channel module "${requested}" is running. Available: ${channels.map(c => c.channel).join(', ') || 'none'}.`,
       );
-  } else if (result.channels.length > 1) channel = await io.askPlatform(result.channels);
-  else channel = result.channels[0]?.id;
+    if (known.linked) {
+      said(io, `Already linked in the ${known.channel} channel.`, { channel: known.channel, linked: true });
+      return;
+    }
+    await mintFor(io, connection, known.channel);
+    return;
+  }
 
-  const hint = result.channels.find(c => c.id === channel)?.hint;
-  // `next` is the one instruction: exactly where and how the code is spent.
-  const next = hint
-    ? `${hint.replace(/<code>/, result.code)} (${result.expiresAt.slice(0, 16).replace('T', ' ')} UTC)`
-    : result.next;
-  io.log(
-    JSON.stringify(
-      { code: result.code, expiresAt: result.expiresAt, person: result.person, ...(channel ? { channel } : {}), next },
-      null,
-      2,
-    ),
-  );
+  if (channels.length === 0) {
+    said(io, 'No channel module is running yet. Start aivi, then run aivi link again.', { channels: [] });
+    return;
+  }
+  const eligible = channels.filter(c => !c.linked);
+  if (eligible.length === 0) {
+    said(io, `Already linked everywhere aivi runs: ${channels.map(c => c.channel).join(', ')}.`, { channels });
+    return;
+  }
+  const channel = eligible.length === 1 ? eligible[0]!.channel : await io.askPlatform(eligible);
+  await mintFor(io, connection, channel);
 }
 
-async function mint(url: string, token: string): Promise<LinkResult> {
+/** One sentence on a terminal, the same fact as JSON in a pipe. */
+function said(io: LinkIo, sentence: string, record: unknown): void {
+  io.log(process.stdout.isTTY ? sentence : JSON.stringify(record, null, 2));
+}
+
+async function mintFor(io: LinkIo, connection: { url: string; token: string }, channel: string): Promise<void> {
+  const result = await io.mint(connection.url, connection.token, channel);
+  if (process.stdout.isTTY) {
+    // The thin CLI ships without @aivi/core, so the terminal gets its own one
+    // line: the host's instruction carries the code, the expiry is the
+    // reader's clock. A pipe keeps the JSON record.
+    const expires = new Date(result.expiresAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    io.log(`${result.next}  —  expires ${expires}`);
+    return;
+  }
+  io.log(JSON.stringify({ ...result, channel }, null, 2));
+}
+
+async function channels(url: string, token: string): Promise<LinkChannel[]> {
   const response = await fetch(`${url}/v1/links`, {
-    method: 'POST',
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(5000),
   });
-  if (response.status === 401)
-    throw new Error('That token does not name a person. Copy it again from `aivi people token` (it is shown once).');
+  if (!response.ok) throw new Error(`Listing the channels aivi runs failed: HTTP ${response.status}.`);
+  const body = (await response.json()) as { channels?: unknown };
+  return Array.isArray(body.channels) ? (body.channels as LinkChannel[]) : [];
+}
+
+async function mint(url: string, token: string, channel: string): Promise<LinkMint> {
+  const response = await fetch(`${url}/v1/links`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ channel }),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (response.status === 409) throw new Error(`Already linked in the ${channel} channel.`);
+  if (response.status === 404) throw new Error(`No channel module "${channel}" is running.`);
   if (!response.ok) throw new Error(`Minting a link code failed: HTTP ${response.status}.`);
-  return (await response.json()) as LinkResult;
+  return (await response.json()) as LinkMint;
 }
 
 /** The client config `aivi setup` writes; read as a file, no host imports. */
 function loadClientConfig(): { url?: string; person?: { token?: string } } | undefined {
-  const path = resolve(process.env.XDG_CONFIG_HOME ?? resolve(process.env.HOME ?? '', '.config'), 'aivi.json');
+  // AIVI_CONFIG moves the whole record (a development home signs in its own copy).
+  const path = process.env.AIVI_CONFIG
+    ? resolve(process.env.AIVI_CONFIG)
+    : resolve(process.env.XDG_CONFIG_HOME ?? resolve(process.env.HOME ?? '', '.config'), 'aivi.json');
   if (!existsSync(path)) return undefined;
   try {
     return JSON.parse(readFileSync(path, 'utf8')) as { url?: string; person?: { token?: string } };
@@ -88,13 +130,13 @@ function loadClientConfig(): { url?: string; person?: { token?: string } } | und
 function askPlatform(channels: LinkChannel[]): Promise<string> {
   if (!process.stdin.isTTY)
     return Promise.reject(
-      new Error(`Several channels are running; name one: aivi link ${channels.map(c => c.id).join('|')}`),
+      new Error(`Several channels are eligible; name one: aivi link ${channels.map(c => c.channel).join('|')}`),
     );
   return (async () => {
     const picked = await p.select({
       message: 'Where will you use the code?',
       options: channels.map(c => ({
-        value: c.id,
+        value: c.channel,
         ...(c.hint ? { hint: c.hint } : {}),
       })),
     });
@@ -104,6 +146,7 @@ function askPlatform(channels: LinkChannel[]): Promise<string> {
 }
 
 export const defaultIo: LinkIo = {
+  channels,
   mint,
   askPlatform,
   log: message => console.log(message),

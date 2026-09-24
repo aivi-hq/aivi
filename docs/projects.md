@@ -1,7 +1,7 @@
 # Projects
 
 aivi is one digital team. The **org** has its knowledge (handbook, decisions,
-memory) and a generalist agent, the librarian in the example home, that knows
+memory) and a generalist agent, the librarian, that knows
 the org and knows *about* every project. A **project** is a repository the team
 works on. Its knowledge lives in the repository (`docs/`), is indexed so the
 librarian can search it, and what dreaming learns about a project is kept as

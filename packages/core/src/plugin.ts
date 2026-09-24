@@ -6,6 +6,8 @@
  * instructions and is testable without a terminal or a platform account.
  */
 
+import type { OutputBlock } from './output.ts';
+
 /** A prompt the person cancelled; the runner says it stopped and writes nothing further. */
 export class PluginSetupCancelled extends Error {}
 
@@ -19,6 +21,9 @@ export interface PluginSetupContext {
   config: Record<string, unknown>;
   /** Print the instructions the plugin owns: how to create the platform app, what to copy where. */
   note(title: string, lines: string): void;
+  /** The command output record on stdout: raw JSON text on the terminal when the
+   *  value is for copying (core's `print`), so paste-able output stays paste-able. */
+  print(value: unknown, output?: OutputBlock[] | string): void;
   log(message: string): void;
   ask: {
     /** One line of text; `secret` asks it hidden. Throws PluginSetupCancelled on cancel. */

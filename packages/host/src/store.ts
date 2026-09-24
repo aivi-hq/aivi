@@ -1002,4 +1002,12 @@ export class Store {
       .get(channel, userId);
     return row ? person(row) : null;
   }
+  /** Whether the person already holds a binding in the channel: one binding
+   *  per channel per person is the rule, so no second link code is minted. */
+  personLinkedIn(channel: string, personId: string): boolean {
+    return (
+      this.db.prepare('SELECT 1 FROM channel_identities WHERE channel=? AND person_id=?').get(channel, personId) !==
+      undefined
+    );
+  }
 }

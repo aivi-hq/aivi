@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { satisfies } from 'semver';
 import { saveClientConfig } from './client-config.ts';
-import { ensureNode, serverRange } from './runtime.ts';
+import { ensureNode } from './runtime.ts';
 import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
 
 export interface UpdateIo {

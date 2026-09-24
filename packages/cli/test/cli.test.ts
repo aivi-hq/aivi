@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { clientConfigSchema, loadClientConfig, saveClientConfig } from '../src/client-config.ts';
 import { appCliPath, forward } from '../src/forward.ts';
-import type { LinkChannel, LinkResult } from '../src/link.ts';
 import { extractLinkArgs, link } from '../src/link.ts';
 import type { SetupIo } from '../src/setup.ts';
 import { extractSetupFlags, seedHomeOpenCode, setup } from '../src/setup.ts';
@@ -15,7 +14,12 @@ let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   directory = mkdtemp();
-  savedEnv = { AIVI_HOME: process.env.AIVI_HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  savedEnv = {
+    AIVI_CONFIG: process.env.AIVI_CONFIG,
+    AIVI_HOME: process.env.AIVI_HOME,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  };
+  delete process.env.AIVI_CONFIG;
   delete process.env.AIVI_HOME;
   process.env.XDG_CONFIG_HOME = join(directory, 'xdg');
 });
@@ -98,6 +102,17 @@ test('the client config saves 0600, preserves unknown fields and never drops the
   assert.equal(loaded.configVersion, 1);
 });
 
+test('AIVI_CONFIG moves the whole client record, leading over XDG_CONFIG_HOME', () => {
+  saveClientConfig({ home: '/dev/home', appDir: '/dev/home/app' });
+  assert.ok(existsSync(join(directory, 'xdg', 'aivi.json')), 'without AIVI_CONFIG the xdg path is used');
+  process.env.AIVI_CONFIG = join(directory, 'dev.json');
+  assert.equal(loadClientConfig(), undefined, 'the overridden path starts empty');
+  saveClientConfig({ home: '/dev/other' });
+  assert.deepEqual(loadClientConfig()!.home, '/dev/other');
+  assert.equal(existsSync(join(directory, 'dev.json')), true);
+  assert.equal(existsSync(join(directory, 'xdg', 'aivi.json')), true, 'the previous record is untouched');
+});
+
 test('unknown fields survive a save', () => {
   const path = join(directory, 'xdg', 'aivi.json');
   mkdirSync(join(directory, 'xdg'), { recursive: true });
@@ -158,6 +173,11 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
   assert.deepEqual(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')), { version: 1 });
   assert.equal(existsSync(join(home, '.env')), true);
   assert.equal(existsSync(join(home, 'app', '.npmrc')), true);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(home, 'app', 'package.json'), 'utf8')),
+    { name: 'aivi-server', private: true },
+    'the manifest npm installs against, so the app dir anchors the install',
+  );
   assert.deepEqual(calls.installs, [['@aivi/app']]);
   assert.deepEqual(calls.identity, [['--use', 'this-machine', '--name', 'Ada']]);
   const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
@@ -217,17 +237,17 @@ test('--connect and --use choose different branches; giving both is refused', as
 
 test('aivi link mints a code over HTTP and says exactly where to spend it', async () => {
   saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: TOKEN } });
-  const mints: [string, string][] = [];
+  const mints: [string, string, string][] = [];
   const logs: string[] = [];
   await link(['discord'], {
-    mint: async (url, token) => {
-      mints.push([url, token]);
+    channels: async () => [{ channel: 'discord', hint: 'In Discord, DM the bot: /link <code>.', linked: false }],
+    mint: async (url, token, channel) => {
+      mints.push([url, token, channel]);
       return {
         code: '12345',
         expiresAt: '2026-09-22T12:34:00.000Z',
         person: 'Ada',
-        channels: [{ id: 'discord', hint: 'In Discord, DM the bot: /link <code>.' }, { id: 'slack' }],
-        next: 'Paste `/link <code>` where the bot reads it.',
+        next: 'In Discord, DM the bot: /link 12345.',
       };
     },
     askPlatform: async () => {
@@ -235,28 +255,33 @@ test('aivi link mints a code over HTTP and says exactly where to spend it', asyn
     },
     log: message => logs.push(message),
   });
-  assert.deepEqual(mints, [['http://127.0.0.1:4100', TOKEN]]);
+  assert.deepEqual(mints, [['http://127.0.0.1:4100', TOKEN, 'discord']]);
   const out = JSON.parse(logs[0]!) as { code: string; channel: string; next: string };
   assert.equal(out.code, '12345');
   assert.equal(out.channel, 'discord');
-  assert.match(out.next, /\/link 12345/, 'the hint carries the code itself');
+  assert.match(out.next, /\/link 12345/, 'the instruction carries the code itself');
 });
 
-test('aivi link asks which channel when several run, and refuses an unknown one', async () => {
+test('aivi link asks which eligible channel when several run, and refuses an unknown one', async () => {
   saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: TOKEN } });
   const logs: string[] = [];
   await link([], {
-    mint: async () => ({
+    channels: async () => [
+      { channel: 'discord', linked: false },
+      { channel: 'slack', hint: 'In Slack, run /{prefix}-link <code> anywhere.', linked: false },
+      { channel: 'elsewhere', linked: true },
+    ],
+    mint: async (_url, _token, channel) => ({
       code: '54321',
       expiresAt: '2026-09-22T12:34:00.000Z',
       person: 'Ada',
-      channels: [{ id: 'discord' }, { id: 'slack', hint: 'In Slack, run /{prefix}-link <code> anywhere.' }],
-      next: 'Paste `/link <code>` where the bot reads it.',
+      next: `Paste \`/link 54321\` in the ${channel} channel the bot reads.`,
     }),
-    askPlatform: async (channels: LinkChannel[]) => {
+    askPlatform: async channels => {
       assert.deepEqual(
-        channels.map(c => c.id),
+        channels.map(c => c.channel),
         ['discord', 'slack'],
+        'the prompt offers the running channels this person is not linked in yet',
       );
       return 'slack';
     },
@@ -267,7 +292,8 @@ test('aivi link asks which channel when several run, and refuses an unknown one'
   assert.match(out.next, /54321/);
   await assert.rejects(
     link(['teams'], {
-      mint: async () => ({ code: '1', expiresAt: '', person: '', channels: [], next: '' }),
+      channels: async () => [{ channel: 'discord', linked: false }],
+      mint: async () => ({ code: '1', expiresAt: '', person: '', next: '' }),
       askPlatform: async () => 'discord',
       log: () => {},
     }),
@@ -275,9 +301,48 @@ test('aivi link asks which channel when several run, and refuses an unknown one'
   );
 });
 
+test('aivi link declines without minting: nothing running, or already linked', async () => {
+  saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: TOKEN } });
+  const mints: string[] = [];
+  const mint = async (_url: string, _token: string, channel: string) => {
+    mints.push(channel);
+    return { code: '1', expiresAt: '', person: '', next: '' };
+  };
+  const logs: string[] = [];
+  const noPrompt = async (): Promise<string> => {
+    throw new Error('no prompt expected');
+  };
+  // Nothing is running: a code no module could read is never minted.
+  await link([], { channels: async () => [], mint, askPlatform: noPrompt, log: message => logs.push(message) });
+  assert.deepEqual(mints, []);
+  assert.deepEqual(JSON.parse(logs.at(-1)!), { channels: [] });
+  // The named channel is already this person's: the CLI asks first, so no code
+  // is even requested.
+  await link(['discord'], {
+    channels: async () => [{ channel: 'discord', linked: true }],
+    mint,
+    askPlatform: noPrompt,
+    log: message => logs.push(message),
+  });
+  assert.deepEqual(mints, [], 'no second code for a channel the person is linked in');
+  assert.deepEqual(JSON.parse(logs.at(-1)!), { channel: 'discord', linked: true });
+  // Unnamed with every running channel linked: the same refusal, no code.
+  await link([], {
+    channels: async () => [{ channel: 'discord', linked: true }],
+    mint,
+    askPlatform: noPrompt,
+    log: message => logs.push(message),
+  });
+  assert.deepEqual(mints, []);
+  assert.equal((JSON.parse(logs.at(-1)!) as { channels: { linked: boolean }[] }).channels[0]!.linked, true);
+});
+
 test('aivi link without a sign-in says what to run first', async () => {
   await assert.rejects(
     link([], {
+      channels: async () => {
+        throw new Error('must not reach the host');
+      },
       mint: async () => {
         throw new Error('must not reach the host');
       },

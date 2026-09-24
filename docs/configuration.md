@@ -3,21 +3,17 @@
 ## Home
 
 aivi reads one directory, the **home**: `~/.aivi` by default, or `AIVI_HOME`
-(leading over the `home` field in `~/.config/aivi.json`). It holds
+(leading over the `home` field in the client config; `AIVI_CONFIG` moves that
+file itself, which is how the development home stays separate). It holds
 `config.json`, `.env`, and `state/` (SQLite, the search index, dreaming
-transcripts). There is no config-path option. The live `config.json` is the
+transcripts). The live `config.json` is the
 file
 you and aivi edit, so it never goes under version control; a home that lives
-in a git repository tracks only a template, and the first run copies it. In
-this repository `npm run aivi` sets `AIVI_HOME=example`; that home has every
-feature enabled, so `serve` needs `DISCORD_BOT_TOKEN` and the two Slack
-tokens in `example/.env` unless the `modules.discord` and `modules.slack`
-blocks are removed or set to `false`. The tracked template is
-`example/config.example.json`:
-
-```sh
-cp example/config.example.json example/config.json   # then put your ids in it
-```
+in a git repository starts empty (`{ version: 1 }`) and grows only what you
+enable. In this repository `npm run aivi` sets `AIVI_HOME=dev`, a development
+home produced by `npm run aivi:cli setup`; add blocks to `dev/config.json` as
+you need them — a Discord block makes `serve` ask for `DISCORD_BOT_TOKEN`
+from `dev/.env`, and so on.
 
 `config.json` is installation configuration and describes the projects too; a
 project's checkout carries nothing of aivi's ([projects](projects.md)).
@@ -68,7 +64,7 @@ containing facts is the wrong file growing.
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
-| `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (the example home uses this so tests never touch a developer's OpenCode). Ignored with `opencode.url` |
+| `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (set this in any home tests and smoke checks read, so they never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
 | `projectDefaults.linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
@@ -81,7 +77,7 @@ containing facts is the wrong file growing.
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
-| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. `example/config.example.json` writes the default out explicitly, in its `maintenance` pool |
+| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. The default (its own `maintenance`-style pool) is written out in [operations](operations.md#how-runs-end) |
 | `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that fast-forwards every project's `source/` to its upstream and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
 | `scheduler.timezone` | Host-wide default for derived schedules (`retention`, `projects-sync`); default the host's own timezone. A schedule's own `timezone` wins over it |
 | `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). A bare operation name is shorthand for its invocation: `"task": "system.check"` is `{ "kind": "invocation", "name": "system.check" }`; use the explicit shape when the operation takes `args`. The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
@@ -171,7 +167,8 @@ blocked and missed) or `"never"`. Two shapes exist:
   is that platform's own identifier. The module decides whether aivi may post
   there (`reportChannels` in its config) and how: Discord opens a thread that
   continues the run's session, so replying to an outcome talks to the agent
-  that produced it ([discord](discord.md#setup)). See `example/tasks/shell.json`.
+  that produced it ([discord](discord.md#setup)). A shell task file:
+  `{ "task": { "kind": "shell", "command": ["node", "--version"], "timeoutMs": 30000 }, "resource": "maintenance" }`.
 - **A session**: `{ "to": "session", "session": "<OpenCode session id>", "on": … }`.
   The outcome is not posted as text; it is submitted as a prompt into that
   session so the agent there reads it and answers in its own words. A session a
@@ -286,7 +283,7 @@ the project's clean checkout on main without a worktree — aivi builds no
 enforcement there, the agent file's own `edit` deny is the only guard, and the
 checkout is never worked in by a lane that does not say so. Lanes merge one
 key at a time over `projectDefaults.linear.lanes` (where `knowledge`
-replaces: a lane map is a lookup table, not a list), so the example website
+replaces: a lane map is a lookup table, not a list), so a project whose site
 works `Dev` with `dev` as the convention says, `Review` with `reviewer` in the
 checkout because the entry outvotes the convention, and leaves `Triage` and
 `Shipped` to people. `teams` is never defaulted: a team belongs to one

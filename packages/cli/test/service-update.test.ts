@@ -52,7 +52,7 @@ test('the managed Node tarball name maps platform and arch', () => {
 
 function fakeIo(over: Partial<UpdateIo>): UpdateIo {
   return {
-    npmView: async (spec, field) => (field === 'engines.node' ? '>=26 <27' : '0.2.0'),
+    npmView: async (_spec, field) => (field === 'engines.node' ? '>=26 <27' : '0.2.0'),
     install: () => ({ status: 0, stderr: '' }),
     log: () => {},
     healthProbe: async () => true,

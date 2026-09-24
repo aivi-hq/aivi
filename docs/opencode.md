@@ -23,7 +23,7 @@ grant or withhold each tool with `permissions`.
 | `aivi_status` | `aivi_status` | aivi version, job counts and capabilities | Read-only; does not start work. |
 | `aivi_context` | `aivi_context` | This conversation's context window, tokens, cost and knowledge scope | Read-only; takes the session id from the tool context. |
 | `aivi_jobs` | `aivi_jobs` | Create/list/pause/resume/remove/run jobs | Schedules work. Turn the tool off host-wide with `scheduler.agentSchedules: false`. |
-| `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The example librarian denies `browser` (OpenCode's), **not** this one. |
+| `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The seeded librarian denies `browser` (OpenCode's), **not** this one. |
 
 ### Giving tools to an agent
 
@@ -74,7 +74,7 @@ guarantee the tools anywhere, declare the plugin once in the global config.
 
 Milestone 0 of the roadmap, run against a real `opencode service` with
 `github-copilot/gemini-3.8-flash`. Repeat it any time with
-`npm run live:opencode -- --plugin "$PWD/example"`.
+`npm run live:opencode -- --plugin "$PWD/dev"`.
 
 | Question | Finding |
 | --- | --- |
@@ -83,7 +83,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | Client-chosen IDs | `session.create({ id: "ses_aivi_…" })` and `session.prompt({ id: "msg_aivi_…" })` are accepted; nested `metadata` objects are stored and returned. |
 | Turn completion | After `session.prompt` (`delivery: "queue"`), `session.wait` returns when the turn ends (about 2 s for a trivial prompt). `session.context` then shows `user → assistant(finish: "stop", time.completed) → idle(outcome: "succeeded")`. This is what the host's `finalAnswer` checks (jobs, dreaming and Discord). |
 | Permission prompts | A tool that needs approval (for example `external_directory` when reading a knowledge source outside the project) parks the turn; `session.wait` blocks until a human replies. `permission.asked` on the event stream announces each request (`{ id, sessionID, action, resources }`); `permission.list({ sessionID })` shows what is already pending and `permission.reply` answers it. aivi answers from the event, and reads the list once after the prompt for requests that predate it (verified 2026-09-15). |
-| Plugin loading | An entry in `plugins` names a directory or a package. An entry that resolves to a plain file — a path or a `file://` URL — is silently ignored: no plugin, no error (verified 2026-09-22). A directory tries `<dir>/server.*` then `<dir>/index.*` and never reads that directory's `package.json`. A package tries the `<name>/server` subpath export, then the package root export (`exports["."]` or `main`) — the first candidate that resolves wins, and a miss on `./server` is caught, not an error. The entry must default-export a definition with an `id` and a `setup` or `effect` function; the `tui` and `rpc` features come from the same probe of `<name>/tui` and `<name>/rpc`. aivi ships no file at the package root: the npm target lands on `exports["."]`, and the example home names the build directory it runs (`../packages/opencode/dist`), which means a fresh clone builds before OpenCode can load the plugin. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
+| Plugin loading | An entry in `plugins` names a directory or a package. An entry that resolves to a plain file — a path or a `file://` URL — is silently ignored: no plugin, no error (verified 2026-09-22). A directory tries `<dir>/server.*` then `<dir>/index.*` and never reads that directory's `package.json`. A package tries the `<name>/server` subpath export, then the package root export (`exports["."]` or `main`) — the first candidate that resolves wins, and a miss on `./server` is caught, not an error. The entry must default-export a definition with an `id` and a `setup` or `effect` function; the `tui` and `rpc` features come from the same probe of `<name>/tui` and `<name>/rpc`. aivi ships no file at the package root: the npm target lands on `exports["."]`. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
 | Plugin failure mode | An exception in `setup()` marks the plugin `failed` and registers no tools. The plugin therefore never throws for a missing token; the tool call reports the 401. |
 | Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `aivi_jobs`, `aivi_browser`, `knowledge_search`, `knowledge_projects` (`GET /v1/projects`: id, `removed`, searchable source kinds), `aivi_context` (`GET /v1/context?session=`: the calling session's context window, totals and knowledge scope as markdown, the same text as the channels' `/context`); tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion, upcoming, recent }`. See [Plugin tools and permission actions](#plugin-tools-and-permission-actions) for the permission actions to write rules against. |
 | Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the agent's, so an `edit` allow from dreaming wins over the dreamer's `edit: deny`; aivi never sends a broad allow, so OpenCode's default `.env` guard stays in force. |
@@ -108,8 +108,8 @@ makes sessions associate with the person without any env setup.
 ## Librarian in native chat
 
 Walkthrough in [getting started](getting-started.md#the-librarian-in-opencode).
-The home is the OpenCode location, so the example's knowledge, memory and
-project directories need no `external_directory` rules; sources elsewhere get
+The home is the OpenCode location, so knowledge, memory and
+project directories inside it need no `external_directory` rules; sources elsewhere get
 those rules from aivi per session. The OpenCode service caches
 `@aivi/host/client`, so restart it after every change to the plugin or client
 (`opencode.lifecycle: "own"` does this at `aivi serve` startup).
@@ -130,9 +130,11 @@ next unit of work; a running one is never restarted again while aivi runs.
 
 ```sh
 npm run aivi -- opencode check
-npm run aivi -- jobs add example/tasks/librarian.json
 npm run aivi -- runs list
 ```
+
+`aivi setup` seeds the home's `.opencode/agents/` (`aivi.md`, `librarian.md`,
+`dreamer.md`) from `packages/cli/templates/agents/`.
 
 The running host dispatches queued runs through the session driver
 (`packages/host/src/session.ts`): create the session with a client-chosen id,

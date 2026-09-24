@@ -165,9 +165,13 @@ should listen in. Collect the channel ids (channel details → bottom of the
 About tab). DM channel ids are not configured; a linked person may DM from
 anywhere ([people](people.md#link-codes-discord-slack)).
 
-The example template enables Slack with placeholder ids; copy
-`example/config.example.json` to `example/config.json` and edit the ids there. A
-`modules.slack` block is the whole module setup, and its presence enables the
+The short way is `aivi install slack` ([operations](operations.md#plugins-aivi-install)):
+it runs this package's own setup, which prints the manifest to paste into
+Slack's app setup, asks for the two tokens, verifies each against Slack, and
+writes the `modules.slack` block into `<home>/config.json` and the tokens
+into `.env` itself. By hand, enable Slack with a `modules.slack` block in
+`<home>/config.json`, filled with
+your ids. The block is the whole module setup, and its presence enables the
 module (`false` is an explicit off):
 
 ```json
@@ -222,13 +226,12 @@ npm run aivi -- slack resolve TURN_ID --confirm-stopped --reason "Inspected nati
 ## Boundaries
 
 Same as Discord's: the agent file is the boundary, web fetch/search allowed,
-browser denied by the example agents. Out of scope: agent or project
+browser denied by the seeded agents. Out of scope: agent or project
 switching, streaming replies, attachment ingestion, a permission-approval UI,
 Block Kit beyond the `markdown` block (layouts, interactive components),
 multi-workspace (org) installs.
 
-Tests mirror Discord's: routing and access with Slack ids, the example
-config, the manifest snippet above against the shared command table, and the
+Tests mirror Discord's: routing and access with Slack ids, the manifest snippet above against the shared command table, and the
 module against a fake connection and the real OpenCode client
 on a mock server (mention → thread reply, dedupe, files, report thread
 adoption, re-entry, slash commands including `-model`, `-stop` and `-steer`
