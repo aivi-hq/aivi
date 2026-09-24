@@ -80,6 +80,17 @@ test('channel modules are blocks in the one file: presence enables with defaults
   );
 });
 
+test('browser is opt-in: absent builds nothing, false is off, a block builds the service', () => {
+  assert.equal('browser' in configSchema.parse({ version: 1 }), false, 'no prefault: a fresh home has no browser');
+  assert.equal(configSchema.parse({ version: 1, browser: false }).browser, false);
+  const built = configSchema.parse({
+    version: 1,
+    browser: { connection: { mode: 'launch', userDataDir: 'state/chrome' } },
+  }).browser;
+  if (typeof built !== 'object') throw new Error('a present block parses to settings, not false');
+  assert.deepEqual(built.connection, { mode: 'launch', userDataDir: 'state/chrome', headless: false });
+});
+
 test('a modules.*.config pointer is the old shape and says where the settings went', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-inline-'));
   t.after(() => rm(root, { recursive: true, force: true }));

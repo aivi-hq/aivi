@@ -168,7 +168,8 @@ People, tokens and the client config are owned by [people](people.md).
 
 ## Plugins: `aivi install`
 
-`aivi install discord` (or `slack`, or any npm package name) adds a plugin to
+`aivi install browser` (or `discord`, `slack`, or any npm package name) adds a
+plugin to
 the server home and lets the plugin configure itself. Three steps, in order:
 
 1. The package is npm-installed into `<home>/app` with `--save-exact`, so
@@ -192,6 +193,9 @@ the server home and lets the plugin configure itself. Three steps, in order:
 The contract is one subpath: a package that exports `./setup` with a
 default function is installable this way, whatever its publisher. A package
 without one is still installed, and the command says it has no setup.
+`browser` is the no-platform case of the same flow: its setup asks no secret,
+verifies no platform call, and writes only the `browser` block in
+`config.json` that turns the service on.
 
 A package can also add operator commands to this CLI: a `./cli` subpath that
 default-exports a `PluginCliCommand` ([architecture](architecture.md#one-application-contained-modules))

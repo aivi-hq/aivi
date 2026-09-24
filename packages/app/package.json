@@ -24,7 +24,6 @@
     "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/browser": "^0.1.5",
     "@aivi/core": "^0.6.0",
     "@aivi/host": "^0.6.0",
     "@aivi/knowledge": "^0.1.5",

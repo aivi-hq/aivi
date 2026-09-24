@@ -113,8 +113,10 @@ runs in one process; adapters are optional modules with a start/stop contract.
   home need no external rules at all ([opencode.md](docs/opencode.md)).
 - **Two browsers, on purpose.** OpenCode's `browser.*` drives the desktop
   app's browser; aivi's `aivi_browser` drives one persistent Chrome for
-  unattended sessions and shared logins. The seeded agents deny the former
-  so Discord and jobs are never offered a browser that cannot connect.
+  unattended sessions and shared logins, and is an opt-in plugin
+  (`aivi install browser`) rather than core. The seeded agents deny the
+  former so Discord and jobs are never offered a browser that cannot
+  connect.
 - **A second chat platform is glue.** The host owns the inbox, the
   claim-with-lease transaction, conversation↔session bindings with adoption and
   seeds, restart recovery, the verified-turn driver and reply splitting; a

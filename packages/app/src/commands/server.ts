@@ -97,22 +97,25 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
   // Knowledge logs under its own category: the service is built here, before
   // any host exists, and keeps this logger whatever job triggers an index.
   const knowledge = await createKnowledgeService(loaded, undefined, log.getChild('knowledge'));
-  // Browser construction is lazy; no Chrome launch occurs until a tool call.
+  // Presence of the browser block builds the service; `false` or absent builds
+  // nothing and the plugin never sees an aivi_browser tool. The package loads
+  // lazily, like the channels, so an installation without it runs everything
+  // else untouched — until someone configures a browser without installing it.
+  const browserBlock = loaded.config.browser;
   const browser =
-    loaded.config.browser !== false ? (await importBrowser()).createBrowserService(loaded.config.browser) : undefined;
+    typeof browserBlock === 'object' ? (await importBrowser()).createBrowserService(browserBlock) : undefined;
   return { knowledge, ...(browser ? { browser } : {}) };
 }
 
-/** `@aivi/browser` is a dependency of this package, so a miss here means a
- *  broken install, not a disabled feature; say so with the repair command
- *  instead of a bare ERR_MODULE_NOT_FOUND. */
+/** The browser block says the operator wants a browser; a missing package is
+ *  then a missing install, not a disabled feature: name the command that fixes it. */
 async function importBrowser(): Promise<typeof import('@aivi/browser')> {
   try {
     return await import('@aivi/browser');
   } catch (error) {
     if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND')
       throw new Error(
-        'The browser service (@aivi/browser) is missing from this installation. Repair it with `aivi update`.',
+        'The browser is configured but @aivi/browser is not installed here. Install it with `aivi install browser`.',
       );
     throw error;
   }

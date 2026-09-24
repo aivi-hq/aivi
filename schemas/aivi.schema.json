@@ -573,13 +573,7 @@
       "additionalProperties": false
     },
     "browser": {
-      "description": "Chrome for browser_control. Default: aivi launches its own Chrome with a profile under state/chrome on first use. `false` disables the browser service.",
-      "default": {
-        "connection": {
-          "mode": "launch",
-          "userDataDir": "state/chrome"
-        }
-      },
+      "description": "Presence of this block enables browser control and builds the service at serve; `false` is an explicit off. `aivi install browser` writes a launch default.",
       "anyOf": [
         {
           "type": "object",

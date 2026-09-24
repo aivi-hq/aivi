@@ -30,15 +30,17 @@ process owns one data directory. aivi can work with either level:
 | `existing` | A data directory you started yourself with `--user-data-dir`, extensions installed and signed in. | You want to prepare the aivi browser by hand, still separate from your own. |
 | `attach` | Your own running Chrome, over remote debugging. aivi's tabs open in it, in the profile that enabled debugging, with your logins. | You work at that Mac and want aivi's tabs next to yours. Unattended jobs then depend on your Chrome being open. |
 
-### Default: aivi's own Chrome
+### Opt-in: `aivi install browser`
 
-Nothing to configure. On the first browser call aivi launches Chrome, visible
-(not headless), with the data directory `<home>/state/chrome`. The window is
-amber and its profile is named "aivi", so it is never mistaken for your own
-Chrome; aivi seeds those two preferences before the first start and leaves any
-colour you pick later alone. Set
-`"browser": false` to disable the service; `aivi_browser` then reports that the
-browser is not configured.
+The browser is not part of the core install. `aivi install browser` puts
+`@aivi/browser` into `<home>/app` and writes the launch block; until a
+`browser` block exists in `config.json` there is no browser service and the
+plugin never sees an `aivi_browser` tool. With the block present, the first
+browser call launches Chrome — visible (not headless), with the data directory
+`<home>/state/chrome`. The window is amber and its profile is named "aivi", so
+it is never mistaken for your own Chrome; aivi seeds those two preferences
+before the first start and leaves any colour you pick later alone. `"browser":
+false` is an explicit off, and the tool is then absent rather than failing.
 
 ### Attach to your own Chrome
 
