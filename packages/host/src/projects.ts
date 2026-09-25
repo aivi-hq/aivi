@@ -23,7 +23,7 @@ export interface ProjectSyncOutcome {
  * with the reason, never resolved by force; `source/` is the clean checkout
  * that gets indexed, not a working directory.
  */
-export async function syncProject(project: Project, signal?: AbortSignal): Promise<ProjectSyncOutcome> {
+async function syncProject(project: Project, signal?: AbortSignal): Promise<ProjectSyncOutcome> {
   const { id, directory } = project;
   const git = async (...args: string[]) =>
     (

@@ -51,7 +51,7 @@ const safeSend = {
 /** Discord's message limit is 2000 UTF-16 units; stay below it with room for formatting. */
 export const DISCORD: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 /** What an unlinked account hears once: a link code is its only door, and DMs are where it opens. */
-export const LINK_NEEDED =
+const LINK_NEEDED =
   "I don't know you yet. Run `aivi link discord` where you work, then paste `/link CODE` to me — from then on I answer as your person.";
 
 export function bindingFor(config: DiscordConfig): string {

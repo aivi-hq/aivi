@@ -230,7 +230,7 @@ export const STOPPED_NOTICE = 'Stopped at your request.';
 /** One short line for a failure notice; never the raw error object (it can carry provider detail or credentials). */
 const shortReason = (error: unknown) => errorMessage(error).split('\n')[0]!.slice(0, 140);
 /** The chat wording; a platform overrides what it must through `ChannelPlatform.notices`. */
-export const CHAT_NOTICES: EngineNotices = {
+const CHAT_NOTICES: EngineNotices = {
   failed: 'Something went wrong',
   stopped: STOPPED_NOTICE,
   notStarted: 'I could not reach my agent runtime just now. Please send that again in a moment.',

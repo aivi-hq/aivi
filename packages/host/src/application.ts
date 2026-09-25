@@ -34,7 +34,7 @@ const FAILURE_NUDGE_AT = 3;
  */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-export class Wake {
+class Wake {
   private controller = new AbortController();
   private readonly listeners = new Set<() => void>();
   notify(): void {

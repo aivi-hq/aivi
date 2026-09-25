@@ -49,7 +49,7 @@ export interface InstallIo {
   log(message: string): void;
 }
 
-export const defaultIo: InstallIo = {
+const defaultIo: InstallIo = {
   install(spec, appDir) {
     const result = spawnSync('npm', ['install', '--save-exact', '--no-fund', spec], {
       cwd: appDir,

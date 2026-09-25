@@ -23,7 +23,7 @@ export interface UpdateIo {
   service: { installed(): boolean; stop(): void; start(): void };
 }
 
-export const defaultIo: UpdateIo = {
+const defaultIo: UpdateIo = {
   async npmView(spec, field) {
     const result = spawnNpm(['view', spec, field, '--json']);
     if (result.status !== 0) throw new Error(`npm view ${spec} ${field} failed: ${result.stderr?.trim()}`);

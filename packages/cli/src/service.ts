@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { build as buildPlistXml } from 'plist';
 
-export const SERVICE_LABEL = 'ai.aivi.server';
+const SERVICE_LABEL = 'ai.aivi.server';
 
 /** getuid is typed as possibly absent (Windows builds of Node); aivi only ever installs on darwin/linux. */
 const uid = (): number => process.getuid?.() ?? 0;
@@ -30,11 +30,11 @@ function appCli(appDir: string): string {
   return join(appDir, 'node_modules', '@aivi', 'app', 'dist', 'cli.js');
 }
 
-export function launchdPlistPath(): string {
+function launchdPlistPath(): string {
   return join(homedir(), 'Library', 'LaunchAgents', `${SERVICE_LABEL}.plist`);
 }
 
-export function systemdUnitPath(): string {
+function systemdUnitPath(): string {
   return join(homedir(), '.config', 'systemd', 'user', 'aivi.service');
 }
 

@@ -74,7 +74,7 @@ const turn = (r: Row): Turn => ({
 const PENDING = "('queued','running','replying','blocked')";
 
 /** Table names and ids derived from the module id; Discord's predate the contract and are unchanged by it. */
-export const namesFor = (id: string) => ({
+const namesFor = (id: string) => ({
   binding: `${id}_binding`,
   sessions: `${id}_sessions`,
   turns: `${id}_turns`,

@@ -40,7 +40,7 @@ export interface UninstallIo {
   warn(message: string): void;
 }
 
-export const defaultIo: UninstallIo = {
+const defaultIo: UninstallIo = {
   exists: path => existsSync(path),
   remove: path => rmSync(path, { recursive: true, force: true }),
   async health(url) {

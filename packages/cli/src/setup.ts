@@ -332,7 +332,7 @@ function spawnPrintable(command: string, args: string[]): boolean {
   return spawnSync(command, args, { stdio: 'ignore' }).status === 0;
 }
 
-export const defaultIo: SetupIo = {
+const defaultIo: SetupIo = {
   install(specs, appDir) {
     const result = spawnSync('npm', ['install', '--save-exact', '--no-fund', ...specs], {
       cwd: appDir,
