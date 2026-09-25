@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema, jobSchema } from '@aivi/core';
@@ -81,7 +82,7 @@ const catalogue = [
 /** The OpenCode routes the commands touch: catalogue, agents, transcript, interrupt, prompt. */
 async function mockOpenCode(t: { after(fn: () => Promise<void>): void }) {
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const url = new URL(req.url!, 'http://x');
@@ -118,7 +119,8 @@ async function mockOpenCode(t: { after(fn: () => Promise<void>): void }) {
     if (url.pathname.endsWith('/prompt')) return void res.end(JSON.stringify({ data: { id: 'steer-1' } }));
     res.writeHead(404);
     res.end('{}');
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();

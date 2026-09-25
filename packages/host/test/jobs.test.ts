@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
@@ -15,7 +16,7 @@ async function fakeOpenCode(
   sessions: Record<string, { agent?: string; directory: string; origin?: string }>,
   agents: Record<string, string[]>,
 ) {
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     for await (const _ of req) void _;
     res.setHeader('content-type', 'application/json');
     const url = new URL(req.url!, 'http://x');
@@ -43,7 +44,8 @@ async function fakeOpenCode(
     }
     res.writeHead(404);
     res.end('{}');
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();

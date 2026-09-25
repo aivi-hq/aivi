@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema, taskSchema } from '@aivi/core';
@@ -25,7 +26,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
     auth: string | undefined;
   }[] = [];
   let promptId = '';
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
@@ -78,7 +79,8 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
         data: { id: body.id ?? received[0]!.body.id, agent: 'librarian', location: { directory: '/team' } },
       }),
     );
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -159,7 +161,7 @@ test('a turn that times out while session.wait is pending reports the timeout, n
     'local-model',
     'slow-turn',
   );
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     for await (const _ of req) void _;
     res.setHeader('content-type', 'application/json');
     if (req.url!.startsWith('/api/agent'))
@@ -168,7 +170,8 @@ test('a turn that times out while session.wait is pending reports the timeout, n
     if (req.url!.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (req.url!.endsWith('/prompt')) return void res.end('{"data":{"id":"m"}}');
     res.end(JSON.stringify({ data: { id: 'x', agent: 'librarian', location: { directory: '/team' } } }));
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     server.closeAllConnections();

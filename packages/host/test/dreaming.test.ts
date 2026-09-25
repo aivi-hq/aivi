@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,7 +56,7 @@ const messages: Record<string, unknown[]> = {
 function mockOpenCode(agent = 'dreamer') {
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
   let promptId = '';
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
@@ -110,7 +111,8 @@ function mockOpenCode(agent = 'dreamer') {
       return;
     }
     res.end(JSON.stringify({ data: { id: body.id ?? 'ses_aivi_x', agent, location: { directory: '/lib' } } }));
-  });
+  };
+  const server = createServer(respond);
   return { server, requests };
 }
 

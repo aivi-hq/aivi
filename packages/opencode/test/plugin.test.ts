@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer, type Server } from 'node:http';
+import { createServer, type RequestListener, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -101,7 +101,7 @@ type Route = (request: {
   headers: Record<string, string | undefined>;
 }) => { status?: number; json: unknown } | Promise<{ status?: number; json: unknown }>;
 async function hostServing(t: { after(fn: () => void): void }, routes: Record<string, Route>): Promise<string> {
-  const server = createServer(async (request, response) => {
+  const respond: RequestListener = async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const route = routes[`${request.method} ${url.pathname}`];
     let body: unknown;
@@ -119,7 +119,8 @@ async function hostServing(t: { after(fn: () => void): void }, routes: Record<st
     const answer = await route({ body, headers: request.headers as Record<string, string | undefined> });
     response.statusCode = answer.status ?? 200;
     response.end(JSON.stringify(answer.json));
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();

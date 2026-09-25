@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath } from 'node:fs/promises';
+import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,7 +39,7 @@ const turn = {
 test('a turn runner creates one fixed-agent session and reapplies only the source-directory allows before each prompt', async t => {
   const requests: { path: string; method: string; body: Record<string, any> }[] = [];
   let metadata: Record<string, unknown> = {};
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
@@ -82,7 +83,8 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     res.end(
       JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
     );
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
@@ -229,7 +231,7 @@ test('a source whose directory does not exist is skipped, not a module start tha
   await mkdir(join(root, 'docs'));
   const requests: { path: string; method: string; body: Record<string, any> }[] = [];
   let promptMetadata: Record<string, unknown> = {};
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
@@ -273,7 +275,8 @@ test('a source whose directory does not exist is skipped, not a module start tha
     res.end(
       JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
     );
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
@@ -315,7 +318,7 @@ test('a source whose directory does not exist is skipped, not a module start tha
 test('a linked channel account speaks as its aivi person, in the prompt and the metadata', async t => {
   const requests: { path: string; method: string; body: Record<string, any> }[] = [];
   let metadata: Record<string, unknown> = {};
-  const server = createServer(async (req, res) => {
+  const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
@@ -355,7 +358,8 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
     res.end(
       JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
     );
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
