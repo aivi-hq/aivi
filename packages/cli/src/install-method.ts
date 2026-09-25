@@ -18,7 +18,7 @@ interface Method {
   readonly uninstall: readonly string[];
 }
 
-export const INSTALL_METHODS = {
+const INSTALL_METHODS = {
   npm: {
     bin: 'npm',
     probe: ['list', '-g', CLI_PACKAGE, '--depth=0'],

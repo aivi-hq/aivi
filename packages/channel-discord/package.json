@@ -3,9 +3,9 @@
   "version": "0.5.2",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js",
-    "./setup": "./dist/setup.js",
-    "./cli": "./dist/cli.js"
+    ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./setup": { "development": "./src/setup.ts", "default": "./dist/setup.js" },
+    "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" }
   },
   "files": [
     "dist"
@@ -23,13 +23,11 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "tsc -b ../../tsconfig.build.json"
+    "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
     "@aivi/core": "^0.7.0",
-    "@opencode/client": "2.0.14",
-    "discord.js": "14.27.0",
-    "zod": "4.1.13"
+    "discord.js": "14.27.0"
   },
   "peerDependencies": {
     "@aivi/host": "^0.8.0"

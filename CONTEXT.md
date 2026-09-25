@@ -172,9 +172,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
 - **One compiled shape, locally and on npm.** Packages compile to `dist/`
-  with TypeScript 7 (`npm run build`, incremental), and every `exports` map
-  points at `dist/`: dev, tests and consumers run the identical artifact,
-  nothing is rewritten at publish, and nothing ships from a package root. The
+  with TypeScript 7 (`npm run build`, incremental). Every `exports` map
+  defaults to `dist/` — what consumers, deploys and `pack:smoke` run — and
+  adds a `development` condition resolving to `src/`, activated only by the
+  test and typecheck commands; nothing is rewritten at publish, and nothing
+  ships from a package root. The
   git-checkout installation decision is superseded; packages publish to npm.
 - **Blocked runs hold global capacity** on purpose until per-project pools
   exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
@@ -270,8 +272,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 `packages/{core,host,knowledge,browser,channel-discord,channel-slack,linear,opencode,app}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `dist/` is built by `npm run build`
-(TypeScript 7, incremental); tests still run from sources under Node's type
-stripping.
+(TypeScript 7, incremental); tests need no build — they run from sources
+under Node's type stripping, resolving workspace packages through the
+`development` exports condition.
 `scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
 `AIVI_HOME`): `config.json` (the live config, never version-controlled), `.env`,
 `projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and

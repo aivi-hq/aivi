@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { DreamingArgs, KnowledgeService, LoadedConfig, Logger, Run } from '@aivi/core';
+import type { DreamingArgs, KnowledgeService, LoadedConfig, Logger, Run, Task } from '@aivi/core';
 import { dreamingArgsSchema, errorMessage, getLogger, MEMORY_SOURCE_ID, runsPruneArgsSchema } from '@aivi/core';
 import { dream } from './dreaming.ts';
 import type { SessionEvents } from './events.ts';
@@ -157,93 +157,10 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
 
   return async (run, context) => {
     switch (run.task.kind) {
-      case 'shell': {
-        const task = run.task;
-        const [file, ...args] = task.command;
-        const cwd = task.cwd ?? loaded.config.stateDirectory;
-        const { started, ...outcome } = await new Promise<{
-          started: boolean;
-          exitCode: number | null;
-          signal: string | null;
-          stdout: string;
-          stderr: string;
-        }>(resolve => {
-          const child = execFile(
-            file!,
-            args,
-            {
-              cwd,
-              env: shellEnvironment(process.env, protectedEnv, task.env),
-              timeout: task.timeoutMs,
-              maxBuffer: 1024 * 1024,
-              signal: context.signal,
-              windowsHide: true,
-            },
-            (error, stdout, stderr) => {
-              // Node reports a non-zero exit as a numeric `code`, a kill (timeout, abort, maxBuffer) with
-              // `signal` or a string code, and a spawn failure (ENOENT, EACCES) with a string code and no pid.
-              const exec = error as (NodeJS.ErrnoException & { code?: number | string; signal?: string }) | null;
-              resolve({
-                started: child.pid !== undefined,
-                exitCode: typeof exec?.code === 'number' ? exec.code : exec ? null : 0,
-                signal: exec?.signal ?? null,
-                stdout: tail(stdout),
-                stderr: exec && typeof exec.code !== 'number' ? tail(`${stderr}\n${exec.message}`) : tail(stderr),
-              });
-            },
-          );
-        });
-        if (outcome.exitCode === 0) return { state: 'succeeded', result: outcome };
-        if (typeof outcome.exitCode === 'number')
-          return { state: 'failed', result: outcome, reason: `Command exited with ${outcome.exitCode}` };
-        // Nothing ran: the next occurrence may simply try again.
-        if (!started) return { state: 'failed', result: outcome, reason: `Command could not start: ${file}` };
-        // Killed by timeout, host shutdown or output limit: the process may still be running, keep it inspectable.
-        return {
-          state: 'blocked',
-          result: outcome,
-          reason: context.signal.aborted
-            ? 'Host stopped while the command was running'
-            : outcome.signal
-              ? `Command killed by ${outcome.signal}`
-              : 'Command did not exit cleanly',
-        };
-      }
-      case 'prompt': {
-        const task = run.task;
-        const { sessionId, messageId } = turnIdsFor(run.id);
-        const timeout = AbortSignal.timeout(task.timeoutMs);
-        const metadata = { aivi: { origin: 'job', run: run.id } };
-        try {
-          const client = await connectForTurn(deps.opencode);
-          // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
-          context.attachSession(sessionId);
-          const turn = await runTurn(
-            client,
-            {
-              sessionId,
-              agent: task.agent,
-              directory: task.directory,
-              create: true,
-              title: `aivi ${run.id}`,
-              sessionMetadata: metadata,
-              messageId,
-              text: task.prompt,
-              messageMetadata: metadata,
-            },
-            {
-              signal: AbortSignal.any([context.signal, timeout]),
-              onPermission: task.onPermission,
-              events: deps.events,
-              log,
-            },
-          );
-          return { state: 'succeeded', result: { sessionId, text: turn.text, rejectedPermissions: turn.rejected } };
-        } catch (error) {
-          log.warn('turn.failed', { error });
-          return ended(error, { sessionId, work: 'Turn', host: context.signal, timeout, timeoutMs: task.timeoutMs });
-        }
-      }
+      case 'shell':
+        return runShell(loaded, protectedEnv, run.task, context);
+      case 'prompt':
+        return runPrompt(deps, log, run.task, run, context);
       case 'invocation': {
         const handler = deps.tasks.get(run.task.name);
         if (!handler)
@@ -256,6 +173,108 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       }
     }
   };
+}
+
+/** Run a shell command and read the outcome the way its operator reads it:
+ *  exit code, nothing ran, or killed and still inspectable. */
+async function runShell(
+  loaded: LoadedConfig,
+  protectedEnv: string[],
+  task: Extract<Task, { kind: 'shell' }>,
+  context: ExecutionContext,
+): Promise<ExecutionResult> {
+  const [file, ...args] = task.command;
+  const cwd = task.cwd ?? loaded.config.stateDirectory;
+  const { started, ...outcome } = await new Promise<{
+    started: boolean;
+    exitCode: number | null;
+    signal: string | null;
+    stdout: string;
+    stderr: string;
+  }>(resolve => {
+    const child = execFile(
+      file!,
+      args,
+      {
+        cwd,
+        env: shellEnvironment(process.env, protectedEnv, task.env),
+        timeout: task.timeoutMs,
+        maxBuffer: 1024 * 1024,
+        signal: context.signal,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        // Node reports a non-zero exit as a numeric `code`, a kill (timeout, abort, maxBuffer) with
+        // `signal` or a string code, and a spawn failure (ENOENT, EACCES) with a string code and no pid.
+        const exec = error as (NodeJS.ErrnoException & { code?: number | string; signal?: string }) | null;
+        resolve({
+          started: child.pid !== undefined,
+          exitCode: typeof exec?.code === 'number' ? exec.code : exec ? null : 0,
+          signal: exec?.signal ?? null,
+          stdout: tail(stdout),
+          stderr: exec && typeof exec.code !== 'number' ? tail(`${stderr}\n${exec.message}`) : tail(stderr),
+        });
+      },
+    );
+  });
+  if (outcome.exitCode === 0) return { state: 'succeeded', result: outcome };
+  if (typeof outcome.exitCode === 'number')
+    return { state: 'failed', result: outcome, reason: `Command exited with ${outcome.exitCode}` };
+  // Nothing ran: the next occurrence may simply try again.
+  if (!started) return { state: 'failed', result: outcome, reason: `Command could not start: ${file}` };
+  // Killed by timeout, host shutdown or output limit: the process may still be running, keep it inspectable.
+  return {
+    state: 'blocked',
+    result: outcome,
+    reason: context.signal.aborted
+      ? 'Host stopped while the command was running'
+      : outcome.signal
+        ? `Command killed by ${outcome.signal}`
+        : 'Command did not exit cleanly',
+  };
+}
+
+/** Run a prompt as its own session: the intended ids are persisted BEFORE
+ *  the request, so a dropped response has a known reconciliation target. */
+async function runPrompt(
+  deps: ExecutorDeps,
+  log: Logger,
+  task: Extract<Task, { kind: 'prompt' }>,
+  run: Run,
+  context: ExecutionContext,
+): Promise<ExecutionResult> {
+  const { sessionId, messageId } = turnIdsFor(run.id);
+  const timeout = AbortSignal.timeout(task.timeoutMs);
+  const metadata = { aivi: { origin: 'job', run: run.id } };
+  try {
+    const client = await connectForTurn(deps.opencode);
+    // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
+    context.attachSession(sessionId);
+    const turn = await runTurn(
+      client,
+      {
+        sessionId,
+        agent: task.agent,
+        directory: task.directory,
+        create: true,
+        title: `aivi ${run.id}`,
+        sessionMetadata: metadata,
+        messageId,
+        text: task.prompt,
+        messageMetadata: metadata,
+      },
+      {
+        signal: AbortSignal.any([context.signal, timeout]),
+        onPermission: task.onPermission,
+        events: deps.events,
+        log,
+      },
+    );
+    return { state: 'succeeded', result: { sessionId, text: turn.text, rejectedPermissions: turn.rejected } };
+  } catch (error) {
+    log.warn('turn.failed', { error });
+    return ended(error, { sessionId, work: 'Turn', host: context.signal, timeout, timeoutMs: task.timeoutMs });
+  }
 }
 
 /**

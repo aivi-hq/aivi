@@ -3,7 +3,7 @@
  *  named after the module, its subcommands the register/status/resolve trio
  *  every channel answers. The run bodies guard their own module block and
  *  import the package's own index lazily, so mounting costs nothing at rest. */
-import type { PluginCliCommand } from '@aivi/host';
+import { type PluginCliCommand, resolveBlocked } from '@aivi/host';
 
 const enabled = async (ctx: Parameters<PluginCliCommand['subcommands'][number]['run']>[0]) => {
   const loaded = await ctx.loaded();
@@ -48,12 +48,7 @@ const discord: PluginCliCommand = {
       async run(ctx, [id], options) {
         const config = await enabled(ctx);
         const { openDiscordStore } = await import('./index.ts');
-        await ctx.withStore(store => {
-          const inbox = openDiscordStore(store, config);
-          inbox.resolve(String(id), String(options.reason));
-          ctx.print({ resolved: true });
-        });
-        await ctx.poke();
+        await resolveBlocked(ctx, id, options.reason, store => openDiscordStore(store, config));
       },
     },
   ],

@@ -8,12 +8,7 @@ import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { EventStream, type SessionEvents } from './events.ts';
 import { createJobHandler } from './jobs.ts';
-import {
-  ConfigurationError,
-  type HostModule as ModuleContract,
-  ModuleSupervisor,
-  type RetryPolicy,
-} from './modules.ts';
+import { ConfigurationError, type ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
@@ -34,7 +29,7 @@ const FAILURE_NUDGE_AT = 3;
  */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-export class Wake {
+class Wake {
   private controller = new AbortController();
   private readonly listeners = new Set<() => void>();
   notify(): void {

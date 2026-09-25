@@ -3,8 +3,8 @@
   "version": "0.8.0",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js",
-    "./client": "./dist/client.js"
+    ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./client": { "development": "./src/client.ts", "default": "./dist/client.js" }
   },
   "files": [
     "dist"
@@ -22,13 +22,14 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "tsc -b ../../tsconfig.build.json"
+    "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
     "@aivi/core": "^0.7.0",
     "@hono/node-server": "2.1.1",
     "@hono/zod-validator": "0.9.1",
     "@opencode/client": "2.0.14",
-    "hono": "4.13.9"
+    "hono": "4.13.9",
+    "zod": "4.1.13"
   }
 }

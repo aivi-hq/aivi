@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +21,14 @@ const run = promisify(execFile);
 const git = (cwd: string, ...args: string[]) =>
   run('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
 
+/** The fake's stateless answers, keyed by nothing but the url; undefined means "ask the state". */
+function canned(url: string, method: string): string | undefined {
+  if (url.startsWith('/api/agent')) return '{"data":[{"id":"developer","name":"developer"}]}';
+  if (url.endsWith('/message')) return '{"data":[],"cursor":{"next":null}}';
+  if (url.endsWith('/permission') && method === 'GET') return '{"data":[]}';
+  return undefined;
+}
+
 /** A tiny OpenCode: any session exists, every prompt gets the same answer. */
 async function fakeOpenCode(
   t: { after(fn: () => Promise<void>): void },
@@ -29,21 +38,41 @@ async function fakeOpenCode(
   const prompts: { id: string; text: string; metadata: unknown }[] = [];
   const sessions = new Map<string, { agent: string; directory: string }>();
   const interrupted: string[] = [];
-  const server = createServer(async (req, res) => {
+  /** The context of the last prompt. The transcript names the agent that ran;
+   *  finalAnswer verifies it against the session's. */
+  const contextBody = (url: string) => {
+    const last = prompts.at(-1)!;
+    const running = sessions.get(decodeURIComponent(url.split('/').at(-2)!))?.agent ?? 'developer';
+    return JSON.stringify({
+      data: [
+        { type: 'user', id: last.id, text: last.text, time: { created: 1 } },
+        {
+          type: 'assistant',
+          id: 'a',
+          agent: running,
+          finish: 'stop',
+          time: { created: 2, completed: 3 },
+          content: [{ type: 'text', text: answer }],
+        },
+        { type: 'idle', id: 'i', outcome: 'succeeded', time: { created: 4 } },
+      ],
+    });
+  };
+  /** One request: the canned routes answer from the url alone, the rest touch the state. */
+  const respond = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
     const url = new URL(req.url!, 'http://x').pathname;
     res.setHeader('content-type', 'application/json');
     if (url.endsWith('/wait')) await gate();
+    const known = canned(url, req.method!);
+    if (known !== undefined) return void res.end(known);
     if (url.endsWith('/interrupt')) {
       interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
       return void res.end('{"interrupted":true}');
     }
-    if (url.startsWith('/api/agent')) return void res.end('{"data":[{"id":"developer","name":"developer"}]}');
-    if (url.endsWith('/message')) return void res.end('{"data":[],"cursor":{"next":null}}');
     if (req.method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) return void res.writeHead(204).end();
-    if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (url === '/api/session' && req.method === 'POST') {
       sessions.set(body.id, { agent: body.agent, directory: body.location.directory });
       return void res.end(JSON.stringify({ data: { id: body.id } }));
@@ -52,31 +81,12 @@ async function fakeOpenCode(
       prompts.push({ id: body.id, text: body.text, metadata: body.metadata });
       return void res.end(JSON.stringify({ data: { id: body.id } }));
     }
-    if (url.endsWith('/context')) {
-      const last = prompts.at(-1)!;
-      // The transcript names the agent that ran; finalAnswer verifies it against the session's.
-      const running = sessions.get(decodeURIComponent(url.split('/').at(-2)!))?.agent ?? 'developer';
-      return void res.end(
-        JSON.stringify({
-          data: [
-            { type: 'user', id: last.id, text: last.text, time: { created: 1 } },
-            {
-              type: 'assistant',
-              id: 'a',
-              agent: running,
-              finish: 'stop',
-              time: { created: 2, completed: 3 },
-              content: [{ type: 'text', text: answer }],
-            },
-            { type: 'idle', id: 'i', outcome: 'succeeded', time: { created: 4 } },
-          ],
-        }),
-      );
-    }
+    if (url.endsWith('/context')) return void res.end(contextBody(url));
     const id = decodeURIComponent(url.split('/').at(-1)!);
     const session = sessions.get(id) ?? { agent: 'developer', directory: '/x' };
     res.end(JSON.stringify({ data: { id, ...session, location: { directory: session.directory } } }));
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
@@ -90,7 +100,6 @@ class FakeLinear extends LinearClient {
   issues = new Map<string, LinearIssue>();
   delegated: [string, string | null][] = [];
   sessionsCreated: string[] = [];
-  comments: [string, string][] = [];
   constructor() {
     super({ clientId: 'x', clientSecret: 'y' }, { baseUrl: 'http://127.0.0.1:1' });
   }
@@ -114,10 +123,6 @@ class FakeLinear extends LinearClient {
     this.delegated.push([issueId, delegateId]);
     const issue = this.issues.get(issueId);
     if (issue) issue.delegate = delegateId ? { id: delegateId } : null;
-  }
-  override async createComment(issueId: string, body: string) {
-    this.comments.push([issueId, body]);
-    return `c-${this.comments.length}`;
   }
 }
 

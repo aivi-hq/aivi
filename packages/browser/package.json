@@ -3,8 +3,8 @@
   "version": "0.2.0",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js",
-    "./setup": "./dist/setup.js"
+    ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./setup": { "development": "./src/setup.ts", "default": "./dist/setup.js" }
   },
   "files": [
     "dist"
@@ -22,7 +22,7 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "tsc -b ../../tsconfig.build.json"
+    "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
     "@aivi/core": "^0.7.0",

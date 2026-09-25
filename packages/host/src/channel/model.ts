@@ -22,7 +22,7 @@ export async function listModels(
   return catalogue.data.filter(m => m.enabled).flatMap(modelChoices);
 }
 
-export const modelChoices = (m: CatalogueModel): ModelChoice[] => [
+const modelChoices = (m: CatalogueModel): ModelChoice[] => [
   { providerID: m.providerID, modelID: m.modelID, name: m.name },
   ...m.variants.map(v => ({
     providerID: m.providerID,

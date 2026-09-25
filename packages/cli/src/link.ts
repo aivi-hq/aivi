@@ -146,7 +146,7 @@ function askPlatform(channels: LinkChannel[]): Promise<string> {
   })();
 }
 
-export const defaultIo: LinkIo = {
+const defaultIo: LinkIo = {
   channels,
   mint,
   askPlatform,

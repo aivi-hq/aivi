@@ -42,6 +42,7 @@ export interface PluginCliCommand {
 }
 
 import type { LoadedConfig, OutputBlock } from '@aivi/core';
+import type { ConversationStore } from './channel/store.ts';
 import type { Store } from './store.ts';
 
 /** What the app hands a plugin's CLI commands: the same home the built-ins
@@ -69,4 +70,25 @@ export interface PluginCliContext {
       validate?: (value: string) => string | undefined;
     }): Promise<string | undefined>;
   };
+}
+
+/**
+ * Open the module's own conversation store against the home store, release the
+ * blocked record, print the receipt, and wake the host so the freed worker
+ * dispatches without waiting. Every channel's `resolve` command ends with this
+ * exact sequence; keeping it in one place is what stops the poke from being
+ * dropped or the receipt from drifting when the contract changes. `openStore`
+ * supplies the module-specific store (it may close over the module's config).
+ */
+export async function resolveBlocked(
+  ctx: PluginCliContext,
+  id: string | undefined,
+  reason: unknown,
+  openStore: (store: Store) => ConversationStore,
+): Promise<void> {
+  await ctx.withStore(store => {
+    openStore(store).resolve(String(id), String(reason));
+    ctx.print({ resolved: true });
+  });
+  await ctx.poke();
 }

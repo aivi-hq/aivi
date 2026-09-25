@@ -1,6 +1,14 @@
 import type { AccessRoute } from '@aivi/core';
 import { accessEntry } from '@aivi/core';
-import type { ChannelDelivery, ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
+import type {
+  ChannelDelivery,
+  ChannelPlatform,
+  ChatCommandName,
+  HostModule,
+  HostServices,
+  Store,
+  Turn,
+} from '@aivi/host';
 import {
   announce,
   CHAT_COMMANDS,
@@ -145,6 +153,18 @@ export interface UnlinkedSender {
   isDM: boolean;
 }
 
+/** A DM channel by its Slack id shape (`D…`, not a channel `C…` or private `G…`), when the event omits the type. */
+const isDMChannel = (event: SlackEvent) =>
+  event.channel_type === 'im' || (!event.channel_type && isDMChannelId(event.channel));
+
+/** A reply inside an existing thread; a top-level message has thread_ts equal to its own ts. */
+const inThread = (event: SlackEvent, isDM: boolean) =>
+  !isDM && event.thread_ts !== undefined && event.thread_ts !== event.ts;
+
+/** Where the turn lives: a DM is its channel, a thread reply is the thread, anything else the channel. */
+const conversationOf = (event: SlackEvent, isDM: boolean, threaded: boolean) =>
+  isDM ? event.channel : threaded ? `${event.channel}:${event.thread_ts}` : event.channel;
+
 /**
  * Map a Slack message onto the shared access route. Mentions are `app_mention`
  * events or `<@bot>` in the text; Slack sends both for one message, so callers
@@ -164,12 +184,12 @@ export function routeMessage(
   const mention = `<@${botUserId}>`;
   const raw = event.text ?? '';
   const text = raw.replaceAll(mention, '').trim() || raw.trim();
-  const isDM = event.channel_type === 'im' || (!event.channel_type && isDMChannelId(event.channel));
-  const inThread = !isDM && event.thread_ts !== undefined && event.thread_ts !== event.ts;
-  const conversation = isDM ? event.channel : inThread ? `${event.channel}:${event.thread_ts}` : event.channel;
+  const isDM = isDMChannel(event);
+  const threaded = inThread(event, isDM);
+  const conversation = conversationOf(event, isDM, threaded);
   const route: AccessRoute = {
     channelId: conversation,
-    parentId: inThread ? event.channel : null,
+    parentId: threaded ? event.channel : null,
     userId: event.user,
     isDM,
     mentioned: event.type === 'app_mention' || raw.includes(mention),
@@ -180,7 +200,8 @@ export function routeMessage(
     if (!route.senderLinked && reaches(config, route)) return { unlinked: true, isDM };
     return null;
   }
-  const opensThread = !isDM && !inThread && accessEntry(config.access, route)?.sessions === 'threads';
+  // In thread mode a fresh top-level message opens a thread on itself, so later replies join it.
+  const opensThread = !isDM && !threaded && accessEntry(config.access, route)?.sessions === 'threads';
   return { route, conversation: opensThread ? `${event.channel}:${event.ts}` : conversation, text };
 }
 
@@ -334,6 +355,119 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
       }
     };
 
+    const spell = (n: string) => `/${config.commandPrefix}-${n}`;
+
+    /** One admitted slash command in flight: the text it carries, the channel it addresses,
+     *  whether thread mode hides a whole conversation behind it, and where to answer. */
+    interface CommandCall {
+      command: SlackCommand;
+      channel: string;
+      threads: boolean;
+      reply: (text: string) => Promise<void>;
+    }
+
+    /** `/search QUERY [project]`: the last word is a project only when it names a configured one. */
+    const searchCommand = async (call: CommandCall) => {
+      const words = call.command.text.trim().split(/\s+/).filter(Boolean);
+      const last = words.at(-1);
+      const project = words.length > 1 && services.loaded.projects.some(p => p.id === last) ? words.pop() : undefined;
+      const query = words.join(' ');
+      if (!query) return call.reply(`Usage: ${spell('search')} QUERY [project]`);
+      try {
+        const hits = await services.knowledge.search({
+          query,
+          limit: 3,
+          ...(project ? { projects: [project] } : {}),
+        });
+        return call.reply(
+          hits.length
+            ? splitReply(
+                hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'),
+                SLACK.replyLimit,
+              )[0]!
+            : 'No matching documents.',
+        );
+      } catch (error) {
+        log.warn('search.failed', { error });
+        return call.reply('Search is unavailable or the project is unknown.');
+      }
+    };
+
+    const contextCommand = async (call: CommandCall) => {
+      try {
+        return call.reply(await describeConversation(store, call.channel, config, services.loaded, services.opencode));
+      } catch (error) {
+        log.warn('context.failed', { error });
+        return call.reply('I could not read this session from OpenCode just now.');
+      }
+    };
+
+    const modelCommand = async (call: CommandCall) => {
+      const wanted = call.command.text.trim();
+      try {
+        return call.reply(
+          wanted
+            ? await switchModel(store, call.channel, config, services.opencode, wanted)
+            : await describeModel(store, call.channel, config, services.opencode),
+        );
+      } catch (error) {
+        log.warn('model.failed', { error });
+        return call.reply('I could not read the model catalogue from OpenCode just now.');
+      }
+    };
+
+    const stopCommand = async (call: CommandCall) => {
+      const result = await stopTurn(engine!, services.opencode, call.channel);
+      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
+      return call.reply(result.text);
+    };
+
+    const steerCommand = async (call: CommandCall) => {
+      const text = call.command.text.trim();
+      if (!text) return call.reply(`Usage: ${spell('steer')} TEXT`);
+      const speaker = { name: await nameOf(call.command.user_id), user: call.command.user_id };
+      const result = await steerTurn(services.store, store, SLACK, services.opencode, call.channel, speaker, text);
+      if (result.error) log.warn('steer.failed', { error: result.error });
+      return call.reply(result.text);
+    };
+
+    const newCommand = (call: CommandCall) => {
+      if (call.threads)
+        return call.reply('In this channel every thread is its own conversation; a new message starts a fresh one.');
+      try {
+        store.reset(call.channel);
+        return call.reply('The next message starts a fresh session. Previous sessions remain in OpenCode.');
+      } catch {
+        return call.reply(
+          'This conversation has queued or unresolved work. Finish or resolve it before starting fresh.',
+        );
+      }
+    };
+
+    /** `/status`: what is queued here, what is due next, and how the last day of runs went. */
+    const statusCommand = (call: CommandCall) => {
+      const pending = store
+        .list()
+        .filter(t => (call.threads ? t.channel.startsWith(`${call.channel}:`) : t.channel === call.channel))
+        .filter(t => !['sent', 'discarded'].includes(t.state));
+      const host = status(services.store, services.loaded);
+      const upcoming = host.upcoming
+        .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
+        .join(', ');
+      const tally = new Map<string, number>();
+      for (const r of host.recent) tally.set(r.state, (tally.get(r.state) ?? 0) + 1);
+      const recent = [...tally].map(([state, n]) => `${n} ${state}`).join(', ');
+      return call.reply(
+        [
+          pending.length
+            ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
+            : 'Ready for your next message.',
+          upcoming ? `Next jobs: ${upcoming}.` : 'No jobs are due.',
+          recent ? `Runs in the last 24 h: ${recent}.` : 'No runs finished in the last 24 h.',
+        ].join('\n'),
+      );
+    };
+
     const onCommand = async (command: SlackCommand) => {
       if (abort.signal.aborted) return;
       const name = command.command.replace(/^\//, '').slice(config.commandPrefix.length + 1);
@@ -349,7 +483,6 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
         senderLinked: services.store.identityFor(SLACK.id, command.user_id) !== null,
       };
       const reply = (text: string) => slack.ephemeral(command.response_url, text);
-      const spell = (n: string) => `/${config.commandPrefix}-${n}`;
       // A link code is its own proof of identity: it redeems wherever aivi listens, linked or not.
       const admitted = name === 'link' ? reaches(config, route) : authorized(config, route);
       if (!admitted) {
@@ -359,107 +492,38 @@ async function startSlack(config: SlackConfig, services: HostServices, given?: S
             : 'This user or conversation is not enabled for aivi.',
         );
       }
-      if (name === 'help') return reply(helpText(spell));
-      if (name === 'jobs') return reply(describeJobs(services.store));
-      if (name === 'link') return reply(redeemLink(services.store, SLACK.id, command.user_id, command.text));
-      if (name === 'search') {
-        // `QUERY [project]`: the last word is a project only when it names a configured one.
-        const words = command.text.trim().split(/\s+/).filter(Boolean);
-        const last = words.at(-1);
-        const project = words.length > 1 && services.loaded.projects.some(p => p.id === last) ? words.pop() : undefined;
-        const query = words.join(' ');
-        if (!query) return reply(`Usage: ${spell('search')} QUERY [project]`);
-        try {
-          const hits = await services.knowledge.search({
-            query,
-            limit: 3,
-            ...(project ? { projects: [project] } : {}),
-          });
-          return reply(
-            hits.length
-              ? splitReply(
-                  hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'),
-                  SLACK.replyLimit,
-                )[0]!
-              : 'No matching documents.',
-          );
-        } catch (error) {
-          log.warn('search.failed', { error });
-          return reply('Search is unavailable or the project is unknown.');
-        }
-      }
+      const call: CommandCall = {
+        command,
+        channel,
+        threads: !route.isDM && accessEntry(config.access, route)?.sessions === 'threads',
+        reply,
+      };
+      // These answer the speaker, not a conversation, so they run before the thread guard below.
+      const speakerCommands: Partial<Record<ChatCommandName, () => Promise<void>>> = {
+        help: () => reply(helpText(spell)),
+        jobs: () => reply(describeJobs(services.store)),
+        link: () => reply(redeemLink(services.store, SLACK.id, command.user_id, command.text)),
+        search: () => searchCommand(call),
+      };
+      const answerSpeaker = speakerCommands[name];
+      if (answerSpeaker) return answerSpeaker();
       // Slash commands carry no thread, so in thread mode they speak for the channel: every new
       // top-level message is already a fresh conversation, and status covers all its threads.
       // Anything that acts on one conversation cannot tell which thread is meant.
-      const threads = !route.isDM && accessEntry(config.access, route)?.sessions === 'threads';
-      if (threads && ['context', 'model', 'stop', 'steer'].includes(name))
+      if (call.threads && ['context', 'model', 'stop', 'steer'].includes(name))
         return reply(
           'In this channel every thread is its own conversation; slash commands cannot tell which one you mean.',
         );
-      if (name === 'context') {
-        try {
-          return reply(await describeConversation(store, channel, config, services.loaded, services.opencode));
-        } catch (error) {
-          log.warn('context.failed', { error });
-          return reply('I could not read this session from OpenCode just now.');
-        }
-      }
-      if (name === 'model') {
-        const wanted = command.text.trim();
-        try {
-          return reply(
-            wanted
-              ? await switchModel(store, channel, config, services.opencode, wanted)
-              : await describeModel(store, channel, config, services.opencode),
-          );
-        } catch (error) {
-          log.warn('model.failed', { error });
-          return reply('I could not read the model catalogue from OpenCode just now.');
-        }
-      }
-      if (name === 'stop') {
-        const result = await stopTurn(engine!, services.opencode, channel);
-        if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-        return reply(result.text);
-      }
-      if (name === 'steer') {
-        const text = command.text.trim();
-        if (!text) return reply(`Usage: ${spell('steer')} TEXT`);
-        const speaker = { name: await nameOf(command.user_id), user: command.user_id };
-        const result = await steerTurn(services.store, store, SLACK, services.opencode, channel, speaker, text);
-        if (result.error) log.warn('steer.failed', { error: result.error });
-        return reply(result.text);
-      }
-      if (name === 'new') {
-        if (threads)
-          return reply('In this channel every thread is its own conversation; a new message starts a fresh one.');
-        try {
-          store.reset(channel);
-          return reply('The next message starts a fresh session. Previous sessions remain in OpenCode.');
-        } catch {
-          return reply('This conversation has queued or unresolved work. Finish or resolve it before starting fresh.');
-        }
-      }
-      const pending = store
-        .list()
-        .filter(t => (threads ? t.channel.startsWith(`${channel}:`) : t.channel === channel))
-        .filter(t => !['sent', 'discarded'].includes(t.state));
-      const host = status(services.store, services.loaded);
-      const upcoming = host.upcoming
-        .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
-        .join(', ');
-      const tally = new Map<string, number>();
-      for (const r of host.recent) tally.set(r.state, (tally.get(r.state) ?? 0) + 1);
-      const recent = [...tally].map(([state, n]) => `${n} ${state}`).join(', ');
-      return reply(
-        [
-          pending.length
-            ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
-            : 'Ready for your next message.',
-          upcoming ? `Next jobs: ${upcoming}.` : 'No jobs are due.',
-          recent ? `Runs in the last 24 h: ${recent}.` : 'No runs finished in the last 24 h.',
-        ].join('\n'),
-      );
+      // Anything else is `/status` — the only chat command without its own branch.
+      const conversationCommands: Partial<Record<ChatCommandName, (call: CommandCall) => Promise<void>>> = {
+        context: contextCommand,
+        model: modelCommand,
+        stop: stopCommand,
+        steer: steerCommand,
+        new: newCommand,
+      };
+      const answerConversation = conversationCommands[name];
+      return answerConversation ? answerConversation(call) : statusCommand(call);
     };
 
     await slack.connect({ event: onEvent, command: onCommand });

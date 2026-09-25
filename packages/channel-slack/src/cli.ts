@@ -3,7 +3,7 @@
  *  command is the one that runs before the module exists — it is how the app
  *  gets set up — so it reads the config when there is one and asks for the
  *  prefix through the context when there is not. */
-import type { PluginCliCommand, PluginCliContext } from '@aivi/host';
+import { type PluginCliCommand, type PluginCliContext, resolveBlocked } from '@aivi/host';
 
 const enabled = async (ctx: PluginCliContext) => {
   const loaded = await ctx.loaded();
@@ -77,12 +77,7 @@ const slack: PluginCliCommand = {
       async run(ctx, [id], options) {
         const config = await enabled(ctx);
         const { openSlackStore } = await import('./index.ts');
-        await ctx.withStore(store => {
-          const inbox = openSlackStore(store, config);
-          inbox.resolve(String(id), String(options.reason));
-          ctx.print({ resolved: true });
-        });
-        await ctx.poke();
+        await resolveBlocked(ctx, id, options.reason, store => openSlackStore(store, config));
       },
     },
   ],

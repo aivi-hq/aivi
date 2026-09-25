@@ -17,6 +17,68 @@ export function shouldReport(report: Report | null, state: RunState): report is 
 }
 
 const ICON: Partial<Record<RunState, string>> = { succeeded: '✅', blocked: '⏸', missed: '⏭' };
+const joinLines = (...parts: (string | undefined)[]) => parts.filter(Boolean).join('\n');
+
+/** The dreaming run: what was reviewed and what the agent said about it. */
+function dreamingOutcome(r: Record<string, unknown>): string {
+  const reviewed = Number(r.reviewed ?? 0);
+  if (reviewed === 0) return 'No new conversations to review.';
+  const changed = Array.isArray(r.changed) ? (r.changed as string[]) : [];
+  return joinLines(
+    `Reviewed ${reviewed} conversation(s); ${changed.length ? `updated ${changed.join(', ')}` : 'memory unchanged'}.`,
+    typeof r.text === 'string' ? r.text : undefined,
+  );
+}
+
+/** A shell run: the exit code with the output that explains it. */
+function shellOutcome(r: Record<string, unknown>): string {
+  return joinLines(`exit ${String(r.exitCode)}`, String(r.stdout ?? '').trim(), String(r.stderr ?? '').trim());
+}
+
+/** The knowledge sources check: which went missing, or that all is well. Undefined when the
+ *  result is not that shape, so the dispatcher can fall through. */
+function systemCheckOutcome(r: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(r.sources)) return undefined;
+  const sources = r.sources as { id: string; available: boolean }[];
+  const missing = sources.filter(s => !s.available).map(s => s.id);
+  return missing.length
+    ? `Missing sources: ${missing.join(', ')}`
+    : `All ${sources.length} knowledge sources available.`;
+}
+
+/** A projects sync: what checked out fresh, what was left alone and why. Undefined when the
+ *  result is not that shape, so the dispatcher can fall through. */
+function projectsSyncOutcome(r: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(r.projects)) return undefined;
+  const outcomes = r.projects as { id: string; state: string; reason?: string }[];
+  const updated = outcomes.filter(o => o.state === 'updated').map(o => o.id);
+  const skipped = outcomes.filter(o => o.state === 'skipped').map(o => `${o.id} (${o.reason})`);
+  return joinLines(
+    updated.length ? `Updated: ${updated.join(', ')}.` : `All ${outcomes.length} project checkout(s) current.`,
+    skipped.length ? `Skipped: ${skipped.join(', ')}.` : undefined,
+  );
+}
+
+/** What a prune deleted. */
+function pruneOutcome(r: Record<string, unknown>): string {
+  const codes =
+    typeof r.linkCodes === 'number' && r.linkCodes > 0 ? ` and ${String(r.linkCodes)} expired link code(s)` : '';
+  return `Deleted ${String(r.runs)} run(s) and ${String(r.jobs)} finished one-off job(s)${codes}.`;
+}
+
+/** What the run produced, in words: the agent's own answer, the job's own report of itself, or the raw result. */
+function outcomeText(run: Run, op: string, result: unknown): string {
+  const r = result as Record<string, unknown> | null | undefined;
+  if (!r) return result === null || result === undefined ? '' : JSON.stringify(result);
+  if (run.task.kind === 'prompt' && typeof r.text === 'string') return r.text;
+  if (op === 'dreaming') return dreamingOutcome(r);
+  if (run.task.kind === 'shell') return shellOutcome(r);
+  if (op === 'runs.prune') return pruneOutcome(r);
+  // These two report only when the result carries their shape; anything else shows raw.
+  const check =
+    op === 'system.check' ? systemCheckOutcome(r) : op === 'projects.sync' ? projectsSyncOutcome(r) : undefined;
+  return check ?? JSON.stringify(result);
+}
 
 /**
  * Human-readable outcome for chat channels and re-entry prompts; capped so a
@@ -34,47 +96,13 @@ export function describeOutcome(
   const op = taskLabel(run.task);
   const head = `${ICON[state] ?? '❌'} ${run.jobId} (${op}) ${state}`;
   let body: string;
-  const r = result as Record<string, unknown> | null | undefined;
   if (state === 'missed')
     body = reason ?? `missed: aivi was not running at ${new Date(run.scheduledFor).toISOString()}`;
-  else if (run.task.kind === 'prompt' && typeof r?.text === 'string') body = r.text;
-  else if (op === 'dreaming' && r) {
-    const reviewed = Number(r.reviewed ?? 0);
-    const changed = Array.isArray(r.changed) ? (r.changed as string[]) : [];
-    body =
-      reviewed === 0
-        ? 'No new conversations to review.'
-        : [
-            `Reviewed ${reviewed} conversation(s); ${changed.length ? `updated ${changed.join(', ')}` : 'memory unchanged'}.`,
-            typeof r.text === 'string' ? r.text : '',
-          ]
-            .filter(Boolean)
-            .join('\n');
-  } else if (run.task.kind === 'shell' && r)
-    body = [`exit ${String(r.exitCode)}`, String(r.stdout ?? '').trim(), String(r.stderr ?? '').trim()]
-      .filter(Boolean)
-      .join('\n');
-  else if (op === 'system.check' && r && Array.isArray(r.sources)) {
-    const missing = (r.sources as { id: string; available: boolean }[]).filter(s => !s.available).map(s => s.id);
-    body = missing.length
-      ? `Missing sources: ${missing.join(', ')}`
-      : `All ${(r.sources as unknown[]).length} knowledge sources available.`;
-  } else if (op === 'projects.sync' && r && Array.isArray(r.projects)) {
-    const outcomes = r.projects as { id: string; state: string; reason?: string }[];
-    const updated = outcomes.filter(o => o.state === 'updated').map(o => o.id);
-    const skipped = outcomes.filter(o => o.state === 'skipped').map(o => `${o.id} (${o.reason})`);
-    body = [
-      updated.length ? `Updated: ${updated.join(', ')}.` : `All ${outcomes.length} project checkout(s) current.`,
-      skipped.length ? `Skipped: ${skipped.join(', ')}.` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-  } else if (op === 'runs.prune' && r) {
-    const codes =
-      typeof r.linkCodes === 'number' && r.linkCodes > 0 ? ` and ${String(r.linkCodes)} expired link code(s)` : '';
-    body = `Deleted ${String(r.runs)} run(s) and ${String(r.jobs)} finished one-off job(s)${codes}.`;
-  } else body = result === null || result === undefined ? '' : JSON.stringify(result);
-  if (state !== 'succeeded' && state !== 'missed' && reason) body = body ? `${reason}\n${body}` : reason;
+  else {
+    body = outcomeText(run, op, result);
+    // A failed or blocked run leads with why, before whatever partial output exists.
+    if (state !== 'succeeded' && reason) body = body ? `${reason}\n${body}` : reason;
+  }
   const foot = run.task.kind === 'prompt' && run.sessionId ? `session ${run.sessionId} in OpenCode` : '';
   const text = [head, body, foot].filter(Boolean).join('\n');
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;

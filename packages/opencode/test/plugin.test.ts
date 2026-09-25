@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer, type Server } from 'node:http';
+import { createServer, type RequestListener, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -101,7 +101,7 @@ type Route = (request: {
   headers: Record<string, string | undefined>;
 }) => { status?: number; json: unknown } | Promise<{ status?: number; json: unknown }>;
 async function hostServing(t: { after(fn: () => void): void }, routes: Record<string, Route>): Promise<string> {
-  const server = createServer(async (request, response) => {
+  const respond: RequestListener = async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const route = routes[`${request.method} ${url.pathname}`];
     let body: unknown;
@@ -119,7 +119,8 @@ async function hostServing(t: { after(fn: () => void): void }, routes: Record<st
     const answer = await route({ body, headers: request.headers as Record<string, string | undefined> });
     response.statusCode = answer.status ?? 200;
     response.end(JSON.stringify(answer.json));
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
@@ -128,7 +129,7 @@ async function hostServing(t: { after(fn: () => void): void }, routes: Record<st
 }
 
 /** A host that answers nothing: the port is closed the moment it opens. */
-async function deadPort(t: { after(fn: () => void): void }): Promise<string> {
+async function deadPort(): Promise<string> {
   const server = createServer();
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -212,7 +213,7 @@ test('a host that refuses the plugin still loads, and the connection tool report
 test('host down at load: only the connection tool remains and it says the host is not reachable', async t => {
   await hermeticXdg(t);
   withToken(t, 'test-offline-token');
-  const base = await deadPort(t);
+  const base = await deadPort();
   const tools: RegisteredTool[] = [];
   const cleanup = await setupWith({ url: base }, tool => tools.push(tool));
   assert.deepEqual(

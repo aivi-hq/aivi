@@ -52,20 +52,11 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  // Not ours (or not a help form we can answer): the installed app runs it with
-  // the same arguments — the forwarding contract is argv, byte for byte.
-  if (command !== undefined && !OWN.has(command) && !HELP_FORMS.has(command)) {
-    const home = requireHome();
-    const appDir = loadClientConfig()?.appDir ?? `${home}/app`;
-    process.exitCode = forward(argv, { home, appDir, nodePath: loadClientConfig()?.nodePath });
-    return;
-  }
-  // `aivi help X` for a command the thin CLI does not own also belongs to the
-  // app — its help knows the jobs, channels and the rest.
-  if (command === 'help' && subcommand !== undefined && !OWN.has(subcommand)) {
-    const home = requireHome();
-    const appDir = loadClientConfig()?.appDir ?? `${home}/app`;
-    process.exitCode = forward(argv, { home, appDir, nodePath: loadClientConfig()?.nodePath });
+  // The forwarding contract is argv, byte for byte: what this CLI does not own
+  // runs in the installed app, and so does `aivi help X` for a command the app
+  // describes better — its help knows the jobs, channels and the rest.
+  if (goesToApp(command, subcommand)) {
+    forwardToApp(argv);
     return;
   }
 
@@ -194,18 +185,31 @@ config, discord, slack, linear — runs in the installed app, arguments and all.
     await program.parseAsync(argv, { from: 'user' });
   } catch (error) {
     if (error instanceof CommanderError) {
-      // Commander has written its message already; showing help or the version is success.
-      process.exitCode =
-        error.code === 'commander.help' ||
-        error.code === 'commander.helpDisplayed' ||
-        error.code === 'commander.version'
-          ? 0
-          : error.exitCode;
+      process.exitCode = commanderExit(error);
       return;
     }
     throw error;
   }
 }
+
+/** Whether the installed app should run this argv: a command this CLI does not
+ *  own, or `help X` for a command it does not own either. */
+const goesToApp = (command: string | undefined, subcommand: string | undefined): boolean =>
+  (command !== undefined && !OWN.has(command) && !HELP_FORMS.has(command)) ||
+  (command === 'help' && subcommand !== undefined && !OWN.has(subcommand));
+
+/** Run the installed app with the same arguments — byte for byte. */
+function forwardToApp(argv: string[]): void {
+  const home = requireHome();
+  const appDir = loadClientConfig()?.appDir ?? `${home}/app`;
+  process.exitCode = forward(argv, { home, appDir, nodePath: loadClientConfig()?.nodePath });
+}
+
+/** Commander has written its message already; showing help or the version is success. */
+const commanderExit = (error: CommanderError): number =>
+  error.code === 'commander.help' || error.code === 'commander.helpDisplayed' || error.code === 'commander.version'
+    ? 0
+    : error.exitCode;
 
 try {
   await main(process.argv.slice(2));

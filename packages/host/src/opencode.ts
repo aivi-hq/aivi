@@ -30,6 +30,44 @@ export interface ConnectHooks {
 const serviceFile = () =>
   join(process.env.XDG_STATE_HOME ?? join(homedir(), '.local', 'state'), 'opencode', 'service.json');
 
+/** What the service file says about the server; only `url` is required. */
+type Registration = { url?: string; password?: string; version?: string };
+
+/** The Basic header for a registered password; the same shape every call uses. */
+const basicAuth = (username: string, password: string) =>
+  `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+
+/** The registered service file, or undefined when there is nothing to read or parse. */
+async function readRegistration(file?: string): Promise<Registration | undefined> {
+  try {
+    return JSON.parse(await readFile(file ?? serviceFile(), 'utf8')) as Registration;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One probe path. A fetch that resolves at all means something is listening there;
+ *  the version is what the answer says, else what the registration filed. */
+async function probe(
+  url: string,
+  path: string,
+  auth: { username: string; password: string } | undefined,
+  registeredVersion: string | undefined,
+): Promise<DiscoveredEndpoint | undefined> {
+  try {
+    const response = await fetch(`${url}${path}`, {
+      ...(auth ? { headers: { authorization: basicAuth(auth.username, auth.password) } } : {}),
+      signal: AbortSignal.timeout(1500),
+    });
+    const body = response.ok ? ((await response.json()) as { version?: unknown }) : undefined;
+    const version = typeof body?.version === 'string' ? body.version : registeredVersion;
+    return { url, ...(auth ? { auth: { type: 'basic', ...auth } as const } : {}), ...(version ? { version } : {}) };
+  } catch {
+    // Not reachable on this path; the caller tries the next, else ensure starts one.
+    return undefined;
+  }
+}
+
 /**
  * Tolerant discovery: the server is alive when it answers HTTP on its
  * registered endpoint — any status, any version. The SDK's own discovery
@@ -41,34 +79,13 @@ const serviceFile = () =>
  * other process fails later with a clear per-call error, never with a kill.
  */
 export async function discoverTolerant(options: { file?: string } = {}): Promise<DiscoveredEndpoint | undefined> {
-  let info: { url?: string; password?: string; version?: string };
-  try {
-    info = JSON.parse(await readFile(options.file ?? serviceFile(), 'utf8'));
-  } catch {
-    return undefined;
-  }
-  if (typeof info.url !== 'string') return undefined;
-  const auth =
-    typeof info.password === 'string'
-      ? ({ type: 'basic', username: 'opencode', password: info.password } as const)
-      : undefined;
-  const headers = auth
-    ? { authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}` }
-    : undefined;
-  // Old and new generations report version and liveness on different paths;
-  // a fetch that resolves at all means something is listening there.
+  const info = await readRegistration(options.file);
+  if (typeof info?.url !== 'string') return undefined;
+  const auth = typeof info.password === 'string' ? { username: 'opencode', password: info.password } : undefined;
+  // Old and new generations report version and liveness on different paths.
   for (const path of ['/api/info', '/api/status']) {
-    try {
-      const response = await fetch(`${info.url}${path}`, {
-        ...(headers ? { headers } : {}),
-        signal: AbortSignal.timeout(1500),
-      });
-      const body = response.ok ? ((await response.json()) as { version?: unknown }) : undefined;
-      const version = typeof body?.version === 'string' ? body.version : info.version;
-      return { url: info.url, ...(auth ? { auth } : {}), ...(version ? { version } : {}) };
-    } catch {
-      // Not reachable on this path; try the next, else let ensure start one.
-    }
+    const endpoint = await probe(info.url, path, auth, info.version);
+    if (endpoint) return endpoint;
   }
   return undefined;
 }
@@ -80,11 +97,7 @@ async function _announceVersion(endpoint: DiscoveredEndpoint, log: Logger): Prom
   if (versionAnnounced) return;
   try {
     const response = await fetch(`${endpoint.url}/api/info`, {
-      ...(endpoint.auth
-        ? {
-            authorization: `Basic ${Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString('base64')}`,
-          }
-        : {}),
+      ...(endpoint.auth ? { authorization: basicAuth(endpoint.auth.username, endpoint.auth.password) } : {}),
       signal: AbortSignal.timeout(1500),
     });
     const server = response.ok ? ((await response.json()) as { version?: string }) : undefined;

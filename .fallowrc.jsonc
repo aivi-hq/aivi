@@ -1,0 +1,43 @@
+{
+  // This file is JSONC: fallow reads these comments; generic JSON tools may not.
+  "$schema": "./node_modules/fallow/schema.json",
+  "entry": [
+    "src/index.{ts,tsx,js,jsx}",
+    "src/main.{ts,tsx,js,jsx}"
+  ],
+  "dynamicallyLoaded": [
+    // Git hooks lefthook invokes by path; nothing imports them, so the static
+    // graph alone would report them dead.
+    "scripts/commit-msg.mjs"
+  ],
+  "workspaces": {
+    "patterns": [
+      "packages/*"
+    ]
+  },
+  "duplicates": {
+    // Hide pair-only clones; focus on widespread copy-paste
+    // worth refactoring. Lower to 2 to report every duplicate pair.
+    "minOccurrences": 3
+    // Common additions (uncomment to enable):
+    // "ignore": [
+    //   "**/lib/**",          // for repos that publish transpiled output to lib/
+    //   "**/legacy/**",       // for repos with legacy-build artifacts
+    //   "**/__generated__/**", // Relay, GraphQL Code Generator
+    //   "**/generated/**"     // OpenAPI, Protobuf codegen
+    // ]
+  },
+  "typeAware": { "enabled": true },
+  "health": {
+    // Istanbul coverage from `npm run test:cov`, so CRAP scores are measured, not estimated.
+    "coverage": "./coverage/coverage-final.json",
+    // 30 → 350 for now. c8 drops nameless inline callbacks from its function
+    // map, so fallow estimates CRAP = cc²+cc for code that ran; the round's
+    // 114 complexity findings are all fixed and the 77 estimates left are
+    // all of that kind. Complexity thresholds stay at their defaults — those
+    // are the real gate. Swap the coverage producer for one that records
+    // anonymous functions (vitest does) and this can drop back to 30.
+    "maxCrap": 350
+  },
+  "rules": {}
+}

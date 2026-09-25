@@ -3,11 +3,15 @@
     "@biomejs/biome": "2.5.13",
     "@changesets/changelog-github": "1.0.1",
     "@changesets/cli": "3.0.3",
+    "@opencode/client": "2.0.14",
     "@types/node": "26.5.1",
     "@types/plist": "3.0.5",
     "@types/semver": "7.8.0",
+    "c8": "12.0.0",
+    "fallow": "3.28.0",
     "lefthook": "2.1.14",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "zod": "4.1.13"
   },
   "engines": {
     "node": ">=26.1.0 <27"
@@ -23,7 +27,8 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run build -s && npm run typecheck && node --test --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
+    "test": "npm run typecheck && NODE_OPTIONS=--conditions=development node --test --conditions=development --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
+    "test:cov": "NODE_OPTIONS=--conditions=development c8 --reporter=json --reporter=text --all \"--include=packages/*/src/**\" \"--include=packages/*/test/**\" \"--exclude=coverage/**\" \"--exclude=node_modules/**\" node --test --conditions=development --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
     "check": "npm test && npm run schema:check && npm run smoke && npm run pack:smoke",
     "aivi": "npm run build -s && AIVI_HOME=${AIVI_HOME:-dev} node packages/app/dist/cli.js",
     "aivi:cli": "npm run build -s && AIVI_HOME=${AIVI_HOME:-dev} AIVI_CONFIG=${AIVI_CONFIG:-dev/.config/aivi.json} node packages/cli/dist/main.js",
@@ -36,7 +41,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "agentic:verify": "biome check --write . && npm run check",
+    "quality": "npx fallow",
+    "agentic:verify": "biome check --write . && npm run check && npm run quality",
     "prepare": "lefthook install"
   },
   "type": "module",

@@ -4,7 +4,7 @@
  *  deleted only after a replacement is in place. */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { satisfies } from 'semver';
 
@@ -60,12 +60,4 @@ export async function ensureNode(home: string, range: string): Promise<string> {
   if (!satisfies(nodeVersionAt(nodePath), range))
     throw new Error(`The downloaded Node ${version} does not satisfy "${range}"`);
   return nodePath;
-}
-
-/** The engines range the server publishes; the shape aivi itself controls. */
-export function serverRange(appDir: string): string {
-  const manifest = JSON.parse(readFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), 'utf8')) as {
-    engines?: { node?: string };
-  };
-  return manifest.engines?.node ?? '>=26.0.0 <27';
 }

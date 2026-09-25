@@ -11,7 +11,7 @@ import type { BrowserConfig, ToolDescriptor } from '@aivi/core';
 import { browserRequestSchema } from '@aivi/core';
 import type { HostModule } from '@aivi/host';
 import { ToolError } from '@aivi/host';
-import { createBrowserService } from './index.ts';
+import { createBrowserService } from './service.ts';
 import type { BrowserTransport } from './transport.ts';
 
 /** The model-facing input; the handler validates the exact shape with zod. */

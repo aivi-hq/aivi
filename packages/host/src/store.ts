@@ -127,11 +127,19 @@ export class Store {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;');
-    this.transaction(() => {
-      const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-      if (version > HOST_SCHEMA_VERSION) throw new Error(`Database schema ${version} is newer than this host`);
-      if (version === 0)
-        this.db.exec(`
+    this.transaction(() => this.migrateSchema());
+  }
+
+  /**
+   * Bring the schema from whatever version it was found at up to
+   * HOST_SCHEMA_VERSION. Each step runs once, in order, inside the
+   * constructor's transaction; each SQL block bumps the version itself.
+   */
+  private migrateSchema(): void {
+    const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
+    if (version > HOST_SCHEMA_VERSION) throw new Error(`Database schema ${version} is newer than this host`);
+    if (version === 0)
+      this.db.exec(`
         CREATE TABLE schedules(id TEXT PRIMARY KEY, spec TEXT NOT NULL, fingerprint TEXT NOT NULL,
           next_at INTEGER NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
         CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
@@ -147,68 +155,49 @@ export class Store {
           action TEXT NOT NULL, reason TEXT NOT NULL);
         PRAGMA user_version=1;
       `);
-      if (version < 2)
-        this.db.exec(`
+    if (version < 2)
+      this.db.exec(`
         CREATE TABLE resource_leases(id TEXT PRIMARY KEY, owner TEXT NOT NULL, resource TEXT NOT NULL,
           state TEXT NOT NULL CHECK(state IN ('running','blocked')), created_at INTEGER NOT NULL, reason TEXT);
         PRAGMA user_version=2;
       `);
-      if (version < 3)
-        this.db.exec(`
+    if (version < 3)
+      this.db.exec(`
         CREATE INDEX audit_job ON audit(job_id,seq);
         CREATE TABLE migrations(namespace TEXT PRIMARY KEY, version INTEGER NOT NULL);
         PRAGMA user_version=3;
       `);
-      if (version < 4)
-        this.db.exec(`
+    if (version < 4)
+      this.db.exec(`
         ALTER TABLE jobs ADD COLUMN report TEXT;
         PRAGMA user_version=4;
       `);
-      if (version < 5)
-        this.db.exec(`
+    if (version < 5)
+      this.db.exec(`
         ALTER TABLE schedules ADD COLUMN source TEXT NOT NULL DEFAULT 'config' CHECK(source IN ('config','agent'));
         ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;
         PRAGMA user_version=5;
       `);
-      if (version < 6) {
-        for (const row of this.db.prepare('SELECT id,report FROM jobs WHERE report IS NOT NULL').all()) {
-          const report = migrateReport(JSON.parse(String(row.report)));
-          this.db
-            .prepare('UPDATE jobs SET report=? WHERE id=?')
-            .run(report ? JSON.stringify(report) : null, String(row.id));
-        }
-        // The fingerprint follows the spec so an unchanged schedule keeps its next occurrence on the next sync.
-        for (const row of this.db.prepare('SELECT id,spec FROM schedules').all()) {
-          const spec = JSON.parse(String(row.spec)) as Job;
-          if (!spec.report) continue;
-          const report = migrateReport(spec.report);
-          if (report) spec.report = report;
-          else delete spec.report;
-          this.db
-            .prepare('UPDATE schedules SET spec=?,fingerprint=? WHERE id=?')
-            .run(JSON.stringify(spec), hash(spec), String(row.id));
-        }
-        this.db.exec('PRAGMA user_version=6');
-      }
-      if (version < 7) this.migrateToJobsAndRuns(Date.now());
-      if (version < 8)
-        this.db.exec(`
+    if (version < 6) this.migrateReportsTo6();
+    if (version < 7) this.migrateToJobsAndRuns(Date.now());
+    if (version < 8)
+      this.db.exec(`
         CREATE TABLE people(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, created_at INTEGER NOT NULL);
         CREATE TABLE tokens(token_hash TEXT PRIMARY KEY,
           person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
           label TEXT NOT NULL, created_at INTEGER NOT NULL);
         PRAGMA user_version=8;
       `);
-      if (version < 9) {
-        this.db.exec(`
+    if (version < 9) {
+      this.db.exec(`
         ALTER TABLE people ADD COLUMN roles TEXT NOT NULL DEFAULT '[]';
         PRAGMA user_version=9;
       `);
-        // The stub said every person was an operator; make the truth true.
-        this.db.exec(`UPDATE people SET roles='["operator"]'`);
-      }
-      if (version < 10)
-        this.db.exec(`
+      // The stub said every person was an operator; make the truth true.
+      this.db.exec(`UPDATE people SET roles='["operator"]'`);
+    }
+    if (version < 10)
+      this.db.exec(`
         CREATE TABLE link_codes(code_hash TEXT PRIMARY KEY,
           person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
           created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
@@ -219,8 +208,31 @@ export class Store {
           PRIMARY KEY(channel, user_id));
         PRAGMA user_version=10;
       `);
-    });
   }
+
+  /** v6: stored reports were rewritten to the current shape, and schedule
+   *  fingerprints follow the spec so an unchanged schedule keeps its next
+   *  occurrence on the next sync. */
+  private migrateReportsTo6(): void {
+    for (const row of this.db.prepare('SELECT id,report FROM jobs WHERE report IS NOT NULL').all()) {
+      const report = migrateReport(JSON.parse(String(row.report)));
+      this.db
+        .prepare('UPDATE jobs SET report=? WHERE id=?')
+        .run(report ? JSON.stringify(report) : null, String(row.id));
+    }
+    for (const row of this.db.prepare('SELECT id,spec FROM schedules').all()) {
+      const spec = JSON.parse(String(row.spec)) as Job;
+      if (!spec.report) continue;
+      const report = migrateReport(spec.report);
+      if (report) spec.report = report;
+      else delete spec.report;
+      this.db
+        .prepare('UPDATE schedules SET spec=?,fingerprint=? WHERE id=?')
+        .run(JSON.stringify(spec), hash(spec), String(row.id));
+    }
+    this.db.exec('PRAGMA user_version=6');
+  }
+
   /**
    * v7: definitions and executions. `schedules` becomes `jobs`, `jobs` becomes
    * `runs`, and every one-off (a run without a schedule) gets a definition of
@@ -440,36 +452,49 @@ export class Store {
    * disappeared is removed.
    */
   syncJobs(config: Job[], system: Job[] = [], now = Date.now()): void {
-    this.transaction(() => {
-      this.db.prepare("UPDATE jobs SET state='paused' WHERE source='config' AND state='active'").run();
-      for (const [source, specs] of [
-        ['config', config],
-        ['system', system],
-      ] as const) {
-        for (const spec of specs) {
-          const fingerprint = hash(spec);
-          const current = this.db.prepare('SELECT fingerprint,next_at,state,source FROM jobs WHERE id=?').get(spec.id);
-          if (current && current.source !== source)
-            throw new Error(`Job ${spec.id} already exists with source ${current.source}; choose another id`);
-          const unchanged = current?.fingerprint === fingerprint;
-          if (current && !unchanged) this.cancelQueuedOf(spec.id, 'job definition changed', now);
-          const finished = unchanged && ['done', 'missed'].includes(String(current.state));
-          const state: JobState = !spec.enabled ? 'paused' : finished ? (current.state as JobState) : 'active';
-          const next = unchanged ? (current.next_at as number | null) : this.firstOccurrence(spec, now);
-          this.db
-            .prepare(`INSERT INTO jobs(id,spec,fingerprint,next_at,state,source,created_at) VALUES(?,?,?,?,?,?,?)
+    this.transaction(() => this.syncOwnedDefinitions(config, system, now));
+  }
+
+  /** The reconciliation itself, run inside `syncJobs`' transaction. */
+  private syncOwnedDefinitions(config: Job[], system: Job[], now: number): void {
+    this.db.prepare("UPDATE jobs SET state='paused' WHERE source='config' AND state='active'").run();
+    for (const [source, specs] of [
+      ['config', config],
+      ['system', system],
+    ] as const)
+      for (const spec of specs) this.syncOneJob(source, spec, now);
+    this.removeVanishedSystemJobs(system, now);
+    this.cancelQueuedOfPaused(now);
+  }
+
+  /** Bring one owned definition to its written shape: an unchanged fingerprint
+   *  keeps `next_at` and a terminal state; a changed one cancels queued runs
+   *  and recomputes. */
+  private syncOneJob(source: 'config' | 'system', spec: Job, now: number): void {
+    const fingerprint = hash(spec);
+    const current = this.db.prepare('SELECT fingerprint,next_at,state,source FROM jobs WHERE id=?').get(spec.id);
+    if (current && current.source !== source)
+      throw new Error(`Job ${spec.id} already exists with source ${current.source}; choose another id`);
+    const unchanged = current?.fingerprint === fingerprint;
+    if (current && !unchanged) this.cancelQueuedOf(spec.id, 'job definition changed', now);
+    const finished = unchanged && ['done', 'missed'].includes(String(current.state));
+    const state: JobState = !spec.enabled ? 'paused' : finished ? (current.state as JobState) : 'active';
+    const next = unchanged ? (current.next_at as number | null) : this.firstOccurrence(spec, now);
+    this.db
+      .prepare(`INSERT INTO jobs(id,spec,fingerprint,next_at,state,source,created_at) VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET spec=excluded.spec,fingerprint=excluded.fingerprint,next_at=excluded.next_at,state=excluded.state`)
-            .run(spec.id, JSON.stringify(spec), fingerprint, next, state, source, now);
-        }
-      }
-      const keep = system.map(s => s.id);
-      for (const row of this.db.prepare("SELECT id FROM jobs WHERE source='system'").all()) {
-        if (keep.includes(String(row.id))) continue;
-        this.cancelQueuedOf(String(row.id), 'job removed', now);
-        this.db.prepare('DELETE FROM jobs WHERE id=?').run(String(row.id));
-      }
-      this.cancelQueuedOfPaused(now);
-    });
+      .run(spec.id, JSON.stringify(spec), fingerprint, next, state, source, now);
+  }
+
+  /** A system job that disappeared is removed with its queued runs; the
+   *  config ones above merely stay paused. */
+  private removeVanishedSystemJobs(system: Job[], now: number): void {
+    const keep = system.map(s => s.id);
+    for (const row of this.db.prepare("SELECT id FROM jobs WHERE source='system'").all()) {
+      if (keep.includes(String(row.id))) continue;
+      this.cancelQueuedOf(String(row.id), 'job removed', now);
+      this.db.prepare('DELETE FROM jobs WHERE id=?').run(String(row.id));
+    }
   }
   /** Disabling a job cancels its queued runs, never active work. */
   private cancelQueuedOfPaused(now: number): void {

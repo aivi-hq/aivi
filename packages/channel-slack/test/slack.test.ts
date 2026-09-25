@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Person, Run } from '@aivi/core';
@@ -128,6 +129,46 @@ test('routing: DMs, mentions opening threads, threads aivi is in, channel mode, 
   );
 });
 
+/** The model the fake offers, so a pinned model resolves. */
+const FAKE_MODEL = {
+  id: 'github-copilot/gpt-5.2',
+  providerID: 'github-copilot',
+  modelID: 'gpt-5.2',
+  name: 'GPT 5.2',
+  enabled: true,
+  variants: [{ id: 'high' }],
+  limit: { context: 128_000, output: 16_000 },
+};
+
+/** The fake's stateless answers, keyed by nothing but the url; undefined means "ask the state". */
+function canned(url: string, method: string): string | undefined {
+  if (url.startsWith('/api/agent')) return '{"data":[{"id":"librarian","name":"librarian"}]}';
+  if (url === '/api/model') return JSON.stringify({ location: {}, data: [FAKE_MODEL] });
+  if (url === '/api/model/default') return '{"location":{},"data":null}';
+  if (url.endsWith('/message')) return '{"data":[],"cursor":{"next":null}}';
+  if (url.endsWith('/permission') && method === 'GET') return '{"data":[]}';
+  return undefined;
+}
+
+/** The context of the last prompt: user, finished assistant, succeeded idle. */
+const lastTurnBody = (prompts: { id: string; text: string }[], answer: string) => {
+  const last = prompts.at(-1)!;
+  return JSON.stringify({
+    data: [
+      { type: 'user', id: last.id, text: last.text, time: { created: 1 } },
+      {
+        type: 'assistant',
+        id: 'a',
+        agent: 'librarian',
+        finish: 'stop',
+        time: { created: 2, completed: 3 },
+        content: [{ type: 'text', text: answer }],
+      },
+      { type: 'idle', id: 'i', outcome: 'succeeded', time: { created: 4 } },
+    ],
+  });
+};
+
 /** A tiny OpenCode: any session exists with the module agent, every prompt gets the same answer. */
 async function fakeOpenCode(
   t: { after(fn: () => Promise<void>): void },
@@ -138,39 +179,21 @@ async function fakeOpenCode(
   const prompts: { id: string; text: string; metadata: any; delivery: string }[] = [];
   const sessions = new Map<string, { agent: string; directory: string; model?: unknown }>();
   const interrupted: string[] = [];
-  const server = createServer(async (req, res) => {
+  /** One request: canned routes answer from the url alone, the rest touch the state. */
+  const respond = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
     const url = new URL(req.url!, 'http://x').pathname;
     res.setHeader('content-type', 'application/json');
     if (url.endsWith('/wait')) await gate();
-    if (url.startsWith('/api/agent')) return void res.end('{"data":[{"id":"librarian","name":"librarian"}]}');
-    if (url === '/api/model')
-      return void res.end(
-        JSON.stringify({
-          location: {},
-          data: [
-            {
-              id: 'github-copilot/gpt-5.2',
-              providerID: 'github-copilot',
-              modelID: 'gpt-5.2',
-              name: 'GPT 5.2',
-              enabled: true,
-              variants: [{ id: 'high' }],
-              limit: { context: 128_000, output: 16_000 },
-            },
-          ],
-        }),
-      );
-    if (url === '/api/model/default') return void res.end('{"location":{},"data":null}');
-    if (url.endsWith('/message')) return void res.end('{"data":[],"cursor":{"next":null}}');
+    const known = canned(url, req.method!);
+    if (known !== undefined) return void res.end(known);
     if (url.endsWith('/interrupt')) {
       interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
       return void res.end('{"interrupted":true}');
     }
     if (req.method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) return void res.writeHead(204).end();
-    if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (url === '/api/session' && req.method === 'POST') {
       sessions.set(body.id, {
         agent: body.agent,
@@ -183,29 +206,12 @@ async function fakeOpenCode(
       prompts.push({ id: body.id, text: body.text, metadata: body.metadata, delivery: body.delivery });
       return void res.end(JSON.stringify({ data: { id: body.id } }));
     }
-    if (url.endsWith('/context')) {
-      const last = prompts.at(-1)!;
-      return void res.end(
-        JSON.stringify({
-          data: [
-            { type: 'user', id: last.id, text: last.text, time: { created: 1 } },
-            {
-              type: 'assistant',
-              id: 'a',
-              agent: 'librarian',
-              finish: 'stop',
-              time: { created: 2, completed: 3 },
-              content: [{ type: 'text', text: answer }],
-            },
-            { type: 'idle', id: 'i', outcome: 'succeeded', time: { created: 4 } },
-          ],
-        }),
-      );
-    }
+    if (url.endsWith('/context')) return void res.end(lastTurnBody(prompts, answer));
     const id = decodeURIComponent(url.split('/').at(-1)!);
     const session = sessions.get(id) ?? { agent: 'librarian', directory: '/librarian' };
     res.end(JSON.stringify({ data: { id, ...session, location: { directory: session.directory } } }));
-  });
+  };
+  const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   // A failing test body can leave the gated /wait request open; tearing the sockets down
   // first lets close (and the hooks after it) finish instead of deadlocking on the gate.

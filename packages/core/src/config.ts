@@ -239,6 +239,7 @@ export const projectSchema = z.strictObject({
     })
     .optional(),
 });
+type ProjectEntry = z.infer<typeof projectSchema>;
 /**
  * The Linear module. One app does the work: it carries the workspace's
  * **Issues** data feed on its webhook route, receives every agent-session
@@ -606,272 +607,298 @@ export async function gitIdentity(identity: Identity, read: ReadGitConfig): Prom
   if (written?.name && written.email) return { name: written.name, email: written.email };
   return { name: AIVI_AGENT_BOT.user, email: AIVI_AGENT_BOT.email };
 }
-export const configSchema = z
-  .strictObject({
-    $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
-    version: z.literal(1),
-    stateDirectory: z.string().default('state'),
-    host: hostSchema.default({ bind: '127.0.0.1', port: 4100 }),
-    opencode: opencodeSchema.default({ lifecycle: 'own' }),
-    knowledge: z
-      .array(source)
-      .default([])
-      .describe('Core sources; `<home>/memory` is added as the core `memory` source automatically.'),
-    projectDefaults: z
-      .strictObject({
-        knowledge: z
-          .array(source)
-          .default([...DEFAULT_PROJECT_KNOWLEDGE])
-          .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
-        linear: z
-          .strictObject({
-            lanes: z
-              .record(z.string().min(1), laneValueSchema)
-              .default({})
-              .describe(
-                'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
-              ),
-            workspaceId: z
-              .string()
+const configShape = z.strictObject({
+  $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
+  version: z.literal(1),
+  stateDirectory: z.string().default('state'),
+  host: hostSchema.default({ bind: '127.0.0.1', port: 4100 }),
+  opencode: opencodeSchema.default({ lifecycle: 'own' }),
+  knowledge: z
+    .array(source)
+    .default([])
+    .describe('Core sources; `<home>/memory` is added as the core `memory` source automatically.'),
+  projectDefaults: z
+    .strictObject({
+      knowledge: z
+        .array(source)
+        .default([...DEFAULT_PROJECT_KNOWLEDGE])
+        .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
+      linear: z
+        .strictObject({
+          lanes: z
+            .record(z.string().min(1), laneValueSchema)
+            .default({})
+            .describe(
+              'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
+            ),
+          workspaceId: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('Linear organization id every project gets unless it names its own.'),
+        })
+        .optional()
+        .describe('The lane convention for projects that do not map the lane themselves.'),
+    })
+    .default({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] })
+    .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
+  projects: z
+    .record(id, projectSchema)
+    .default({})
+    .describe(
+      'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
+    ),
+  modules: z
+    .strictObject({
+      discord: z
+        .union([discordConfigSchema, z.literal(false)])
+        .optional()
+        .describe('Presence of this block enables the Discord module; `false` is an explicit off.'),
+      slack: z
+        .union([slackConfigSchema, z.literal(false)])
+        .optional()
+        .describe('Presence of this block enables the Slack module; `false` is an explicit off.'),
+    })
+    .default({}),
+  browser: z
+    .union([browserConfigSchema, z.literal(false)])
+    .optional()
+    .describe(
+      'Presence of this block enables browser control and builds the service at serve; `false` is an explicit off. `aivi install browser` writes a launch default.',
+    ),
+  search: z
+    .strictObject({
+      provider: z.literal('qmd'),
+      indexOnStart: z.boolean().default(true),
+      maxPending: z.number().int().min(1).max(100).default(32),
+    })
+    .optional(),
+  linear: linearSchema.optional(),
+  update: z
+    .strictObject({
+      channel: z
+        .enum(['stable'])
+        .default('stable')
+        .describe(
+          'What `aivi update` resolves: the npm latest dist-tag. The enum exists so future channels (a GitHub feed, an RC tag) are a schema change, not a redesign.',
+        ),
+    })
+    .optional()
+    .describe('Update preferences; the default channel is stable.'),
+  identity: identitySchema
+    .prefault({})
+    .describe('Who aivi is: the persona every platform shows, and who a worker it launched commits as.'),
+  scheduler: z
+    .strictObject({
+      maxConcurrent: z.number().int().min(1).max(64).default(1),
+      /** Host-wide default for derived schedules; a job's own `timezone` wins over it. */
+      timezone: z.string().optional().describe('IANA timezone for derived system schedules; default the host’s.'),
+      resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
+      agentSchedules: z
+        .union([
+          z.strictObject({
+            resource: id.default('local-model').describe('Pool that agent-created jobs run in.'),
+            max: z
+              .number()
+              .int()
               .min(1)
+              .max(500)
+              .default(50)
+              .describe('How many agent-created jobs (recurring, or one-offs not yet fired) may exist at once.'),
+          }),
+          z.literal(false),
+        ])
+        .default({ resource: 'local-model', max: 50 })
+        .describe(
+          'OpenCode agents create jobs through the aivi_jobs tool; whoever may talk to an agent may schedule. `false` disables the tool.',
+        ),
+      misfire: z
+        .strictObject({ graceSeconds: misfireSchema.shape.graceSeconds.default(60) })
+        .default({ graceSeconds: 60 })
+        .describe(
+          'Default for every job: an occurrence found more than graceSeconds late (aivi was down) becomes one missed run per job, never executed.',
+        ),
+      retention: z
+        .union([
+          z.strictObject({
+            cron: z.string().min(1).default('0 4 * * *'),
+            timezone: z.string().optional().describe('IANA timezone; default the host’s.'),
+            olderThanDays: z.number().int().min(1).default(30),
+            resource: id
               .optional()
-              .describe('Linear organization id every project gets unless it names its own.'),
-          })
-          .optional()
-          .describe('The lane convention for projects that do not map the lane themselves.'),
-      })
-      .default({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] })
-      .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
-    projects: z
-      .record(id, projectSchema)
-      .default({})
-      .describe(
-        'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
-      ),
-    modules: z
-      .strictObject({
-        discord: z
-          .union([discordConfigSchema, z.literal(false)])
-          .optional()
-          .describe('Presence of this block enables the Discord module; `false` is an explicit off.'),
-        slack: z
-          .union([slackConfigSchema, z.literal(false)])
-          .optional()
-          .describe('Presence of this block enables the Slack module; `false` is an explicit off.'),
-      })
-      .default({}),
-    browser: z
-      .union([browserConfigSchema, z.literal(false)])
-      .optional()
-      .describe(
-        'Presence of this block enables browser control and builds the service at serve; `false` is an explicit off. `aivi install browser` writes a launch default.',
-      ),
-    search: z
-      .strictObject({
-        provider: z.literal('qmd'),
-        indexOnStart: z.boolean().default(true),
-        maxPending: z.number().int().min(1).max(100).default(32),
-      })
-      .optional(),
-    linear: linearSchema.optional(),
-    update: z
-      .strictObject({
-        channel: z
-          .enum(['stable'])
-          .default('stable')
-          .describe(
-            'What `aivi update` resolves: the npm latest dist-tag. The enum exists so future channels (a GitHub feed, an RC tag) are a schema change, not a redesign.',
-          ),
-      })
-      .optional()
-      .describe('Update preferences; the default channel is stable.'),
-    identity: identitySchema
-      .prefault({})
-      .describe('Who aivi is: the persona every platform shows, and who a worker it launched commits as.'),
-    scheduler: z
-      .strictObject({
-        maxConcurrent: z.number().int().min(1).max(64).default(1),
-        /** Host-wide default for derived schedules; a job's own `timezone` wins over it. */
-        timezone: z.string().optional().describe('IANA timezone for derived system schedules; default the host’s.'),
-        resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
-        agentSchedules: z
-          .union([
-            z.strictObject({
-              resource: id.default('local-model').describe('Pool that agent-created jobs run in.'),
-              max: z
-                .number()
-                .int()
-                .min(1)
-                .max(500)
-                .default(50)
-                .describe('How many agent-created jobs (recurring, or one-offs not yet fired) may exist at once.'),
-            }),
-            z.literal(false),
-          ])
-          .default({ resource: 'local-model', max: 50 })
-          .describe(
-            'OpenCode agents create jobs through the aivi_jobs tool; whoever may talk to an agent may schedule. `false` disables the tool.',
-          ),
-        misfire: z
-          .strictObject({ graceSeconds: misfireSchema.shape.graceSeconds.default(60) })
-          .default({ graceSeconds: 60 })
-          .describe(
-            'Default for every job: an occurrence found more than graceSeconds late (aivi was down) becomes one missed run per job, never executed.',
-          ),
-        retention: z
-          .union([
-            z.strictObject({
-              cron: z.string().min(1).default('0 4 * * *'),
-              timezone: z.string().optional().describe('IANA timezone; default the host’s.'),
-              olderThanDays: z.number().int().min(1).default(30),
-              resource: id
-                .optional()
-                .describe(
-                  'Pool the prune run takes a slot in; default local-model, or the first pool when that does not exist.',
-                ),
-            }),
-            z.literal(false),
-          ])
-          .default({ cron: '0 4 * * *', olderThanDays: 30 })
-          .describe(
-            'The system job `retention` (task runs.prune) that deletes finished runs and finished one-off jobs older than olderThanDays. `false` removes it.',
-          ),
-        projectsSync: z
-          .union([
-            z.strictObject({
-              cron: z.string().min(1).default('0 * * * *'),
-              timezone: z.string().optional().describe('IANA timezone; default the host’s.'),
-              resource: id
-                .optional()
-                .describe(
-                  'Pool the sync run takes a slot in; default local-model, or the first pool when that does not exist.',
-                ),
-            }),
-            z.literal(false),
-          ])
-          .default({ cron: '0 * * * *' })
-          .describe(
-            'The system job `projects-sync` (task projects.sync) that fast-forwards every project’s source/ to its upstream and reindexes what changed, so merges reach what is searched. `false` removes it.',
-          ),
-      })
-      .default({
-        maxConcurrent: 1,
-        resources: { 'local-model': 1 },
-        agentSchedules: { resource: 'local-model', max: 50 },
-        misfire: { graceSeconds: 60 },
-        retention: { cron: '0 4 * * *', olderThanDays: 30 },
-        projectsSync: { cron: '0 * * * *' },
-      }),
-    jobs: z.array(jobSchema).default([]),
-  })
-  .superRefine((config, ctx) => {
-    const sourceLists: [(string | number)[], { id: string }[]][] = [
-      [['knowledge'], config.knowledge],
-      [['projectDefaults', 'knowledge'], config.projectDefaults.knowledge],
-      ...Object.entries(config.projects).flatMap(([project, entry]): [(string | number)[], { id: string }[]][] =>
-        entry.knowledge ? [[['projects', project, 'knowledge'], entry.knowledge]] : [],
-      ),
-    ];
-    for (const [path, values] of [...sourceLists, [['jobs'], config.jobs] as (typeof sourceLists)[number]]) {
-      const seen = new Set<string>();
-      for (const [i, value] of values.entries()) {
-        if (seen.has(value.id))
-          ctx.addIssue({ code: 'custom', path: [...path, i, 'id'], message: 'Duplicate identifier' });
-        seen.add(value.id);
-      }
+              .describe(
+                'Pool the prune run takes a slot in; default local-model, or the first pool when that does not exist.',
+              ),
+          }),
+          z.literal(false),
+        ])
+        .default({ cron: '0 4 * * *', olderThanDays: 30 })
+        .describe(
+          'The system job `retention` (task runs.prune) that deletes finished runs and finished one-off jobs older than olderThanDays. `false` removes it.',
+        ),
+      projectsSync: z
+        .union([
+          z.strictObject({
+            cron: z.string().min(1).default('0 * * * *'),
+            timezone: z.string().optional().describe('IANA timezone; default the host’s.'),
+            resource: id
+              .optional()
+              .describe(
+                'Pool the sync run takes a slot in; default local-model, or the first pool when that does not exist.',
+              ),
+          }),
+          z.literal(false),
+        ])
+        .default({ cron: '0 * * * *' })
+        .describe(
+          'The system job `projects-sync` (task projects.sync) that fast-forwards every project’s source/ to its upstream and reindexes what changed, so merges reach what is searched. `false` removes it.',
+        ),
+    })
+    .default({
+      maxConcurrent: 1,
+      resources: { 'local-model': 1 },
+      agentSchedules: { resource: 'local-model', max: 50 },
+      misfire: { graceSeconds: 60 },
+      retention: { cron: '0 4 * * *', olderThanDays: 30 },
+      projectsSync: { cron: '0 * * * *' },
+    }),
+  jobs: z.array(jobSchema).default([]),
+});
+
+export type Config = z.infer<typeof configShape>;
+
+/** A cross-field rule's pen: records a complaint at a path into the zod issue list. */
+type AddIssue = (path: (string | number)[], message: string) => void;
+
+/** The lists where an id must be unique: knowledge sources at every level, and the jobs list. */
+function sourceLists(config: Config): [(string | number)[], { id: string }[]][] {
+  return [
+    [['knowledge'], config.knowledge],
+    [['projectDefaults', 'knowledge'], config.projectDefaults.knowledge],
+    ...Object.entries(config.projects).flatMap(([project, entry]): [(string | number)[], { id: string }[]][] =>
+      entry.knowledge ? [[['projects', project, 'knowledge'], entry.knowledge]] : [],
+    ),
+  ];
+}
+
+/** Duplicate ids in one list leave no way to point at just one entry. */
+function idsAreUnique(config: Config, report: AddIssue): void {
+  const lists: [(string | number)[], { id: string }[]][] = [...sourceLists(config), [['jobs'], config.jobs]];
+  for (const [path, values] of lists) {
+    const seen = new Set<string>();
+    for (const [i, value] of values.entries()) {
+      if (seen.has(value.id)) report([...path, i, 'id'], 'Duplicate identifier');
+      seen.add(value.id);
     }
-    for (const [path, values] of sourceLists)
-      for (const [i, value] of values.entries())
-        if (value.id === MEMORY_SOURCE_ID)
-          ctx.addIssue({
-            code: 'custom',
-            path: [...path, i, 'id'],
-            message: 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically',
-          });
-    const appIds = Object.keys(config.linear?.apps ?? {});
-    if (config.linear && appIds.length > 1 && !config.linear.primary)
-      ctx.addIssue({
-        code: 'custom',
-        path: ['linear', 'primary'],
-        message:
-          'Required once several apps are configured: which app carries the data feed and the bare LINEAR_* secrets',
-      });
-    if (config.linear?.primary && !appIds.includes(config.linear.primary))
-      ctx.addIssue({ code: 'custom', path: ['linear', 'primary'], message: 'Not a configured app' });
-    const teamOwners = new Map<string, string>();
-    for (const [project, entry] of Object.entries(config.projects))
-      for (const [i, team] of entry.linear?.teams.entries() ?? []) {
-        const owner = teamOwners.get(team);
-        if (owner && owner !== project)
-          ctx.addIssue({
-            code: 'custom',
-            path: ['projects', project, 'linear', 'teams', i],
-            message: `This Linear team is already mapped to project ${owner}`,
-          });
-        teamOwners.set(team, project);
-      }
-    if (config.linear && !(config.linear.resource in config.scheduler.resources))
-      ctx.addIssue({ code: 'custom', path: ['linear', 'resource'], message: 'Unknown resource pool' });
-    for (const [name, module] of [
-      ['discord', config.modules.discord],
-      ['slack', config.modules.slack],
-    ] as const)
-      if (module && !(module.resource in config.scheduler.resources))
-        ctx.addIssue({
-          code: 'custom',
-          path: ['modules', name, 'resource'],
-          message: `Unknown resource pool; name one of scheduler.resources or set modules.${name} to false`,
-        });
-    for (const [i, job] of config.jobs.entries()) {
-      if (!(job.resource in config.scheduler.resources))
-        ctx.addIssue({ code: 'custom', path: ['jobs', i, 'resource'], message: 'Unknown resource pool' });
-      if (job.id === RETENTION_JOB_ID && config.scheduler.retention)
-        ctx.addIssue({
-          code: 'custom',
-          path: ['jobs', i, 'id'],
-          message: 'Reserved for the system retention job; choose another id or set scheduler.retention to false',
-        });
-      if (job.id === PROJECTS_SYNC_JOB_ID && config.scheduler.projectsSync)
-        ctx.addIssue({
-          code: 'custom',
-          path: ['jobs', i, 'id'],
-          message:
-            'Reserved for the system projects-sync job; choose another id or set scheduler.projectsSync to false',
-        });
+  }
+}
+
+/** The id `memory` belongs to the automatically registered memory source, at every level. */
+function memoryIsReserved(config: Config, report: AddIssue): void {
+  for (const [path, values] of sourceLists(config))
+    for (const [i, value] of values.entries())
+      if (value.id === MEMORY_SOURCE_ID)
+        report([...path, i, 'id'], 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically');
+}
+
+/** Several apps need a named primary, and the primary must be one of the configured apps. */
+function primaryIsSound(config: Config, report: AddIssue): void {
+  const appIds = Object.keys(config.linear?.apps ?? {});
+  if (config.linear && appIds.length > 1 && !config.linear.primary)
+    report(
+      ['linear', 'primary'],
+      'Required once several apps are configured: which app carries the data feed and the bare LINEAR_* secrets',
+    );
+  if (config.linear?.primary && !appIds.includes(config.linear.primary))
+    report(['linear', 'primary'], 'Not a configured app');
+}
+
+/** An issue lands in one checkout, so a Linear team may belong to exactly one project. */
+function teamsHaveOneProject(config: Config, report: AddIssue): void {
+  const owners = new Map<string, string>();
+  for (const [project, entry] of Object.entries(config.projects))
+    for (const [i, team] of entry.linear?.teams.entries() ?? []) {
+      const owner = owners.get(team);
+      if (owner && owner !== project)
+        report(['projects', project, 'linear', 'teams', i], `This Linear team is already mapped to project ${owner}`);
+      owners.set(team, project);
     }
-    if (config.scheduler.agentSchedules && !(config.scheduler.agentSchedules.resource in config.scheduler.resources))
-      ctx.addIssue({
-        code: 'custom',
-        path: ['scheduler', 'agentSchedules', 'resource'],
-        message: 'Unknown resource pool; name one of scheduler.resources or set agentSchedules to false',
-      });
-    for (const [name, system] of [
-      ['retention', config.scheduler.retention],
-      ['projectsSync', config.scheduler.projectsSync],
-    ] as const) {
-      if (!system) continue;
-      if (system.resource !== undefined && !(system.resource in config.scheduler.resources))
-        ctx.addIssue({
-          code: 'custom',
-          path: ['scheduler', name, 'resource'],
-          message: `Unknown resource pool; name one of scheduler.resources or set ${name} to false`,
-        });
-      if (
-        !jobSchema.safeParse({
-          id: 'system',
-          cron: system.cron,
-          timezone: system.timezone,
-          task: { kind: 'shell', command: ['x'] },
-        }).success
-      )
-        ctx.addIssue({
-          code: 'custom',
-          path: ['scheduler', name, 'cron'],
-          message: 'Invalid cron expression or timezone',
-        });
-    }
-  });
-export type Config = z.infer<typeof configSchema>;
+}
+
+/** The pools configured on linear and the channel modules must exist in the scheduler. */
+function modulePoolsAreNamed(config: Config, report: AddIssue): void {
+  const resources = config.scheduler.resources;
+  if (config.linear && !(config.linear.resource in resources)) report(['linear', 'resource'], 'Unknown resource pool');
+  for (const [name, module] of [
+    ['discord', config.modules.discord],
+    ['slack', config.modules.slack],
+  ] as const)
+    if (module && !(module.resource in resources))
+      report(
+        ['modules', name, 'resource'],
+        `Unknown resource pool; name one of scheduler.resources or set modules.${name} to false`,
+      );
+}
+
+/** A job's pool must exist, and no job may take a system job's reserved id. */
+function jobsObeyTheirPools(config: Config, report: AddIssue): void {
+  for (const [i, job] of config.jobs.entries()) {
+    if (!(job.resource in config.scheduler.resources)) report(['jobs', i, 'resource'], 'Unknown resource pool');
+    if (job.id === RETENTION_JOB_ID && config.scheduler.retention)
+      report(
+        ['jobs', i, 'id'],
+        'Reserved for the system retention job; choose another id or set scheduler.retention to false',
+      );
+    if (job.id === PROJECTS_SYNC_JOB_ID && config.scheduler.projectsSync)
+      report(
+        ['jobs', i, 'id'],
+        'Reserved for the system projects-sync job; choose another id or set scheduler.projectsSync to false',
+      );
+  }
+}
+
+/** The scheduler's own knobs name real pools, and their crons parse. */
+function schedulerKnobsAreSound(config: Config, report: AddIssue): void {
+  const resources = config.scheduler.resources;
+  if (config.scheduler.agentSchedules && !(config.scheduler.agentSchedules.resource in resources))
+    report(
+      ['scheduler', 'agentSchedules', 'resource'],
+      'Unknown resource pool; name one of scheduler.resources or set agentSchedules to false',
+    );
+  for (const [name, system] of [
+    ['retention', config.scheduler.retention],
+    ['projectsSync', config.scheduler.projectsSync],
+  ] as const) {
+    if (!system) continue;
+    if (system.resource !== undefined && !(system.resource in resources))
+      report(
+        ['scheduler', name, 'resource'],
+        `Unknown resource pool; name one of scheduler.resources or set ${name} to false`,
+      );
+    if (
+      !jobSchema.safeParse({
+        id: 'system',
+        cron: system.cron,
+        timezone: system.timezone,
+        task: { kind: 'shell', command: ['x'] },
+      }).success
+    )
+      report(['scheduler', name, 'cron'], 'Invalid cron expression or timezone');
+  }
+}
+
+/** The cross-field rules the shape cannot express: unique and reserved ids, named pools,
+ *  crons that parse. The order the rules run is the order issues surface. */
+export const configSchema = configShape.superRefine((config, ctx) => {
+  const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+  idsAreUnique(config, report);
+  memoryIsReserved(config, report);
+  primaryIsSound(config, report);
+  teamsHaveOneProject(config, report);
+  modulePoolsAreNamed(config, report);
+  jobsObeyTheirPools(config, report);
+  schedulerKnobsAreSound(config, report);
+});
 
 /** The environment names of the one app: the primary's credentials, no app segment. */
 export const linearPrimarySecretNames = {
@@ -1034,9 +1061,9 @@ async function discoverProjects(
   return found;
 }
 
-export async function loadConfig(path: string): Promise<LoadedConfig> {
-  path = resolve(path);
-  const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
+/** A config shape aivi has moved past: a clear error saying where the contents live now,
+ *  rather than a schema complaint about unknown keys. */
+function rejectRetiredShapes(raw: unknown, path: string): void {
   // Module settings are inline now; a `config` pointer is the old shape, so say where its contents belong.
   for (const name of ['discord', 'slack'] as const) {
     const pointer = (raw as { modules?: Record<string, unknown> }).modules?.[name];
@@ -1051,8 +1078,11 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
     throw new Error(
       `name is gone: the persona lives in identity.name in ${path}. Write "identity": { "name": ${JSON.stringify(String(persona))} } there.`,
     );
-  const config = configSchema.parse(raw);
-  const base = dirname(path);
+}
+
+/** Rewrites every path the config holds relative to itself into an absolute one, based on
+ *  the config file's directory. */
+function absolutizePaths(config: Config, base: string): void {
   config.stateDirectory = absolute(base, config.stateDirectory);
   if (config.modules.discord) config.modules.discord.directory = absolute(base, config.modules.discord.directory);
   if (config.modules.slack) config.modules.slack.directory = absolute(base, config.modules.slack.directory);
@@ -1062,6 +1092,39 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
     if (browser.mode === 'launch' && browser.executablePath)
       browser.executablePath = absolute(base, browser.executablePath);
   }
+  for (const job of config.jobs) {
+    const task = job.task;
+    if (task.kind === 'prompt') task.directory = absolute(base, task.directory);
+    if (task.kind === 'shell' && task.cwd) task.cwd = absolute(base, task.cwd);
+    // Invocation args resolve at run time by whoever claimed the operation; the
+    // config does not know their shapes.
+  }
+}
+
+/** The lanes the listener consults: the projectDefaults base merged with the entry's own,
+ *  with `null` lanes — human-worked — dropped. */
+function projectLinearBinding(config: Config, entry: ProjectEntry): ProjectLinear | undefined {
+  if (!entry.linear) return undefined;
+  // Lanes merge per lane — the convention is the base and the entry wins one
+  // key at a time — and `null` means a human works the lane, so it is absent
+  // from the map the listener consults while it stays written in the file.
+  const merged = { ...(config.projectDefaults.linear?.lanes ?? {}), ...entry.linear.lanes };
+  const lanes: Record<string, LaneBinding> = {};
+  for (const [lane, value] of Object.entries(merged)) {
+    const binding = laneBinding(value);
+    if (binding) lanes[lane] = binding;
+  }
+  const workspaceId = entry.linear.workspaceId ?? config.projectDefaults.linear?.workspaceId;
+  return { teams: entry.linear.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
+}
+
+export async function loadConfig(path: string): Promise<LoadedConfig> {
+  path = resolve(path);
+  const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
+  rejectRetiredShapes(raw, path);
+  const config = configSchema.parse(raw);
+  const base = dirname(path);
+  absolutizePaths(config, base);
   const sources: KnowledgeSource[] = [
     ...config.knowledge.map((s): KnowledgeSource => ({ ...s, path: absolute(base, s.path), scope: 'core' })),
     { id: MEMORY_SOURCE_ID, path: resolve(base, 'memory'), kind: 'memory', scope: 'core' },
@@ -1077,33 +1140,13 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
       for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
         sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
     sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
-    // Lanes merge per lane — the convention is the base and the entry wins one
-    // key at a time — and `null` means a human works the lane, so it is absent
-    // from the map the listener consults while it stays written in the file.
-    let linear: ProjectLinear | undefined;
-    if (entry.linear) {
-      const merged = { ...(config.projectDefaults.linear?.lanes ?? {}), ...entry.linear.lanes };
-      const lanes: Record<string, LaneBinding> = {};
-      for (const [lane, value] of Object.entries(merged)) {
-        const binding = laneBinding(value);
-        if (binding) lanes[lane] = binding;
-      }
-      const workspaceId = entry.linear.workspaceId ?? config.projectDefaults.linear?.workspaceId;
-      linear = { teams: entry.linear.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
-    }
+    const linear = projectLinearBinding(config, entry);
     projects.push({
       id: projectId,
       directory: layout.source,
       ...(removed ? { removed: true } : {}),
       ...(linear ? { linear } : {}),
     });
-  }
-  for (const job of config.jobs) {
-    const task = job.task;
-    if (task.kind === 'prompt') task.directory = absolute(base, task.directory);
-    if (task.kind === 'shell' && task.cwd) task.cwd = absolute(base, task.cwd);
-    // Invocation args resolve at run time by whoever claimed the operation; the
-    // config does not know their shapes.
   }
   return { config, path, sources, projects };
 }

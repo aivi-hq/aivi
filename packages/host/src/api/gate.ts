@@ -9,7 +9,7 @@ import { respond } from './http.ts';
  * is never a pass: only our clients speak this API, and one of them forgot
  * to update.
  */
-export const CLIENT_HEADER = 'x-aivi-client';
+const CLIENT_HEADER = 'x-aivi-client';
 
 export type Negotiation =
   | { ok: true }
