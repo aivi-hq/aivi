@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
@@ -64,6 +65,11 @@ test('only the matching completed final answer is returned, without reasoning or
   assert.throws(() => finalAnswer(otherSteer, 'msg_one', 'librarian'), /changed outside this turn/);
 });
 
+/** The agent the fake reports, with a model pin so the agent file's model resolves. */
+const AGENTS_BODY = JSON.stringify({
+  data: [{ id: 'librarian', name: 'librarian', model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } }],
+});
+
 /** Mock of the OpenCode 2.0.3 endpoints runTurn touches; the context shape matches the live server. */
 function mockOpenCode(
   options: {
@@ -83,7 +89,56 @@ function mockOpenCode(
   let promptId = '';
   let sessionModel = options.sessionModel;
   const agent = options.agent ?? 'librarian';
-  const server = createServer(async (req, res) => {
+  /** The completed turn the fake reports: user, finished assistant, succeeded idle. */
+  const answerBody = () =>
+    JSON.stringify({
+      data: [
+        { type: 'user', id: promptId, text: 'q', time: { created: 1 } },
+        {
+          type: 'assistant',
+          id: 'a',
+          agent,
+          finish: 'stop',
+          time: { created: 2, completed: 3 },
+          content: [{ type: 'text', text: 'Answer' }],
+        },
+        { type: 'idle', id: 'i', outcome: 'succeeded', time: { created: 4 } },
+      ],
+    });
+  /** What `session.get` reports: the fixed id, and the model the create carried. */
+  const sessionBody = () =>
+    JSON.stringify({
+      data: {
+        id: 'ses_test',
+        agent: 'librarian',
+        location: { directory: '/lib' },
+        ...(sessionModel ? { model: sessionModel } : {}),
+      },
+    });
+  /** The permission queue: GET lists what is pending, a reply takes one out.
+   *  Undefined means this was not a permission route. */
+  const permissionRoute = (url: string, method: string): { status: number; body?: string } | undefined => {
+    if (url.endsWith('/permission') && method === 'GET') {
+      options.onPermissionList?.();
+      return { status: 200, body: JSON.stringify({ data: pending }) };
+    }
+    if (/\/permission\/[^/]+\/reply$/.test(url)) {
+      pending = pending.filter(p => !url.includes(p.id));
+      return { status: 204 };
+    }
+    return undefined;
+  };
+  /** The context of the last prompt; the lag option simulates the context
+   *  trailing `wait` so the re-check loop runs. */
+  const contextBody = (): string => {
+    if (lag > 0) {
+      lag--;
+      return '{"data":[]}'; // wait() already returned but the context is not there yet
+    }
+    return answerBody();
+  };
+  /** One request: the stateless routes answer from the url alone, the rest touch state. */
+  const respond = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
@@ -91,73 +146,19 @@ function mockOpenCode(
     res.setHeader('content-type', 'application/json');
     const url = req.url!;
     if (url.endsWith('/wait')) options.waitUntil?.();
-    if (url.startsWith('/api/agent')) {
-      res.end(
-        JSON.stringify({
-          data: [
-            { id: 'librarian', name: 'librarian', model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } },
-          ],
-        }),
-      );
-      return;
-    }
-    if (req.method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-    if (url.endsWith('/permission') && req.method === 'GET') {
-      options.onPermissionList?.();
-      res.end(JSON.stringify({ data: pending }));
-      return;
-    }
-    if (/\/permission\/[^/]+\/reply$/.test(url)) {
-      pending = pending.filter(p => !url.includes(p.id));
-      res.writeHead(204);
-      res.end();
-      return;
-    }
+    if (url.startsWith('/api/agent')) return void res.end(AGENTS_BODY);
+    if (req.method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) return void res.writeHead(204).end();
+    const asked = permissionRoute(url, req.method!);
+    if (asked) return void res.writeHead(asked.status).end(asked.body);
     if (url === '/api/session' && req.method === 'POST') sessionModel = body.model;
     if (url.endsWith('/prompt')) {
       promptId = body.id;
-      res.end(JSON.stringify({ data: { id: body.id } }));
-      return;
+      return void res.end(JSON.stringify({ data: { id: body.id } }));
     }
-    if (url.endsWith('/context')) {
-      if (lag > 0) {
-        lag--;
-        res.end(JSON.stringify({ data: [] })); // wait() already returned but the context is not there yet
-        return;
-      }
-      res.end(
-        JSON.stringify({
-          data: [
-            { type: 'user', id: promptId, text: 'q', time: { created: 1 } },
-            {
-              type: 'assistant',
-              id: 'a',
-              agent,
-              finish: 'stop',
-              time: { created: 2, completed: 3 },
-              content: [{ type: 'text', text: 'Answer' }],
-            },
-            { type: 'idle', id: 'i', outcome: 'succeeded', time: { created: 4 } },
-          ],
-        }),
-      );
-      return;
-    }
-    res.end(
-      JSON.stringify({
-        data: {
-          id: 'ses_test',
-          agent: 'librarian',
-          location: { directory: '/lib' },
-          ...(sessionModel ? { model: sessionModel } : {}),
-        },
-      }),
-    );
-  });
+    if (url.endsWith('/context')) return void res.end(contextBody());
+    return void res.end(sessionBody());
+  };
+  const server = createServer(respond);
   return { server, requests };
 }
 
