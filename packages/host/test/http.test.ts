@@ -419,7 +419,7 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   );
 });
 
-test('the version gate serves clients at or behind the host and refuses those ahead', async t => {
+test('the gate as plumbing: exempt paths answer, the shipped client passes, silence does not', async t => {
   const store = new Store(':memory:');
   const server = serveApp(
     createApp({
@@ -438,32 +438,11 @@ test('the version gate serves clients at or behind the host and refuses those ah
   // Liveness and the negotiation's own answer need no header at all.
   assert.equal((await fetch(`${base}/health`)).status, 200, 'liveness is exempt');
   assert.deepEqual(await (await fetch(`${base}/version`)).json(), { version: hostVersion });
-  // The major is the contract and the minor is features: a client behind the
-  // host is served — the host's newer minors are features it never touches.
-  assert.equal((await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.1.0' } })).status, 200);
-  assert.equal((await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.6.99' } })).status, 200);
-  // A client ahead of the host expects answers this host cannot give; a
-  // minor ahead and a major ahead are refused alike, naming the host to reach.
-  const ahead = await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.7.0' } });
-  assert.equal(ahead.status, 403);
-  assert.deepEqual(await ahead.json(), {
-    code: 'server_version_too_low',
-    minVersion: '0.7.0',
-    error: `The aivi client 0.7.0 is newer than this host (${hostVersion}); features it expects may not answer here. Ask an operator to update aivi, or downgrade the client.`,
-  });
-  assert.equal(
-    (await (await fetch(`${base}/status`, { headers: { 'x-aivi-client': '1.0.0' } })).json()).code,
-    'server_version_too_low',
-  );
-  // Silence is never a pass: only first-party clients speak this API, and
-  // every one of them sends its version. So is a header that names none.
+  // The rule itself is unit-tested in gate.test.ts against fixed versions;
+  // here only the wiring: the client that ships with this host always
+  // passes, and names this host's own version; silence gets the refusal.
+  assert.equal((await createHostClient(base).status()).version, hostVersion);
   const silent = await fetch(`${base}/status`);
   assert.equal(silent.status, 403, 'silence is not a pass');
   assert.equal((await silent.json()).code, 'client_version_unsupported');
-  assert.equal(
-    (await (await fetch(`${base}/status`, { headers: { 'x-aivi-client': 'weird' } })).json()).code,
-    'client_version_unsupported',
-  );
-  // The client the API ships with always passes, and reports the same version.
-  assert.equal((await createHostClient(base).status()).version, hostVersion);
 });
