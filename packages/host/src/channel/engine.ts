@@ -104,61 +104,14 @@ export class ChannelEngine {
       (reporter ? reporter.fail(text) : notice(turn.channel, text)).catch(error =>
         log.warn('notify.failed', { error }),
       );
-    let delivering = false;
+    const state = { delivering: false };
     const own = new AbortController();
     const work = Promise.resolve()
       .then(async () => {
         try {
-          const signal = AbortSignal.any([
-            this.abort.signal,
-            own.signal,
-            AbortSignal.timeout(this.limits.turnTimeoutMs),
-          ]);
-          const text = await this.ask(turn, signal, () => this.store.ready(turn.channel));
-          const answeredMs = Date.now() - startedAt;
-          this.store.result(turn.id, text);
-          delivering = true;
-          const chunks = splitReply(text, this.store.platform.replyLimit);
-          if (reporter) await reporter.finish(chunks);
-          else for (const chunk of chunks) await this.delivery.send(turn.channel, chunk);
-          this.store.sent(turn.id);
-          log.info('turn.sent', { answeredMs, totalMs: Date.now() - startedAt, chars: text.length });
+          await this.runTurn(turn, own, state, reporter, log, startedAt);
         } catch (error) {
-          if (own.signal.aborted && !delivering) {
-            // Someone in the conversation asked (`/stop`): discarded like a shutdown, but said so.
-            log.info('turn.stopped');
-            this.store.interrupt(turn.id, STOPPED_REASON);
-            await tell(this.notices.stopped);
-            return;
-          }
-          if (error instanceof TurnNotStarted) {
-            // Nothing reached the agent: release capacity and let the person try again.
-            log.warn('turn.not_started', { error });
-            this.store.fail(turn.id);
-            await tell(this.notices.notStarted);
-            return;
-          }
-          if (this.abort.signal.aborted) {
-            // The host is going down. As after a restart, the reply is the turn's only external
-            // effect, so the turn is discarded rather than blocked, and the person hears why.
-            log.info('turn.interrupted', { delivering });
-            this.store.interrupt(turn.id);
-            await tell(delivering ? this.notices.offlineMidReply : this.notices.offline);
-            return;
-          }
-          // A chat turn's only effect is its reply, so a known end (provider/auth error,
-          // timeout, delivery failure) is just a failure: release capacity and say why.
-          // Only a worker (`effects: 'work'`) blocks, because its checkout may still be moving.
-          const reason = shortReason(error);
-          if (this.store.platform.effects === 'work') {
-            log.warn('turn.blocked', { error });
-            this.store.block(turn.id);
-            await tell(this.notices.blocked);
-          } else {
-            log.warn('turn.failed', { error });
-            this.store.fail(turn.id, reason);
-            await tell(`${this.notices.failed} (${reason})`);
-          }
+          await this.settleTurn(turn, error, state, own.signal.aborted, tell, log);
         }
       })
       .catch(error => {
@@ -173,6 +126,74 @@ export class ChannelEngine {
         this.onRelease();
       });
     this.active.set(turn.id, { work, abort: own });
+  }
+
+  /** Answer the turn and deliver the reply in order; anything thrown here is an early end. */
+  private async runTurn(
+    turn: Turn,
+    own: AbortController,
+    state: { delivering: boolean },
+    reporter: ProgressReporter | undefined,
+    log: Logger,
+    startedAt: number,
+  ): Promise<void> {
+    const signal = AbortSignal.any([this.abort.signal, own.signal, AbortSignal.timeout(this.limits.turnTimeoutMs)]);
+    const text = await this.ask(turn, signal, () => this.store.ready(turn.channel));
+    const answeredMs = Date.now() - startedAt;
+    this.store.result(turn.id, text);
+    state.delivering = true;
+    const chunks = splitReply(text, this.store.platform.replyLimit);
+    if (reporter) await reporter.finish(chunks);
+    else for (const chunk of chunks) await this.delivery.send(turn.channel, chunk);
+    this.store.sent(turn.id);
+    log.info('turn.sent', { answeredMs, totalMs: Date.now() - startedAt, chars: text.length });
+  }
+
+  /** Why the turn ended early: every branch records the state and tells the person.
+   *  `stoppedByRequest` is read at the catch, before anything here awaits. */
+  private async settleTurn(
+    turn: Turn,
+    error: unknown,
+    state: { delivering: boolean },
+    stoppedByRequest: boolean,
+    tell: (text: string) => Promise<void>,
+    log: Logger,
+  ): Promise<void> {
+    if (stoppedByRequest && !state.delivering) {
+      // Someone in the conversation asked (`/stop`): discarded like a shutdown, but said so.
+      log.info('turn.stopped');
+      this.store.interrupt(turn.id, STOPPED_REASON);
+      await tell(this.notices.stopped);
+      return;
+    }
+    if (error instanceof TurnNotStarted) {
+      // Nothing reached the agent: release capacity and let the person try again.
+      log.warn('turn.not_started', { error });
+      this.store.fail(turn.id);
+      await tell(this.notices.notStarted);
+      return;
+    }
+    if (this.abort.signal.aborted) {
+      // The host is going down. As after a restart, the reply is the turn's only external
+      // effect, so the turn is discarded rather than blocked, and the person hears why.
+      log.info('turn.interrupted', { delivering: state.delivering });
+      this.store.interrupt(turn.id);
+      await tell(state.delivering ? this.notices.offlineMidReply : this.notices.offline);
+      return;
+    }
+    // A chat turn's only effect is its reply, so a known end (provider/auth error,
+    // timeout, delivery failure) is just a failure: release capacity and say why.
+    // Only a worker (`effects: 'work'`) blocks, because its checkout may still be moving.
+    const reason = shortReason(error);
+    if (this.store.platform.effects === 'work') {
+      log.warn('turn.blocked', { error });
+      this.store.block(turn.id);
+      await tell(this.notices.blocked);
+    } else {
+      log.warn('turn.failed', { error });
+      this.store.fail(turn.id, reason);
+      await tell(`${this.notices.failed} (${reason})`);
+    }
   }
 
   /**
