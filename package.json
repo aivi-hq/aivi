@@ -28,7 +28,7 @@
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "npm run typecheck && NODE_OPTIONS=--conditions=development node --test --conditions=development --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
-    "test:cov": "NODE_OPTIONS=--conditions=development c8 --reporter=json --reporter=text --all \"--include=packages/*/src/**\" node --test --conditions=development --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
+    "test:cov": "NODE_OPTIONS=--conditions=development c8 --reporter=json --reporter=text --all \"--include=packages/*/src/**\" \"--include=packages/*/test/**\" \"--exclude=coverage/**\" \"--exclude=node_modules/**\" node --test --conditions=development --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
     "check": "npm test && npm run schema:check && npm run smoke && npm run pack:smoke",
     "aivi": "npm run build -s && AIVI_HOME=${AIVI_HOME:-dev} node packages/app/dist/cli.js",
     "aivi:cli": "npm run build -s && AIVI_HOME=${AIVI_HOME:-dev} AIVI_CONFIG=${AIVI_CONFIG:-dev/.config/aivi.json} node packages/cli/dist/main.js",
