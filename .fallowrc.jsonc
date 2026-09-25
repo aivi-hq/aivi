@@ -34,9 +34,9 @@
     // 30 → 350 for now. c8 drops nameless inline callbacks from its function
     // map, so fallow estimates CRAP = cc²+cc for code that ran; the round's
     // 114 complexity findings are all fixed and the 77 estimates left are
-    // triaged in docs/review/fallow-leftovers.md. Complexity thresholds stay
-    // at their defaults — those are the real gate. Raise a coverage seam
-    // (vitest istanbul provider, or the doc's seams) and drop this back to 30.
+    // all of that kind. Complexity thresholds stay at their defaults — those
+    // are the real gate. Swap the coverage producer for one that records
+    // anonymous functions (vitest does) and this can drop back to 30.
     "maxCrap": 350
   },
   "rules": {}
