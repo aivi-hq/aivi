@@ -85,6 +85,116 @@ export interface TurnResult {
   rejected: { action: string; resources: string[] }[];
 }
 
+/** Turn metadata: the caller's own fields plus aivi's message id, whatever came in. */
+function turnMetadata(input: TurnInput): Metadata {
+  const aivi = input.messageMetadata?.aivi;
+  return {
+    ...input.messageMetadata,
+    aivi: { ...(aivi && typeof aivi === 'object' && !Array.isArray(aivi) ? aivi : {}), message: input.messageId },
+  };
+}
+
+/** What `session.create` gets: aivi's identity for the session plus whatever the caller brought. */
+const createBody = (input: TurnInput, wanted: NativeModel | undefined) => ({
+  id: input.sessionId,
+  agent: input.agent,
+  location: { directory: input.directory },
+  ...(wanted ? { model: wanted } : {}),
+  ...(input.title ? { title: input.title } : {}),
+  ...(input.sessionMetadata ? { metadata: input.sessionMetadata } : {}),
+  ...(input.permissions ? { permissions: input.permissions } : {}),
+});
+
+/**
+ * Bring the session to the state the turn expects: create it when asked, then
+ * verify it still runs the agent in the directory, apply permissions and the
+ * model pin. Anything thrown here means the turn never started.
+ */
+async function prepareSession(
+  client: OpenCodeClient,
+  input: TurnInput,
+  options: TurnOptions,
+  request: { signal: AbortSignal },
+): Promise<void> {
+  const sessionID = input.sessionId;
+  // The API does not substitute the agent file's model the way the TUI does (seen live 2026-09-15:
+  // sessions ran OpenCode's default model). The model is a session property; aivi sets it.
+  const wanted = input.model
+    ? {
+        providerID: input.model.providerID,
+        id: input.model.modelID,
+        ...(input.model.variant ? { variant: input.model.variant } : {}),
+      }
+    : await agentModel(client, input.agent, input.directory, request);
+  if (input.create) {
+    await client.session.create(createBody(input, wanted), request);
+    options.onCreated?.();
+  }
+  const session = await client.session.get({ sessionID }, request);
+  if (session.agent !== input.agent || session.location.directory !== input.directory) {
+    throw new Error(`Session ${sessionID} no longer runs agent ${input.agent} in ${input.directory}`);
+  }
+  if (input.permissions) await client.session.update({ sessionID, permissions: input.permissions }, request);
+  // The model is chosen at session create (the agent file's pin, or the conversation's `/model`
+  // pin) and only ever changes when a `/model` pin says so — never re-read per turn. A pin that
+  // differs from the session is applied here; no pin means the session is left alone.
+  if (wanted && !sameModel(session.model, wanted))
+    await client.session.switchModel({ sessionID, model: wanted }, request);
+}
+
+/**
+ * The answers this turn gives to permission prompts, kept apart from the turn
+ * itself because they arrive while it is parked: the watch lives from before
+ * the prompt to after the wait, and the `fail` policy stops the turn through
+ * its `parked` signal.
+ */
+function watchPermissions(
+  client: OpenCodeClient,
+  sessionID: string,
+  request: { signal: AbortSignal },
+  events: SessionEvents,
+  policy: 'reject' | 'fail',
+  log: Logger,
+) {
+  const rejected: TurnResult['rejected'] = [];
+  const asks = new Set<string>();
+  let failed: PermissionRequired | undefined;
+  const parked = new AbortController();
+  const failWith = (requests: { action: string; resources: string[] }[]) => {
+    failed ??= new PermissionRequired(requests);
+    parked.abort();
+  };
+  const answer = async (id: string, action: string, resources: string[]) => {
+    if (asks.has(id)) return;
+    asks.add(id);
+    const summary = { action, resources: [...resources] };
+    if (policy === 'fail') return failWith([summary]);
+    await client.permission.reply({ sessionID, requestID: id, decision: 'reject' }, request);
+    rejected.push(summary);
+    log.warn('permission.rejected', { requests: [summary] });
+  };
+  let awaited = Promise.resolve();
+  const unwatch = events.watch(sessionID, event => {
+    if (event.type !== 'permission.asked') return;
+    const { id, action, resources } = event.data as { id: string; action: string; resources: string[] };
+    awaited = awaited
+      .then(() => answer(id, action, resources))
+      .catch(error => log.warn('permission.reply.failed', { error }));
+  });
+  return {
+    /** The audit trail of auto-rejected prompts. */
+    rejected,
+    /** The `fail` policy's verdict once a prompt stopped the turn; undefined while none has. */
+    failure: () => failed,
+    /** The abort signal the fail policy fires; the wait races against it. */
+    parked: parked.signal,
+    /** Resolves once every queued reply has actually been sent. */
+    settled: () => awaited,
+    answer,
+    unwatch,
+  };
+}
+
 /**
  * Drive one turn of an OpenCode session to a verified end:
  * create (optional) → check agent/directory → apply permissions → prompt → wait,
@@ -97,80 +207,24 @@ export interface TurnResult {
 export async function runTurn(client: OpenCodeClient, input: TurnInput, options: TurnOptions): Promise<TurnResult> {
   const { signal } = options;
   const log = (options.log ?? getLogger(['aivi'])).with({ session: input.sessionId, turn: input.messageId });
-  const onPermission = options.onPermission ?? 'reject';
   const sessionID = input.sessionId;
   const request = { signal };
 
-  const aivi = input.messageMetadata?.aivi;
-  const messageMetadata: Metadata = {
-    ...input.messageMetadata,
-    aivi: { ...(aivi && typeof aivi === 'object' && !Array.isArray(aivi) ? aivi : {}), message: input.messageId },
-  };
   try {
-    // The API does not substitute the agent file's model the way the TUI does (seen live 2026-09-15:
-    // sessions ran OpenCode's default model). The model is a session property; aivi sets it.
-    const wanted = input.model
-      ? {
-          providerID: input.model.providerID,
-          id: input.model.modelID,
-          ...(input.model.variant ? { variant: input.model.variant } : {}),
-        }
-      : await agentModel(client, input.agent, input.directory, request);
-    if (input.create) {
-      await client.session.create(
-        {
-          id: sessionID,
-          agent: input.agent,
-          location: { directory: input.directory },
-          ...(wanted ? { model: wanted } : {}),
-          ...(input.title ? { title: input.title } : {}),
-          ...(input.sessionMetadata ? { metadata: input.sessionMetadata } : {}),
-          ...(input.permissions ? { permissions: input.permissions } : {}),
-        },
-        request,
-      );
-      options.onCreated?.();
-    }
-    const session = await client.session.get({ sessionID }, request);
-    if (session.agent !== input.agent || session.location.directory !== input.directory) {
-      throw new Error(`Session ${sessionID} no longer runs agent ${input.agent} in ${input.directory}`);
-    }
-    if (input.permissions) await client.session.update({ sessionID, permissions: input.permissions }, request);
-    // The model is chosen at session create (the agent file's pin, or the conversation's `/model`
-    // pin) and only ever changes when a `/model` pin says so — never re-read per turn. A pin that
-    // differs from the session is applied here; no pin means the session is left alone.
-    if (wanted && !sameModel(session.model, wanted))
-      await client.session.switchModel({ sessionID, model: wanted }, request);
+    await prepareSession(client, input, options, request);
   } catch (error) {
     throw new TurnNotStarted(error);
   }
   // Permission prompts park the turn until someone answers; nobody is at the server, so the policy
   // answers them as they are asked. Anything already pending from before this prompt is handled once.
-  const rejected: TurnResult['rejected'] = [];
-  const asks = new Set<string>();
-  let failed: PermissionRequired | undefined;
-  const failWith = (requests: { action: string; resources: string[] }[]) => {
-    failed ??= new PermissionRequired(requests);
-    parked.abort();
-  };
-  const parked = new AbortController();
-  const answer = async (id: string, action: string, resources: string[]) => {
-    if (asks.has(id)) return;
-    asks.add(id);
-    const summary = { action, resources: [...resources] };
-    if (onPermission === 'fail') return failWith([summary]);
-    await client.permission.reply({ sessionID, requestID: id, decision: 'reject' }, request);
-    rejected.push(summary);
-    log.warn('permission.rejected', { requests: [summary] });
-  };
-  let awaited = Promise.resolve();
-  const unwatch = options.events.watch(sessionID, event => {
-    if (event.type !== 'permission.asked') return;
-    const { id, action, resources } = event.data as { id: string; action: string; resources: string[] };
-    awaited = awaited
-      .then(() => answer(id, action, resources))
-      .catch(error => log.warn('permission.reply.failed', { error }));
-  });
+  const permissions = watchPermissions(
+    client,
+    sessionID,
+    request,
+    options.events,
+    options.onPermission ?? 'reject',
+    log,
+  );
   try {
     await client.session.prompt(
       {
@@ -178,32 +232,33 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
         id: input.messageId,
         text: input.text,
         delivery: 'queue',
-        metadata: messageMetadata,
+        metadata: turnMetadata(input),
       },
       request,
     );
     for (const p of await client.permission.list({ sessionID }, request))
-      await answer(p.id, p.action, [...p.resources]);
+      await permissions.answer(p.id, p.action, [...p.resources]);
     // The context can trail `wait` by a moment; every step of a session emits events, so the next one is the re-check.
     while (true) {
       await Promise.race([
         client.session.wait({ sessionID }, request),
         new Promise<never>((_, reject) =>
-          parked.signal.addEventListener('abort', () => reject(failed), { once: true }),
+          permissions.parked.addEventListener('abort', () => reject(permissions.failure()), { once: true }),
         ),
       ]);
-      if (failed) throw failed;
-      await awaited;
+      const failure = permissions.failure();
+      if (failure) throw failure;
+      await permissions.settled();
       try {
         const text = finalAnswer(await client.session.context({ sessionID }, request), input.messageId, input.agent);
-        return { sessionId: sessionID, text, rejected };
+        return { sessionId: sessionID, text, rejected: permissions.rejected };
       } catch (error) {
         if (!(error instanceof PendingAnswer)) throw error;
         await nextEvent(options.events, sessionID, signal);
       }
     }
   } finally {
-    unwatch();
+    permissions.unwatch();
   }
 }
 

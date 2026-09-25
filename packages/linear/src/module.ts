@@ -1,4 +1,4 @@
-import type { LinearConfig, Logger, Project } from '@aivi/core';
+import type { LaneBinding, LinearConfig, Logger, Project } from '@aivi/core';
 import {
   assistantAgent,
   errorMessage,
@@ -112,6 +112,13 @@ export function requireLinearSecrets(config: LinearConfig, env: NodeJS.ProcessEn
 export function createLinearModule(config: LinearConfig, clients?: Map<string, LinearClient>): HostModule {
   return { id: LINEAR.id, start: services => startLinear(config, services, clients) };
 }
+
+/** One issue, as the API answers it: the only routing input, always re-read, never trusted from a payload. */
+type LinearIssue = Awaited<ReturnType<LinearClient['issue']>>;
+
+/** The `<issue>` block that accompanies every enqueue when the webhook brought no context of its own. */
+const issueDossier = (issue: LinearIssue) =>
+  `<issue identifier="${issue.identifier}"><title>${issue.title}</title><description>${issue.description ?? ''}</description></issue>`;
 
 /** Which aivi project an issue belongs to: by the issue's Linear team, and by workspace when one is configured. */
 export function projectForIssue(
@@ -254,6 +261,96 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
     };
 
     /**
+     * A delegated issue a lane claims: the worker. Worktree first (a failure
+     * refuses and nothing is bound), then the bind, the notice and the prompt.
+     * False when the worktree could not be prepared — the caller skips its
+     * tick then, exactly as the early return used to.
+     */
+    const startWorker = async (
+      app: LinearAppRuntime,
+      payload: AgentSessionEventPayload,
+      issue: LinearIssue,
+      project: Project,
+      lane: LaneBinding,
+      conversation: string,
+    ): Promise<boolean> => {
+      const path = worktreePathFor(project.directory, payload.agentSession.id);
+      let made: Awaited<ReturnType<typeof ensureWorktree>> | null = null;
+      if (lane.worktree) {
+        try {
+          made = await ensureWorktree({
+            source: project.directory,
+            path,
+            branch: issue.branchName,
+            identity: workerIdentity,
+            signal: abort.signal,
+          });
+        } catch (error) {
+          await refuse(conversation, `I could not prepare a worktree for ${issue.identifier}: ${errorMessage(error)}`);
+          return false;
+        }
+      }
+      const directory = made ? made.path : project.directory;
+      store.bind(conversation, { agent: lane.agent, directory, project: project.id, issue: issue.id });
+      const waiting = store.waitingOn(conversation);
+      await activity(
+        conversation,
+        {
+          type: 'thought',
+          body: waiting
+            ? `Queued: another worker is busy on ${issue.identifier}; I start when it finishes.`
+            : `Starting as \`${lane.agent}\` in project ${project.id}${made ? ` on branch \`${issue.branchName}\`` : ', working in the project checkout'}.`,
+        },
+        true,
+      ).catch(error => log.warn('notify.failed', { error }));
+      if (made && made.path !== path) store.rebind(conversation, { directory: made.path });
+      const place = made
+        ? `You work in the git worktree ${made.path} on branch ${issue.branchName} (from ${made.base}).`
+        : `You work in the project's clean checkout ${project.directory} on its current branch; leave it as you found it — the checkout is the source of truth. The agent file says what you may change.`;
+      const text = [
+        `[Linear delegated ${issue.identifier} "${issue.title}" to you (app ${app.id}) in project ${project.id}, lane "${issue.state.name}". ${place} Your final answer is posted to the issue as your response; questions you ask are posted too and answered as follow-ups.]`,
+        payload.promptContext ?? issueDossier(issue),
+      ].join('\n\n');
+      store.enqueue(
+        { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },
+        100,
+      );
+      return true;
+    };
+
+    /**
+     * The assistant: who people reach directly. A delegation nothing claims
+     * is un-taken here; the assistant's response is the trail.
+     */
+    const startAssistant = async (
+      app: LinearAppRuntime,
+      payload: AgentSessionEventPayload,
+      issue: LinearIssue,
+      project: Project | undefined,
+      conversation: string,
+    ) => {
+      const delegated = issue.delegate?.id === app.userId;
+      if (delegated)
+        await app.client.setDelegate(issue.id, null).catch(error => log.warn('delegate.undone', { error }));
+      store.bind(conversation, {
+        agent: assistantAgent(services.loaded.config),
+        directory: project ? project.directory : home,
+        project: project?.id ?? null,
+      });
+      await activity(conversation, { type: 'thought', body: `One moment — reading ${issue.identifier}.` }, true).catch(
+        error => log.warn('notify.failed', { error }),
+      );
+      const situation = delegated
+        ? `[${issue.identifier} "${issue.title}" was delegated to you, but its lane ("${issue.state.name}") is not mapped to any agent. Do not do the work: respond briefly — a refusal or a clarification — and leave it with the people.]`
+        : `[Someone brought you ${issue.identifier} in ${project ? `project ${project.id}` : 'a team no project maps'}. Answer, clarify or decline; you do not do the work.]`;
+      const text = [situation, payload.promptContext ?? issueDossier(issue)].join('\n\n');
+      store.enqueue(
+        { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },
+        100,
+      );
+    };
+
+    /**
      * A session started. Routing is deterministic, from the issue re-read:
      * the HITL label refuses for any agent; a delegation whose lane maps an
      * agent is a worker (the lane decides worktree or checkout); everything
@@ -278,79 +375,10 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
         organizationId: payload.organizationId,
       });
       const lane = project?.linear?.lanes[issue.state.name];
-      const delegated = issue.delegate?.id === app.userId;
-      if (project && lane && delegated) {
-        const path = worktreePathFor(project.directory, payload.agentSession.id);
-        let made: Awaited<ReturnType<typeof ensureWorktree>> | null = null;
-        if (lane.worktree) {
-          try {
-            made = await ensureWorktree({
-              source: project.directory,
-              path,
-              branch: issue.branchName,
-              identity: workerIdentity,
-              signal: abort.signal,
-            });
-          } catch (error) {
-            return refuse(
-              conversation,
-              `I could not prepare a worktree for ${issue.identifier}: ${errorMessage(error)}`,
-            );
-          }
-        }
-        const directory = made ? made.path : project.directory;
-        store.bind(conversation, { agent: lane.agent, directory, project: project.id, issue: issue.id });
-        const waiting = store.waitingOn(conversation);
-        await activity(
-          conversation,
-          {
-            type: 'thought',
-            body: waiting
-              ? `Queued: another worker is busy on ${issue.identifier}; I start when it finishes.`
-              : `Starting as \`${lane.agent}\` in project ${project.id}${made ? ` on branch \`${issue.branchName}\`` : ', working in the project checkout'}.`,
-          },
-          true,
-        ).catch(error => log.warn('notify.failed', { error }));
-        if (made && made.path !== path) store.rebind(conversation, { directory: made.path });
-        const place = made
-          ? `You work in the git worktree ${made.path} on branch ${issue.branchName} (from ${made.base}).`
-          : `You work in the project's clean checkout ${project.directory} on its current branch; leave it as you found it — the checkout is the source of truth. The agent file says what you may change.`;
-        const text = [
-          `[Linear delegated ${issue.identifier} "${issue.title}" to you (app ${app.id}) in project ${project.id}, lane "${issue.state.name}". ${place} Your final answer is posted to the issue as your response; questions you ask are posted too and answered as follow-ups.]`,
-          payload.promptContext ??
-            `<issue identifier="${issue.identifier}"><title>${issue.title}</title><description>${issue.description ?? ''}</description></issue>`,
-        ].join('\n\n');
-        store.enqueue(
-          { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },
-          100,
-        );
+      if (project && lane && issue.delegate?.id === app.userId) {
+        if (!(await startWorker(app, payload, issue, project, lane, conversation))) return;
       } else {
-        // The assistant: who people reach directly. A delegation nothing
-        // claims is un-taken here; the assistant's response is the trail.
-        if (delegated)
-          await app.client.setDelegate(issue.id, null).catch(error => log.warn('delegate.undone', { error }));
-        store.bind(conversation, {
-          agent: assistantAgent(services.loaded.config),
-          directory: project ? project.directory : home,
-          project: project?.id ?? null,
-        });
-        await activity(
-          conversation,
-          { type: 'thought', body: `One moment — reading ${issue.identifier}.` },
-          true,
-        ).catch(error => log.warn('notify.failed', { error }));
-        const situation = delegated
-          ? `[${issue.identifier} "${issue.title}" was delegated to you, but its lane ("${issue.state.name}") is not mapped to any agent. Do not do the work: respond briefly — a refusal or a clarification — and leave it with the people.]`
-          : `[Someone brought you ${issue.identifier} in ${project ? `project ${project.id}` : 'a team no project maps'}. Answer, clarify or decline; you do not do the work.]`;
-        const text = [
-          situation,
-          payload.promptContext ??
-            `<issue identifier="${issue.identifier}"><title>${issue.title}</title><description>${issue.description ?? ''}</description></issue>`,
-        ].join('\n\n');
-        store.enqueue(
-          { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },
-          100,
-        );
+        await startAssistant(app, payload, issue, project, conversation);
       }
       engine?.tick();
     };
