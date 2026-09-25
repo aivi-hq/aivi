@@ -57,6 +57,100 @@ export interface ReviewedSession {
   lines: string[];
 }
 
+/** One page of the message list, as the wire returns it. */
+type MessagePage = Awaited<ReturnType<OpenCodeClient['message']['list']>>;
+
+/** One session row as the list endpoint returns it. */
+type WireSession = Awaited<ReturnType<OpenCodeClient['session']['list']>>['data'][number];
+
+/** A session worth reviewing, before its transcript is fetched. */
+type Candidate = Omit<ReviewedSession, 'lines'>;
+
+/** One message as a transcript line — who said what, when — or nothing worth reviewing. */
+function transcriptLine(message: MessagePage['data'][number], since: number): string | undefined {
+  if (message.time.created <= since) return undefined;
+  const when = new Date(message.time.created).toISOString().slice(0, 16).replace('T', ' ');
+  if (message.type === 'user') return `**user** ${when}\n${message.text.trim()}`;
+  if (message.type !== 'assistant') return undefined;
+  const text = message.content
+    .filter(p => p.type === 'text')
+    .map(p => p.text)
+    .join('\n')
+    .trim();
+  return text ? `**${message.agent}** ${when}\n${text}` : undefined;
+}
+
+/** The conversation of one session after `since`, oldest message first. */
+async function transcriptLines(
+  client: OpenCodeClient,
+  sessionId: string,
+  since: number,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const lines: string[] = [];
+  let messageCursor: string | undefined;
+  while (true) {
+    const page = await client.message.list(
+      messageCursor
+        ? { sessionID: sessionId, limit: 200, cursor: messageCursor }
+        : { sessionID: sessionId, limit: 200, order: 'asc' },
+      { signal },
+    );
+    for (const message of page.data) {
+      const line = transcriptLine(message, since);
+      if (line) lines.push(line);
+    }
+    if (!page.cursor.next || page.data.length === 0) break;
+    messageCursor = page.cursor.next;
+  }
+  return lines;
+}
+
+/** aivi's own mark on a session row: which origin created it, and which channel it spoke for. */
+function aiviMark(session: WireSession): { origin?: string; channel?: string } | undefined {
+  return (session.metadata as { aivi?: { origin?: string; channel?: string } } | undefined)?.aivi;
+}
+
+/** One page of the session list, as the wire returns it. */
+type WireSessionPage = Awaited<ReturnType<OpenCodeClient['session']['list']>>;
+
+/** Add this page's aivi sessions to `candidates`; false once a session older than `since` shows up. */
+function foldPage(page: WireSessionPage, since: number, origins: string[], candidates: Candidate[]): boolean {
+  for (const session of page.data) {
+    if (session.time.updated <= since) return false;
+    const aivi = aiviMark(session);
+    if (!aivi?.origin || !origins.includes(aivi.origin)) continue;
+    candidates.push({
+      id: session.id,
+      origin: aivi.origin,
+      ...(aivi.channel ? { channel: aivi.channel } : {}),
+      updated: session.time.updated,
+    });
+  }
+  return true;
+}
+
+/** Sessions aivi created (by origin) that changed after `since`, oldest first. */
+async function changedSessions(
+  client: OpenCodeClient,
+  since: number,
+  origins: string[],
+  signal: AbortSignal,
+): Promise<Candidate[]> {
+  const candidates: Candidate[] = [];
+  let cursor: string | undefined;
+  while (true) {
+    // The API refuses `cursor` together with `order`; the order sticks to the cursor.
+    const page = await client.session.list(cursor ? { limit: 50, cursor } : { limit: 50, order: 'desc' }, { signal });
+    // Newest first: the first session older than `since` ends the walk, the rest is history.
+    if (!foldPage(page, since, origins, candidates)) break;
+    if (!page.cursor.next || page.data.length === 0) break;
+    cursor = page.cursor.next;
+  }
+  candidates.sort((a, b) => a.updated - b.updated);
+  return candidates;
+}
+
 /**
  * Sessions aivi created (by origin) that changed after `since`, oldest first,
  * capped at `max` so a backlog is worked through in order across runs.
@@ -68,54 +162,10 @@ export async function collectSessions(
   max: number,
   signal: AbortSignal,
 ): Promise<ReviewedSession[]> {
-  const candidates: { id: string; origin: string; channel?: string; updated: number }[] = [];
-  let cursor: string | undefined;
-  outer: while (true) {
-    // The API refuses `cursor` together with `order`; the order sticks to the cursor.
-    const page = await client.session.list(cursor ? { limit: 50, cursor } : { limit: 50, order: 'desc' }, { signal });
-    for (const session of page.data) {
-      if (session.time.updated <= since) break outer;
-      const aivi = (session.metadata as { aivi?: { origin?: string; channel?: string } } | undefined)?.aivi;
-      if (!aivi?.origin || !origins.includes(aivi.origin)) continue;
-      candidates.push({
-        id: session.id,
-        origin: aivi.origin,
-        ...(aivi.channel ? { channel: aivi.channel } : {}),
-        updated: session.time.updated,
-      });
-    }
-    if (!page.cursor.next || page.data.length === 0) break;
-    cursor = page.cursor.next;
-  }
-  candidates.sort((a, b) => a.updated - b.updated);
-  const batch = candidates.slice(0, max);
+  const batch = (await changedSessions(client, since, origins, signal)).slice(0, max);
   const sessions: ReviewedSession[] = [];
   for (const candidate of batch) {
-    const lines: string[] = [];
-    let messageCursor: string | undefined;
-    while (true) {
-      const page = await client.message.list(
-        messageCursor
-          ? { sessionID: candidate.id, limit: 200, cursor: messageCursor }
-          : { sessionID: candidate.id, limit: 200, order: 'asc' },
-        { signal },
-      );
-      for (const message of page.data) {
-        if (message.time.created <= since) continue;
-        const when = new Date(message.time.created).toISOString().slice(0, 16).replace('T', ' ');
-        if (message.type === 'user') lines.push(`**user** ${when}\n${message.text.trim()}`);
-        else if (message.type === 'assistant') {
-          const text = message.content
-            .filter(p => p.type === 'text')
-            .map(p => p.text)
-            .join('\n')
-            .trim();
-          if (text) lines.push(`**${message.agent}** ${when}\n${text}`);
-        }
-      }
-      if (!page.cursor.next || page.data.length === 0) break;
-      messageCursor = page.cursor.next;
-    }
+    const lines = await transcriptLines(client, candidate.id, since, signal);
     if (lines.length) sessions.push({ ...candidate, lines });
   }
   return sessions;
