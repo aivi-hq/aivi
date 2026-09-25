@@ -64,48 +64,100 @@ const defaultIo: UninstallIo = {
   warn: message => console.warn(message),
 };
 
+/** What aivi has left on this machine, each entry a line the person can read. */
+interface UninstallInventory {
+  home: string | undefined;
+  clientPath: string | undefined;
+  unitPath: string | undefined;
+  plugin: boolean;
+  attribution: boolean;
+  method: InstallMethod | undefined;
+}
+
+/** Read everything that exists. Nothing is guessed; every path is probed here and printed as-is. */
+function survey(options: UninstallOptions, io: UninstallIo): UninstallInventory {
+  const { home } = options;
+  const clientPath = clientConfigPath();
+  const unitPath = serviceUnitPath();
+  const unit = unitPath !== undefined && io.exists(unitPath);
+  const listed = io.opencodeOnPath() ? io.pluginList() : '';
+  const method = io.detectMethod();
+  return {
+    home,
+    clientPath: io.exists(clientPath) ? clientPath : undefined,
+    unitPath: unit ? unitPath : undefined,
+    plugin: listed.includes(AIVI_PLUGIN),
+    attribution: listed.includes(ATTRIBUTION_PLUGIN),
+    method,
+  };
+}
+
+const describeEntry = (entry: string, what: string) => `  ${entry}  ${what}`;
+
+/** The lines the person reads: what is here, and for the attribution plugin, whether aivi will touch it. */
+function inventoryLines(found: UninstallInventory, confirm: boolean, withAttribution: boolean): string[] {
+  return [
+    ...(found.home === undefined ? [] : [describeEntry(found.home, 'the aivi home')]),
+    ...(found.clientPath === undefined
+      ? []
+      : [describeEntry(found.clientPath, `the client config: this machine's sign-in`)]),
+    ...(found.unitPath === undefined ? [] : [describeEntry(found.unitPath, 'the background service')]),
+    ...(found.plugin ? [describeEntry(AIVI_PLUGIN, "aivi's OpenCode plugin")] : []),
+    ...(found.attribution
+      ? [
+          confirm && withAttribution
+            ? describeEntry(ATTRIBUTION_PLUGIN, 'the attribution OpenCode plugin')
+            : describeEntry(ATTRIBUTION_PLUGIN, "kept: it is not aivi's — add --with-attribution to remove it"),
+        ]
+      : []),
+    ...(found.method === undefined ? [] : [describeEntry(CLI_PACKAGE, `this CLI, installed with ${found.method}`)]),
+  ];
+}
+
+/** The one promise of uninstall: never delete a directory that this machine did not record as its home. */
+function refuseWrongHome(home: string | undefined, io: UninstallIo, clientPath: string): void {
+  // Only the home this machine recorded, and only when it is one — config.json
+  // is the first file `aivi setup` writes into it. The whole path is printed
+  // by the listing below, so nothing here is guessed.
+  if (home === undefined) return;
+  if (home === resolve('/') || home === resolve(homedir()))
+    throw new Error(`${home} is not a directory aivi created. Nothing was deleted.`);
+  if (!io.exists(join(home, 'config.json')))
+    throw new Error(
+      `No config.json at ${home}, so aivi deletes nothing. Check AIVI_HOME and the home field in ${clientPath}.`,
+    );
+}
+
+/** Take the plugin entries out of OpenCode's own global config, which the home never takes with it. */
+function removeOpenCodePlugins(found: UninstallInventory, withAttribution: boolean, io: UninstallIo): void {
+  // A failure says so and continues: the deletion is what was asked.
+  if (!io.opencodeOnPath()) {
+    if (found.home !== undefined)
+      io.warn(
+        `OpenCode is not on PATH, so its plugin entries were left. Remove them by hand: ` +
+          `opencode plugin remove ${AIVI_PLUGIN}${withAttribution ? ` && opencode plugin remove ${ATTRIBUTION_PLUGIN}` : ''}`,
+      );
+    return;
+  }
+  if (found.plugin) removePlugin(io, AIVI_PLUGIN);
+  if (withAttribution && found.attribution) removePlugin(io, ATTRIBUTION_PLUGIN);
+  else if (found.attribution) io.log(`Kept ${ATTRIBUTION_PLUGIN}: \`opencode plugin remove ${ATTRIBUTION_PLUGIN}\`.`);
+}
+
 /** True when the job is finished — which includes there having been nothing
  *  here to uninstall. False when it stopped short: a dry run, or a CLI that no
  *  install method aivi knows can remove. */
 export async function uninstall(options: UninstallOptions, io: UninstallIo = defaultIo): Promise<boolean> {
   const { home, confirm, withAttribution } = options;
   const clientPath = clientConfigPath();
-  const unitPath = serviceUnitPath();
   // Read the install method before the file that records it goes away; it names
   // the method in the one message no probe can answer.
   const recorded = loadClientConfig()?.installMethod;
 
-  // The guard comes before anything else: only the home this machine recorded,
-  // and only when it is one — config.json is the first file `aivi setup` writes
-  // into it. The whole path is printed below, so nothing here is guessed.
-  if (home !== undefined) {
-    if (home === resolve('/') || home === resolve(homedir()))
-      throw new Error(`${home} is not a directory aivi created. Nothing was deleted.`);
-    if (!io.exists(join(home, 'config.json')))
-      throw new Error(
-        `No config.json at ${home}, so aivi deletes nothing. Check AIVI_HOME and the home field in ${clientPath}.`,
-      );
-  }
+  refuseWrongHome(home, io, clientPath);
 
-  const unit = unitPath !== undefined && io.exists(unitPath);
-  const listed = io.opencodeOnPath() ? io.pluginList() : '';
-  const method = io.detectMethod();
-  const attribution = listed.includes(ATTRIBUTION_PLUGIN);
-  const lines = [
-    ...(home === undefined ? [] : [`  ${home}  the aivi home`]),
-    ...(io.exists(clientPath) ? [`  ${clientPath}  the client config: this machine's sign-in`] : []),
-    ...(unit && unitPath !== undefined ? [`  ${unitPath}  the background service`] : []),
-    ...(listed.includes(AIVI_PLUGIN) ? [`  ${AIVI_PLUGIN}  aivi's OpenCode plugin`] : []),
-    ...(attribution
-      ? [
-          confirm && withAttribution
-            ? `  ${ATTRIBUTION_PLUGIN}  the attribution OpenCode plugin`
-            : `  ${ATTRIBUTION_PLUGIN}  kept: it is not aivi's — add --with-attribution to remove it`,
-        ]
-      : []),
-    ...(method === undefined ? [] : [`  ${CLI_PACKAGE}  this CLI, installed with ${method}`]),
-  ];
-
+  const found = survey(options, io);
+  const lines = inventoryLines(found, confirm, withAttribution);
   io.log(confirm ? 'Deleting:' : 'aivi uninstall would delete:');
   for (const line of lines) io.log(line);
 
@@ -125,17 +177,7 @@ export async function uninstall(options: UninstallOptions, io: UninstallIo = def
   else if (home !== undefined && (await io.health(await healthUrl(home))))
     throw new Error('aivi is running in the foreground; stop it (Ctrl+C) and re-run `aivi uninstall`.');
 
-  // OpenCode keeps plugins in its own global config, which the home never takes
-  // with it. A failure says so and continues: the deletion is what was asked.
-  if (io.opencodeOnPath()) {
-    if (listed.includes(AIVI_PLUGIN)) removePlugin(io, AIVI_PLUGIN);
-    if (withAttribution && attribution) removePlugin(io, ATTRIBUTION_PLUGIN);
-    else if (attribution) io.log(`Kept ${ATTRIBUTION_PLUGIN}: \`opencode plugin remove ${ATTRIBUTION_PLUGIN}\`.`);
-  } else if (home !== undefined)
-    io.warn(
-      `OpenCode is not on PATH, so its plugin entries were left. Remove them by hand: ` +
-        `opencode plugin remove ${AIVI_PLUGIN}${withAttribution ? ` && opencode plugin remove ${ATTRIBUTION_PLUGIN}` : ''}`,
-    );
+  removeOpenCodePlugins(found, withAttribution, io);
 
   if (home !== undefined) {
     io.remove(home);
@@ -148,7 +190,7 @@ export async function uninstall(options: UninstallOptions, io: UninstallIo = def
 
   // Last: the CLI removes itself. Nothing may read or write after this line —
   // the files this command deletes are its own.
-  if (method === undefined) {
+  if (found.method === undefined) {
     io.warn(
       `The aivi files are gone. No install method aivi knows answers${
         recorded ? `, and the client config recorded ${recorded}` : ''
@@ -156,8 +198,8 @@ export async function uninstall(options: UninstallOptions, io: UninstallIo = def
     );
     return false;
   }
-  io.log(`Removing this CLI (installed with ${method}) — the last thing it says.`);
-  io.selfDelete(method);
+  io.log(`Removing this CLI (installed with ${found.method}) — the last thing it says.`);
+  io.selfDelete(found.method);
   return true;
 }
 

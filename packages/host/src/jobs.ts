@@ -74,7 +74,115 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
     }
   };
 
-  async function create(input: Extract<JobRequest, { action: 'create' }>): Promise<JobResponse> {
+  type CreateInput = Extract<JobRequest, { action: 'create' }>;
+
+  /** The prompt or shell task the input asks for; the prompt case is verified against OpenCode. */
+  async function taskFor(
+    input: CreateInput,
+    client: OpenCodeClient,
+    agent: string | undefined,
+    directory: string,
+  ): Promise<Job['task']> {
+    if (input.command !== undefined)
+      return userTaskSchema.parse({
+        kind: 'shell',
+        command: input.command,
+        cwd: input.cwd ?? directory,
+        ...(input.env ? { env: input.env } : {}),
+        ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+      });
+    if (!agent) throw new JobRefused('This session has no agent; pass agent explicitly.');
+    // Verified against OpenCode 2.0.3: `agent.list` with a location sees agents defined under that
+    // directory's .opencode/, where `agent.get` does not.
+    const agents = await client.agent.list({ location: { directory } }).catch(() => ({ data: [] }));
+    if (!agents.data.some(a => a.id === agent)) throw new JobRefused(`No agent "${agent}" exists in ${directory}.`);
+    return userTaskSchema.parse({
+      kind: 'prompt',
+      agent,
+      directory,
+      prompt: input.prompt,
+      ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+    });
+  }
+
+  /** A report nobody may carry is refused at creation, not at delivery time. */
+  function refuseReport(report: Report): Report {
+    const refusal = channels.refuse(report);
+    if (refusal) throw new JobRefused(`${refusal}. Use report "none" or a channel aivi may post to.`);
+    return report;
+  }
+
+  /** The report the input asks for, with "this channel" resolved through the router. */
+  async function reportFor(input: CreateInput): Promise<Report | null> {
+    if (input.report === 'channel' && !input.channel) {
+      // "Post it to this channel": the channel the asking conversation lives in.
+      const here = await channels.channelOf(input.sessionId);
+      if (!here)
+        throw new JobRefused(
+          'report "channel" needs the channel id when the asking session is not a chat conversation.',
+        );
+      return refuseReport({ to: 'channel', module: input.module ?? here.module, channel: here.channel, on: input.on });
+    }
+    if (input.report === 'channel') {
+      // A conversation asking for a post defaults to its own platform; a native session must say which.
+      const module = input.module ?? channels.ownerOf(input.sessionId);
+      if (!module)
+        throw new JobRefused('report "channel" needs the module (for example "discord") from a native session.');
+      return refuseReport({ to: 'channel', module, channel: input.channel!, on: input.on });
+    }
+    if (input.report === 'session')
+      return refuseReport({ to: SESSION_DESTINATION, session: input.sessionId, on: input.on });
+    return null;
+  }
+
+  /** The fields every new agent job carries; the schedule belongs to the branch that adds it. */
+  interface JobDraft {
+    id: string;
+    title?: string;
+    timezone: string;
+    resource: string;
+    task: Job['task'];
+    report?: Report;
+  }
+  function draft(input: CreateInput, task: Job['task'], report: Report | null, resource: string): JobDraft {
+    return {
+      id: `agent-${randomUUID().slice(0, 8)}`,
+      ...(input.title ? { title: input.title } : {}),
+      timezone: input.timezone ?? hostTimezone(),
+      resource,
+      task,
+      ...(report ? { report } : {}),
+    };
+  }
+
+  function addOneOff(input: CreateInput, base: JobDraft, at: number, dedupeKey: string): JobResponse {
+    const due = parseDueOrRefuse(input.at!, at);
+    const entry = store.addJob(jobSchema.parse({ ...base, at: new Date(due).toISOString() }), 'agent', at, {
+      dedupeKey,
+      reason: `agent:${input.sessionId}`,
+    });
+    wake();
+    const item = jobItem(entry);
+    return {
+      summary: `Created a one-off ${item.title} (${item.id}) for ${formatInstant(due, base.timezone)}. ${reportText(base.report ?? null)}`,
+      items: [item],
+    };
+  }
+
+  function addRecurring(input: CreateInput, base: JobDraft, at: number): JobResponse {
+    const parsed = jobSchema.safeParse({ ...base, cron: input.cron });
+    if (!parsed.success)
+      throw new JobRefused(`Invalid cron expression or timezone: "${input.cron}" in ${base.timezone}.`);
+    const entry = store.addJob(parsed.data, 'agent', at);
+    wake();
+    const item = jobItem(entry);
+    return {
+      summary: `Created ${item.title} (${item.id}): cron ${parsed.data.cron} in ${base.timezone}. Next: ${item.next.join(', ')}. ${reportText(base.report ?? null)}`,
+      items: [item],
+    };
+  }
+
+  async function create(input: CreateInput): Promise<JobResponse> {
     if (!settings) throw new Error('unreachable');
     if ((input.prompt === undefined) === (input.command === undefined))
       throw new JobRefused('Give exactly one of prompt (an agent job) or command (a script job).');
@@ -91,52 +199,13 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
     if ((origin === 'job' || origin === 'dreaming') && !channels.ownsSession(input.sessionId))
       throw new JobRefused('Jobs do not create jobs. Ask a person in a conversation to schedule this.', 403);
 
-    const directory = input.directory ?? session.location.directory;
-    const agent = input.agent ?? session.agent;
-    let task: Job['task'];
-    if (input.prompt !== undefined) {
-      if (!agent) throw new JobRefused('This session has no agent; pass agent explicitly.');
-      // Verified against OpenCode 2.0.3: `agent.list` with a location sees agents defined under that
-      // directory's .opencode/, where `agent.get` does not.
-      const agents = await client.agent.list({ location: { directory } }).catch(() => ({ data: [] }));
-      if (!agents.data.some(a => a.id === agent)) throw new JobRefused(`No agent "${agent}" exists in ${directory}.`);
-      task = userTaskSchema.parse({
-        kind: 'prompt',
-        agent,
-        directory,
-        prompt: input.prompt,
-        ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-      });
-    } else {
-      task = userTaskSchema.parse({
-        kind: 'shell',
-        command: input.command,
-        cwd: input.cwd ?? directory,
-        ...(input.env ? { env: input.env } : {}),
-        ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-      });
-    }
-
-    let report: Report | null = null;
-    if (input.report === 'channel' && !input.channel) {
-      // "Post it to this channel": the channel the asking conversation lives in.
-      const here = await channels.channelOf(input.sessionId);
-      if (!here)
-        throw new JobRefused(
-          'report "channel" needs the channel id when the asking session is not a chat conversation.',
-        );
-      report = { to: 'channel', module: input.module ?? here.module, channel: here.channel, on: input.on };
-    } else if (input.report === 'channel') {
-      // A conversation asking for a post defaults to its own platform; a native session must say which.
-      const module = input.module ?? channels.ownerOf(input.sessionId);
-      if (!module)
-        throw new JobRefused('report "channel" needs the module (for example "discord") from a native session.');
-      report = { to: 'channel', module, channel: input.channel!, on: input.on };
-    } else if (input.report === 'session') report = { to: SESSION_DESTINATION, session: input.sessionId, on: input.on };
-    if (report) {
-      const refusal = channels.refuse(report);
-      if (refusal) throw new JobRefused(`${refusal}. Use report "none" or a channel aivi may post to.`);
-    }
+    const task = await taskFor(
+      input,
+      client,
+      input.agent ?? session.agent,
+      input.directory ?? session.location.directory,
+    );
+    const report = await reportFor(input);
 
     // A retried tool call carries the same message id and lands on the job it already made.
     const dedupeKey = `agent:${input.sessionId}:${input.messageId ?? randomUUID()}`;
@@ -146,38 +215,8 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
       throw new JobRefused(`The limit of ${settings.max} agent-created jobs is reached; remove one first.`, 409);
 
     const at = now();
-    const timezone = input.timezone ?? hostTimezone();
-    const id = `agent-${randomUUID().slice(0, 8)}`;
-    const base = {
-      id,
-      ...(input.title ? { title: input.title } : {}),
-      timezone,
-      resource: settings.resource,
-      task,
-      ...(report ? { report } : {}),
-    };
-    if (input.at !== undefined) {
-      const due = parseDueOrRefuse(input.at, at);
-      const entry = store.addJob(jobSchema.parse({ ...base, at: new Date(due).toISOString() }), 'agent', at, {
-        dedupeKey,
-        reason: `agent:${input.sessionId}`,
-      });
-      wake();
-      const item = jobItem(entry);
-      return {
-        summary: `Created a one-off ${item.title} (${item.id}) for ${formatInstant(due, timezone)}. ${reportText(report)}`,
-        items: [item],
-      };
-    }
-    const parsed = jobSchema.safeParse({ ...base, cron: input.cron });
-    if (!parsed.success) throw new JobRefused(`Invalid cron expression or timezone: "${input.cron}" in ${timezone}.`);
-    const entry = store.addJob(parsed.data, 'agent', at);
-    wake();
-    const item = jobItem(entry);
-    return {
-      summary: `Created ${item.title} (${item.id}): cron ${parsed.data.cron} in ${timezone}. Next: ${item.next.join(', ')}. ${reportText(report)}`,
-      items: [item],
-    };
+    const base = draft(input, task, report, settings.resource);
+    return input.at !== undefined ? addOneOff(input, base, at, dedupeKey) : addRecurring(input, base, at);
   }
 
   function agentJobs(): JobEntry[] {
