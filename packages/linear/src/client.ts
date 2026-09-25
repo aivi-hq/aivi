@@ -212,14 +212,6 @@ export class LinearClient {
     return issueOf(data.issue);
   }
 
-  async agentSession(id: string): Promise<LinearAgentSession> {
-    const data = await this.graphql<{ agentSession: LinearAgentSession }>(
-      `query($id: String!) { agentSession(id: $id) { id status issue { id } } }`,
-      { id },
-    );
-    return data.agentSession;
-  }
-
   /** Start an agent session on an issue without waiting to be delegated; the listener uses this. */
   async createSessionOnIssue(issueId: string): Promise<string> {
     const data = await this.graphql<{ agentSessionCreateOnIssue: { success: boolean; agentSession: { id: string } } }>(
@@ -237,16 +229,6 @@ export class LinearClient {
       { id: issueId, input: { delegateId } },
     );
     if (!data.issueUpdate.success) throw new LinearApiError('issueUpdate(delegateId) failed', 200);
-  }
-
-  /** Leave a comment on the issue: the trail when the assistant declines a delegation. */
-  async createComment(issueId: string, body: string): Promise<string> {
-    const data = await this.graphql<{ commentCreate: { success: boolean; comment: { id: string } } }>(
-      `mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }`,
-      { input: { issueId, body } },
-    );
-    if (!data.commentCreate.success) throw new LinearApiError('commentCreate failed', 200);
-    return data.commentCreate.comment.id;
   }
 }
 

@@ -90,7 +90,6 @@ class FakeLinear extends LinearClient {
   issues = new Map<string, LinearIssue>();
   delegated: [string, string | null][] = [];
   sessionsCreated: string[] = [];
-  comments: [string, string][] = [];
   constructor() {
     super({ clientId: 'x', clientSecret: 'y' }, { baseUrl: 'http://127.0.0.1:1' });
   }
@@ -114,10 +113,6 @@ class FakeLinear extends LinearClient {
     this.delegated.push([issueId, delegateId]);
     const issue = this.issues.get(issueId);
     if (issue) issue.delegate = delegateId ? { id: delegateId } : null;
-  }
-  override async createComment(issueId: string, body: string) {
-    this.comments.push([issueId, body]);
-    return `c-${this.comments.length}`;
   }
 }
 
