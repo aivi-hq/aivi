@@ -8,7 +8,7 @@
 
 import type { LoadedConfig } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
-import type { PluginCliCommand, PluginCliContext, Store } from '@aivi/host';
+import type { PluginCliCommand, PluginCliContext, PluginCliSubcommand, Store } from '@aivi/host';
 import * as p from '@clack/prompts';
 import type { Command } from 'commander';
 import { configPath, context, home, print, withStore } from '../context.ts';
@@ -63,6 +63,27 @@ function pluginCliContext(): PluginCliContext {
 
 const collect = (value: string, previous: string[]): string[] => [...previous, value];
 
+/** The three shapes commander's overloads distinguish: a repeat collector
+ *  (which wants its initial list), a valued default, and a bare option. */
+function declareOption(subcommand: Command, option: NonNullable<PluginCliSubcommand['options']>[number]): void {
+  const describe = [option.description, option.required ? '(required)' : ''].join(' ').trim();
+  if (option.multiple) {
+    if (option.required) subcommand.requiredOption(option.flags, describe, collect, []);
+    else subcommand.option(option.flags, describe, collect, []);
+  } else if (option.required) subcommand.requiredOption(option.flags, describe);
+  else if (option.default !== undefined) subcommand.option(option.flags, describe, option.default);
+  else subcommand.option(option.flags, describe);
+}
+
+/** A subcommand's action: relay the operands and option values into its `run`. */
+function relay(subcommand: Command, sub: PluginCliSubcommand): void {
+  subcommand.action(async (...rest) => {
+    const values = rest[rest.length - 2] as Record<string, unknown>;
+    const operands = rest.slice(0, -2) as string[];
+    await sub.run(pluginCliContext(), operands, values);
+  });
+}
+
 /** Mount one plugin command: the data becomes a commander subtree whose
  *  actions relay into the subcommand's `run` with the shared context. */
 function mount(program: Command, command: PluginCliCommand): void {
@@ -72,22 +93,8 @@ function mount(program: Command, command: PluginCliCommand): void {
     .helpGroup(command.helpGroup ?? 'Channels');
   for (const sub of command.subcommands) {
     const subcommand = cmd.command(`${sub.name}${sub.args ? ` ${sub.args}` : ''}`).description(sub.description);
-    for (const option of sub.options ?? []) {
-      const describe = [option.description, option.required ? '(required)' : ''].join(' ').trim();
-      // The three shapes commander's overloads distinguish: a repeat collector
-      // (which wants its initial list), a valued default, and a bare option.
-      if (option.multiple) {
-        if (option.required) subcommand.requiredOption(option.flags, describe, collect, []);
-        else subcommand.option(option.flags, describe, collect, []);
-      } else if (option.required) subcommand.requiredOption(option.flags, describe);
-      else if (option.default !== undefined) subcommand.option(option.flags, describe, option.default);
-      else subcommand.option(option.flags, describe);
-    }
-    subcommand.action(async (...rest) => {
-      const values = rest[rest.length - 2] as Record<string, unknown>;
-      const operands = rest.slice(0, -2) as string[];
-      await sub.run(pluginCliContext(), operands, values);
-    });
+    for (const option of sub.options ?? []) declareOption(subcommand, option);
+    relay(subcommand, sub);
   }
 }
 
