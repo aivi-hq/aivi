@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { forward } from './forward.ts';
 import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
-import { healthUrl } from './update.ts';
+import { healthUrl, waitHealthy } from './update.ts';
 import { aiviVersion } from './version.ts';
 
 /** Short names for the plugins aivi ships; any npm package name is accepted too. */
@@ -91,6 +91,37 @@ function installedVersion(dir: string): string {
   }
 }
 
+/** Install the package into the home. npm owns what is installed; --save-exact
+ *  keeps the plugin in app/package.json, where `aivi update` carries it along from. */
+function installPackage(io: InstallIo, spec: string, appDir: string): void {
+  const dest = packageDir(appDir, spec);
+  if (existsSync(dest)) {
+    io.log(`${spec} ${installedVersion(dest)} is already installed; nothing to install.`);
+    return;
+  }
+  io.log(`Installing ${spec} into ${appDir}`);
+  io.install(spec, appDir);
+}
+
+/** Bring it up: restart aivi, then read the module's own health. The command
+ *  ends only when the module itself reports running (or gives a reason). */
+async function restartAndReport(io: InstallIo, url: string, label: string, moduleId: string | undefined) {
+  io.log('Restarting aivi…');
+  io.service.stop();
+  io.service.start();
+  // A bounded wait for a known instant: the restarted server coming healthy,
+  // the same probe `aivi update` runs.
+  await waitHealthy(io, url, 'aivi did not come back healthy within 30 s. Check `aivi service logs`.');
+  const seen = moduleId ? (await io.moduleStates(url)).find(state => state.id === moduleId) : undefined;
+  if (seen?.state === 'running') io.log(`${label} is running.`);
+  else if (seen?.state === 'degraded') {
+    io.log(
+      `${label} is degraded so far: ${seen.lastError ?? 'no reason given'}. aivi keeps retrying; \`aivi status\` follows it.`,
+    );
+    process.exitCode = 1;
+  } else io.log('aivi is back and healthy.');
+}
+
 export async function install(args: string[], options: InstallOptions, io: InstallIo = defaultIo): Promise<void> {
   const flags = args.filter(arg => arg.startsWith('-'));
   if (flags.length) throw new Error(`Unknown install flag: ${flags[0]}`);
@@ -104,17 +135,9 @@ export async function install(args: string[], options: InstallOptions, io: Insta
   if (!existsSync(packageDir(options.appDir, '@aivi/app')))
     throw new Error(`No aivi server installed at ${options.appDir}. Run \`aivi setup\` first.`);
 
-  // 1. Into the home: npm owns what is installed; --save-exact keeps the plugin
-  // in app/package.json, where `aivi update` carries it along from.
-  const dest = packageDir(options.appDir, spec);
-  if (existsSync(dest)) {
-    io.log(`${spec} ${installedVersion(dest)} is already installed; nothing to install.`);
-  } else {
-    io.log(`Installing ${spec} into ${options.appDir}`);
-    io.install(spec, options.appDir);
-  }
+  installPackage(io, spec, options.appDir);
 
-  // 2. The plugin configures itself: instructions, prompts, verification and
+  // The plugin configures itself: instructions, prompts, verification and
   // writes all live in its ./setup entry; the human sees it through inherited stdio.
   const status = io.forwardSetup(spec, options);
   if (status !== 0) {
@@ -123,8 +146,7 @@ export async function install(args: string[], options: InstallOptions, io: Insta
     return;
   }
 
-  // 3. Bring it up: restart aivi, then read the module's own health. A running
-  // foreground server is the operator's to restart; the CLI never kills it.
+  // A running foreground server is the operator's to restart; the CLI never kills it.
   const url = await io.healthUrl(options.home);
   if (!io.service.installed()) {
     if (await io.healthProbe(url))
@@ -132,24 +154,5 @@ export async function install(args: string[], options: InstallOptions, io: Insta
     else io.log(`Configured. Start aivi to bring ${label} up.`);
     return;
   }
-  io.log('Restarting aivi…');
-  io.service.stop();
-  io.service.start();
-  // A bounded wait for a known instant: the restarted server coming healthy,
-  // the same probe `aivi update` runs.
-  const deadline = Date.now() + 30_000;
-  for (;;) {
-    if (await io.healthProbe(url)) break;
-    if (Date.now() > deadline)
-      throw new Error('aivi did not come back healthy within 30 s. Check `aivi service logs`.');
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-  const seen = moduleId ? (await io.moduleStates(url)).find(state => state.id === moduleId) : undefined;
-  if (seen?.state === 'running') io.log(`${label} is running.`);
-  else if (seen?.state === 'degraded') {
-    io.log(
-      `${label} is degraded so far: ${seen.lastError ?? 'no reason given'}. aivi keeps retrying; \`aivi status\` follows it.`,
-    );
-    process.exitCode = 1;
-  } else io.log('aivi is back and healthy.');
+  await restartAndReport(io, url, label, moduleId);
 }

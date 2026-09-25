@@ -80,6 +80,61 @@ function installedDependencies(appDir: string): Record<string, string> {
   return Object.fromEntries(Object.entries(manifest.dependencies ?? {}).filter(([name]) => name.startsWith('@aivi/')));
 }
 
+/** Install the new server with every plugin at its latest; npm is the peer resolver.
+ *  A plugin whose peer range excludes the new host is pinned where it is and excluded
+ *  from this and future retries until its range catches up. */
+function installPeers(io: UpdateIo, appDir: string, installed: Record<string, string>, targetVersion: string): void {
+  const plugins = Object.entries(installed).filter(([name]) => name !== '@aivi/app');
+  const excluded = new Set<string>();
+  let specs = [`@aivi/app@${targetVersion}`, ...plugins.map(([name]) => `${name}@latest`)];
+  for (;;) {
+    const attempt = io.install(specs, appDir);
+    if (attempt.status === 0) return;
+    const conflict = attempt.stderr.match(/While resolving: (@aivi\/[a-z-]+)@/)?.[1];
+    if (!conflict || conflict === '@aivi/app' || excluded.has(conflict))
+      throw new Error(`npm install failed:\n${attempt.stderr}`);
+    excluded.add(conflict);
+    const kept = installed[conflict];
+    io.log(`${conflict}: disabled: no compatible release (kept ${kept})`);
+    specs = specs.filter(spec => !spec.startsWith(`${conflict}@`));
+  }
+}
+
+/** A bounded wait for a known instant: the restarted server coming healthy.
+ *  The `failure` message is the diagnosis each caller's operator needs. */
+export async function waitHealthy(
+  io: { healthProbe(url: string): Promise<boolean> },
+  url: string,
+  failure: string,
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    if (await io.healthProbe(url)) return;
+    if (Date.now() > deadline) throw new Error(failure);
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+}
+
+/** Restart the managed service and wait for it to answer. */
+async function restartAndWait(io: UpdateIo, url: string): Promise<void> {
+  io.service.start();
+  await waitHealthy(
+    io,
+    url,
+    'The update installed, but the server did not come healthy within 30 s. Check the service logs.',
+  );
+  io.log('The server is back and healthy.');
+}
+
+/** The target's engines gate the update before anything is stopped. An unsuitable
+ *  Node provisions the managed runtime first, recorded for the service's benefit. */
+async function provisionNode(io: UpdateIo, home: string, targetVersion: string, nodePath: string): Promise<void> {
+  const engines = await io.npmView(`@aivi/app@${targetVersion}`, 'engines.node').catch(() => '');
+  if (!engines || satisfies(nodeVersion(nodePath), engines)) return;
+  io.log(`The target needs Node ${engines}; provisioning the managed runtime.`);
+  saveClientConfig({ nodePath: await ensureNode(home, engines) });
+}
+
 export async function updateServer(options: UpdateOptions, io: UpdateIo = defaultIo): Promise<void> {
   const { home, appDir } = options;
   const configPath = join(home, 'config.json');
@@ -100,15 +155,7 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
     return;
   }
 
-  // The target's engines gate the update before anything is stopped. An
-  // unsuitable Node provisions the managed runtime first.
-  const engines = await io.npmView(`@aivi/app@${targetVersion}`, 'engines.node').catch(() => '');
-  let nodePath = options.nodePath;
-  if (engines && !satisfies(nodeVersion(nodePath), engines)) {
-    io.log(`The target needs Node ${engines}; provisioning the managed runtime.`);
-    nodePath = await ensureNode(home, engines);
-    saveClientConfig({ nodePath });
-  }
+  await provisionNode(io, home, targetVersion, options.nodePath);
 
   const url = await healthUrl(home);
   const managed = io.service.installed();
@@ -116,42 +163,11 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
   else if (await io.healthProbe(url))
     throw new Error('aivi is running in the foreground; stop it (Ctrl+C) and re-run `aivi update`.');
 
-  // Install the new server with every plugin at its latest; npm is the peer
-  // resolver. A plugin whose peer range excludes the new host is pinned where
-  // it is and excluded from this and future retries until its range catches up.
-  const plugins = Object.entries(installed).filter(([name]) => name !== '@aivi/app');
-  const excluded = new Set<string>();
-  let specs = [`@aivi/app@${targetVersion}`, ...plugins.map(([name]) => `${name}@latest`)];
-  for (;;) {
-    const attempt = io.install(specs, appDir);
-    if (attempt.status === 0) break;
-    const conflict = attempt.stderr.match(/While resolving: (@aivi\/[a-z-]+)@/)?.[1];
-    if (!conflict || conflict === '@aivi/app' || excluded.has(conflict))
-      throw new Error(`npm install failed:\n${attempt.stderr}`);
-    excluded.add(conflict);
-    const kept = installed[conflict];
-    io.log(`${conflict}: disabled: no compatible release (kept ${kept})`);
-    specs = specs.filter(spec => !spec.startsWith(`${conflict}@`));
-  }
+  installPeers(io, appDir, installed, targetVersion);
 
   io.log(`Updated @aivi/app: ${currentVersion.version} → ${targetVersion}.`);
-  if (managed) {
-    io.service.start();
-    const deadline = Date.now() + 30_000;
-    for (;;) {
-      if (await io.healthProbe(url)) {
-        io.log('The server is back and healthy.');
-        break;
-      }
-      if (Date.now() > deadline)
-        throw new Error(
-          'The update installed, but the server did not come healthy within 30 s. Check the service logs.',
-        );
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-  } else {
-    io.log('Done. Start the server with `aivi serve`.');
-  }
+  if (managed) await restartAndWait(io, url);
+  else io.log('Done. Start the server with `aivi serve`.');
 }
 
 function nodeVersion(nodePath: string): string {
