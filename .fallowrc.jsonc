@@ -5,6 +5,11 @@
     "src/index.{ts,tsx,js,jsx}",
     "src/main.{ts,tsx,js,jsx}"
   ],
+  "dynamicallyLoaded": [
+    // Git hooks lefthook invokes by path; nothing imports them, so the static
+    // graph alone would report them dead.
+    "scripts/commit-msg.mjs"
+  ],
   "workspaces": {
     "patterns": [
       "packages/*"
