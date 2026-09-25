@@ -75,7 +75,7 @@ export interface SetupOptions {
   nodePath?: string | undefined;
 }
 
-export function extractSetupFlags(args: string[]): {
+export interface SetupFlags {
   plugins: string[];
   appSpec: string | undefined;
   use: string | undefined;
@@ -83,32 +83,76 @@ export function extractSetupFlags(args: string[]): {
   url: string | undefined;
   token: string | undefined;
   name: string | undefined;
-} {
-  const plugins: string[] = [];
-  let appSpec: string | undefined;
-  let use: string | undefined;
-  let connect = false;
-  let url: string | undefined;
-  let token: string | undefined;
-  let name: string | undefined;
+}
+
+/** The valued flags, each with its setter. `--plugin` collects; the rest take
+ *  one value, as `--flag value` or `--flag=value` — the same two shapes for all. */
+const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = {
+  '--plugin': (flags, value) => flags.plugins.push(value),
+  '--app-spec': (flags, value) => {
+    flags.appSpec = value;
+  },
+  '--use': (flags, value) => {
+    flags.use = value;
+  },
+  '--url': (flags, value) => {
+    flags.url = value;
+  },
+  '--token': (flags, value) => {
+    flags.token = value;
+  },
+  '--name': (flags, value) => {
+    flags.name = value;
+  },
+};
+
+export function extractSetupFlags(args: string[]): SetupFlags {
+  const flags: SetupFlags = {
+    plugins: [],
+    appSpec: undefined,
+    use: undefined,
+    connect: false,
+    url: undefined,
+    token: undefined,
+    name: undefined,
+  };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    const value = (flag: string): string => {
-      if (arg.includes('=')) return arg.slice(arg.indexOf('=') + 1);
-      const next = args[++i];
-      if (next === undefined) throw new Error(`${flag} wants a value`);
-      return next;
-    };
-    if (arg === '--plugin' || arg.startsWith('--plugin=')) plugins.push(value('--plugin'));
-    else if (arg === '--app-spec' || arg.startsWith('--app-spec=')) appSpec = value('--app-spec');
-    else if (arg === '--use' || arg.startsWith('--use=')) use = value('--use');
-    else if (arg === '--connect') connect = true;
-    else if (arg === '--url' || arg.startsWith('--url=')) url = value('--url');
-    else if (arg === '--token' || arg.startsWith('--token=')) token = value('--token');
-    else if (arg === '--name' || arg.startsWith('--name=')) name = value('--name');
-    else throw new Error(`Unknown setup flag: ${arg}`);
+    if (arg === '--connect') {
+      flags.connect = true;
+      continue;
+    }
+    const eq = arg.indexOf('=');
+    const name = eq === -1 ? arg : arg.slice(0, eq);
+    const setter = SETUP_FLAGS[name];
+    if (!setter) throw new Error(`Unknown setup flag: ${arg}`);
+    const value = eq === -1 ? args[++i] : arg.slice(eq + 1);
+    if (value === undefined) throw new Error(`${name} wants a value`);
+    setter(flags, value);
   }
-  return { plugins, appSpec, use, connect, url, token, name };
+  return flags;
+}
+
+/** Which flow this invocation follows. An already signed-in machine gets the
+ *  quiet refresh; a home with a server but no sign-in skips the url question. */
+async function routeSetup(
+  flags: SetupFlags,
+  existing: ReturnType<typeof loadClientConfig>,
+  home: string,
+  nodePath: string,
+  io: SetupIo,
+): Promise<void> {
+  if (flags.connect) return connectFlow(flags.url ?? existing?.url, flags.token, io);
+  if (flags.use !== undefined) return createFlow(flags, home, nodePath, io);
+  if (existing?.person?.token && existing.url) return signedInFlow(existing.url, existing.person.token, io);
+  if (serverInstalled(home)) {
+    // The server lives here but nobody has signed in on this machine:
+    // the url is a fact of this home, only the token is missing.
+    io.log(`The aivi server lives at ${home}; this machine has not signed in yet.`);
+    return connectFlow(homeHostUrl(home), undefined, io);
+  }
+  const branch = await io.ask.branch();
+  return branch === 'connect' ? connectFlow(flags.url, flags.token, io) : createFlow(flags, home, nodePath, io);
 }
 
 export async function setup(args: string[], options: SetupOptions, io: SetupIo = defaultIo): Promise<void> {
@@ -119,24 +163,8 @@ export async function setup(args: string[], options: SetupOptions, io: SetupIo =
     throw new Error('`--connect` and `--use` choose different branches; give one.');
   if (flags.use !== undefined && !['this-machine', 'another'].includes(flags.use))
     throw new Error(`Unknown --use ${flags.use}. Use this-machine or another.`);
-  const existing = loadClientConfig();
   try {
-    if (!flags.connect && flags.use === undefined) {
-      if (existing?.person?.token && existing.url) return await signedInFlow(existing.url, existing.person.token, io);
-      if (serverInstalled(home)) {
-        // The server lives here but nobody has signed in on this machine:
-        // the url is a fact of this home, only the token is missing.
-        io.log(`The aivi server lives at ${home}; this machine has not signed in yet.`);
-        return await connectFlow(homeHostUrl(home), undefined, io);
-      }
-      const branch = await io.ask.branch();
-      return branch === 'connect'
-        ? await connectFlow(flags.url, flags.token, io)
-        : await createFlow(flags, home, nodePath, io);
-    }
-    return flags.connect
-      ? await connectFlow(flags.url ?? existing?.url, flags.token, io)
-      : await createFlow(flags, home, nodePath, io);
+    await routeSetup(flags, loadClientConfig(), home, nodePath, io);
   } catch (error) {
     if (error instanceof Cancelled) {
       p.cancel('Setup stopped. Nothing further was written.');
@@ -173,20 +201,8 @@ async function connectFlow(url: string | undefined, token: string | undefined, i
   io.log(`Signed in as ${who.person.name}. Open OpenCode — the aivi tools are there.`);
 }
 
-async function createFlow(
-  flags: ReturnType<typeof extractSetupFlags>,
-  home: string,
-  nodePath: string,
-  io: SetupIo,
-): Promise<void> {
-  const major = Number(process.versions.node.split('.')[0]);
-  if (major !== 26) throw new Error(`aivi needs Node 26 (below 27); running ${process.versions.node}.`);
-  const use = (flags.use ?? (await io.ask.machine())) as 'this-machine' | 'another';
-  // A flag given skips its prompt, the identity step's own rule; a script
-  // passing --use without --name gets the default operator name.
-  const name = flags.name ?? (flags.use !== undefined ? 'Operator' : await io.ask.name());
-
-  // The home structure; a populated home is preserved, only missing pieces are written.
+/** The home structure; a populated home is preserved, only missing pieces are written. */
+function writeHomeSkeleton(home: string): string {
   mkdirSync(home, { recursive: true });
   const configPath = join(home, 'config.json');
   if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
@@ -204,6 +220,18 @@ async function createFlow(
   // checkout, a dotfiles home) must never anchor the install at that ancestor.
   if (!existsSync(join(appDir, 'package.json')))
     writeFileSync(join(appDir, 'package.json'), `${JSON.stringify({ name: 'aivi-server', private: true }, null, 2)}\n`);
+  return appDir;
+}
+
+async function createFlow(flags: SetupFlags, home: string, nodePath: string, io: SetupIo): Promise<void> {
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major !== 26) throw new Error(`aivi needs Node 26 (below 27); running ${process.versions.node}.`);
+  const use = (flags.use ?? (await io.ask.machine())) as 'this-machine' | 'another';
+  // A flag given skips its prompt, the identity step's own rule; a script
+  // passing --use without --name gets the default operator name.
+  const name = flags.name ?? (flags.use !== undefined ? 'Operator' : await io.ask.name());
+
+  const appDir = writeHomeSkeleton(home);
 
   io.log(`Installing the aivi server into ${appDir}`);
   io.install([flags.appSpec ?? '@aivi/app', ...flags.plugins], appDir);
