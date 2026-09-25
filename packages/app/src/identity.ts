@@ -31,35 +31,10 @@ export async function serverCreate(options: {
       'setup needs an interactive terminal; in a script use: aivi setup --use this-machine|another [--name TEXT]',
     );
   if (use === undefined) p.intro('aivi setup — identity');
-  const stopped = (why: string) => {
-    p.cancel(`Setup stopped: ${why}. Nothing was created.`);
-    process.exitCode = 1;
-  };
-  const where =
-    use ??
-    (await p.select({
-      message: 'Where will you use aivi?',
-      options: [
-        { value: 'this-machine', label: 'This machine — set up the client here too' },
-        { value: 'another', label: 'Another machine — print the token and take it there' },
-      ],
-    }));
-  if (p.isCancel(where)) {
-    stopped('no answer');
-    return {};
-  }
-  let name = options.name?.trim();
-  if (!name) {
-    const answered =
-      use === undefined
-        ? await p.text({ message: 'Your name — aivi associates records with it', placeholder: 'Operator' })
-        : undefined;
-    if (answered !== undefined && p.isCancel(answered)) {
-      stopped('no name');
-      return {};
-    }
-    name = (answered as string | undefined)?.trim() || 'Operator';
-  }
+  const where = await askWhere(use);
+  if (where === undefined) return {};
+  const name = await askName(options.name, use);
+  if (name === undefined) return {};
 
   mkdirSync(home, { recursive: true });
   if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
@@ -93,6 +68,39 @@ export async function serverCreate(options: {
   } finally {
     store.close();
   }
+}
+
+/** The cancel screen; returns undefined so a step can hand "the speaker stopped" back. */
+function stopped(why: string): undefined {
+  p.cancel(`Setup stopped: ${why}. Nothing was created.`);
+  process.exitCode = 1;
+}
+
+/** Where the person will use aivi; undefined when they stopped. */
+async function askWhere(use: string | undefined): Promise<string | undefined> {
+  const where =
+    use ??
+    (await p.select({
+      message: 'Where will you use aivi?',
+      options: [
+        { value: 'this-machine', label: 'This machine — set up the client here too' },
+        { value: 'another', label: 'Another machine — print the token and take it there' },
+      ],
+    }));
+  if (p.isCancel(where)) return stopped('no answer');
+  return where;
+}
+
+/** The display name, 'Operator' when nobody answered; undefined when the speaker stopped. */
+async function askName(name: string | undefined, use: string | undefined): Promise<string | undefined> {
+  const trimmed = name?.trim();
+  if (trimmed) return trimmed;
+  const answered =
+    use === undefined
+      ? await p.text({ message: 'Your name — aivi associates records with it', placeholder: 'Operator' })
+      : undefined;
+  if (answered !== undefined && p.isCancel(answered)) return stopped('no name');
+  return (answered as string | undefined)?.trim() || 'Operator';
 }
 
 /** The bearer for commands that act as the operator over HTTP; absent when this

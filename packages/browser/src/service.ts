@@ -62,44 +62,42 @@ export function createBrowserService(
     if (!page) throw new Error('Tab is no longer open');
     return { tabId: entry.tabId, url: page.url, title: page.title };
   }
-  async function run(owner: string, request: BrowserRequest): Promise<BrowserResult> {
-    if (failure) throw failure;
-    // Upstream IDs are monotonic within a process, including browser reconnections.
-    // Reconnection notices block this service; a new MCP process never reuses our map.
-    const current = pages(await call('list_pages', {}));
-    for (const [id, entry] of owned) if (!current.some(p => p.id === entry.pageId)) owned.delete(id);
-    if (request.action === 'tabs')
-      return { tabs: [...owned.values()].filter(t => t.owner === owner).map(t => tab(t, current)) };
-    if (request.action === 'open') {
-      if (
-        owned.size >= config.maxTabs ||
-        [...owned.values()].filter(t => t.owner === owner).length >= config.maxTabsPerSession
-      )
-        throw new Error('Browser tab limit reached');
-      // Allocate a blank page first: navigation failure must not lose its owner.
-      let created: Page[];
-      try {
-        created = pages(await call('new_page', { url: 'about:blank', timeout: config.timeoutMs }));
-      } catch {
-        throw fail();
-      }
-      const added = created.filter(p => !current.some(old => old.id === p.id));
-      const page = added.find(p => p.selected && p.url === 'about:blank');
-      if (!page || added.filter(p => p.selected).length !== 1) throw fail();
-      const entry = { owner, pageId: page.id, tabId: randomUUID() };
-      owned.set(entry.tabId, entry);
-      await call('navigate_page', { pageId: page.id, type: 'url', url: request.url, timeout: config.timeoutMs });
-      return { tab: tab(entry, pages(await call('list_pages', {}))) };
+  /** Open a tab for `owner`: a blank page first, so a failed navigation must not lose its owner. */
+  async function openTab(
+    owner: string,
+    request: Extract<BrowserRequest, { action: 'open' }>,
+    current: Page[],
+  ): Promise<BrowserResult> {
+    if (
+      owned.size >= config.maxTabs ||
+      [...owned.values()].filter(t => t.owner === owner).length >= config.maxTabsPerSession
+    )
+      throw new Error('Browser tab limit reached');
+    let created: Page[];
+    try {
+      created = pages(await call('new_page', { url: 'about:blank', timeout: config.timeoutMs }));
+    } catch {
+      throw fail();
     }
-    const entry = owned.get(request.tabId);
-    if (!entry || entry.owner !== owner) throw new Error('Tab is not owned by this session');
-    if (request.action === 'close') {
-      const remaining = pages(await call('close_page', { pageId: entry.pageId }));
-      if (remaining.some(p => p.id === entry.pageId))
-        throw new Error('Chrome did not close the tab; ownership retained');
-      owned.delete(entry.tabId);
-      return { completed: true };
-    }
+    const added = created.filter(p => !current.some(old => old.id === p.id));
+    const page = added.find(p => p.selected && p.url === 'about:blank');
+    if (!page || added.filter(p => p.selected).length !== 1) throw fail();
+    const entry = { owner, pageId: page.id, tabId: randomUUID() };
+    owned.set(entry.tabId, entry);
+    await call('navigate_page', { pageId: page.id, type: 'url', url: request.url, timeout: config.timeoutMs });
+    return { tab: tab(entry, pages(await call('list_pages', {}))) };
+  }
+
+  /** Forget the tab only once Chrome says it is gone; a stubborn tab stays owned. */
+  async function closeTab(entry: Owned): Promise<BrowserResult> {
+    const remaining = pages(await call('close_page', { pageId: entry.pageId }));
+    if (remaining.some(p => p.id === entry.pageId)) throw new Error('Chrome did not close the tab; ownership retained');
+    owned.delete(entry.tabId);
+    return { completed: true };
+  }
+
+  /** The MCP call each page action maps to; the tab is already owned and checked. */
+  function actionFor(request: Exclude<BrowserRequest, { action: 'tabs' | 'open' | 'close' }>, entry: Owned) {
     const args: Record<string, unknown> = { pageId: entry.pageId };
     let name: string;
     switch (request.action) {
@@ -131,6 +129,22 @@ export function createBrowserService(
         args.action = request.response;
         break;
     }
+    return { name, args };
+  }
+
+  async function run(owner: string, request: BrowserRequest): Promise<BrowserResult> {
+    if (failure) throw failure;
+    // Upstream IDs are monotonic within a process, including browser reconnections.
+    // Reconnection notices block this service; a new MCP process never reuses our map.
+    const current = pages(await call('list_pages', {}));
+    for (const [id, entry] of owned) if (!current.some(p => p.id === entry.pageId)) owned.delete(id);
+    if (request.action === 'tabs')
+      return { tabs: [...owned.values()].filter(t => t.owner === owner).map(t => tab(t, current)) };
+    if (request.action === 'open') return openTab(owner, request, current);
+    const entry = owned.get(request.tabId);
+    if (!entry || entry.owner !== owner) throw new Error('Tab is not owned by this session');
+    if (request.action === 'close') return closeTab(entry);
+    const { name, args } = actionFor(request, entry);
     const reply = await call(name, args);
     if (request.action === 'snapshot') {
       const snapshot = reply.structuredContent?.snapshot;
