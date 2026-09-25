@@ -11,55 +11,70 @@ import { respond } from './http.ts';
  */
 export const CLIENT_HEADER = 'x-aivi-client';
 
+export type Negotiation =
+  | { ok: true }
+  | {
+      ok: false;
+      code: 'client_version_unsupported' | 'server_version_too_low';
+      minVersion: string;
+      error: string;
+    };
+
 /** The two segments that matter: the contract (major) and the features (minor). */
 function majorMinor(version: string): [major: number, minor: number] | null {
   const match = /^(\d+)\.(\d+)/.exec(version);
   return match ? [Number(match[1]), Number(match[2])] : null;
 }
 
-const ours = majorMinor(hostVersion) ?? [Number.NaN, Number.NaN];
+/**
+ * The whole rule of client/server negotiation, in place of a version in the
+ * path, over two version strings. The major is the contract: a server may
+ * gain minors (features) the client never touches, so a client at or behind
+ * the host is served; a client whose major.minor is ahead expects answers
+ * this server cannot give, so it is refused rather than allowed to misread
+ * them. A different major is always a refusal — breaking changes happened
+ * somewhere between the two — and so is silence: every first-party client
+ * names its version. The refusal names the side that must move:
+ * `client_version_unsupported` with `aivi upgrade` for the stale client,
+ * `server_version_too_low` with the version to reach for the stale server.
+ * `server` is a package's own `package.json` version: trusted input.
+ */
+export function negotiate(client: string | undefined, server: string): Negotiation {
+  const theirs = client === undefined ? null : majorMinor(client);
+  // The host's version comes from its own package.json; only a malformed
+  // release can make this null, and then serving is the least it can do.
+  const ours = majorMinor(server);
+  if (!ours || !theirs)
+    return {
+      ok: false,
+      code: 'client_version_unsupported',
+      minVersion: server,
+      error: `The aivi client ${client ?? 'does not name its version'} is older than this host (${server}). Run: aivi upgrade.`,
+    };
+  if (theirs[0] < ours[0])
+    return {
+      ok: false,
+      code: 'client_version_unsupported',
+      minVersion: server,
+      error: `The aivi client ${client} speaks an older contract than this host (${server}). Run: aivi upgrade.`,
+    };
+  if (theirs[0] > ours[0] || theirs[1] > ours[1])
+    return {
+      ok: false,
+      code: 'server_version_too_low',
+      minVersion: client!,
+      error: `The aivi client ${client} is newer than this host (${server}); features it expects may not answer here. Ask an operator to update aivi, or downgrade the client.`,
+    };
+  return { ok: true };
+}
 
 /**
- * Client/server negotiation in place of a version in the path. The major is
- * the contract: a server may gain minors (features) the client never
- * touches, so an older client is served; a client whose major.minor is ahead
- * expects answers this server cannot give, so it is refused rather than
- * allowed to misread them. A different major is always a refusal — breaking
- * changes happened somewhere between the two. The 403 body names the side
- * that must move: `client_version_unsupported` with `aivi upgrade` for the
- * stale client, `server_version_too_low` with the version to reach for the
- * stale server. The paths exempt from the gate (`/health`, `/version`,
- * module webhooks) are exempt by registration order, not here.
+ * The gate as middleware: the rule above against this host's own version.
+ * The paths exempt from the gate (`/health`, `/version`, module webhooks)
+ * are exempt by registration order, not here.
  */
 export const versionGate: AppMiddleware = async (c, next) => {
-  const theirs = c.req.header(CLIENT_HEADER);
-  const [major, minor] = theirs === undefined ? [null, null] : (majorMinor(theirs) ?? [null, null]);
-  if (major === null || minor === null)
-    return respond(
-      {
-        code: 'client_version_unsupported',
-        minVersion: hostVersion,
-        error: `The aivi client ${theirs ?? 'does not name its version'} is older than this host (${hostVersion}). Run: aivi upgrade.`,
-      },
-      403,
-    );
-  if (major < ours[0])
-    return respond(
-      {
-        code: 'client_version_unsupported',
-        minVersion: hostVersion,
-        error: `The aivi client ${theirs} speaks an older contract than this host (${hostVersion}). Run: aivi upgrade.`,
-      },
-      403,
-    );
-  if (major > ours[0] || minor > ours[1])
-    return respond(
-      {
-        code: 'server_version_too_low',
-        minVersion: theirs,
-        error: `The aivi client ${theirs} is newer than this host (${hostVersion}); features it expects may not answer here. Ask an operator to update aivi, or downgrade the client.`,
-      },
-      403,
-    );
+  const outcome = negotiate(c.req.header(CLIENT_HEADER), hostVersion);
+  if (!outcome.ok) return respond({ code: outcome.code, minVersion: outcome.minVersion, error: outcome.error }, 403);
   await next();
 };
