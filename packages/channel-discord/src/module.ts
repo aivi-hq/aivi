@@ -1,7 +1,16 @@
 import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
 import { accessEntry, errorMessage } from '@aivi/core';
-import type { ChannelPlatform, ChatCommand, ChatCommandName, HostModule, HostServices, Store, Turn } from '@aivi/host';
+import type {
+  ChannelPlatform,
+  ChatCommand,
+  ChatCommandName,
+  DeliveryContext,
+  HostModule,
+  HostServices,
+  Store,
+  Turn,
+} from '@aivi/host';
 import {
   announce,
   CHAT_COMMANDS,
@@ -28,10 +37,13 @@ import {
   switchModel,
 } from '@aivi/host';
 import {
+  type AutocompleteInteraction,
   ChannelType,
+  type ChatInputCommandInteraction,
   Client,
   Events,
   GatewayIntentBits,
+  type Interaction,
   InteractionContextType,
   type Message,
   MessageFlags,
@@ -244,241 +256,312 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
     // One link hint per account per start: a stranger's tenth DM says nothing new.
     const hinted = new Set<string>();
     client.on(Events.MessageCreate, message => {
-      void (async () => {
-        if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
-        if (message.author.bot || message.webhookId || message.system) return;
-        const route: Route = {
-          channelId: message.channelId,
-          userId: message.author.id,
-          guildId: message.guildId,
-          parentId: message.channel.isThread() ? message.channel.parentId : null,
-          isDM: message.channel.type === ChannelType.DM,
-          mentioned: message.mentions.users.has(client.user!.id),
-          knownConversation: store.has(message.channelId),
-          senderLinked: services.store.identityFor(DISCORD.id, message.author.id) !== null,
-        };
-        if (!authorized(config, route)) {
-          if (route.isDM && !route.senderLinked && !hinted.has(route.userId)) {
-            hinted.add(route.userId);
-            await message.reply({ content: LINK_NEEDED, ...safeSend }).catch(() => {});
-          }
-          return;
-        }
-        if (message.attachments.size || !message.content.trim()) {
-          await message.reply({ content: 'Text messages only for now; paste the relevant text.', ...safeSend });
-          return;
-        }
-        const text = message.content.replace(new RegExp(`<@!?${client.user!.id}>`, 'g'), '').trim() || message.content;
-        // In thread mode a top-level message opens the thread that becomes the conversation.
-        let conversation = message.channelId;
-        if (!route.isDM && !message.channel.isThread() && accessEntry(config.access, route)?.sessions === 'threads') {
-          if (!message.channel.isThreadOnly() && 'threads' in message.channel) {
-            try {
-              const thread = await message.startThread({
-                name: threadName(text),
-                autoArchiveDuration: 1440,
-                reason: 'aivi conversation',
-              });
-              conversation = thread.id;
-            } catch (error) {
-              log.warn('thread.create.failed', { channel: message.channelId, error });
-              await message.reply({ content: 'I need permission to create threads in this channel.', ...safeSend });
-              return;
-            }
-          }
-        }
-        try {
-          store.enqueue(
-            {
-              id: message.id,
-              channel: conversation,
-              user: message.author.id,
-              name: message.member?.displayName ?? message.author.displayName,
-              text,
-            },
-            config.maxPending,
-          );
-          engine?.tick(); // pick it up now; the poll loop is only the fallback
-          if (store.state(message.id) === 'queued') await acknowledgeQueued(message);
-        } catch (error) {
-          log.warn('enqueue.rejected', { channel: message.channelId, error });
-          await message.reply({
-            content: 'I could not queue this message. The queue may be full; check /status.',
-            ...safeSend,
-          });
-        }
-      })().catch(error => log.error('message.failed', { error }));
+      void handleMessage(message).catch(error => log.error('message.failed', { error }));
     });
 
-    client.on(Events.InteractionCreate, interaction => {
-      void (async () => {
-        if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
-        if (!interaction.isChatInputCommand() && !interaction.isAutocomplete()) return;
-        if (!isChatCommand(interaction.commandName)) return;
-        const name: ChatCommandName = interaction.commandName;
-        const channel = interaction.channel;
-        const route: Route = {
-          channelId: interaction.channelId,
-          userId: interaction.user.id,
-          guildId: interaction.guildId,
-          parentId: channel?.isThread() ? channel.parentId : null,
-          isDM: interaction.guildId === null,
-          mentioned: true, // a slash command is an explicit address
-          knownConversation: store.has(interaction.channelId),
-          senderLinked: services.store.identityFor(DISCORD.id, interaction.user.id) !== null,
-        };
-        if (interaction.isAutocomplete()) {
-          // Choices for /model come from OpenCode's catalogue for the conversation's directory; Discord takes 25.
-          if (name !== 'model' || !authorized(config, route)) return void (await interaction.respond([]));
-          try {
-            const directory = store.sessionOf(interaction.channelId)?.directory ?? config.directory;
-            const choices = matchModels(
-              await listModels(await services.opencode(), directory, AbortSignal.timeout(2500)),
-              interaction.options.getFocused(),
-              25,
-            );
-            await interaction.respond(
-              choices.map(m => ({ name: formatModel(m).slice(0, 100), value: formatModel(m) })),
-            );
-          } catch (error) {
-            log.warn('autocomplete.failed', { error });
-            await interaction.respond([]).catch(() => {});
-          }
-          return;
-        }
-        // A link code is its own proof of identity: it redeems wherever aivi listens, linked or not.
-        const admitted = name === 'link' ? reaches(config, route) : authorized(config, route);
-        if (!admitted) {
-          const content =
-            name !== 'link' && route.isDM && !route.senderLinked
-              ? LINK_NEEDED
-              : 'This user or conversation is not enabled for aivi.';
-          await interaction.reply({ content, flags: MessageFlags.Ephemeral });
-          return;
-        }
-        const reply = (content: string) =>
-          interaction.deferred
-            ? interaction.editReply({ content, allowedMentions: safeSend.allowedMentions })
-            : interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
-        if (name === 'help') return void (await reply(helpText(n => `/${n}`)));
-        if (name === 'jobs') return void (await reply(describeJobs(services.store)));
-        if (name === 'link')
-          return void (await reply(
-            redeemLink(services.store, DISCORD.id, interaction.user.id, interaction.options.getString('code', true)),
-          ));
-        if (name === 'search') {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-          try {
-            const project = interaction.options.getString('project');
-            const hits = await services.knowledge.search({
-              query: interaction.options.getString('query', true),
-              limit: 3,
-              ...(project ? { projects: [project] } : {}),
-            });
-            const content = hits.length
-              ? splitReply(
-                  hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'),
-                  DISCORD.replyLimit,
-                )[0]!
-              : 'No matching documents.';
-            await interaction.editReply({
-              content,
-              allowedMentions: safeSend.allowedMentions,
-              flags: MessageFlags.SuppressEmbeds,
-            });
-          } catch (error) {
-            log.warn('search.failed', { error });
-            await interaction.editReply('Search is unavailable or the project is unknown.');
-          }
-          return;
-        }
-        // In thread mode the channel itself is never a conversation; the conversation commands belong in a thread.
-        if (
-          chatCommand(name).conversation &&
-          !route.isDM &&
-          route.parentId === null &&
-          accessEntry(config.access, route)?.sessions === 'threads'
-        )
-          return void (await reply('Run this inside a thread. In this channel every conversation is its own thread.'));
-        const conversation = interaction.channelId;
-        if (name === 'context') {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-          try {
-            await reply(await describeConversation(store, conversation, config, services.loaded, services.opencode));
-          } catch (error) {
-            log.warn('context.failed', { error });
-            await reply('I could not read this session from OpenCode just now.');
-          }
-          return;
-        }
-        if (name === 'model') {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-          const wanted = interaction.options.getString('model');
-          try {
-            await reply(
-              wanted
-                ? await switchModel(store, conversation, config, services.opencode, wanted)
-                : await describeModel(store, conversation, config, services.opencode),
-            );
-          } catch (error) {
-            log.warn('model.failed', { error });
-            await reply('I could not read the model catalogue from OpenCode just now.');
-          }
-          return;
-        }
-        if (name === 'stop') {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-          const result = await stopTurn(engine!, services.opencode, conversation);
-          if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-          return void (await reply(result.text));
-        }
-        if (name === 'steer') {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-          const member = interaction.member;
-          const speaker = {
-            name: member && 'displayName' in member ? member.displayName : interaction.user.displayName,
-            user: interaction.user.id,
-          };
-          const result = await steerTurn(
-            services.store,
-            store,
-            DISCORD,
-            services.opencode,
-            conversation,
-            speaker,
-            interaction.options.getString('text', true),
-          );
-          if (result.error) log.warn('steer.failed', { error: result.error });
-          return void (await reply(result.text));
-        }
-        if (name === 'new') {
-          try {
-            store.reset(conversation);
-            await reply('The next message starts a fresh session. Previous sessions remain in OpenCode.');
-          } catch {
-            await reply('This conversation has queued or unresolved work. Finish or resolve it before starting fresh.');
-          }
-          return;
-        }
-        const pending = store.list(conversation).filter(t => !['sent', 'discarded'].includes(t.state));
-        const host = status(services.store, services.loaded);
-        const upcoming = host.upcoming
-          .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
-          .join(', ');
-        const tally = new Map<string, number>();
-        for (const r of host.recent) tally.set(r.state, (tally.get(r.state) ?? 0) + 1);
-        const recent = [...tally].map(([state, n]) => `${n} ${state}`).join(', ');
-        await reply(
-          [
-            pending.length
-              ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
-              : 'Ready for your next message.',
-            upcoming ? `Next jobs: ${upcoming}.` : 'No jobs are due.',
-            recent ? `Runs in the last 24 h: ${recent}.` : 'No runs finished in the last 24 h.',
-          ].join('\n'),
+    /** One message from a person: admitted, turned into a queued turn in its conversation. */
+    async function handleMessage(message: Message): Promise<void> {
+      if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
+      if (message.author.bot || message.webhookId || message.system) return;
+      const route: Route = {
+        channelId: message.channelId,
+        userId: message.author.id,
+        guildId: message.guildId,
+        parentId: message.channel.isThread() ? message.channel.parentId : null,
+        isDM: message.channel.type === ChannelType.DM,
+        mentioned: message.mentions.users.has(client.user!.id),
+        knownConversation: store.has(message.channelId),
+        senderLinked: services.store.identityFor(DISCORD.id, message.author.id) !== null,
+      };
+      if (!authorized(config, route)) {
+        await hintUnlinked(message, route);
+        return;
+      }
+      if (message.attachments.size || !message.content.trim()) {
+        await message.reply({ content: 'Text messages only for now; paste the relevant text.', ...safeSend });
+        return;
+      }
+      const text = message.content.replace(new RegExp(`<@!?${client.user!.id}>`, 'g'), '').trim() || message.content;
+      const conversation = await conversationFor(message, route, text);
+      if (!conversation) return; // the thread would not open; the speaker was told why
+      await enqueueTurn(message, conversation, text);
+    }
+
+    /** An unlinked stranger in a DM hears the link hint once per start; everyone else hears nothing. */
+    async function hintUnlinked(message: Message, route: Route): Promise<void> {
+      if (!route.isDM || route.senderLinked || hinted.has(route.userId)) return;
+      hinted.add(route.userId);
+      await message.reply({ content: LINK_NEEDED, ...safeSend }).catch(() => {});
+    }
+
+    /** In thread mode a top-level message opens the thread that becomes the conversation; null if it cannot. */
+    async function conversationFor(message: Message, route: Route, text: string): Promise<string | null> {
+      const opensThread =
+        !route.isDM &&
+        !message.channel.isThread() &&
+        accessEntry(config.access, route)?.sessions === 'threads' &&
+        !message.channel.isThreadOnly() &&
+        'threads' in message.channel;
+      if (!opensThread) return message.channelId;
+      try {
+        const thread = await message.startThread({
+          name: threadName(text),
+          autoArchiveDuration: 1440,
+          reason: 'aivi conversation',
+        });
+        return thread.id;
+      } catch (error) {
+        log.warn('thread.create.failed', { channel: message.channelId, error });
+        await message.reply({ content: 'I need permission to create threads in this channel.', ...safeSend });
+        return null;
+      }
+    }
+
+    /** Queue the turn; a full queue is the one failure the speaker hears about. */
+    async function enqueueTurn(message: Message, conversation: string, text: string): Promise<void> {
+      try {
+        store.enqueue(
+          {
+            id: message.id,
+            channel: conversation,
+            user: message.author.id,
+            name: message.member?.displayName ?? message.author.displayName,
+            text,
+          },
+          config.maxPending,
         );
-      })().catch(error => log.error('command.failed', { error }));
+        engine?.tick(); // pick it up now; the poll loop is only the fallback
+        if (store.state(message.id) === 'queued') await acknowledgeQueued(message);
+      } catch (error) {
+        log.warn('enqueue.rejected', { channel: message.channelId, error });
+        await message.reply({
+          content: 'I could not queue this message. The queue may be full; check /status.',
+          ...safeSend,
+        });
+      }
+    }
+
+    client.on(Events.InteractionCreate, interaction => {
+      void handleInteraction(interaction).catch(error => log.error('command.failed', { error }));
     });
+
+    /** Everything a chat command handler needs: the interaction, its access route, and where to answer. */
+    interface CommandCall {
+      interaction: ChatInputCommandInteraction;
+      route: Route;
+      reply: (content: string) => Promise<unknown>;
+    }
+
+    /** Why an admission failure is what the speaker hears: a hint for the unlinked, a refusal for the rest. */
+    async function refuse(interaction: ChatInputCommandInteraction, name: ChatCommandName, route: Route) {
+      const content =
+        name !== 'link' && route.isDM && !route.senderLinked
+          ? LINK_NEEDED
+          : 'This user or conversation is not enabled for aivi.';
+      await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+    }
+
+    /**
+     * One slash command or autocomplete request. The commands that answer the speaker run
+     * first; the commands that address a conversation belong in a thread in thread mode;
+     * status catches everything else.
+     */
+    async function handleInteraction(interaction: Interaction): Promise<void> {
+      if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
+      if (!interaction.isChatInputCommand() && !interaction.isAutocomplete()) return;
+      if (!isChatCommand(interaction.commandName)) return;
+      const name: ChatCommandName = interaction.commandName;
+      const channel = interaction.channel;
+      const route: Route = {
+        channelId: interaction.channelId,
+        userId: interaction.user.id,
+        guildId: interaction.guildId,
+        parentId: channel?.isThread() ? channel.parentId : null,
+        isDM: interaction.guildId === null,
+        mentioned: true, // a slash command is an explicit address
+        knownConversation: store.has(interaction.channelId),
+        senderLinked: services.store.identityFor(DISCORD.id, interaction.user.id) !== null,
+      };
+      if (interaction.isAutocomplete()) return autocomplete(interaction, route);
+      // A link code is its own proof of identity: it redeems wherever aivi listens, linked or not.
+      const admitted = name === 'link' ? reaches(config, route) : authorized(config, route);
+      if (!admitted) return refuse(interaction, name, route);
+      const reply = (content: string) =>
+        interaction.deferred
+          ? interaction.editReply({ content, allowedMentions: safeSend.allowedMentions })
+          : interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: safeSend.allowedMentions });
+      const call: CommandCall = { interaction, route, reply };
+      // These answer the speaker, not a conversation, so they run before the thread guard below.
+      const speakerCommands: Partial<Record<ChatCommandName, () => Promise<unknown>>> = {
+        help: () => reply(helpText(n => `/${n}`)),
+        jobs: () => reply(describeJobs(services.store)),
+        link: () =>
+          reply(
+            redeemLink(services.store, DISCORD.id, interaction.user.id, interaction.options.getString('code', true)),
+          ),
+        search: () => searchCommand(call),
+      };
+      const answerSpeaker = speakerCommands[name];
+      if (answerSpeaker) return void (await answerSpeaker());
+      // In thread mode the channel itself is never a conversation; the conversation commands belong in a thread.
+      if (
+        chatCommand(name).conversation &&
+        !route.isDM &&
+        route.parentId === null &&
+        accessEntry(config.access, route)?.sessions === 'threads'
+      )
+        return void (await reply('Run this inside a thread. In this channel every conversation is its own thread.'));
+      const conversationCommands: Partial<Record<ChatCommandName, (call: CommandCall) => Promise<unknown>>> = {
+        context: contextCommand,
+        model: modelCommand,
+        stop: stopCommand,
+        steer: steerCommand,
+        new: newCommand,
+      };
+      const answerConversation = conversationCommands[name];
+      if (answerConversation) return void (await answerConversation(call));
+      return statusCommand(call);
+    }
+
+    /** /model's autocomplete: choices from OpenCode's catalogue for the conversation's directory; Discord takes 25. */
+    async function autocomplete(interaction: AutocompleteInteraction, route: Route): Promise<void> {
+      if (interaction.commandName !== 'model' || !authorized(config, route))
+        return void (await interaction.respond([]));
+      try {
+        const directory = store.sessionOf(interaction.channelId)?.directory ?? config.directory;
+        const choices = matchModels(
+          await listModels(await services.opencode(), directory, AbortSignal.timeout(2500)),
+          interaction.options.getFocused(),
+          25,
+        );
+        await interaction.respond(choices.map(m => ({ name: formatModel(m).slice(0, 100), value: formatModel(m) })));
+      } catch (error) {
+        log.warn('autocomplete.failed', { error });
+        await interaction.respond([]).catch(() => {});
+      }
+    }
+
+    /** /search: the top knowledge hits, deferred so a slow index never looks like a dropped command. */
+    async function searchCommand(call: CommandCall): Promise<void> {
+      const { interaction } = call;
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        const project = interaction.options.getString('project');
+        const hits = await services.knowledge.search({
+          query: interaction.options.getString('query', true),
+          limit: 3,
+          ...(project ? { projects: [project] } : {}),
+        });
+        const content = hits.length
+          ? splitReply(
+              hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'),
+              DISCORD.replyLimit,
+            )[0]!
+          : 'No matching documents.';
+        await interaction.editReply({
+          content,
+          allowedMentions: safeSend.allowedMentions,
+          flags: MessageFlags.SuppressEmbeds,
+        });
+      } catch (error) {
+        log.warn('search.failed', { error });
+        await interaction.editReply('Search is unavailable or the project is unknown.');
+      }
+    }
+    /** /context: what OpenCode says about this conversation's session. */
+    async function contextCommand(call: CommandCall): Promise<void> {
+      const { interaction } = call;
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        await call.reply(
+          await describeConversation(store, interaction.channelId, config, services.loaded, services.opencode),
+        );
+      } catch (error) {
+        log.warn('context.failed', { error });
+        await call.reply('I could not read this session from OpenCode just now.');
+      }
+    }
+
+    /** /model: show the current model, or switch to a named one. */
+    async function modelCommand(call: CommandCall): Promise<void> {
+      const { interaction } = call;
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const wanted = interaction.options.getString('model');
+      try {
+        await call.reply(
+          wanted
+            ? await switchModel(store, interaction.channelId, config, services.opencode, wanted)
+            : await describeModel(store, interaction.channelId, config, services.opencode),
+        );
+      } catch (error) {
+        log.warn('model.failed', { error });
+        await call.reply('I could not read the model catalogue from OpenCode just now.');
+      }
+    }
+
+    /** /stop: end the running turn now; a failed interrupt still gets its answer. */
+    async function stopCommand(call: CommandCall): Promise<void> {
+      const { interaction, reply } = call;
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const result = await stopTurn(engine!, services.opencode, interaction.channelId);
+      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
+      await reply(result.text);
+    }
+
+    /** /steer: add a voice to the running turn, as the person who spoke. */
+    async function steerCommand(call: CommandCall): Promise<void> {
+      const { interaction, reply } = call;
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const member = interaction.member;
+      const speaker = {
+        name: member && 'displayName' in member ? member.displayName : interaction.user.displayName,
+        user: interaction.user.id,
+      };
+      const result = await steerTurn(
+        services.store,
+        store,
+        DISCORD,
+        services.opencode,
+        interaction.channelId,
+        speaker,
+        interaction.options.getString('text', true),
+      );
+      if (result.error) log.warn('steer.failed', { error: result.error });
+      await reply(result.text);
+    }
+
+    /** /new: forget this conversation's session; the next message starts fresh. */
+    async function newCommand(call: CommandCall): Promise<void> {
+      try {
+        store.reset(call.interaction.channelId);
+        await call.reply('The next message starts a fresh session. Previous sessions remain in OpenCode.');
+      } catch {
+        await call.reply(
+          'This conversation has queued or unresolved work. Finish or resolve it before starting fresh.',
+        );
+      }
+    }
+
+    /** /status: pending turns here, jobs coming due, and how the last day of runs went. */
+    async function statusCommand(call: CommandCall): Promise<void> {
+      const pending = store.list(call.interaction.channelId).filter(t => !['sent', 'discarded'].includes(t.state));
+      const host = status(services.store, services.loaded);
+      const upcoming = host.upcoming
+        .map(u => `${u.id} at ${new Date(u.nextAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`)
+        .join(', ');
+      const tally = new Map<string, number>();
+      for (const r of host.recent) tally.set(r.state, (tally.get(r.state) ?? 0) + 1);
+      const recent = [...tally].map(([state, count]) => `${count} ${state}`).join(', ');
+      await call.reply(
+        [
+          pending.length
+            ? `${pending.length} pending turn(s): ${[...new Set(pending.map(t => t.state))].join(', ')}. Blocked turns require operator inspection.`
+            : 'Ready for your next message.',
+          upcoming ? `Next jobs: ${upcoming}.` : 'No jobs are due.',
+          recent ? `Runs in the last 24 h: ${recent}.` : 'No runs finished in the last 24 h.',
+        ].join('\n'),
+      );
+    }
 
     try {
       await Promise.all([
@@ -520,6 +603,40 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
       })().catch(error => log.warn('notify.failed', { channel, error }));
     }
 
+    /** The thread title for a post: the job's own title, the post's title, or the text's opening line. */
+    function threadTitleFor(text: string, context: DeliveryContext): string {
+      const fallback = context.title ?? threadName(text);
+      if (!context.run) return fallback;
+      try {
+        return services.store.job(context.run.jobId).spec.title ?? fallback;
+      } catch {
+        // The job was removed after its run finished; the text names it.
+        return fallback;
+      }
+    }
+
+    /** A post opens a thread so replies continue the job's own session; undefined when it cannot. */
+    async function openReportThread(opener: Message, channelId: string, text: string, context: DeliveryContext) {
+      const { run } = context;
+      try {
+        const thread = await opener.startThread({
+          name: threadTitleFor(text, context),
+          autoArchiveDuration: 1440,
+          reason: run ? `aivi run ${run.id}` : 'aivi notice',
+        });
+        store.adopt(
+          thread.id,
+          run && run.task.kind === 'prompt' && run.sessionId
+            ? { session: run.sessionId, agent: run.task.agent, directory: run.task.directory }
+            : { seed: text },
+        );
+        return thread;
+      } catch (error) {
+        log.warn('report.thread.failed', { channel: channelId, error });
+        return undefined;
+      }
+    }
+
     // Proactive posts only go where the operator said they may. A post opens a thread that is a
     // conversation: replying continues the job's own session (agent jobs) or a fresh one seeded with
     // the output (script jobs), so "what is this about?" never happens. A job's outcome for a session
@@ -548,33 +665,8 @@ async function startDiscord(config: DiscordConfig, services: HostServices) {
         const [first, ...rest] = splitReply(text, DISCORD.replyLimit);
         const opener = await channel.send({ content: first!, ...safeSend });
         let target = channel;
-        if (!channel.isThread() && !channel.isDMBased() && 'threads' in channel && !channel.isThreadOnly()) {
-          try {
-            const { run, title } = context;
-            let threadTitle = title ?? threadName(text);
-            if (run) {
-              try {
-                threadTitle = services.store.job(run.jobId).spec.title ?? threadTitle;
-              } catch {
-                // The job was removed after its run finished; the text names it.
-              }
-            }
-            const thread = await opener.startThread({
-              name: threadTitle,
-              autoArchiveDuration: 1440,
-              reason: run ? `aivi run ${run.id}` : 'aivi notice',
-            });
-            target = thread;
-            store.adopt(
-              thread.id,
-              run && run.task.kind === 'prompt' && run.sessionId
-                ? { session: run.sessionId, agent: run.task.agent, directory: run.task.directory }
-                : { seed: text },
-            );
-          } catch (error) {
-            log.warn('report.thread.failed', { channel: channelId, error });
-          }
-        }
+        if (!channel.isThread() && !channel.isDMBased() && 'threads' in channel && !channel.isThreadOnly())
+          target = (await openReportThread(opener, channelId, text, context)) ?? target;
         for (const chunk of rest) await target.send({ content: chunk, ...safeSend });
       },
     });
