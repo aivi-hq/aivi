@@ -128,7 +128,7 @@ async function hostServing(t: { after(fn: () => void): void }, routes: Record<st
 }
 
 /** A host that answers nothing: the port is closed the moment it opens. */
-async function deadPort(t: { after(fn: () => void): void }): Promise<string> {
+async function deadPort(): Promise<string> {
   const server = createServer();
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -212,7 +212,7 @@ test('a host that refuses the plugin still loads, and the connection tool report
 test('host down at load: only the connection tool remains and it says the host is not reachable', async t => {
   await hermeticXdg(t);
   withToken(t, 'test-offline-token');
-  const base = await deadPort(t);
+  const base = await deadPort();
   const tools: RegisteredTool[] = [];
   const cleanup = await setupWith({ url: base }, tool => tools.push(tool));
   assert.deepEqual(
