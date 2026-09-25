@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { configSchema } from '@aivi/core';
-import { createHostServer, Store } from '@aivi/host';
+import { createApp, Store, serveApp } from '@aivi/host';
 
 const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
@@ -90,10 +90,12 @@ test('people commands talk HTTP to the running host', async t => {
   const operator = store.createPerson({ name: 'Ada', roles: ['operator'] });
   const { secret } = store.mintToken(operator.id, 'laptop');
   writeFileSync(join(xdg, 'aivi.json'), JSON.stringify({ configVersion: 1, home, person: { token: secret } }));
-  const server = createHostServer({
-    store,
-    loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), sources: [], projects: [] },
-  });
+  const server = serveApp(
+    createApp({
+      store,
+      loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), sources: [], projects: [] },
+    }),
+  );
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));

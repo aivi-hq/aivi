@@ -452,7 +452,7 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
     };
 
     /**
-     * One route shape: `POST /v1/linear/webhooks/app/<id>`, verified by that
+     * One route shape: `POST /linear/webhooks/app/<id>`, verified by that
      * app's secret. The primary's route carries both families — its own
      * agent-session events and the workspace's Issues data changes. A data
      * change on a face's route is a misroute: acknowledged, dropped, audible

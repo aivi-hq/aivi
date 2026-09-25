@@ -21,7 +21,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
 | `accepts(channel)` | Whether a report to that channel could be delivered; refuses a job before anything is spent |
 | `channelOf(sessionId)` | The platform channel the conversation bound to that session lives in (a thread's parent, a DM itself); "post it to this channel" resolves through it |
-| `linkHint?` | How a person spends a link code on this platform ("DM the bot: /link <code>."), shown by `aivi link` and aggregated by the router for `POST /v1/links`; redemption itself is the shared `redeemLink` helper |
+| `linkHint?` | How a person spends a link code on this platform ("DM the bot: /link <code>."), shown by `aivi link` and aggregated by the router for `POST /links`; redemption itself is the shared `redeemLink` helper |
 
 Registering is the whole integration with reports: `Channels` (the router on
 `HostServices.channels`) sends `{ to: "channel", module }` reports to the
@@ -208,7 +208,7 @@ against the model's limit (last answer's input + cache + output vs
 totals and the knowledge in scope, as markdown both platforms render, read
 from OpenCode's transcript and catalogue. It backs three surfaces: the
 channels' `/context` command (`describeConversation`, which adds the
-conversation's binding and pending turns), `GET /v1/context?session=` and the
+conversation's binding and pending turns), `GET /context?session=` and the
 plugin tool `aivi_context`, so an agent asked "what's the context?" answers
 with the same text. Slack refuses slash commands inside threads; there the
 agent is the way to ask.

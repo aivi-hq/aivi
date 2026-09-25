@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as p from '@clack/prompts';
+import { aiviVersion } from './version.ts';
 
 export interface LinkChannel {
   channel: string;
@@ -91,8 +92,8 @@ async function mintFor(io: LinkIo, connection: { url: string; token: string }, c
 }
 
 async function channels(url: string, token: string): Promise<LinkChannel[]> {
-  const response = await fetch(`${url}/v1/links`, {
-    headers: { authorization: `Bearer ${token}` },
+  const response = await fetch(`${url}/links`, {
+    headers: { 'x-aivi-client': aiviVersion, authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(5000),
   });
   if (!response.ok) throw new Error(`Listing the channels aivi runs failed: HTTP ${response.status}.`);
@@ -101,9 +102,9 @@ async function channels(url: string, token: string): Promise<LinkChannel[]> {
 }
 
 async function mint(url: string, token: string, channel: string): Promise<LinkMint> {
-  const response = await fetch(`${url}/v1/links`, {
+  const response = await fetch(`${url}/links`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    headers: { 'x-aivi-client': aiviVersion, authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ channel }),
     signal: AbortSignal.timeout(5000),
   });

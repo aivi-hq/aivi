@@ -45,7 +45,7 @@ export interface PluginSetupContext {
 }
 
 export interface PluginSetupResult {
-  /** The module the flow enabled — the id `aivi install` watches in `/v1/status`. */
+  /** The module the flow enabled — the id `aivi install` watches in `/status`. */
   module: string;
   /** The verified last line: what is true now, never what may happen. */
   summary: string;

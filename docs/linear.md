@@ -30,7 +30,7 @@ in [plans/linear.md](plans/linear.md); configuration fields are in
 
 1. **A person delegates or mentions the app** in an issue. Linear posts an
    `AgentSessionEvent` `created` webhook to
-   `POST /v1/linear/webhooks/app/<app>` on the host listener. aivi verifies the
+   `POST /linear/webhooks/app/<app>` on the host listener. aivi verifies the
    signature and answers within the 5 seconds Linear allows, then works.
 2. **Routing is deterministic code, from the issue re-read.** The HITL label
    (`linear.humanLabel`, default `needs-human`) refuses any agent with one
@@ -102,7 +102,7 @@ in [plans/linear.md](plans/linear.md); configuration fields are in
    so label and state names are current, and a change delivered twice finds
    the delegate already set.
 
-One route shape: `POST /v1/linear/webhooks/app/<id>`, verified by that app's
+One route shape: `POST /linear/webhooks/app/<id>`, verified by that app's
 signing secret. The primary's route carries both families — its own agent
 session events and the workspace's Issues data changes. A data change
 delivered to a face's route is a misroute: acknowledged, dropped, logged per
@@ -145,7 +145,7 @@ One app in Linear — the 95% case:
 1. **One app.** In Linear, **Settings → API → Applications → New**. Name it
    `identity.name` (the persona; aivi cannot set the name — use the name from
    config here). Enable **Client credentials**. Under **Webhooks**, set the
-   URL to `<public base>/v1/linear/webhooks/app/<app id>` and enable both the
+   URL to `<public base>/linear/webhooks/app/<app id>` and enable both the
    **Issues** data-change category and **Agent session events**. Copy the
    client id, client secret and webhook signing secret.
 2. In `<home>/.env`: `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and

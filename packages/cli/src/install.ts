@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { forward } from './forward.ts';
 import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
 import { healthUrl } from './update.ts';
+import { aiviVersion } from './version.ts';
 
 /** Short names for the plugins aivi ships; any npm package name is accepted too. */
 export const PLUGIN_ALIASES: Record<string, string> = {
@@ -19,7 +20,7 @@ export const PLUGIN_ALIASES: Record<string, string> = {
   browser: '@aivi/browser',
 };
 
-/** The module each first-party plugin enables — the id `/v1/status` reports. */
+/** The module each first-party plugin enables — the id `/status` reports. */
 const MODULE_BY_SPEC: Record<string, string> = {
   '@aivi/channel-discord': 'discord',
   '@aivi/channel-slack': 'slack',
@@ -67,8 +68,11 @@ export const defaultIo: InstallIo = {
     }
   },
   async moduleStates(url) {
-    const response = await fetch(`${url}/v1/status`, { signal: AbortSignal.timeout(5000) });
-    if (!response.ok) throw new Error(`/v1/status answered ${response.status}.`);
+    const response = await fetch(`${url}/status`, {
+      headers: { 'x-aivi-client': aiviVersion },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error(`/status answered ${response.status}.`);
     return ((await response.json()) as { modules: ModuleState[] }).modules;
   },
   service: { installed: serviceInstalled, stop: serviceStop, start: serviceStart },

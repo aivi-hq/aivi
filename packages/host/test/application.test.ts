@@ -8,6 +8,7 @@ import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 import { TaskRegistry } from '../src/tasks.ts';
+import { hostVersion } from '../src/version.ts';
 
 const loaded = () => ({
   path: '/config',
@@ -394,7 +395,9 @@ test('a module whose start fails is retried with backoff while the host serves; 
     },
   });
   const fetchStatus = async () =>
-    (await (await fetch(`http://127.0.0.1:${address!.port}/v1/status`)).json()) as {
+    (await (
+      await fetch(`http://127.0.0.1:${address!.port}/status`, { headers: { 'x-aivi-client': hostVersion } })
+    ).json()) as {
       modules: { id: string; state: string; attempts: number; lastError: string | null }[];
     };
   const started = Date.now();

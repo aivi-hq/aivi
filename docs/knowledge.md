@@ -34,8 +34,8 @@ Every source declares what it contains, from a registry in
 | `conversation` | Indexed transcripts; useful for details, never authoritative (reserved) |
 
 Hits carry `kind`, `scope`, and `projectId`, so an answer can say what kind of
-material it rests on. `knowledge_search`, `/v1/knowledge/search?kind=…`, and
-`/v1/sources?kind=…` accept a kind filter (the `aivi sources` CLI does not yet). The librarian's agent file explains the
+material it rests on. `knowledge_search`, `/knowledge/search?kind=…`, and
+`/sources?kind=…` accept a kind filter (the `aivi sources` CLI does not yet). The librarian's agent file explains the
 kinds to the model; adding a kind means one entry in the registry.
 
 ## Use it

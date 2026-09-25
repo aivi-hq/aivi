@@ -46,7 +46,7 @@ test('every app gets its own route; a verified delivery is acknowledged before i
   assert.equal((await call('review', 's-review')).status, 200);
   assert.equal((await call('dev', 's-dev', 'GET')).status, 405);
   assert.equal(routes.get(appWebhookPath('other')), undefined);
-  assert.equal(routes.get('/v1/linear/webhooks/dev'), undefined, 'the old flat path is gone');
+  assert.equal(routes.get('/linear/webhooks/dev'), undefined, 'the old flat path is gone');
   release();
   off();
   assert.equal(routes.get(appWebhookPath('dev')), undefined);

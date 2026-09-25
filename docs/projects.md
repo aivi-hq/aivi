@@ -122,7 +122,7 @@ queries name their collections; the index is a rebuildable derivative, so
 deleting `state/knowledge` reclaims the space.
 
 **Removed is a state, not an absence.** A memory home with a `facts.md` and no
-checkout is a removed project: `projects list`, `/v1/projects` and the
+checkout is a removed project: `projects list`, `/projects` and the
 librarian's `knowledge_projects` show it with `removed: true` and only its
 `memory` source, so "what did we decide for website?" still has an answer, and
 the librarian says the project is gone. Nothing is forgotten until someone runs

@@ -34,13 +34,14 @@ Modules receive a `HostServices` object containing the loaded installation
 config, store, knowledge service, an `opencode()` client factory, a structured
 logger, the shutdown signal, the `channels`
 registry where chat modules register ([channels](channels.md)), `routes`
-(webhook paths under `/v1/` a module exposes on the host listener outside
-bearer auth, the platform's signature being the auth; one handler per path,
-the raw body passed for signing), `tasks` (the invocation door: a module
+(webhook paths a module exposes on the host listener outside
+bearer auth, the platform's signature being the auth; one handler per path —
+an absolute path that is never `/health` or `/version` — the raw body passed
+for signing), `tasks` (the invocation door: a module
 claims the operations its `kind: 'invocation'` jobs dispatch to, each name
 exactly once), `tools` (the tool door: a module claims a descriptor and
-handler per tool it offers the model — `GET /v1/tools` serves the claims and
-`POST /v1/tools` dispatches to them, each id claimed exactly once; the
+handler per tool it offers the model — `GET /tools` serves the claims and
+`POST /tools` dispatches to them, each id claimed exactly once; the
 OpenCode plugin registers whatever the list says at its load, see
 [opencode.md](opencode.md#plugin-tools-and-permission-actions)), `wake()` and
 `fail()`. They return an asynchronous `stop` function. They call shared
@@ -61,7 +62,7 @@ methods; shared capacity uses `acquireLease`/`releaseLease`/`blockLease`.
 
 OpenCode plugins live inside the native runtime, so they use the host's
 authenticated API. The aivi plugin hardcodes no tools: it registers whatever
-`GET /v1/tools` answers at its load, and every call goes back over that one
+`GET /tools` answers at its load, and every call goes back over that one
 pair of routes ([opencode.md](opencode.md#plugin-tools-and-permission-actions)).
 `knowledge_search` reaches the same service used by the
 channels' search commands and scheduled indexing jobs; `aivi_jobs` reaches the
@@ -97,7 +98,7 @@ Croner is only a timezone-aware date calculator. The host loop sleeps until the
 next due instant (`Store.nextDue`: the earliest future occurrence of an active
 job, recurring or one-off), and is woken early when the queue changes: the
 jobs tool, a run or Discord turn releasing capacity, or the CLI poking
-`POST /v1/wake` after it wrote to SQLite (and says so when the host cannot be
+`POST /wake` after it wrote to SQLite (and says so when the host cannot be
 reached). Nothing periodic exists: no safety-net interval, no polling. No
 in-memory timer holds state, so a crash or restart has nothing to reconcile. Dispatching never invokes a model unless a queued task requests one.
 
@@ -182,7 +183,7 @@ knowledge, not per-human private memory.
 The API listens on `host.bind` (loopback by default; a tailnet or LAN address
 for a shared knowledge server) and exposes status, source discovery, scoped
 knowledge search, optional permission-gated browser operations, and one job
-mutation: `POST /v1/jobs`, the back end of the `aivi_jobs` tool.
+mutation: `POST /jobs`, the back end of the `aivi_jobs` tool.
 `/health` and module webhook routes (`HostServices.routes`, verified by the
 platform's own signature) are public; everything else is open too — a bearer
 token only identifies the caller for association, it never locks a route. The jobs route is a deliberate revision of the
@@ -193,6 +194,23 @@ sessions) and can be switched off with `scheduler.agentSchedules: false`; the AP
 exposes no prompts, secrets, or ticket control.
 Per-device tokens and reverse-proxy SSO are future auth modes on the same
 listener.
+
+The API version lives in a header, not in paths: every first-party client
+sends `x-aivi-client` naming the version it speaks, read at runtime from its
+own `package.json` — the server's is `@aivi/host`'s, and the host's own
+`createHostClient` reads the same file. `@aivi/cli` and `@aivi/host` are a
+changesets `fixed` group: releases keep the two packages at one version, so
+the thin CLI's number is comparable without any synced file. The major is
+the contract, the minor is features: a client at or behind the host is
+served (a newer server's minors are features the client never touches),
+while a client whose major.minor is ahead of the host is refused with 403 —
+it expects answers this host cannot give. The body names the side that must
+move: `server_version_too_low` with the host version to reach, or
+`client_version_unsupported` with `aivi upgrade` for a client behind the
+host's major or naming no version at all. `/health`, `GET /version` and
+module webhooks answer without the header: the first two are the
+supervisor's and the negotiation's own fixed points, and a platform webhook
+is not an aivi client. Paths themselves carry no version.
 The operator CLI can inspect prompts and operates directly on local state.
 Secrets come from the process environment, preferably resolved with existing
 fnox configuration. aivi does not implement a vault.
