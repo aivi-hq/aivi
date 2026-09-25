@@ -8,12 +8,7 @@ import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { EventStream, type SessionEvents } from './events.ts';
 import { createJobHandler } from './jobs.ts';
-import {
-  ConfigurationError,
-  type HostModule as ModuleContract,
-  ModuleSupervisor,
-  type RetryPolicy,
-} from './modules.ts';
+import { ConfigurationError, type ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';

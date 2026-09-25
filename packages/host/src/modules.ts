@@ -7,7 +7,7 @@ import type { ToolRegistry } from './tools.ts';
 export interface RunningModule {
   stop(): Promise<void>;
 }
-export interface HostModule<Services = unknown> {
+export interface ModuleContract<Services = unknown> {
   id: string;
   start(services: Services): Promise<RunningModule>;
   /**
@@ -44,7 +44,7 @@ export const DEFAULT_RETRY: RetryPolicy = { baseMs: 1000, maxMs: 600_000 };
 export class ModuleSupervisor<Services> {
   private readonly entries = new Map<
     string,
-    { module: HostModule<Services>; health: ModuleHealth; running?: RunningModule }
+    { module: ModuleContract<Services>; health: ModuleHealth; running?: RunningModule }
   >();
   private readonly order: string[] = [];
   private readonly retries: Promise<void>[] = [];
@@ -86,7 +86,7 @@ export class ModuleSupervisor<Services> {
     return scoped as unknown as Services;
   }
 
-  async start(modules: HostModule<Services>[]): Promise<void> {
+  async start(modules: ModuleContract<Services>[]): Promise<void> {
     for (const module of modules) {
       if (this.entries.has(module.id)) throw new Error(`Module ${module.id} is registered twice`);
       this.entries.set(module.id, {
