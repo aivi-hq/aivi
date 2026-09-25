@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LoadedConfig } from '@aivi/core';
-import { configSchema } from '@aivi/core';
+import { aiviVersion, configSchema } from '@aivi/core';
+import { createApp, serveApp } from '../src/api/app.ts';
+import { PublicRoutes } from '../src/api/public.ts';
 import { createHostClient } from '../src/client.ts';
 import { JobRefused } from '../src/jobs.ts';
-import { createHostServer, PublicRoutes } from '../src/server.ts';
 import { Store } from '../src/store.ts';
+
+/** The header the version gate asks of every request that is not `/health`, `/version` or a webhook. */
+const api = { 'x-aivi-client': aiviVersion };
 
 test('the read API scopes sources and refuses job operations without a handler; commands are open', async t => {
   const store = new Store(':memory:');
@@ -23,22 +27,24 @@ test('the read API scopes sources and refuses job operations without a handler; 
     ],
   };
   const searches: unknown[] = [];
-  const server = createHostServer({
-    store,
-    loaded,
-    knowledge: {
-      async search(request) {
-        searches.push(request);
-        return [];
+  const server = serveApp(
+    createApp({
+      store,
+      loaded,
+      knowledge: {
+        async search(request) {
+          searches.push(request);
+          return [];
+        },
+        async index() {},
+        async close() {},
       },
-      async index() {},
-      async close() {},
-    },
-    context: async sessionID => {
-      if (sessionID === 'ses_gone') throw new Error('not found');
-      return `🧠 **Context** for ${sessionID}`;
-    },
-  });
+      context: async sessionID => {
+        if (sessionID === 'ses_gone') throw new Error('not found');
+        return `🧠 **Context** for ${sessionID}`;
+      },
+    }),
+  );
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -48,7 +54,7 @@ test('the read API scopes sources and refuses job operations without a handler; 
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
   const client = createHostClient(base);
-  assert.equal((await fetch(`${base}/v1/status`)).status, 200, 'commands are open');
+  assert.equal((await fetch(`${base}/status`, { headers: api })).status, 200, 'commands are open');
   assert.equal((await fetch(`${base}/health`)).status, 200, 'liveness is public');
   assert.equal((await client.status()).sources, 3);
   assert.equal((await client.sources({ projects: [] })).length, 1);
@@ -58,17 +64,17 @@ test('the read API scopes sources and refuses job operations without a handler; 
     ['adrs'],
     'kind filter',
   );
-  assert.equal((await fetch(`${base}/v1/sources?kind=gossip`)).status, 400);
+  assert.equal((await fetch(`${base}/sources?kind=gossip`, { headers: api })).status, 400);
   await assert.rejects(client.sources({ projects: ['typo'] }), /HTTP 400: Unknown project: typo/);
   assert.deepEqual(await client.context('ses_x'), { text: '🧠 **Context** for ses_x' });
   await assert.rejects(client.context('ses_gone'), /HTTP 502: Could not read that session/);
-  assert.equal((await fetch(`${base}/v1/context`)).status, 400);
+  assert.equal((await fetch(`${base}/context`, { headers: api })).status, 400);
   assert.deepEqual(await client.projects(), [
     { id: 'app', sources: [{ id: 'adrs', kind: 'decision' }] },
     { id: 'old', removed: true, sources: [{ id: 'memory', kind: 'memory' }] },
   ]);
-  assert.equal((await fetch(`${base}/v1/jobs`, { method: 'POST' })).status, 503);
-  assert.equal((await fetch(`${base}/v1/sources?includeCore=no`)).status, 400);
+  assert.equal((await fetch(`${base}/jobs`, { method: 'POST', headers: api })).status, 503);
+  assert.equal((await fetch(`${base}/sources?includeCore=no`, { headers: api })).status, 400);
   assert.deepEqual(
     await client.search({ query: 'deployment', projects: [], includeCore: false, limit: 3, kinds: ['memory'] }),
     [],
@@ -77,14 +83,14 @@ test('the read API scopes sources and refuses job operations without a handler; 
   await assert.rejects(client.search({ query: 'deployment', projects: ['typo'] }), /HTTP 400: Unknown project/);
   assert.equal(searches.length, 1);
   assert.equal(
-    (await fetch(`${base}/v1/status`, { headers: { authorization: 'Bearer aivi-not-a-real-token' } })).status,
+    (await fetch(`${base}/status`, { headers: { ...api, authorization: 'Bearer aivi-not-a-real-token' } })).status,
     200,
     'an unknown bearer is accepted, anonymous',
   );
 });
 
 test('commands are open: anonymous and unknown bearers are accepted; a known bearer names its person', async t => {
-  const { bearerPerson } = await import('../src/server.ts');
+  const { bearerPerson } = await import('../src/api/person.ts');
   const store = new Store(':memory:');
   const nemo = store.createPerson({ name: 'Nemo' });
   const { secret } = store.mintToken(nemo.id, 'laptop');
@@ -94,7 +100,7 @@ test('commands are open: anonymous and unknown bearers are accepted; a known bea
     sources: [],
     projects: [],
   };
-  const server = createHostServer({ store, loaded });
+  const server = serveApp(createApp({ store, loaded }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -105,12 +111,12 @@ test('commands are open: anonymous and unknown bearers are accepted; a known bea
   const base = `http://127.0.0.1:${address.port}`;
   assert.equal((await createHostClient(base).status()).sources, 0, 'anonymous is served');
   assert.equal(
-    (await fetch(`${base}/v1/status`, { headers: { authorization: 'Bearer aivi-unknown' } })).status,
+    (await fetch(`${base}/status`, { headers: { ...api, authorization: 'Bearer aivi-unknown' } })).status,
     200,
     'an unknown bearer is accepted, anonymous',
   );
   assert.equal(
-    (await fetch(`${base}/v1/status`, { headers: { authorization: `Bearer ${secret}` } })).status,
+    (await fetch(`${base}/status`, { headers: { ...api, authorization: `Bearer ${secret}` } })).status,
     200,
     'a person token is served too',
   );
@@ -128,7 +134,7 @@ test('people management creates, lists and mints tokens over the API', async t =
     sources: [],
     projects: [],
   };
-  const server = createHostServer({ store, loaded });
+  const server = serveApp(createApp({ store, loaded }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -176,7 +182,7 @@ test('whoami names the caller and refuses to guess', async t => {
     sources: [],
     projects: [],
   };
-  const server = createHostServer({ store, loaded });
+  const server = serveApp(createApp({ store, loaded }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -185,9 +191,9 @@ test('whoami names the caller and refuses to guess', async t => {
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
-  assert.equal((await fetch(`${base}/v1/whoami`)).status, 401, 'anonymous cannot be named');
+  assert.equal((await fetch(`${base}/whoami`, { headers: api })).status, 401, 'anonymous cannot be named');
   assert.equal(
-    (await fetch(`${base}/v1/whoami`, { headers: { authorization: 'Bearer aivi-unknown' } })).status,
+    (await fetch(`${base}/whoami`, { headers: { ...api, authorization: 'Bearer aivi-unknown' } })).status,
     401,
     'an unknown token cannot be named',
   );
@@ -208,11 +214,13 @@ test('a link code is minted over HTTP with the bearer and names where to spend i
     sources: [],
     projects: [],
   };
-  const server = createHostServer({
-    store,
-    loaded,
-    linkable: () => [{ id: 'discord', hint: 'In Discord, DM the bot: /link <code>.' }],
-  });
+  const server = serveApp(
+    createApp({
+      store,
+      loaded,
+      linkable: () => [{ id: 'discord', hint: 'In Discord, DM the bot: /link <code>.' }],
+    }),
+  );
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -221,10 +229,14 @@ test('a link code is minted over HTTP with the bearer and names where to spend i
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
-  const auth = { authorization: `Bearer ${secret}` };
-  assert.equal((await fetch(`${base}/v1/links`, { method: 'POST' })).status, 401, 'anonymous has no person to bind');
+  const auth = { ...api, authorization: `Bearer ${secret}` };
+  assert.equal(
+    (await fetch(`${base}/links`, { method: 'POST', headers: api })).status,
+    401,
+    'anonymous has no person to bind',
+  );
   // GET lists the running channels with this person's binding state.
-  const listed = (await (await fetch(`${base}/v1/links`, { headers: auth })).json()) as {
+  const listed = (await (await fetch(`${base}/links`, { headers: auth })).json()) as {
     channels: { channel: string; hint?: string; linked: boolean }[];
   };
   assert.deepEqual(listed.channels, [
@@ -233,18 +245,18 @@ test('a link code is minted over HTTP with the bearer and names where to spend i
   // The mint names its channel: a bodyless POST is malformed, an unknown
   // channel is refused with nothing minted.
   assert.equal(
-    (await fetch(`${base}/v1/links`, { method: 'POST', headers: auth })).status,
+    (await fetch(`${base}/links`, { method: 'POST', headers: auth })).status,
     415,
     'the mint request is malformed without a JSON channel',
   );
-  const nowhere = await fetch(`${base}/v1/links`, {
+  const nowhere = await fetch(`${base}/links`, {
     method: 'POST',
     headers: { ...auth, 'content-type': 'application/json' },
     body: JSON.stringify({ channel: 'teams' }),
   });
   assert.equal(nowhere.status, 404);
   // A real mint: the instruction carries the code, the channel is named back.
-  const minted = await fetch(`${base}/v1/links`, {
+  const minted = await fetch(`${base}/links`, {
     method: 'POST',
     headers: { ...auth, 'content-type': 'application/json' },
     body: JSON.stringify({ channel: 'discord' }),
@@ -260,11 +272,11 @@ test('a link code is minted over HTTP with the bearer and names where to spend i
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM link_codes').get()!.n, 0, 'one-time use');
   // The binding exists, so GET says linked — and a second mint is refused
   // without consuming anything: one binding per channel per person.
-  const relisted = (await (await fetch(`${base}/v1/links`, { headers: auth })).json()) as {
+  const relisted = (await (await fetch(`${base}/links`, { headers: auth })).json()) as {
     channels: { channel: string; linked: boolean }[];
   };
   assert.equal(relisted.channels[0]!.linked, true);
-  const again = await fetch(`${base}/v1/links`, {
+  const again = await fetch(`${base}/links`, {
     method: 'POST',
     headers: { ...auth, 'content-type': 'application/json' },
     body: JSON.stringify({ channel: 'discord' }),
@@ -296,16 +308,18 @@ test('jobs API validates the body, maps refusals to their status, and status lis
   const claimed = store.claim('host', 1, { 'local-model': 1 })!;
   store.finish(claimed.id, 'host', 'failed', null, 'boom');
   const requests: unknown[] = [];
-  const server = createHostServer({
-    store,
-    loaded,
-    jobs: async request => {
-      requests.push(request);
-      if (request.action === 'run') throw new JobRefused('Jobs do not create jobs', 403);
-      if (request.action === 'remove') throw new Error('sqlite exploded');
-      return { summary: `ok ${request.action}`, items: [] };
-    },
-  });
+  const server = serveApp(
+    createApp({
+      store,
+      loaded,
+      jobs: async request => {
+        requests.push(request);
+        if (request.action === 'run') throw new JobRefused('Jobs do not create jobs', 403);
+        if (request.action === 'remove') throw new Error('sqlite exploded');
+        return { summary: `ok ${request.action}`, items: [] };
+      },
+    }),
+  );
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -326,12 +340,12 @@ test('jobs API validates the body, maps refusals to their status, and status lis
   );
 
   const post = (body: unknown, type = 'application/json') =>
-    fetch(`${base}/v1/jobs`, {
+    fetch(`${base}/jobs`, {
       method: 'POST',
-      headers: { 'content-type': type },
+      headers: { ...api, 'content-type': type },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     });
-  assert.equal((await fetch(`${base}/v1/jobs`)).status, 405);
+  assert.equal((await fetch(`${base}/jobs`, { headers: api })).status, 405);
   assert.equal((await post('x', 'text/plain')).status, 415);
   assert.equal((await post({ action: 'create' })).status, 400, 'sessionId is required');
   assert.equal((await post({ action: 'create', sessionId: 's', prompt: 'p', at: '1h', bogus: 1 })).status, 400);
@@ -356,7 +370,7 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   const store = new Store(':memory:');
   const routes = new PublicRoutes();
   const seen: { method: string; body: string; header: string | undefined }[] = [];
-  const unregister = routes.register('/v1/linear/webhooks/dev', async request => {
+  const unregister = routes.register('/linear/webhooks/dev', async request => {
     seen.push({
       method: request.method,
       body: request.body.toString('utf8'),
@@ -364,13 +378,16 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
     });
     return { status: 202, body: { accepted: true } };
   });
-  assert.throws(() => routes.register('/v1/linear/webhooks/dev', async () => ({ status: 200 })), /registered twice/);
-  assert.throws(() => routes.register('/hooks', async () => ({ status: 200 })), /under \/v1\//);
-  const server = createHostServer({
-    store,
-    loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] },
-    routes,
-  });
+  assert.throws(() => routes.register('/linear/webhooks/dev', async () => ({ status: 200 })), /registered twice/);
+  assert.throws(() => routes.register('hooks', async () => ({ status: 200 })), /absolute path/);
+  assert.throws(() => routes.register('/health', async () => ({ status: 200 })), /never \/health or \/version/);
+  const server = serveApp(
+    createApp({
+      store,
+      loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] },
+      routes,
+    }),
+  );
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -380,7 +397,7 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
   const raw = '{"a":1,  "b": "spacing kept"}';
-  const response = await fetch(`${base}/v1/linear/webhooks/dev`, {
+  const response = await fetch(`${base}/linear/webhooks/dev`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'linear-signature': 'abc' },
     body: raw,
@@ -389,10 +406,63 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   assert.deepEqual(await response.json(), { accepted: true });
   assert.deepEqual(seen, [{ method: 'POST', body: raw, header: 'abc' }], 'the body arrives byte for byte');
   assert.equal(
-    (await fetch(`${base}/v1/linear/webhooks/other`, { method: 'POST' })).status,
+    (await fetch(`${base}/linear/webhooks/other`, { method: 'POST', headers: api })).status,
     405,
     'unknown POST paths never reach a route',
   );
   unregister();
-  assert.equal((await fetch(`${base}/v1/linear/webhooks/dev`, { method: 'POST' })).status, 405, 'unregistered is gone');
+  assert.equal(
+    (await fetch(`${base}/linear/webhooks/dev`, { method: 'POST', headers: api })).status,
+    405,
+    'unregistered is gone',
+  );
+});
+
+test('the version gate negotiates x-aivi-client, and the exempt paths answer whatever it says', async t => {
+  const store = new Store(':memory:');
+  const server = serveApp(
+    createApp({
+      store,
+      loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] },
+    }),
+  );
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  // Liveness and the negotiation's own answer need no header at all.
+  assert.equal((await fetch(`${base}/health`)).status, 200, 'liveness is exempt');
+  assert.deepEqual(await (await fetch(`${base}/version`)).json(), { version: aiviVersion });
+  // The same breaking segment is served whatever the patch; the path holds no version.
+  assert.equal((await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.6.99' } })).status, 200);
+  // An old client is refused with the minimum that would pass and the remedy.
+  const old = await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.5.0' } });
+  assert.equal(old.status, 403);
+  assert.deepEqual(await old.json(), {
+    code: 'client_version_unsupported',
+    minVersion: aiviVersion,
+    error: `The aivi client 0.5.0 is older than this host (${aiviVersion}). Run: aivi upgrade.`,
+  });
+  // A missing header is the oldest client alive; so is a header that names no version.
+  const silent = await fetch(`${base}/status`);
+  assert.equal(silent.status, 403, 'silence is not a pass');
+  assert.equal((await silent.json()).code, 'client_version_unsupported');
+  assert.equal(
+    (await (await fetch(`${base}/status`, { headers: { 'x-aivi-client': 'weird' } })).json()).code,
+    'client_version_unsupported',
+  );
+  // A newer client is not allowed to guess at an older host's answers.
+  const ahead = await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.7.0' } });
+  assert.equal(ahead.status, 403);
+  assert.deepEqual(await ahead.json(), {
+    code: 'server_version_too_low',
+    minVersion: '0.7.0',
+    error: `The aivi client 0.7.0 needs a host of 0.7.0 or newer; this host is ${aiviVersion}. Ask an operator to update aivi, or downgrade the client.`,
+  });
+  // The client the API ships with always passes, and reports the same version.
+  assert.equal((await createHostClient(base).status()).version, aiviVersion);
 });

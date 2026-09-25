@@ -71,7 +71,7 @@ so local and installed behavior are identical.
 
 Modules and jobs call shared services in-process. The plugin reaches the same
 services over the authenticated host API. Linear is an in-process module with
-a webhook route per app on the same listener (`/v1/linear/webhooks/app/<id>`).
+a webhook route per app on the same listener (`/linear/webhooks/app/<id>`).
 
 ## Status
 

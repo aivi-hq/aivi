@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { getLogger, systemJobs } from '@aivi/core';
+import { createApp, serveApp } from './api/app.ts';
+import { PublicRoutes } from './api/public.ts';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { EventStream, type SessionEvents } from './events.ts';
@@ -16,7 +18,6 @@ import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencod
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
-import { createHostServer, PublicRoutes } from './server.ts';
 import type { Store } from './store.ts';
 import type { TaskClaims } from './tasks.ts';
 import { TaskRegistry } from './tasks.ts';
@@ -28,7 +29,7 @@ const FAILURE_NUDGE_AT = 3;
 
 /**
  * Lets the host loop sleep until the next due instant and be woken early when
- * the queue changes (a tool created a job, the CLI poked `/v1/wake`). A notify
+ * the queue changes (a tool created a job, the CLI poked `/wake`). A notify
  * that arrives between two waits is not lost: the next wait returns at once.
  */
 const MAX_TIMER_MS = 2 ** 31 - 1;
@@ -121,7 +122,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
 
   let knowledge: KnowledgeService | undefined;
   let scheduler: Scheduler | undefined;
-  let server: ReturnType<typeof createHostServer> | undefined;
+  let server: ReturnType<typeof serveApp> | undefined;
   let supervisor: ModuleSupervisor<HostServices> | undefined;
   const owner = randomUUID();
   let acquired = false;
@@ -154,19 +155,21 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       log.warn('opencode.restart.failed', { error });
     }
     const routes = new PublicRoutes();
-    const http = createHostServer({
-      store,
-      loaded,
-      knowledge,
-      routes,
-      jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
-      wake: () => wake.notify(),
-      health: () => supervisor?.health() ?? [],
-      linkable: () => channels.linkable(),
-      tools,
-      context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
-      log,
-    });
+    const http = serveApp(
+      createApp({
+        store,
+        loaded,
+        knowledge,
+        routes,
+        jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
+        wake: () => wake.notify(),
+        health: () => supervisor?.health() ?? [],
+        linkable: () => channels.linkable(),
+        tools,
+        context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
+        log,
+      }),
+    );
     server = http;
     const { bind, port } = loaded.config.host;
     await new Promise<void>((yes, no) => {

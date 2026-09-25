@@ -14,7 +14,7 @@ shared services, reconciles the job definitions it owns (`jobs[]` from
 `host.bind:host.port`, then starts modules in order and announces readiness
 once each has had its first attempt. From then on the loop sleeps until the
 next due instant and wakes early when something changes the queue
-(`HostServices.wake`, `POST /v1/wake` from the CLI, a run or turn releasing
+(`HostServices.wake`, `POST /wake` from the CLI, a run or turn releasing
 capacity). Nothing periodic exists; the serving host is the only executor of
 work.
 
@@ -22,7 +22,7 @@ A module whose start fails does not take the host down (live finding
 2026-09-15: a chat platform answered 503 during startup and the knowledge
 server and scheduler died with it). The `ModuleSupervisor` retries the start
 in the background with exponential backoff, 1 s doubling to a 10 minute cap,
-for as long as the host runs, and `/v1/status` lists every module as
+for as long as the host runs, and `/status` lists every module as
 `starting`, `running`, `degraded` (with its last error and next retry) or
 `stopped`. Readiness never waits for a retry; the API, the scheduler and the
 other modules run meanwhile. Only a `ConfigurationError` is fatal: a missing
@@ -242,7 +242,7 @@ ID, result, transition history). `runs cancel ID` only cancels queued work.
 `runs abort ID` asks the scheduler to stop a running run; the run then ends
 `blocked` and keeps its capacity until `runs resolve`, as above.
 
-The CLI writes to SQLite directly and pokes the running host (`POST /v1/wake`)
+The CLI writes to SQLite directly and pokes the running host (`POST /wake`)
 so it dispatches without waiting; when the host is not reachable the command
 says so and the change takes effect at the next dispatch.
 
@@ -271,6 +271,13 @@ future update. There is no rollback; sessions resume because state is SQLite
 and OpenCode's own. `aivi upgrade` updates the CLI itself through its install
 method (npm today) — the same install-method table `aivi uninstall` reads, so
 the two can never disagree about what is installed.
+
+A client and a host that no longer share a breaking API segment never
+mis-talk silently: the API answers 403 with the code that names which side
+must move — `client_version_unsupported` (run `aivi upgrade`) or
+`server_version_too_low` (update the host). The negotiation itself is an
+[architecture decision](architecture.md); `GET /version` answers what a
+running host speaks, with no header and no credentials.
 
 ## Uninstall
 

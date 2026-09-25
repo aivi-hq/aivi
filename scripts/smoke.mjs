@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { aiviVersion } from '../packages/core/dist/version.js';
 
 const cli = fileURLToPath(new URL('../packages/app/dist/cli.js', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));
@@ -92,14 +93,17 @@ try {
   });
   // The queued one-off is due now: the serving loop dispatches it on its first pass.
   await until(() =>
-    fetch(`http://127.0.0.1:${listening.port}/v1/status`, { signal: AbortSignal.timeout(5000) })
+    fetch(`http://127.0.0.1:${listening.port}/status`, {
+      headers: { 'x-aivi-client': aiviVersion },
+      signal: AbortSignal.timeout(5000),
+    })
       .then(response => response.json())
       .then(status => status.counts.succeeded === 1),
   );
   assert.equal(
     (
-      await fetch(`http://127.0.0.1:${listening.port}/v1/status`, {
-        headers: { authorization: 'Bearer aivi-not-a-real-token' },
+      await fetch(`http://127.0.0.1:${listening.port}/status`, {
+        headers: { 'x-aivi-client': aiviVersion, authorization: 'Bearer aivi-not-a-real-token' },
         signal: AbortSignal.timeout(5000),
       })
     ).status,

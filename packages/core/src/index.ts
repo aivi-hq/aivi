@@ -10,3 +10,4 @@ export * from './output.ts';
 export * from './plugin.ts';
 export * from './projects.ts';
 export * from './tools.ts';
+export * from './version.ts';

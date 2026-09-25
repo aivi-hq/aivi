@@ -5,7 +5,7 @@ import { type LinearWebhook, verifyWebhook } from './webhook.ts';
 
 /** An app's own stream, at `app/<id>`: agent-session events — and, for the
  * primary, the workspace's **Issues** data changes on the same route. */
-export const appWebhookPath = (app: string) => `/v1/linear/webhooks/app/${app}`;
+export const appWebhookPath = (app: string) => `/linear/webhooks/app/${app}`;
 
 export interface WebhookApp {
   id: string;

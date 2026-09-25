@@ -4,7 +4,7 @@ import { z } from 'zod';
  * One tool as its owning module describes it and the host serves it. Nothing
  * aivi offers the model is hardcoded in the OpenCode plugin: the owner of a
  * capability contributes this descriptor, the plugin registers exactly what
- * `GET /v1/tools` answered at load. The effective id is `${namespace}_${name}`
+ * `GET /tools` answered at load. The effective id is `${namespace}_${name}`
  * — it is the permission action agent files write rules against, so it is
  * data on the owner's side and stable, never derived by the plugin.
  */
@@ -37,7 +37,7 @@ const identifier = z
   .max(200)
   .regex(/^[a-zA-Z0-9_-]+$/);
 
-/** `POST /v1/tools`: run one claimed tool against the calling session. */
+/** `POST /tools`: run one claimed tool against the calling session. */
 export const toolCallSchema = z.strictObject({
   tool: z.string().min(1).max(80),
   sessionId: identifier,

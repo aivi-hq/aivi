@@ -11,6 +11,7 @@ import type {
   Status,
   Whoami,
 } from '@aivi/core';
+import { aiviVersion } from '@aivi/core/version';
 
 export interface HostClientOptions {
   /** Bearer token identifying the caller (a person token). Omit to stay anonymous. */
@@ -26,7 +27,14 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
     throw new Error('Expected an HTTP host URL without embedded credentials');
   }
-  const headers: Record<string, string> = options.token ? { authorization: `Bearer ${options.token}` } : {};
+  const headers: Record<string, string> = {
+    // The version the host negotiates against; a host that cannot speak to
+    // this client answers 403 with the version that would pass, and the
+    // error below carries that answer. Zero-dependency import: this module
+    // must stay free of SQLite, QMD, and other host-side weight.
+    'x-aivi-client': aiviVersion,
+    ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
+  };
 
   async function request<T>(path: string, init: RequestInit & { timeoutMs: number }): Promise<T> {
     const { timeoutMs, ...rest } = init;
@@ -54,22 +62,22 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       const params = new URLSearchParams({ q: query.query });
       if (query.limit !== undefined) params.set('limit', String(query.limit));
       appendSelection(params, query);
-      return get<SearchHit[]>(`/v1/knowledge/search?${params}`);
+      return get<SearchHit[]>(`/knowledge/search?${params}`);
     },
-    status: () => get<Status>('/v1/status'),
+    status: () => get<Status>('/status'),
     sources(selection: SourceSelection = {}) {
       const params = new URLSearchParams();
       appendSelection(params, selection);
-      return get<KnowledgeSource[]>(`/v1/sources?${params}`);
+      return get<KnowledgeSource[]>(`/sources?${params}`);
     },
-    projects: () => get<ProjectSummary[]>('/v1/projects'),
+    projects: () => get<ProjectSummary[]>('/projects'),
     async listTools() {
-      return (await get<{ tools: ServedTool[] }>('/v1/tools')).tools;
+      return (await get<{ tools: ServedTool[] }>('/tools')).tools;
     },
     callTool(id, call) {
       // One budget per tool comes from its descriptor: a browser action may
       // wait behind other tabs, a status read must not.
-      return request<unknown>('/v1/tools', {
+      return request<unknown>('/tools', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -83,12 +91,12 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
     },
     health: () => request<{ ok: true }>('/health', { timeoutMs: 3_000 }),
     context: sessionId =>
-      request<{ text: string }>(`/v1/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
-    wake: () => request<{ woken: boolean }>('/v1/wake', { method: 'POST', timeoutMs: 3_000 }),
-    whoami: () => get<Whoami>('/v1/whoami'),
-    people: () => get<Person[]>('/v1/people'),
+      request<{ text: string }>(`/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
+    wake: () => request<{ woken: boolean }>('/wake', { method: 'POST', timeoutMs: 3_000 }),
+    whoami: () => get<Whoami>('/whoami'),
+    people: () => get<Person[]>('/people'),
     createPerson(input) {
-      return request<Person>('/v1/people', {
+      return request<Person>('/people', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(input),
@@ -96,7 +104,7 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       });
     },
     createPersonToken(personId, label) {
-      return request<{ token: PersonToken; secret: string }>(`/v1/people/${encodeURIComponent(personId)}/tokens`, {
+      return request<{ token: PersonToken; secret: string }>(`/people/${encodeURIComponent(personId)}/tokens`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ label }),
@@ -105,7 +113,7 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
     },
     jobs(body) {
       // Creating a job checks the calling session and agent against OpenCode; a few seconds at most.
-      return request<JobResponse>('/v1/jobs', {
+      return request<JobResponse>('/jobs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),

@@ -38,7 +38,7 @@ The browser is not part of the core install. `aivi install browser` puts
 `@aivi/browser` into `<home>/app` and writes the launch block; until a
 `browser` block exists in `config.json` the browser module is not composed and
 the plugin never sees an `aivi_browser` tool. Once composed it appears as the
-`browser` module in `/v1/status`, and an install ends with "Browser is running."
+`browser` module in `/status`, and an install ends with "Browser is running."
 With the block present, the first browser call launches Chrome — visible (not
 headless), with the data directory `<home>/state/chrome`. The window is amber
 and its profile is named "aivi", so it is never mistaken for your own Chrome;

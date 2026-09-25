@@ -12,6 +12,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
+import { aiviVersion } from './api-version.ts';
 import { loadClientConfig, saveClientConfig } from './client-config.ts';
 import { appCliPath } from './forward.ts';
 import { serviceInstall } from './service.ts';
@@ -375,8 +376,8 @@ export const defaultIo: SetupIo = {
     }
   },
   async whoami(url, token) {
-    const response = await fetch(`${url}/v1/whoami`, {
-      headers: { authorization: `Bearer ${token}` },
+    const response = await fetch(`${url}/whoami`, {
+      headers: { 'x-aivi-client': aiviVersion, authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
     });
     if (response.status === 401)

@@ -81,7 +81,7 @@ export default Plugin.define({
 
     // No aivi tool is hardcoded here. Each capability's owner — the host, or
     // an optional module such as the browser — contributes a descriptor, and
-    // this process registers exactly what `GET /v1/tools` answered at load.
+    // this process registers exactly what `GET /tools` answered at load.
     // Host down at that instant: the plugin is a no-op beside
     // `aivi_connection`, which says so. Re-registering tools mid-process would
     // invalidate the prompt cache of every live session, so the recovery for

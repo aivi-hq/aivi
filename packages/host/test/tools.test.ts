@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LoadedConfig } from '@aivi/core';
-import { configSchema } from '@aivi/core';
+import { aiviVersion, configSchema } from '@aivi/core';
+import { createApp, serveApp } from '../src/api/app.ts';
 import { createHostClient } from '../src/client.ts';
 import { ConfigurationError } from '../src/modules.ts';
-import { createHostServer } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { ToolError, ToolRegistry } from '../src/tools.ts';
 
@@ -43,11 +43,11 @@ test('a module door bakes its own id in: it cannot claim or release under anothe
   assert.ok(registry.get('aivi_ping'), 'a module cannot release the host claim');
 });
 
-test('GET /v1/tools serves the host tools id-sorted, and a module claim lands beside them', async t => {
+test('GET /tools serves the host tools id-sorted, and a module claim lands beside them', async t => {
   const store = new Store(':memory:');
   const seen: { sessionId: string; action: string }[] = [];
   const registry = new ToolRegistry();
-  const server = createHostServer({ store, loaded, tools: registry });
+  const server = serveApp(createApp({ store, loaded, tools: registry }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -99,7 +99,7 @@ test('GET /v1/tools serves the host tools id-sorted, and a module claim lands be
   assert.deepEqual(seen, [{ sessionId: 'ses_owner', action: 'tabs' }]);
 });
 
-test('POST /v1/tools answers for every claimed name and fails loudly for every one that is not', async t => {
+test('POST /tools answers for every claimed name and fails loudly for every one that is not', async t => {
   const store = new Store(':memory:');
   const registry = new ToolRegistry();
   registry
@@ -112,7 +112,7 @@ test('POST /v1/tools answers for every claimed name and fails loudly for every o
     .claim({ namespace: 'aivi', name: 'broken', description: 'Crash.', input: {} }, async () => {
       throw new Error('bug');
     });
-  const server = createHostServer({ store, loaded, tools: registry });
+  const server = serveApp(createApp({ store, loaded, tools: registry }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -122,9 +122,9 @@ test('POST /v1/tools answers for every claimed name and fails loudly for every o
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
   const post = (body: unknown) =>
-    fetch(`${base}/v1/tools`, {
+    fetch(`${base}/tools`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'x-aivi-client': aiviVersion, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
 
@@ -145,12 +145,15 @@ test('POST /v1/tools answers for every claimed name and fails loudly for every o
     400,
     'the envelope is validated',
   );
-  assert.equal((await fetch(`${base}/v1/tools`, { method: 'PUT' })).status, 405);
+  assert.equal(
+    (await fetch(`${base}/tools`, { method: 'PUT', headers: { 'x-aivi-client': aiviVersion } })).status,
+    405,
+  );
 });
 
 test('a host without a tool registry serves an empty list, not a failure', async t => {
   const store = new Store(':memory:');
-  const server = createHostServer({ store, loaded });
+  const server = serveApp(createApp({ store, loaded }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));

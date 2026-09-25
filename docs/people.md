@@ -92,7 +92,7 @@ until the api-only session):
 ## Link codes (Discord, Slack)
 
 `aivi link [PLATFORM]` asks the host which channels are running and whether
-the person already holds a binding in each (`GET /v1/links`), then mints a
+the person already holds a binding in each (`GET /links`), then mints a
 one-time code (5 digits, hashed, 15 minutes, one active per person —
 re-minting replaces it) **for a named channel**: the host refuses a mint with
 no running module, for a channel it does not know, or when that person is

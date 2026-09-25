@@ -148,7 +148,7 @@ const descriptor = (over: Partial<ServedTool>): ServedTool => ({
 });
 
 const toolsRoute = (...tools: ServedTool[]): Record<string, Route> => ({
-  'GET /v1/tools': () => ({ json: { tools } }),
+  'GET /tools': () => ({ json: { tools } }),
 });
 
 test('plugin registers exactly the tools the host serves, beside its own connection tool', async t => {
@@ -179,7 +179,7 @@ test('plugin registers exactly the tools the host serves, beside its own connect
   assert.deepEqual(
     tools.map(tool => tool.name),
     ['connection', 'status', 'search'],
-    'the connection tool is the plugin own; the rest come from GET /v1/tools',
+    'the connection tool is the plugin own; the rest come from GET /tools',
   );
   for (const tool of tools) assert.equal(tool.input.type, 'object', `${tool.name} must declare a root object schema`);
   assert.equal(typeof cleanup, 'function');
@@ -192,9 +192,9 @@ test('a host that refuses the plugin still loads, and the connection tool report
   withToken(t, undefined);
   const refuse: Route = () => ({ status: 401, json: { error: 'Unauthorized' } });
   const base = await hostServing(t, {
-    'GET /v1/tools': refuse,
+    'GET /tools': refuse,
     'GET /health': refuse,
-    'GET /v1/status': refuse,
+    'GET /status': refuse,
   });
   const tools: RegisteredTool[] = [];
   const cleanup = await setupWith({ url: base }, tool => tools.push(tool));
@@ -230,9 +230,9 @@ test('the connection tool tells a live host its tools were not loaded into this 
   await hermeticXdg(t);
   withToken(t, 'test-late-host-token');
   const base = await hostServing(t, {
-    'GET /v1/tools': () => ({ status: 404, json: { error: 'Not found' } }),
+    'GET /tools': () => ({ status: 404, json: { error: 'Not found' } }),
     'GET /health': () => ({ json: { ok: true } }),
-    'GET /v1/status': () => ({ json: { version: '4.5.6', counts: {} } }),
+    'GET /status': () => ({ json: { version: '4.5.6', counts: {} } }),
   });
   const tools: RegisteredTool[] = [];
   const cleanup = await setupWith({ url: base }, tool => tools.push(tool));
@@ -249,7 +249,7 @@ test('the connection tool tells a live host its tools were not loaded into this 
   if (typeof cleanup === 'function') await cleanup();
 });
 
-test('served tools keep their namespace and dispatch through POST /v1/tools with the runtime session', async t => {
+test('served tools keep their namespace and dispatch through POST /tools with the runtime session', async t => {
   await hermeticXdg(t);
   withToken(t, 'test-native-browser-token');
   let received: unknown;
@@ -263,7 +263,7 @@ test('served tools keep their namespace and dispatch through POST /v1/tools with
         timeoutMs: 300_000,
       }),
     ),
-    'POST /v1/tools': request => {
+    'POST /tools': request => {
       received = request.body;
       return { json: { tabs: [] } };
     },
@@ -292,7 +292,7 @@ test('the jobs envelope forwards the calling session and message so the host can
   let received: unknown;
   const base = await hostServing(t, {
     ...toolsRoute(descriptor({ id: 'aivi_jobs', name: 'jobs', description: 'Schedule.', timeoutMs: 30_000 })),
-    'POST /v1/tools': request => {
+    'POST /tools': request => {
       received = request.body;
       return { json: { summary: 'Created', items: [] } };
     },
@@ -331,7 +331,7 @@ test('remote mode: url and bearer come from the client config when options say n
   const server: Server = createServer((request, response) => {
     assert.equal(request.headers.authorization, `Bearer ${token}`, 'the cached person bearer is sent');
     response.setHeader('content-type', 'application/json');
-    if (request.url === '/v1/tools') {
+    if (request.url === '/tools') {
       response.end(JSON.stringify({ tools: [descriptor({})] }));
       return;
     }
@@ -362,7 +362,7 @@ test('on a server home the cached bearer is ignored: host-originated sessions st
   const server: Server = createServer((request, response) => {
     assert.equal(request.headers.authorization, undefined, 'no bearer may leak from the operator into host work');
     response.setHeader('content-type', 'application/json');
-    if (request.url === '/v1/tools') {
+    if (request.url === '/tools') {
       response.end(JSON.stringify({ tools: [descriptor({})] }));
       return;
     }

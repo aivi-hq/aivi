@@ -148,7 +148,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   works the same outside aivi. No `aivi.project.json`
   ([projects](docs/projects.md)).
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
-  through `aivi_jobs` (`POST /v1/jobs`, the one job mutation on the
+  through `aivi_jobs` (`POST /jobs`, the one job mutation on the
   API, on by default; `scheduler.agentSchedules: false` turns it off); the host derives agent and
   directory from the calling session and refuses sessions with origin `job` or
   `dreaming`, unless a Discord thread adopted that session. Whoever may talk

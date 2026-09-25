@@ -8,7 +8,7 @@ export interface ToolCall {
   messageId?: string;
   input: Record<string, unknown>;
 }
-/** What a claimed tool does; `POST /v1/tools` dispatches to it. */
+/** What a claimed tool does; `POST /tools` dispatches to it. */
 export type ToolHandler = (call: ToolCall) => Promise<unknown>;
 
 /** A tool failed with an answer for the agent: this status and message reach the caller. */
@@ -27,7 +27,7 @@ export interface ToolClaims {
 }
 
 /**
- * What `GET /v1/tools` serves and `POST /v1/tools` dispatches over: the
+ * What `GET /tools` serves and `POST /tools` dispatches over: the
  * host's own capabilities and a module's tools meet here as equals, and the
  * OpenCode plugin registers whatever the list says at its load. The rules
  * are the task registry's: each tool id is claimed *exactly once* — a claim

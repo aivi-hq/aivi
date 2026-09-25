@@ -1,3 +1,9 @@
+export type { HostApiOptions } from './api/app.ts';
+export { createApp, serveApp } from './api/app.ts';
+export { bearerPerson } from './api/person.ts';
+export type { PublicRequest, PublicRouteHandler } from './api/public.ts';
+export { PublicRoutes } from './api/public.ts';
+export { status } from './api/status.ts';
 export type { HostModule, HostResources, HostServices, RunHostOptions, RunningModule } from './application.ts';
 export { runHost } from './application.ts';
 export type { ChatCommand, ChatCommandArgument, ChatCommandName } from './channel/commands.ts';
@@ -64,8 +70,6 @@ export type { ExecutorDeps } from './runtime.ts';
 export { createExecutor, SECRET_ENV, shellEnvironment } from './runtime.ts';
 export type { Execute, ExecutionContext, ExecutionResult, OnFinished } from './scheduler.ts';
 export { Scheduler } from './scheduler.ts';
-export type { HostServerOptions, PublicRequest, PublicRouteHandler } from './server.ts';
-export { bearerPerson, createHostServer, PublicRoutes, status } from './server.ts';
 export type { TurnInput, TurnOptions, TurnResult } from './session.ts';
 export {
   connectForTurn,
