@@ -411,20 +411,15 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
      * while a worker is pending (stop it); and, with the listener on, an issue entering a
      * mapped lane with nobody on it (delegate the primary and start its session).
      */
-    const onIssue = async (primary: LinearAppRuntime, payload: IssueEventPayload) => {
-      if (payload.action !== 'update') return;
-      const changed = Object.keys(payload.updatedFrom ?? {});
-      if (!changed.some(k => ['stateId', 'labelIds', 'delegateId'].includes(k))) return;
-      const issue = await primary.client.issue(payload.data.id);
-      const project = projectForIssue(services.loaded.projects, {
-        teamId: issue.team.id,
-        organizationId: payload.organizationId,
-      });
-      if (!project) return;
-      // Lane names are per Linear team; two mapped teams sharing a state name share the lane's agent.
-      const lane = project.linear?.lanes[issue.state.name];
-      const human = issue.labels.some(l => l.name === config.humanLabel);
-      const pending = store.pendingForIssue(issue.id);
+    /** Workers the update orphaned: the HITL label, a lane move or a delegate
+     *  change each stops only its own kind of change. */
+    const stopOrphans = async (
+      pending: string[],
+      issue: LinearIssue,
+      lane: LaneBinding | undefined,
+      human: boolean,
+      changed: string[],
+    ) => {
       for (const conversation of pending) {
         const { app: workerApp } = conversationParts(conversation);
         const workerAgent = store.sessionOf(conversation)?.agent;
@@ -441,7 +436,16 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
         else if (changed.includes('delegateId') && issue.delegate?.id !== apps.get(workerApp)?.userId)
           await stopWorker(conversation, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
       }
-      if (!config.listener || !changed.includes('stateId') || !lane || human || pending.length) return;
+    };
+
+    /** The listener's pickup: an issue entering a mapped lane with nobody on
+     *  it. The delegation and the session are its doing. */
+    const listenerPickup = async (
+      primary: LinearAppRuntime,
+      payload: IssueEventPayload,
+      issue: LinearIssue,
+      lane: LaneBinding,
+    ) => {
       if (issue.delegate) return;
       // Linear's native blocking: an issue blocked by unfinished issues is not picked up.
       if (issue.blockedBy.some(b => b.state.type !== 'completed' && b.state.type !== 'canceled')) {
@@ -465,6 +469,25 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
         webhookTimestamp: Date.now(),
         agentSession: { id: agentSession, issue: { id: issue.id, identifier: issue.identifier } },
       });
+    };
+
+    const onIssue = async (primary: LinearAppRuntime, payload: IssueEventPayload) => {
+      if (payload.action !== 'update') return;
+      const changed = Object.keys(payload.updatedFrom ?? {});
+      if (!changed.some(k => ['stateId', 'labelIds', 'delegateId'].includes(k))) return;
+      const issue = await primary.client.issue(payload.data.id);
+      const project = projectForIssue(services.loaded.projects, {
+        teamId: issue.team.id,
+        organizationId: payload.organizationId,
+      });
+      if (!project) return;
+      // Lane names are per Linear team; two mapped teams sharing a state name share the lane's agent.
+      const lane = project.linear?.lanes[issue.state.name];
+      const human = issue.labels.some(l => l.name === config.humanLabel);
+      const pending = store.pendingForIssue(issue.id);
+      await stopOrphans(pending, issue, lane, human, changed);
+      if (!config.listener || !changed.includes('stateId') || !lane || human || pending.length) return;
+      await listenerPickup(primary, payload, issue, lane);
     };
 
     /**

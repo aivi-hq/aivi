@@ -83,23 +83,30 @@ export async function writeProjectLinear(
  */
 export function parseLaneFlags(lanes: string[], unlanes: string[]): Record<string, string | null> {
   const out: Record<string, string | null> = {};
-  for (const entry of lanes) {
-    const at = entry.lastIndexOf(':');
-    const agent = at < 0 ? '' : entry.slice(at + 1).trim();
-    if (!agent || at <= 0) throw new Error(`--lane "${entry}" must read LANE:AGENT, e.g. --lane "Dev:dev"`);
-    for (const lane of entry.slice(0, at).split(',')) {
-      const name = lane.trim();
-      if (!name) throw new Error(`--lane "${entry}" has an empty lane name`);
-      out[name] = agent;
-    }
-  }
-  for (const entry of unlanes) {
-    const name = entry.trim();
-    if (!name) throw new Error('--unlane needs a lane name');
-    if (out[name] !== undefined) throw new Error(`Lane "${name}" is given both --lane and --unlane; choose one`);
-    out[name] = null;
-  }
+  for (const entry of lanes) readLaneFlag(out, entry);
+  for (const entry of unlanes) readUnlaneFlag(out, entry);
   return out;
+}
+
+/** One `--lane` entry written into the map; split at the last colon, so a
+ *  lane name may hold one. */
+function readLaneFlag(out: Record<string, string | null>, entry: string): void {
+  const at = entry.lastIndexOf(':');
+  const agent = at < 0 ? '' : entry.slice(at + 1).trim();
+  if (!agent || at <= 0) throw new Error(`--lane "${entry}" must read LANE:AGENT, e.g. --lane "Dev:dev"`);
+  for (const lane of entry.slice(0, at).split(',')) {
+    const name = lane.trim();
+    if (!name) throw new Error(`--lane "${entry}" has an empty lane name`);
+    out[name] = agent;
+  }
+}
+
+/** One `--unlane` entry: a lane marked for humans, unless `--lane` claimed it first. */
+function readUnlaneFlag(out: Record<string, string | null>, entry: string): void {
+  const name = entry.trim();
+  if (!name) throw new Error('--unlane needs a lane name');
+  if (out[name] !== undefined) throw new Error(`Lane "${name}" is given both --lane and --unlane; choose one`);
+  out[name] = null;
 }
 
 /**
