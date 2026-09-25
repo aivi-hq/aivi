@@ -153,6 +153,18 @@ export interface UnlinkedSender {
   isDM: boolean;
 }
 
+/** A DM channel by its Slack id shape (`D…`, not a channel `C…` or private `G…`), when the event omits the type. */
+const isDMChannel = (event: SlackEvent) =>
+  event.channel_type === 'im' || (!event.channel_type && isDMChannelId(event.channel));
+
+/** A reply inside an existing thread; a top-level message has thread_ts equal to its own ts. */
+const inThread = (event: SlackEvent, isDM: boolean) =>
+  !isDM && event.thread_ts !== undefined && event.thread_ts !== event.ts;
+
+/** Where the turn lives: a DM is its channel, a thread reply is the thread, anything else the channel. */
+const conversationOf = (event: SlackEvent, isDM: boolean, threaded: boolean) =>
+  isDM ? event.channel : threaded ? `${event.channel}:${event.thread_ts}` : event.channel;
+
 /**
  * Map a Slack message onto the shared access route. Mentions are `app_mention`
  * events or `<@bot>` in the text; Slack sends both for one message, so callers
@@ -172,12 +184,12 @@ export function routeMessage(
   const mention = `<@${botUserId}>`;
   const raw = event.text ?? '';
   const text = raw.replaceAll(mention, '').trim() || raw.trim();
-  const isDM = event.channel_type === 'im' || (!event.channel_type && isDMChannelId(event.channel));
-  const inThread = !isDM && event.thread_ts !== undefined && event.thread_ts !== event.ts;
-  const conversation = isDM ? event.channel : inThread ? `${event.channel}:${event.thread_ts}` : event.channel;
+  const isDM = isDMChannel(event);
+  const threaded = inThread(event, isDM);
+  const conversation = conversationOf(event, isDM, threaded);
   const route: AccessRoute = {
     channelId: conversation,
-    parentId: inThread ? event.channel : null,
+    parentId: threaded ? event.channel : null,
     userId: event.user,
     isDM,
     mentioned: event.type === 'app_mention' || raw.includes(mention),
@@ -188,7 +200,8 @@ export function routeMessage(
     if (!route.senderLinked && reaches(config, route)) return { unlinked: true, isDM };
     return null;
   }
-  const opensThread = !isDM && !inThread && accessEntry(config.access, route)?.sessions === 'threads';
+  // In thread mode a fresh top-level message opens a thread on itself, so later replies join it.
+  const opensThread = !isDM && !threaded && accessEntry(config.access, route)?.sessions === 'threads';
   return { route, conversation: opensThread ? `${event.channel}:${event.ts}` : conversation, text };
 }
 
