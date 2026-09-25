@@ -14,9 +14,9 @@ owns them.
 { "search": { "provider": "qmd", "indexOnStart": true, "maxPending": 32 } }
 ```
 
-QMD is a pinned optional dependency. Normal `npm ci` installs it; if optional
-dependencies were omitted or native installation failed, enabling search produces
-an explicit startup error. Disabling search leaves the rest of aivi usable.
+QMD is a pinned dependency of the knowledge package, imported statically; a missing
+or broken install stops aivi from starting. Disabling search leaves the rest of aivi
+usable.
 This release calls QMD's `searchLex` API: keyword/BM25 retrieval, with no embedding,
 reranking, or query-expansion model loaded. The public SDK is the boundary; aivi
 does not query QMD's private database tables.

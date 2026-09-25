@@ -3,6 +3,7 @@ import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { KnowledgeService, KnowledgeSource, LoadedConfig, Logger, SearchHit, SearchRequest } from '@aivi/core';
 import { searchSchema, selectSources } from '@aivi/core';
+import { createStore, extractSnippet } from '@tobilu/qmd';
 
 // Narrow boundary matches QMD 2.8.3's public SDK. No dependency on its internal database.
 export interface QmdStore {
@@ -37,14 +38,7 @@ const collectionID = (s: KnowledgeSource) =>
 export class SearchUnavailable extends Error {}
 export async function createKnowledgeService(
   loaded: LoadedConfig,
-  loader: () => Promise<QmdSDK> = async () => {
-    const name = '@tobilu/qmd';
-    try {
-      return (await import(name)) as QmdSDK;
-    } catch {
-      throw new SearchUnavailable('QMD is unavailable; install @tobilu/qmd@2.8.3 and its native dependencies');
-    }
-  },
+  loader: () => Promise<QmdSDK> = async () => ({ createStore, extractSnippet }),
   log?: Logger,
 ): Promise<KnowledgeService> {
   const warned = new Set<string>();
