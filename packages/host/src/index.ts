@@ -65,6 +65,7 @@ export type {
   PluginCliOption,
   PluginCliSubcommand,
 } from './plugin-cli.ts';
+export { resolveBlocked } from './plugin-cli.ts';
 export { describeOutcome, reentryPrompt, reportTarget, SESSION_DESTINATION, shouldReport } from './reports.ts';
 export type { ExecutorDeps } from './runtime.ts';
 export { createExecutor, SECRET_ENV, shellEnvironment } from './runtime.ts';

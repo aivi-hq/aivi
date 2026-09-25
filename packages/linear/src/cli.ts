@@ -1,7 +1,7 @@
 /** The Linear module's operator commands, mounted into the server CLI through
  *  the `./cli` subpath contract (@aivi/host `PluginCliCommand`): status and
  *  resolve, over the same conversation store the module runs on. */
-import type { PluginCliCommand, PluginCliContext } from '@aivi/host';
+import { type PluginCliCommand, type PluginCliContext, resolveBlocked } from '@aivi/host';
 
 const enabled = async (ctx: PluginCliContext) => {
   const loaded = await ctx.loaded();
@@ -36,12 +36,7 @@ const linear: PluginCliCommand = {
       async run(ctx, [id], options) {
         await enabled(ctx);
         const { openLinearStore } = await import('./index.ts');
-        await ctx.withStore(store => {
-          const inbox = openLinearStore(store);
-          inbox.resolve(String(id), String(options.reason));
-          ctx.print({ resolved: true });
-        });
-        await ctx.poke();
+        await resolveBlocked(ctx, id, options.reason, store => openLinearStore(store));
       },
     },
   ],
