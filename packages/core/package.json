@@ -4,8 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
-    "./kinds": "./dist/kinds.js",
-    "./version": "./dist/version.js"
+    "./kinds": "./dist/kinds.js"
   },
   "files": [
     "dist"

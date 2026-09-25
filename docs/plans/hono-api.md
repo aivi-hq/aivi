@@ -170,11 +170,15 @@ Validation is endpoint-owned; the gate is a 403 with a `code` field.
   `@hono/node-server`, not `createAdaptorServer`: the adaptor's `ServerType`
   return is a union over http/http2 and types `listen` worse. Same real
   node http Server, not yet listening.
-- The version constant (`aiviVersion` in `packages/core/src/version.ts`) is
-  `@aivi/host`'s `package.json` version — the packages are versioned
-  independently, so "the package set" has no single version. A core test
-  asserts both, and `@aivi/cli` — which may import nothing (its packaging
-  test) — carries a copy in `src/api-version.ts` that the same test welds.
+- The version each side names is read at runtime from its own
+  `package.json` (`createRequire`), so no constant and no sync test exist.
+  `@aivi/cli` and `@aivi/host` are a changesets `fixed` group — one version
+  for both, enforced by the release machinery. The gate is asymmetric: a
+  client at or behind the host (major, minor) is served; a client ahead is
+  refused `server_version_too_low`; a different major or a silent client is
+  refused `client_version_unsupported`. (An earlier same-day scheme kept an
+  `aiviVersion` constant in core, welded to the host's version by a test;
+  the fixed group replaced it.)
 - D4 as planned: an interrupted body read now answers 400 through the
   validator (`Invalid <label>…`) instead of `… request interrupted`, and the
   `*.interrupted` log keys are gone with the manual read loops. Untested

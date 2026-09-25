@@ -1,12 +1,13 @@
 import { createServer, type Server } from 'node:http';
 import type { KnowledgeService, LoadedConfig, Logger, ModuleHealth } from '@aivi/core';
-import { aiviVersion, getLogger } from '@aivi/core';
+import { getLogger } from '@aivi/core';
 import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { methodNotAllowed } from 'hono/method-not-allowed';
 import type { JobHandler } from '../jobs.ts';
 import type { Store } from '../store.ts';
 import type { ToolRegistry } from '../tools.ts';
+import { hostVersion } from '../version.ts';
 import type { AppEnv } from './env.ts';
 import { versionGate } from './gate.ts';
 import { claimHostTools } from './host-tools.ts';
@@ -83,7 +84,7 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
   // Liveness and the version are public so process supervisors and the
   // negotiation itself need no credentials and answer whatever else is wrong.
   app.get('/health', c => c.json({ ok: true }));
-  app.get('/version', c => c.json({ version: aiviVersion }));
+  app.get('/version', c => c.json({ version: hostVersion }));
   app.use('*', publicDispatch(routes, log));
   app.use('*', versionGate);
   app.use('*', resolvePerson(store));

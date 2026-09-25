@@ -1,6 +1,7 @@
 import type { LoadedConfig, ModuleHealth, Status } from '@aivi/core';
-import { aiviVersion, taskLabel } from '@aivi/core';
+import { taskLabel } from '@aivi/core';
 import type { Store } from '../store.ts';
+import { hostVersion } from '../version.ts';
 
 /**
  * The host's own report, as `GET /status` and the `aivi_status` tool answer
@@ -8,7 +9,7 @@ import type { Store } from '../store.ts';
  */
 export function status(store: Store, loaded: LoadedConfig, now = Date.now(), modules: ModuleHealth[] = []): Status {
   return {
-    version: aiviVersion,
+    version: hostVersion,
     counts: store.counts(),
     sources: loaded.sources.length,
     leases: store.leaseCount(),

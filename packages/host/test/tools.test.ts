@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LoadedConfig } from '@aivi/core';
-import { aiviVersion, configSchema } from '@aivi/core';
+import { configSchema } from '@aivi/core';
 import { createApp, serveApp } from '../src/api/app.ts';
 import { createHostClient } from '../src/client.ts';
 import { ConfigurationError } from '../src/modules.ts';
 import { Store } from '../src/store.ts';
 import { ToolError, ToolRegistry } from '../src/tools.ts';
+import { hostVersion } from '../src/version.ts';
 
 const loaded: LoadedConfig = {
   path: '/config.json',
@@ -124,7 +125,7 @@ test('POST /tools answers for every claimed name and fails loudly for every one 
   const post = (body: unknown) =>
     fetch(`${base}/tools`, {
       method: 'POST',
-      headers: { 'x-aivi-client': aiviVersion, 'content-type': 'application/json' },
+      headers: { 'x-aivi-client': hostVersion, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
 
@@ -146,7 +147,7 @@ test('POST /tools answers for every claimed name and fails loudly for every one 
     'the envelope is validated',
   );
   assert.equal(
-    (await fetch(`${base}/tools`, { method: 'PUT', headers: { 'x-aivi-client': aiviVersion } })).status,
+    (await fetch(`${base}/tools`, { method: 'PUT', headers: { 'x-aivi-client': hostVersion } })).status,
     405,
   );
 });

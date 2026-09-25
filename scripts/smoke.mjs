@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aiviVersion } from '../packages/core/dist/version.js';
+
+// The host answers the version gate with its own package version; the smoke
+// fetches are first-party calls and must name it.
+const { version: aiviVersion } = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../packages/host/package.json', import.meta.url)), 'utf8'),
+);
 
 const cli = fileURLToPath(new URL('../packages/app/dist/cli.js', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));

@@ -12,10 +12,10 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
-import { aiviVersion } from './api-version.ts';
 import { loadClientConfig, saveClientConfig } from './client-config.ts';
 import { appCliPath } from './forward.ts';
 import { serviceInstall } from './service.ts';
+import { aiviVersion } from './version.ts';
 
 /** Both plugins a signed-in machine needs: the aivi tools and the commit
  *  attribution. `opencode plugin add` is idempotent, so setup may re-run it.

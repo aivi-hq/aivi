@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as p from '@clack/prompts';
-import { aiviVersion } from './api-version.ts';
+import { aiviVersion } from './version.ts';
 
 export interface LinkChannel {
   channel: string;

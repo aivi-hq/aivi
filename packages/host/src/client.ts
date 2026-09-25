@@ -11,7 +11,7 @@ import type {
   Status,
   Whoami,
 } from '@aivi/core';
-import { aiviVersion } from '@aivi/core/version';
+import { hostVersion } from './version.ts';
 
 export interface HostClientOptions {
   /** Bearer token identifying the caller (a person token). Omit to stay anonymous. */
@@ -30,9 +30,10 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
   const headers: Record<string, string> = {
     // The version the host negotiates against; a host that cannot speak to
     // this client answers 403 with the version that would pass, and the
-    // error below carries that answer. Zero-dependency import: this module
-    // must stay free of SQLite, QMD, and other host-side weight.
-    'x-aivi-client': aiviVersion,
+    // error below carries that answer. Read from this package's own
+    // package.json: this module must stay free of SQLite, QMD, and other
+    // host-side weight.
+    'x-aivi-client': hostVersion,
     ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
   };
 

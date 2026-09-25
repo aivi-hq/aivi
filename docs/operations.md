@@ -272,12 +272,16 @@ and OpenCode's own. `aivi upgrade` updates the CLI itself through its install
 method (npm today) — the same install-method table `aivi uninstall` reads, so
 the two can never disagree about what is installed.
 
-A client and a host that no longer share a breaking API segment never
-mis-talk silently: the API answers 403 with the code that names which side
-must move — `client_version_unsupported` (run `aivi upgrade`) or
-`server_version_too_low` (update the host). The negotiation itself is an
-[architecture decision](architecture.md); `GET /version` answers what a
-running host speaks, with no header and no credentials.
+A client that is ahead of its host never mis-talks silently: the API answers
+403 `server_version_too_low` naming the host version to reach, because the
+client expects features this host cannot give. A client behind the host's
+major answers 403 `client_version_unsupported` — run `aivi upgrade`; a
+client behind within the same major is served, using fewer features than
+the host has. `@aivi/cli` and `@aivi/host` share one version through a
+changesets `fixed` group, so the CLI's own number is the API version it
+speaks. The negotiation itself is an [architecture decision](architecture.md);
+`GET /version` answers what a running host speaks, with no header and no
+credentials.
 
 ## Uninstall
 

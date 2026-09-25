@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LoadedConfig } from '@aivi/core';
-import { aiviVersion, configSchema } from '@aivi/core';
+import { configSchema } from '@aivi/core';
 import { createApp, serveApp } from '../src/api/app.ts';
 import { PublicRoutes } from '../src/api/public.ts';
 import { createHostClient } from '../src/client.ts';
 import { JobRefused } from '../src/jobs.ts';
 import { Store } from '../src/store.ts';
+import { hostVersion } from '../src/version.ts';
 
 /** The header the version gate asks of every request that is not `/health`, `/version` or a webhook. */
-const api = { 'x-aivi-client': aiviVersion };
+const api = { 'x-aivi-client': hostVersion };
 
 test('the read API scopes sources and refuses job operations without a handler; commands are open', async t => {
   const store = new Store(':memory:');
@@ -418,7 +419,7 @@ test('public routes bypass bearer auth, see the raw body, and are owned by one h
   );
 });
 
-test('the version gate negotiates x-aivi-client, and the exempt paths answer whatever it says', async t => {
+test('the version gate serves clients at or behind the host and refuses those ahead', async t => {
   const store = new Store(':memory:');
   const server = serveApp(
     createApp({
@@ -436,18 +437,26 @@ test('the version gate negotiates x-aivi-client, and the exempt paths answer wha
   const base = `http://127.0.0.1:${address.port}`;
   // Liveness and the negotiation's own answer need no header at all.
   assert.equal((await fetch(`${base}/health`)).status, 200, 'liveness is exempt');
-  assert.deepEqual(await (await fetch(`${base}/version`)).json(), { version: aiviVersion });
-  // The same breaking segment is served whatever the patch; the path holds no version.
+  assert.deepEqual(await (await fetch(`${base}/version`)).json(), { version: hostVersion });
+  // The major is the contract and the minor is features: a client behind the
+  // host is served — the host's newer minors are features it never touches.
+  assert.equal((await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.1.0' } })).status, 200);
   assert.equal((await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.6.99' } })).status, 200);
-  // An old client is refused with the minimum that would pass and the remedy.
-  const old = await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.5.0' } });
-  assert.equal(old.status, 403);
-  assert.deepEqual(await old.json(), {
-    code: 'client_version_unsupported',
-    minVersion: aiviVersion,
-    error: `The aivi client 0.5.0 is older than this host (${aiviVersion}). Run: aivi upgrade.`,
+  // A client ahead of the host expects answers this host cannot give; a
+  // minor ahead and a major ahead are refused alike, naming the host to reach.
+  const ahead = await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.7.0' } });
+  assert.equal(ahead.status, 403);
+  assert.deepEqual(await ahead.json(), {
+    code: 'server_version_too_low',
+    minVersion: '0.7.0',
+    error: `The aivi client 0.7.0 is newer than this host (${hostVersion}); features it expects may not answer here. Ask an operator to update aivi, or downgrade the client.`,
   });
-  // A missing header is the oldest client alive; so is a header that names no version.
+  assert.equal(
+    (await (await fetch(`${base}/status`, { headers: { 'x-aivi-client': '1.0.0' } })).json()).code,
+    'server_version_too_low',
+  );
+  // Silence is never a pass: only first-party clients speak this API, and
+  // every one of them sends its version. So is a header that names none.
   const silent = await fetch(`${base}/status`);
   assert.equal(silent.status, 403, 'silence is not a pass');
   assert.equal((await silent.json()).code, 'client_version_unsupported');
@@ -455,14 +464,6 @@ test('the version gate negotiates x-aivi-client, and the exempt paths answer wha
     (await (await fetch(`${base}/status`, { headers: { 'x-aivi-client': 'weird' } })).json()).code,
     'client_version_unsupported',
   );
-  // A newer client is not allowed to guess at an older host's answers.
-  const ahead = await fetch(`${base}/status`, { headers: { 'x-aivi-client': '0.7.0' } });
-  assert.equal(ahead.status, 403);
-  assert.deepEqual(await ahead.json(), {
-    code: 'server_version_too_low',
-    minVersion: '0.7.0',
-    error: `The aivi client 0.7.0 needs a host of 0.7.0 or newer; this host is ${aiviVersion}. Ask an operator to update aivi, or downgrade the client.`,
-  });
   // The client the API ships with always passes, and reports the same version.
-  assert.equal((await createHostClient(base).status()).version, aiviVersion);
+  assert.equal((await createHostClient(base).status()).version, hostVersion);
 });

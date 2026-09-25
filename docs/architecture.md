@@ -196,16 +196,21 @@ Per-device tokens and reverse-proxy SSO are future auth modes on the same
 listener.
 
 The API version lives in a header, not in paths: every first-party client
-sends `x-aivi-client` naming the API version it speaks (`aiviVersion`, kept
-equal to `@aivi/host`'s `package.json` by a test), and the host answers a
-request whose breaking segment differs — the minor while 0.x, the major after
-— with 403 and a body naming the fix: `client_version_unsupported` with the
-minimum version and `aivi upgrade` for an old client, `server_version_too_low`
-with the version the host must reach for a new client ahead of its server.
-A client that names no version is treated as the oldest one alive. `/health`,
-`GET /version` and module webhooks answer without the header: the first two
-are the supervisor's and the negotiation's own fixed points, and a platform
-webhook is not an aivi client. Paths themselves carry no version.
+sends `x-aivi-client` naming the version it speaks, read at runtime from its
+own `package.json` — the server's is `@aivi/host`'s, and the host's own
+`createHostClient` reads the same file. `@aivi/cli` and `@aivi/host` are a
+changesets `fixed` group: releases keep the two packages at one version, so
+the thin CLI's number is comparable without any synced file. The major is
+the contract, the minor is features: a client at or behind the host is
+served (a newer server's minors are features the client never touches),
+while a client whose major.minor is ahead of the host is refused with 403 —
+it expects answers this host cannot give. The body names the side that must
+move: `server_version_too_low` with the host version to reach, or
+`client_version_unsupported` with `aivi upgrade` for a client behind the
+host's major or naming no version at all. `/health`, `GET /version` and
+module webhooks answer without the header: the first two are the
+supervisor's and the negotiation's own fixed points, and a platform webhook
+is not an aivi client. Paths themselves carry no version.
 The operator CLI can inspect prompts and operates directly on local state.
 Secrets come from the process environment, preferably resolved with existing
 fnox configuration. aivi does not implement a vault.

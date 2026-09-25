@@ -8,10 +8,10 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { aiviVersion } from './api-version.ts';
 import { forward } from './forward.ts';
 import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
 import { healthUrl } from './update.ts';
+import { aiviVersion } from './version.ts';
 
 /** Short names for the plugins aivi ships; any npm package name is accepted too. */
 export const PLUGIN_ALIASES: Record<string, string> = {

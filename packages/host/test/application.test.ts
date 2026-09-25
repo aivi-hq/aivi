@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { aiviVersion, configSchema, jobSchema } from '@aivi/core';
+import { configSchema, jobSchema } from '@aivi/core';
 import type { HostModule, HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
 import { ConfigurationError } from '../src/modules.ts';
@@ -8,6 +8,7 @@ import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 import { TaskRegistry } from '../src/tasks.ts';
+import { hostVersion } from '../src/version.ts';
 
 const loaded = () => ({
   path: '/config',
@@ -395,7 +396,7 @@ test('a module whose start fails is retried with backoff while the host serves; 
   });
   const fetchStatus = async () =>
     (await (
-      await fetch(`http://127.0.0.1:${address!.port}/status`, { headers: { 'x-aivi-client': aiviVersion } })
+      await fetch(`http://127.0.0.1:${address!.port}/status`, { headers: { 'x-aivi-client': hostVersion } })
     ).json()) as {
       modules: { id: string; state: string; attempts: number; lastError: string | null }[];
     };
