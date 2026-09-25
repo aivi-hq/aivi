@@ -662,9 +662,9 @@ export const configSchema = z
       .default({}),
     browser: z
       .union([browserConfigSchema, z.literal(false)])
-      .prefault({ connection: { mode: 'launch', userDataDir: 'state/chrome' } })
+      .optional()
       .describe(
-        'Chrome for browser_control. Default: aivi launches its own Chrome with a profile under state/chrome on first use. `false` disables the browser service.',
+        'Presence of this block enables browser control and builds the service at serve; `false` is an explicit off. `aivi install browser` writes a launch default.',
       ),
     search: z
       .strictObject({

@@ -4,6 +4,7 @@ import { browserEnvelopeSchema } from '@aivi/core';
 import type { BrowserTransport, McpReply } from './transport.ts';
 import { createChromeTransport } from './transport.ts';
 
+export { createBrowserModule } from './module.ts';
 export type { BrowserTransport, McpReply } from './transport.ts';
 export { brandProfile, chromeArguments } from './transport.ts';
 

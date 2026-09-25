@@ -6,8 +6,26 @@ OpenCode or read its private storage.
 
 ## Plugin tools and permission actions
 
-The aivi plugin registers these tools for the OpenCode **Location** that loads
-it, so every agent in a directory that loads the plugin has them. The **effective
+The aivi plugin hardcodes **no tools**. Each capability's owner — the host for
+status, knowledge, sources, context and jobs; an optional composed module for
+whatever it brings — claims a **descriptor** and its handler on the host. At
+load the plugin registers exactly what `GET /v1/tools` answered, and every
+call goes back over `POST /v1/tools` as `{ tool, sessionId, messageId, input }`
+with the ids taken from the native tool context, never from the model. A
+capability the host does not offer is simply absent from its list, so an
+unconfigured optional tool exists for no agent rather than failing when used.
+
+The plugin's one own tool is `aivi_connection`: it probes the host on demand
+and reports whether it answers, its version, and which tools this process
+loaded. If the host is down when OpenCode loads the plugin, that is all there
+is, and the tool says exactly that. The plugin never re-registers tools
+mid-process — a tool-set change invalidates the prompt cache of every live
+session — so when the connection tool says the host answers now but its tools
+were not loaded, the fix is an explicit OpenCode reload, in the same category
+as a soul edit.
+
+These tools are registered for the OpenCode **Location** that loads
+the plugin, so every agent in a directory that loads the plugin has them. The **effective
 id is also the permission action** you write rules against (`aivi_jobs` and
 `aivi_browser` are confirmed in their sections below; the rest follow the same
 rule). Every aivi tool is a Code Mode tool, so the agent also needs the `execute`
@@ -17,6 +35,7 @@ grant or withhold each tool with `permissions`.
 
 | Tool | Permission action | What it does | Permissions notes |
 | --- | --- | --- | --- |
+| `aivi_connection` | `aivi_connection` | Whether the host answers this process, its version, and which tools were loaded at startup | Read-only; probes `/health` and `/v1/status`. The only tool when the host was down at load. |
 | `knowledge_search` | `knowledge_search` | Keyword search over configured knowledge; returns source paths and excerpts | Runs over the host API, not a file read. Opening a full document still uses `read` (and `external_directory` when the source is outside the Location). |
 | `knowledge_projects` | `knowledge_projects` | List the projects and the source kinds each is searchable by | Read-only. |
 | `aivi_sources` | `aivi_sources` | List configured knowledge sources and their paths | Read-only. |
@@ -56,8 +75,7 @@ add `<home>/.opencode/agents/<name>.md`; to offer it in every project, use
 prompt** — put instructions there, not in a `system` frontmatter field. Full
 field list: [OpenCode agents](https://opencode.ai/v2/docs/agents).
 
-A new agent in this Location already has every aivi tool (the plugin registers
-them here and the default policy allows them); list the tools you want it to
+A new agent in this Location already has every aivi tool (the host serves them and the plugin registers them at load, and the default policy allows them); list the tools you want it to
 reach in the body so it uses them. **Per-project override:** a project's own
 `.opencode/agents/<name>.md` in its checkout replaces the home's agent of the
 same id for that project ([linear](linear.md)). Do not carry v1 frontmatter over
@@ -86,6 +104,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 | Plugin loading | An entry in `plugins` names a directory or a package. An entry that resolves to a plain file — a path or a `file://` URL — is silently ignored: no plugin, no error (verified 2026-09-22). A directory tries `<dir>/server.*` then `<dir>/index.*` and never reads that directory's `package.json`. A package tries the `<name>/server` subpath export, then the package root export (`exports["."]` or `main`) — the first candidate that resolves wins, and a miss on `./server` is caught, not an error. The entry must default-export a definition with an `id` and a `setup` or `effect` function; the `tui` and `rpc` features come from the same probe of `<name>/tui` and `<name>/rpc`. aivi ships no file at the package root: the npm target lands on `exports["."]`. Loading is location-scoped: the plugin is instantiated per project directory that configures it. |
 | Plugin failure mode | An exception in `setup()` marks the plugin `failed` and registers no tools. The plugin therefore never throws for a missing token; the tool call reports the 401. |
 | Tool invocation | Plugin tools are exposed to the model through codemode, for example `return await tools.aivi.status();`. Effective ids are `aivi_status`, `aivi_sources`, `aivi_jobs`, `aivi_browser`, `knowledge_search`, `knowledge_projects` (`GET /v1/projects`: id, `removed`, searchable source kinds), `aivi_context` (`GET /v1/context?session=`: the calling session's context window, totals and knowledge scope as markdown, the same text as the channels' `/context`); tools return `output` (value) and `content` (text). `aivi_status` returns `{ version, counts, sources, leases, completion, upcoming, recent }`. See [Plugin tools and permission actions](#plugin-tools-and-permission-actions) for the permission actions to write rules against. |
+| Tool registration (2026-09-24) | Verified against a real `opencode serve` (standalone, generated basic-auth password): a plugin whose `setup()` **awaits a fetched tool list before** `ctx.tool.transform` loads `active`, and the model can call a registered descriptor — `aivi_connection` answered with the seven served ids. Registration order follows the fetched order; nothing re-registers until the location reloads. |
 | Permission matching | Documented in [permissions](https://opencode.ai/v2/docs/permissions): `*` matches any characters **including `/`**, rules combine in order and the **last match wins**, `external_directory`/`read`/`edit` resources are canonical absolute paths (`realpath`). aivi's session rules are appended after the agent's, so an `edit` allow from dreaming wins over the dreamer's `edit: deny`; aivi never sends a broad allow, so OpenCode's default `.env` guard stays in force. |
 | History access | `session.list` (paginated; filter by `directory`/`project`), `message.list`, `session.export`, `session.context`. There is no cross-session search: any "what did we discuss" feature needs a derived index. |
 | Changes to a local plugin | The server caches module resolution; run `opencode service restart` after changing the plugin package layout **or after `npm install` rewrites `node_modules`** (the plugin otherwise fails with "Cannot find package"). The restart also reloads every client of that service, including an open TUI. |
@@ -162,18 +181,20 @@ Interrupting a worker at Linear's request will reuse `session.interrupt` as
 
 ## Jobs tool
 
-The plugin registers `aivi_jobs` (namespace `aivi`, permission action
+The host contributes the descriptor for `aivi_jobs` (namespace `aivi`, permission action
 `aivi_jobs` like the other aivi tools). Its input is flat: `action`
 (`create|list|pause|resume|remove|run`), `id` for the last four, and for
 `create` one of `prompt`/`command`, one of `at`/`cron` (+ `timezone`), optional
 `title`, `agent`, `directory`, `cwd`, `env`, `timeoutMs`, `report`
 (`session` default; `channel`, with `channel` and `module` defaulting to the
-calling conversation's own channel and platform; `none`) and `on`. The tool adds the
-calling `sessionID` and `messageID` from the native tool context; the host
+calling conversation's own channel and platform; `none`) and `on`. The call
+envelope carries the calling `sessionId` and `messageId` from the native tool
+context, and they win over anything in the input; the host
 reads the session's agent, directory and `metadata.aivi.origin` from OpenCode
 and refuses sessions with origin `job` or `dreaming` (a job's own session
-adopted by a Discord thread is a conversation and is allowed). The route is
-`POST /v1/jobs`, same bearer auth as every other route; `messageID` is the
+adopted by a Discord thread is a conversation and is allowed). The tool call
+is a `POST /v1/tools` dispatch to this handler, same bearer auth as every
+other route; the envelope's `messageId` is the
 dedupe key of a one-off, so a retried tool call creates one job, not two. The
 host validates the agent with `agent.list` for that directory before creating
 anything (verified 2026-09-15: `agent.get` does not see agents defined under a
@@ -183,5 +204,8 @@ the configuration switch are in
 
 ## Browser tool
 
-The plugin also registers `aivi_browser` (permission action `aivi_browser`). Ownership comes from the native tool context, not tool arguments.
-Configure the host browser service before using it; see [browser setup](browser.md).
+The `browser` module claims the descriptor for `aivi_browser` (permission
+action `aivi_browser`) and the host serves that claim only while the module is
+composed; a host without it serves no such tool and no agent sees it.
+Ownership comes from the native tool context, not tool arguments. Install and
+configure it with `aivi install browser`; see [browser setup](browser.md).

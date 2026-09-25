@@ -39,6 +39,7 @@ const CATEGORY_COLORS: NonNullable<PrettyFormatterOptions['categoryColorMap']> =
   [['aivi', 'host', 'discord'], '#a371f7'],
   [['aivi', 'host', 'slack'], '#36c5f0'],
   [['aivi', 'host', 'linear'], '#5e6ad2'],
+  [['aivi', 'host', 'browser'], '#ff7800'],
   [['aivi', 'knowledge'], '#C69214'],
   [['aivi', 'host', 'scheduler'], '#c51162'],
   [['aivi', 'host'], '#3B82FF'],

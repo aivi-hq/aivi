@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import type { BrowserRequest, BrowserResult } from './browser.ts';
 import type { KnowledgeSource, Report, Task } from './config.ts';
 import { knowledgeKindSchema } from './config.ts';
 import type { KnowledgeKind } from './kinds.ts';
+import type { ServedTool } from './tools.ts';
 
 /**
  * One execution of a job. `missed` is terminal and never ran: the occurrence
@@ -124,13 +124,16 @@ export interface SearchRequest extends SourceSelection {
   query: string;
   limit?: number;
 }
-/** Validation for search requests arriving over the API or from tools. */
-export const searchSchema = z.strictObject({
-  query: z.string().trim().min(1).max(2000),
-  limit: z.number().int().min(1).max(20).default(8),
+/** The scope an agent or the CLI asks a knowledge question about; shared by search and source listing. */
+export const sourceSelectionSchema = z.strictObject({
   projects: z.array(z.string().min(1)).max(100).optional(),
   includeCore: z.boolean().optional(),
   kinds: z.array(knowledgeKindSchema).min(1).optional(),
+});
+/** Validation for search requests arriving over the API or from tools. */
+export const searchSchema = sourceSelectionSchema.extend({
+  query: z.string().trim().min(1).max(2000),
+  limit: z.number().int().min(1).max(20).default(8),
 });
 export interface SearchHit {
   sourceId: string;
@@ -192,7 +195,6 @@ export const personTokenCreateSchema = z.strictObject({
   label: z.string().trim().min(1).max(80),
 });
 export interface HostClient {
-  browser(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   status(): Promise<Status>;
   sources(selection?: SourceSelection): Promise<KnowledgeSource[]>;
   projects(): Promise<ProjectSummary[]>;
@@ -200,6 +202,15 @@ export interface HostClient {
   context(sessionId: string): Promise<{ text: string }>;
   search(request: SearchRequest): Promise<SearchHit[]>;
   jobs(request: JobRequest): Promise<JobResponse>;
+  /** What the host offers the model: every tool descriptor, id-sorted; the OpenCode plugin registers exactly these. */
+  listTools(): Promise<ServedTool[]>;
+  /** Run one served tool against the calling session; the claimant's own validation answers for the input. */
+  callTool(
+    id: string,
+    call: { sessionId: string; messageId?: string; input: Record<string, unknown>; timeoutMs?: number },
+  ): Promise<unknown>;
+  /** Liveness only: succeeds when the host answers HTTP, whatever it thinks of the caller. */
+  health(): Promise<{ ok: true }>;
   /** The person the bearer names; the one endpoint a request cannot make anonymously. */
   whoami(): Promise<Whoami>;
   /** Operator people management; ungated until the api-only session enforces roles. */

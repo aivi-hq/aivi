@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import type { KnowledgeService } from '@aivi/core';
 import { configSchema, getLogger } from '@aivi/core';
 import type { HostServices, SessionEvents } from '@aivi/host';
-import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry } from '@aivi/host';
+import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, ToolRegistry } from '@aivi/host';
 import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
 import { LinearClient } from '../src/client.ts';
 import { conversationFor, createLinearModule, openLinearStore } from '../src/module.ts';
@@ -208,6 +208,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     channels: new Channels(),
     routes,
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -440,6 +441,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
     channels: new Channels(),
     routes,
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -556,6 +558,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     channels: new Channels(),
     routes,
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),

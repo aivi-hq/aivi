@@ -1,5 +1,4 @@
 import type {
-  BrowserResult,
   HostClient,
   JobResponse,
   KnowledgeSource,
@@ -7,6 +6,7 @@ import type {
   PersonToken,
   ProjectSummary,
   SearchHit,
+  ServedTool,
   SourceSelection,
   Status,
   Whoami,
@@ -50,16 +50,6 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
   const get = <T>(path: string) => request<T>(path, { timeoutMs: 10_000 });
 
   return {
-    browser(sessionId, body) {
-      // An accepted operation can wait behind other browser actions. A timeout is an
-      // uncertain outcome, never an invitation to retry a click automatically.
-      return request<BrowserResult>('/v1/browser', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, request: body }),
-        timeoutMs: 300_000,
-      });
-    },
     search(query) {
       const params = new URLSearchParams({ q: query.query });
       if (query.limit !== undefined) params.set('limit', String(query.limit));
@@ -73,6 +63,25 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       return get<KnowledgeSource[]>(`/v1/sources?${params}`);
     },
     projects: () => get<ProjectSummary[]>('/v1/projects'),
+    async listTools() {
+      return (await get<{ tools: ServedTool[] }>('/v1/tools')).tools;
+    },
+    callTool(id, call) {
+      // One budget per tool comes from its descriptor: a browser action may
+      // wait behind other tabs, a status read must not.
+      return request<unknown>('/v1/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tool: id,
+          sessionId: call.sessionId,
+          ...(call.messageId ? { messageId: call.messageId } : {}),
+          input: call.input,
+        }),
+        timeoutMs: call.timeoutMs ?? 10_000,
+      });
+    },
+    health: () => request<{ ok: true }>('/health', { timeoutMs: 3_000 }),
     context: sessionId =>
       request<{ text: string }>(`/v1/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
     wake: () => request<{ woken: boolean }>('/v1/wake', { method: 'POST', timeoutMs: 3_000 }),

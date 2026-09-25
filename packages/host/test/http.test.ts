@@ -83,50 +83,6 @@ test('the read API scopes sources and refuses job operations without a handler; 
   );
 });
 
-test('the browser API takes bounded JSON and uses the shared browser service', async t => {
-  const store = new Store(':memory:');
-  const loaded = { path: '/config', config: configSchema.parse({ version: 1 }), sources: [], projects: [] };
-  const calls: unknown[] = [];
-  const server = createHostServer({
-    store,
-    loaded,
-    browser: {
-      async execute(session, request) {
-        calls.push({ session, request });
-        return { tabs: [] };
-      },
-      async close() {},
-    },
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    await new Promise<void>(resolve => server.close(() => resolve()));
-    store.close();
-  });
-  const address = server.address();
-  assert.ok(address && typeof address !== 'string');
-  const base = `http://127.0.0.1:${address.port}`;
-  const headers = { 'content-type': 'application/json' };
-  assert.equal((await fetch(`${base}/v1/browser`)).status, 405);
-  assert.equal(
-    (
-      await fetch(`${base}/v1/browser`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ sessionId: 's', request: { action: 'evaluate_script' } }),
-      })
-    ).status,
-    400,
-  );
-  assert.equal(
-    (await fetch(`${base}/v1/browser`, { method: 'POST', headers, body: JSON.stringify({ large: 'x'.repeat(40000) }) }))
-      .status,
-    413,
-  );
-  assert.deepEqual(await createHostClient(base).browser('native-session', { action: 'tabs' }), { tabs: [] });
-  assert.deepEqual(calls, [{ session: 'native-session', request: { action: 'tabs' } }]);
-});
-
 test('commands are open: anonymous and unknown bearers are accepted; a known bearer names its person', async t => {
   const { bearerPerson } = await import('../src/server.ts');
   const store = new Store(':memory:');

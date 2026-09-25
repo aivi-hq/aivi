@@ -39,9 +39,9 @@ is live; `ensure` only starts, `discover` never touches it. aivi never
 manages OpenCode's installation. QMD uses its
 library API inside aivi, with no QMD server or separate launch command. Only the
 configured Discord module loads discord.js, only the configured Slack module
-loads the Slack SDK, and only enabled search loads QMD. A configured browser
-service is created after installation ownership is acquired; its MCP/Chrome
-processes start on first use and stop with the host ([browser](browser.md)).
+loads the Slack SDK, and only enabled search loads QMD. A configured browser is
+composed as a module like the channels; its MCP/Chrome processes start on first
+use and stop when the module stops ([browser](browser.md)).
 
 Logging is LogTape, configured once at startup: every command mirrors its log to
 stderr — pretty on a terminal, one JSON object per line when piped, which
@@ -49,8 +49,8 @@ stderr — pretty on a terminal, one JSON object per line when piped, which
 JSON lines to `<home>/state/logs/aivi.log` (rotated, so the file is capped)
 whatever the console shows. In the pretty console the category column is the
 activation tree, colored per module: `aivi·host` blue, `aivi·host·discord`
-purple, `aivi·host·slack` cyan, `aivi·host·linear` indigo, `aivi·host·scheduler`
-deep pink, `aivi·knowledge` amber; the CLI root and dreaming keep the muted
+purple, `aivi·host·slack` cyan, `aivi·host·linear` indigo, `aivi·host·browser`
+orange, `aivi·host·scheduler` deep pink, `aivi·knowledge` amber; the CLI root and dreaming keep the muted
 gray. Message text uses the terminal's own foreground; the log file stays
 colorless JSON.
 `--log-level debug` shows job materialization.
@@ -168,7 +168,8 @@ People, tokens and the client config are owned by [people](people.md).
 
 ## Plugins: `aivi install`
 
-`aivi install discord` (or `slack`, or any npm package name) adds a plugin to
+`aivi install browser` (or `discord`, `slack`, or any npm package name) adds a
+plugin to
 the server home and lets the plugin configure itself. Three steps, in order:
 
 1. The package is npm-installed into `<home>/app` with `--save-exact`, so
@@ -192,6 +193,10 @@ the server home and lets the plugin configure itself. Three steps, in order:
 The contract is one subpath: a package that exports `./setup` with a
 default function is installable this way, whatever its publisher. A package
 without one is still installed, and the command says it has no setup.
+`browser` is the no-platform case of the same flow: its setup asks no secret,
+verifies no platform call, and writes only the `browser` block in
+`config.json` that composes the module; the install then ends in the same
+verified truth as any other — "Browser is running."
 
 A package can also add operator commands to this CLI: a `./cli` subpath that
 default-exports a `PluginCliCommand` ([architecture](architecture.md#one-application-contained-modules))

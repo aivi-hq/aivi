@@ -5,7 +5,16 @@ import { test } from 'node:test';
 import type { KnowledgeService, Person, Run } from '@aivi/core';
 import { configSchema, getLogger, slackConfigSchema } from '@aivi/core';
 import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
-import { CHAT_COMMANDS, Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, usageHint } from '@aivi/host';
+import {
+  CHAT_COMMANDS,
+  Channels,
+  connectOpenCode,
+  PublicRoutes,
+  Store,
+  TaskRegistry,
+  ToolRegistry,
+  usageHint,
+} from '@aivi/host';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import type { Routed, UnlinkedSender } from '../src/module.ts';
 import {
@@ -301,6 +310,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     channels,
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -500,6 +510,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     channels: new Channels(),
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {
       for (const l of woken) l();
     },
@@ -571,6 +582,7 @@ test('progress: the placeholder goes into the thread, stays quiet inside its win
     channels: new Channels(),
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -619,6 +631,7 @@ test('progress when the turn cannot run: the notice edits the placeholder instea
     channels: new Channels(),
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
@@ -702,6 +715,7 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
     channels: new Channels(),
     routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
+    tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),

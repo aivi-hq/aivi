@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
-import type { BrowserService, KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
+import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { getLogger, systemJobs } from '@aivi/core';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
@@ -20,6 +20,8 @@ import { createHostServer, PublicRoutes } from './server.ts';
 import type { Store } from './store.ts';
 import type { TaskClaims } from './tasks.ts';
 import { TaskRegistry } from './tasks.ts';
+import type { ToolClaims } from './tools.ts';
+import { ToolRegistry } from './tools.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
 const FAILURE_NUDGE_AT = 3;
@@ -60,7 +62,6 @@ export interface HostServices {
   loaded: LoadedConfig;
   store: Store;
   knowledge: KnowledgeService;
-  browser?: BrowserService;
   /** Discovers the OpenCode service on every call. Call once per unit of work and hold the client for its duration. */
   opencode: () => Promise<OpenCodeClient>;
   /** The host's one OpenCode event stream, fanned out by session id; channel progress watches turns through it. */
@@ -73,6 +74,8 @@ export interface HostServices {
   routes: PublicRoutes;
   /** What `kind: 'invocation'` tasks dispatch to: the host claims its own operations here, modules claim theirs. */
   tasks: TaskClaims;
+  /** The tool surface the OpenCode plugin registers at load: the host claims its own tools here, modules claim theirs. */
+  tools: ToolClaims;
   /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
   wake(): void;
   /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
@@ -82,7 +85,6 @@ export interface HostServices {
 }
 export interface HostResources {
   knowledge: KnowledgeService;
-  browser?: BrowserService;
 }
 export type { RunningModule } from './modules.ts';
 export type HostModule = ModuleContract<HostServices>;
@@ -118,7 +120,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   if (signal.aborted) stop();
 
   let knowledge: KnowledgeService | undefined;
-  let browser: BrowserService | undefined;
   let scheduler: Scheduler | undefined;
   let server: ReturnType<typeof createHostServer> | undefined;
   let supervisor: ModuleSupervisor<HostServices> | undefined;
@@ -138,6 +139,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     );
   const wake = new Wake();
   const tasks = new TaskRegistry();
+  const tools = new ToolRegistry();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
@@ -156,12 +158,12 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       store,
       loaded,
       knowledge,
-      browser,
       routes,
       jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
       wake: () => wake.notify(),
       health: () => supervisor?.health() ?? [],
       linkable: () => channels.linkable(),
+      tools,
       context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
       log,
     });
@@ -183,7 +185,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       loaded,
       store,
       knowledge,
-      ...(browser ? { browser } : {}),
       opencode,
       events,
       signal: abort.signal,
@@ -192,13 +193,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       routes,
       // The supervisor replaces this with each module's own scope before start; nothing else reads it.
       tasks: tasks.forModule('host'),
+      tools: tools.forModule('host'),
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
       fail,
     };
     // An optional module never takes the host down: a failed start is retried in the background
     // and shows as degraded in status; only a ConfigurationError is fatal.
-    supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks);
+    supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks, tools);
     await supervisor.start(modules);
     abort.signal.throwIfAborted();
     options.onReady?.(http.address());
@@ -218,7 +220,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     abort.signal.throwIfAborted();
     store.acquireDaemon(owner);
     acquired = true;
-    ({ knowledge, browser } = await options.resources());
+    ({ knowledge } = await options.resources());
     // A result for a session no module owns goes straight into that native session's inbox;
     // OpenCode orders it behind whatever the person is doing. Nobody waits for the answer here.
     const channels = new Channels(async (sessionId, text, context) => {
@@ -292,11 +294,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       await new Promise<void>(yes => http.close(() => yes()));
     }
     // Knowledge closes after modules and in-flight HTTP calls have drained.
-    try {
-      await browser?.close();
-    } catch (error) {
-      errors.push(error);
-    }
     try {
       await knowledge?.close();
     } catch (error) {

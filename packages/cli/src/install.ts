@@ -16,12 +16,14 @@ import { healthUrl } from './update.ts';
 export const PLUGIN_ALIASES: Record<string, string> = {
   discord: '@aivi/channel-discord',
   slack: '@aivi/channel-slack',
+  browser: '@aivi/browser',
 };
 
 /** The module each first-party plugin enables — the id `/v1/status` reports. */
 const MODULE_BY_SPEC: Record<string, string> = {
   '@aivi/channel-discord': 'discord',
   '@aivi/channel-slack': 'slack',
+  '@aivi/browser': 'browser',
 };
 
 export interface InstallOptions {
@@ -89,7 +91,7 @@ export async function install(args: string[], options: InstallOptions, io: Insta
   const flags = args.filter(arg => arg.startsWith('-'));
   if (flags.length) throw new Error(`Unknown install flag: ${flags[0]}`);
   const name = args[0];
-  if (!name) throw new Error('Install what? aivi install discord|slack|NPM-SPEC');
+  if (!name) throw new Error('Install what? aivi install browser|discord|slack|NPM-SPEC');
   const spec = PLUGIN_ALIASES[name] ?? name;
   if (spec === '@aivi/app' || spec === '@aivi/cli')
     throw new Error('The server and this CLI come from `aivi setup` and npm, not from install.');
