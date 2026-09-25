@@ -1,6 +1,6 @@
 {
   "name": "@aivi/channel-discord",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
@@ -26,15 +26,15 @@
     "prepack": "tsc -b ../../tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.6.0",
+    "@aivi/core": "^0.7.0",
     "@opencode/client": "2.0.14",
     "discord.js": "14.27.0",
     "zod": "4.1.13"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.6.0"
+    "@aivi/host": "^0.8.0"
   },
   "devDependencies": {
-    "@aivi/host": "^0.6.0"
+    "@aivi/host": "^0.8.0"
   }
 }
