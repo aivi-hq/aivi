@@ -3,9 +3,9 @@
   "version": "0.5.2",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js",
-    "./setup": "./dist/setup.js",
-    "./cli": "./dist/cli.js"
+    ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./setup": { "development": "./src/setup.ts", "default": "./dist/setup.js" },
+    "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" }
   },
   "files": [
     "dist"

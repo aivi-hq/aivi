@@ -16,6 +16,12 @@ aivi.json
 dev/*
 !dev/README.md
 
-# Build output: compiled packages (every exports map points at dist/) and
-# their build info.
+# Build output: compiled packages (the published artifact; exports maps default
+# to dist/) and their build info.
 dist/
+
+# Test coverage (npm run test:cov): the Istanbul json fallow scores CRAP from,
+# plus c8's temporary V8 dumps.
+coverage/
+
+.fallow/
