@@ -3,8 +3,8 @@ import { errorMessage, getLogger } from '@aivi/core';
 import type { SessionEvents } from './events.ts';
 import type { OpenCodeClient } from './opencode.ts';
 
-type NativeMessages = Awaited<ReturnType<OpenCodeClient['session']['context']>>;
-type PermissionRule = { action: string; resource: string; effect: 'allow' | 'deny' | 'ask' };
+export type NativeMessages = Awaited<ReturnType<OpenCodeClient['session']['context']>>;
+export type PermissionRule = { action: string; resource: string; effect: 'allow' | 'deny' | 'ask' };
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 export type Metadata = Record<string, Json>;
 
@@ -207,8 +207,9 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
   }
 }
 
-type ModelRef = { providerID: string; id: string; variant?: string };
-const sameModel = (a: ModelRef | undefined, b: ModelRef) =>
+/** A model as OpenCode's own session/agent APIs name it (`id`); the host's persisted ModelRef uses `modelID`. */
+export type NativeModel = { providerID: string; id: string; variant?: string };
+const sameModel = (a: NativeModel | undefined, b: NativeModel) =>
   a !== undefined && a.providerID === b.providerID && a.id === b.id && (a.variant ?? undefined) === b.variant;
 
 /**
@@ -221,7 +222,7 @@ export async function agentModel(
   agent: string,
   directory: string,
   request: { signal: AbortSignal },
-): Promise<ModelRef | undefined> {
+): Promise<NativeModel | undefined> {
   const agents = await client.agent.list({ location: { directory } }, request);
   const model = agents.data.find(a => a.id === agent || a.name === agent)?.model;
   return model

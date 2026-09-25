@@ -20,7 +20,7 @@ export interface ProgressOptions {
   /** When the text changes without events (long-turn suffix, idle notice, elapsed refresh). */
   clock?: Partial<ProgressClock>;
 }
-type Editable = ChannelDelivery & Required<Pick<ChannelDelivery, 'edit'>>;
+export type Editable = ChannelDelivery & Required<Pick<ChannelDelivery, 'edit'>>;
 
 /**
  * One placeholder message per turn: posted when work starts, edited in place as

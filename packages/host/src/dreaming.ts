@@ -49,7 +49,7 @@ export function writeCursor(store: Store, key: string, since: number, now = Date
     .run(key, since, now);
 }
 
-interface ReviewedSession {
+export interface ReviewedSession {
   id: string;
   origin: string;
   channel?: string;
