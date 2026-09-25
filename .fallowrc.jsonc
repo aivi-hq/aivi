@@ -22,5 +22,10 @@
     //   "**/generated/**"     // OpenAPI, Protobuf codegen
     // ]
   },
+  "typeAware": { "enabled": true },
+  "health": {
+    // Istanbul coverage from `npm run test:cov`, so CRAP scores are measured, not estimated.
+    "coverage": "./coverage/coverage-final.json"
+  },
   "rules": {}
 }

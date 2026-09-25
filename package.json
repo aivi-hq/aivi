@@ -39,7 +39,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "quality": "npx fallow --type-aware --coverage ./coverage/coverage-final.json",
+    "quality": "npx fallow",
     "agentic:verify": "biome check --write . && npm run check && npm run quality",
     "prepare": "lefthook install"
   },
