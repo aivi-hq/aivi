@@ -1,6 +1,6 @@
 {
   "name": "@aivi/browser",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
@@ -25,14 +25,14 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.0",
+    "@aivi/core": "^0.7.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "chrome-devtools-mcp": "1.9.0"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.0"
+    "@aivi/host": "^0.8.1"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.0"
+    "@aivi/host": "^0.8.1"
   }
 }

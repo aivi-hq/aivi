@@ -1,6 +1,6 @@
 {
   "name": "@aivi/channel-slack",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
@@ -26,14 +26,14 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.0",
+    "@aivi/core": "^0.7.1",
     "@slack/socket-mode": "3.0.1",
     "@slack/web-api": "8.1.1"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.0"
+    "@aivi/host": "^0.8.1"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.0"
+    "@aivi/host": "^0.8.1"
   }
 }
