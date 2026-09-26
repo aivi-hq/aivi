@@ -1,246 +1,33 @@
-# Linear module: plan
+# Linear module: what is left
 
-Status: scope agreed 2026-09-16; steps 0b–6 built the same day (behaviour in
-[linear.md](../linear.md)); step 0 (live checks) and the live gate are open.
-2026-09-18: routing switched from Linear projects to Linear **teams**
-(`projects.<id>.linear.teams`, a list; a Linear project plays no part) and the
-data-change got its own receiver (step 8). 2026-09-19: the single-app rework
-(step 11, plan at `~/.opencode/plan/linear-keeper.md`) replaced the app-to-agent
-routing, the data receiver and the project lock — the behaviour sections
-below that still say "app → agent", "data receiver" or "project lock" describe
-what was built then, and [linear.md](../linear.md) is the owner of what is.
-This is a working checklist, not the behaviour document. Items marked
-**verify** are facts the docs could not settle; each is a live gate before the
-step that depends on it. Requirements this serves: [requirements.md](../requirements.md)
-§2, §4, §5.
+Status: the module is built and [linear.md](../linear.md) owns the behaviour.
+This file keeps only what no document could settle — the six verifications
+and the live gates — plus the open build items and the deliberately-later
+list. The build checklist, the vocabulary and the decisions are history:
+the behaviour docs own what is, and git owns how it got built (this file was
+shrunk 2026-09-26). Where a step below says "lock released" or "serialize",
+the single-app rework (2026-09-19) replaced that: worktrees isolate, the
+pool is the capacity, one worker per issue is the redelivery guard.
+Requirements this serves: [requirements.md](../requirements.md) §2, §4, §5.
 
-## 11. The single-app rework (2026-09-19, built)
-
-The full argument lives in the plan file; what landed, each with its tests:
-
-- [x] Config: `identity.name` (the persona, default `aivi`; the top-level `name`
-      it was moved into `identity` on 2026-09-20, when the git identity a worker
-      commits as joined it), `linear.agent`
-      (the assistant, default the aivi name), `linear.primary` (required only
-      once several apps are configured), `apps.<id>` with no fields (an app is
-      credentials and a route), lanes `agent | null | { agent, worktree:
-      false }` naming agents, the apps-share-an-agent check retired,
-      `workspaceId` unchanged.
-- [x] Secrets: the bare `LINEAR_*` names mean the primary; every other app
-      (a face) keeps the `LINEAR_<APP>_*` convention;
-      `requireDataReceiverSecrets` gone.
-- [x] The soul: the plugin's `agent.transform` appends `<home>/soul.md` to
-      every agent's prompt, re-read at each registry rebuild; the plugin
-      watches the file and calls `agent.reload()` on change. No per-agent
-      config: aivi runs on a dedicated machine.
-- [x] Routing: one route shape `POST /v1/linear/webhooks/app/<id>`; the
-      primary's route carries the Issues data changes too (a data change on a
-      face's route is a misroute); HITL refuses any agent; a delegation whose
-      lane maps an agent runs it — worktree, or the project checkout for
-      `worktree: false`; everything else (mentions, delegations nothing
-      claims, teams that map no project) lands on the assistant, in the
-      checkout or the home, with the delegate un-taken when a delegation was
-      wrong.
-- [x] The per-project lock is out: `claim` and `waitingOn` key on the issue
-      only; per-issue redelivery dedup kept; the listener respects
-      `blockedBy` (a blocker not in a finished state holds it back);
-      `ConversationStore.bind` takes an optional `project`.
-- [x] `client.ts`: `createComment`; `blockedBy` in the issue read.
-- [x] The Linear MCP: on by default, the module hosts a loopback forwarder
-      (default port 4101, `false` disables) that pipes to Linear's hosted MCP,
-      rewriting only the authorization header to the app-actor token from its
-      own `LinearClient` (re-mint on 401); OpenCode connects as a remote MCP.
-      Reshaped from a stdio spawn the same day after review: credentials stay
-      inside aivi, and the lifecycle is `serve`'s.
-- [x] CLI: `projects create` asks which agent works each lane (text, empty =
-      humans); `linear status` lists conversations (workers and assistant
-      sessions) with their agent; `--lane` reads `LANE:AGENT`.
-- [x] `example/`: `soul.md`, the assistant's agent file (`aivi.md`), a
-      `linear` block in `config.example.json`, `.env.example` with the bare
-      names as the one-app path.
-- [x] Docs: `linear.md`, `configuration.md` (`name`, the soul, the Linear
-      section), `CONTEXT.md`, `AGENTS.md`, this file, backlogs
-      (projects-and-capacity obsoleted; worktree lifecycle narrowed to the
-      sweep).
-- [ ] Live gate (in addition to step 7's): one app receiving both webhook
-      families on one route; a mention answered by the assistant; a
-      delegation into an unmapped lane refused and un-delegated; two workers
-      in one project running concurrently in separate worktrees; a
-      `worktree: false` lane running in the checkout; `blockedBy` visibly
-      holding a delegation; the Linear MCP tools usable from a worker session
-      attributing writes to the app.
-
-## Vocabulary (Linear's words, used as Linear uses them)
-
-| Word | Meaning |
-| --- | --- |
-| app | One Linear OAuth application, acting as an *app user* in the workspace (Linear's UI calls these "agents"). Has its own client id, secret and webhook signing secret. Config: `linear.apps.<id>` |
-| delegate | The issue field `Issue.delegate`: the app user working the issue while the human `assignee` stays responsible. "aivi delegates an issue to an app" |
-| agent session | Linear's `AgentSession`: one unit of agent work on an issue, visible in the issue, with states `pending/active/awaitingInput/error/complete/stale` that Linear derives from activities |
-| activity | What an app emits into an agent session: `thought`, `action`, `elicitation`, `response`, `error`; a person's messages arrive as `prompt` activities, optionally with `signal: "stop"` |
-| lane | aivi's word for a team workflow state, by name (`In Progress`, `Review`). `projects.<id>.linear.lanes` maps lane → app |
-| worker | The OpenCode session aivi runs for one agent session: in its own worktree under `<home>/projects/<id>/worktrees/`, with the app's mapped OpenCode agent, kept for the whole run |
-| listener | The part of the module that reacts to issue changes and delegates eligible issues; on or off by configuration |
-| interactive | A person opening OpenCode in the checkout and talking to the same agent file. Not aivi's concern beyond staying out of the way |
-
-Renames from today's validation-only config: `linear.applications` → `linear.apps`.
-
-## Decisions taken (2026-09-16)
-
-- **An agent session is a conversation.** The module is built on the channel
-  machinery (`ConversationStore`, `ChannelEngine`, progress, turn runner):
-  conversation id = agent session id, turn id = the activity id (dedupes
-  webhook retries), `created` = first message carrying `promptContext`,
-  `prompted` = a follow-up, `stop` signal = `stopTurn`, the verified final
-  answer = one `response` activity, progress = *ephemeral* `thought`/`action`
-  activities (Linear replaces each with the next, like the edited
-  placeholder). Three extensions to the shared machinery: a per-conversation
-  binding (agent + directory + project + issue), an interruption policy for
-  workers (a stop ends the turn `stopped` and releases; only an unverifiable
-  stop is `blocked`; nothing is silently discarded), and the project lock.
-- **Auth is `client_credentials`.** Per app: `LINEAR_<APP>_CLIENT_ID`,
-  `LINEAR_<APP>_CLIENT_SECRET`, `LINEAR_<APP>_WEBHOOK_SECRET` in `.env`
-  (`<APP>` = app id upper-cased, `-` → `_`). The 30-day token lives in memory
-  only, is fetched at start and refetched on 401. Scopes
-  `read,write,app:assignable,app:mentionable`. No redirect flow, no token in
-  state.
-- **Webhooks arrive on the host listener** at
-  `POST /v1/linear/webhooks/<app>`, verified by HMAC (`Linear-Signature` over
-  the raw body) and `webhookTimestamp` within 60 s, acknowledged within 5 s,
-  processed after. Bearer auth does not apply to this route. How the URL is
-  reached (tailscale funnel, cloudflared, a reverse proxy, aivi in the cloud)
-  is deployment, documented, not code; the operator gives Linear
-  `<public base>/v1/linear/webhooks/<app>`.
-- **The 10-second acknowledgement is the module's, not the agent's.** On
-  `created`, one `thought` is emitted before anything else ("Starting …" or
-  "Queued behind another worker in <project>"), so a busy project never shows
-  as unresponsive.
-- **One worker per project, one worker per issue.** The lock is a check in
-  the claim transaction over the module's own `sessions` rows (`project`,
-  `issue` columns): a turn is claimable only when no other conversation of
-  that project has a `running`/`replying`/`blocked` turn. The limit is one
-  today; worktrees make it a number later. A second `created` for an issue
-  that already has a pending worker is queued behind it and told so in its
-  acknowledging thought (changed 2026-09-16 from "refused": queuing is what the
-  lock does anyway).
-  Scope: Linear workers only; jobs and channels do not take the lock yet
-  ([projects-and-capacity](../backlog/projects-and-capacity.md)).
-- **Each worker runs in its own git worktree**, never in the project's
-  `source/` checkout: `git fetch origin`, then `git worktree add
-  <home>/projects/<id>/worktrees/<agent-session> -B <issue.branchName>
-  origin/<default>` (the branch name is Linear's, from the team's
-  branch-format setting; an existing branch is reused). The worker's
-  directory is that worktree, so `source/` stays clean and indexable, and a
-  stopped worker leaves nothing for the next one to trip over. Worktrees
-  stay for inspection and are pruned by retention (`runs.prune`-style age,
-  never while their turn is pending). Pushing and PRs are the agent file's
-  business. Ignored files (`node_modules`, `.env`) are per worktree, as in
-  plain git; a per-project `worktree: { copy, setup }` is a later escape hatch.
-- **Stop means stop, like a cancelled CI job.** Linear's `stop`, the HITL
-  label added mid-run, the lane leaving its mapping, the delegate removed:
-  `stopTurn` + `session.interrupt`, one `error` activity saying what
-  happened, where the OpenCode session and the worktree are; the turn ends
-  `stopped` and the project lock is released. `blocked` (lock held until
-  `aivi linear resolve`) is only for the unverifiable case: OpenCode
-  unreachable during the interrupt, or a restart finding a worker whose
-  session still shows work in progress. Graceful agent-first cleanup is the
-  later upgrade for the cases where undo matters (a test database migration);
-  the worktree is what makes "clear" safe without it
-  ([requirements](../requirements.md#changes-while-work-is-active) and AGENTS.md
-  are updated to this).
-- **Lane automation is the listener, off by default until it has been seen
-  live.** Issue `update` webhooks whose `stateId` changed: resolve project by
-  the issue's team from the API re-read (and `organizationId` when
-  `workspaceId` is configured),
-  lane by state *name*, app by lane, agent by app; eligible when the issue has
-  no delegate, no HITL label, and no pending worker; then
-  `agentSessionCreateOnIssue` and `issueUpdate(delegateId)`. Issue events are
-  subscribed on exactly one app's webhook (documented) so every change is
-  seen once; a second app's copy is a harmless no-op because eligibility is
-  re-read.
-- **The HITL label** (default `needs-human`, configurable) blocks the
-  listener and is refused even on a hand delegation (an `error` activity
-  explains). It is a label, not a state, so it composes with any lane.
-- **A hand delegation runs the delegated app whatever the lane.** The person
-  chose the app; the lane is passed as context. Lane → app matters for the
-  listener only (2026-09-16).
-- **aivi does not move issues between lanes.** Completion is the `response`;
-  the agent file may move the issue through its own tools, or a person does.
-  Linear's "move to the first `started` state on delegation" recommendation is
-  a later option.
-- **Worker agent files** are ordinary OpenCode agents: defaults in
-  `<home>/.opencode/agents/<name>.md`, per-project override in the
-  repository's own `.opencode/agents/<name>.md` (present in every worktree;
-  same name wins, native merging). Whether OpenCode discovers the home's
-  `.opencode` from inside `<home>/projects/<id>/worktrees/<x>` is **verify**
-  #3; if it does not, the module passes the resolved file explicitly and
-  [projects.md](../projects.md) is corrected.
-- **The home groups a project in one directory** (decided 2026-09-16, its
-  own step before the module): `<home>/projects/<id>/source` (the clean
-  checkout), `<home>/projects/<id>/memory` (was `<home>/memory/<id>`),
-  `<home>/projects/<id>/worktrees/` (workers). `<home>/memory` is org memory
-  only (the knowledge rule that a directory source ignores nested sources stays; it is general). A
-  project is discovered as a directory of `<home>/projects` with a `source/`
-  or a `memory/`; one with only `memory/` is *removed*. `source/` is kept
-  current by a system job `projects.sync` (`git fetch` + fast-forward of the
-  default branch, then reindex), because merges on GitHub otherwise never
-  reach what is indexed. No automatic migration: a bare checkout at
-  `<home>/projects/<id>/.git` is a `ConfigurationError` at start that says
-  which two `mv`s to run.
-- **No `@linear/sdk`.** Six GraphQL operations over `fetch` keep the
-  dependency footprint where the principles want it.
-- **Configuration lives in `config.json`** (`linear` on, `projects.<id>.linear`
-  lanes), not a separate module file: it is routing config validated together
-  with projects, and small. Presence of `linear` enables the module.
-
-## Configuration sketch
-
-```json
-{
-  "linear": {
-    "apps": { "dev": { "agent": "developer" }, "review": { "agent": "reviewer" } },
-    "listener": false,
-    "humanLabel": "needs-human",
-    "resource": "local-model",
-    "progress": "tools",
-    "turnTimeoutMs": 7200000
-  },
-  "projects": {
-    "website": {
-      "linear": {
-        "teams": ["…"],
-        "workspaceId": "…",
-        "lanes": { "In Progress": "dev", "Review": "review" }
-      }
-    }
-  }
-}
-```
-
-`workspaceId` optional (single-workspace default). One OpenCode agent maps to
-at most one app (an existing check in `configSchema.superRefine`; it retired
-with `apps.<id>.agent` in the 2026-09-19 rework below). Secrets:
-[decisions](#decisions-taken-2026-09-16).
-
-## Checklist
-
-### 0. Verify before building on it
+## Verify (facts no document could settle; each gates the work that needs it)
 
 - [ ] **verify 1** (setup detail, not a blocker) Whether an app authorised
       only through `client_credentials` also receives `AgentSessionEvent`
       webhooks, or whether Linear needs one browser-based (`actor=app`)
-      authorisation per app to create the workspace webhook. Either way tokens
-      come from client credentials; the answer decides one paragraph of setup
-      in `docs/linear.md`.
+      authorisation per app to create the workspace webhook. Either way the
+      tokens come from client credentials; the answer decides one paragraph
+      of setup in [linear.md](../linear.md).
 - [ ] **verify 2** `agentSessionCreateOnIssue` + `issueUpdate(delegateId)` by
       the app itself: does a `created` webhook follow, or must the module
-      start the worker from the mutation result? (Design assumes the latter is
-      safe either way: the mutation result starts it, a later `created` for
-      the same session id is a dedupe no-op.)
-- [ ] **verify 3** `agent.list` with `directory: <home>/projects/<id>/worktrees/<x>`
-      returns agents from `<home>/.opencode/agents/` and prefers the
-      worktree's `.opencode/agents/` file of the same name. Record the result
-      in [projects.md](../projects.md).
+      start the worker from the mutation result? (The build assumes the
+      latter is safe either way: the mutation result starts it, a later
+      `created` for the same session id is a dedupe no-op.)
+- [ ] **verify 3** `agent.list` with
+      `directory: <home>/projects/<id>/worktrees/<x>` returns agents from
+      `<home>/.opencode/agents/` and prefers the worktree's
+      `.opencode/agents/` file of the same name. Record the result in
+      [projects.md](../projects.md).
 - [ ] **verify 4** The `stop` signal's payload shape (`agentActivity.signal`),
       `Issue.branchName` in the session payload or by query, and the
       delegate-removed notification (`issueUnassignedFromYou`) as they arrive
@@ -252,193 +39,51 @@ with `apps.<id>.agent` in the 2026-09-19 rework below). Secrets:
       does not depend on it (the module re-reads the issue from the API), but
       confirm it once.
 
-### 0b. Home layout: one directory per project
+## Live gates
 
-- [x] Discovery: `<home>/projects/<id>/{source,memory,worktrees}`; a
-      project with `memory/` but no `source/` is *removed*; a bare
-      `projects/<id>/.git` is a `ConfigurationError` with the two `mv`s.
-- [x] Knowledge: project sources relative to `source/`; the project `memory`
-      source is `projects/<id>/memory`; `<home>/memory` is org only; drop the
-      nested-collection exclusion.
-- [x] Dreaming: memory homes and the prompt's list of them follow.
-- [x] CLI: `projects add` clones into `source/`; `remove` deletes `source/`
-      (and `worktrees/`); `purge` deletes the directory; `list` shows what
-      each has.
-- [x] System job `projects.sync` (task kind; seeded like `retention`,
-      `scheduler.projectsSync`, `false` removes it): per project `git fetch`
-      and fast-forward of the checked-out branch in `source/`, never with local
-      changes, then `knowledge.index`.
-- [x] Docs: [projects.md](../projects.md), [configuration.md](../configuration.md),
-      [dreaming.md](../dreaming.md), CONTEXT vocabulary row `project`, `example/`
-      (landed 2026-09-16; step 0b is complete).
+The module has never been run live end to end. The per-step gates merged
+into one list (2026-09-26); record results in [roadmap.md](../roadmap.md).
 
-### 1. Configuration and vocabulary
+- [ ] One app receiving both webhook families on one route; a misrouted
+      delivery seen and logged (`linear.logMisroutes`).
+- [ ] A mention answered by the assistant (`linear.agent`).
+- [ ] An issue delegated by hand → acknowledging `thought` → ephemeral
+      progress activities → `response`; a follow-up prompt continues the
+      worker's own session.
+- [ ] A delegation whose lane maps an agent runs it; a delegation into an
+      unmapped lane refused and un-delegated, the delegate left un-taken.
+- [ ] A stop request → `error` activity naming the worktree and the OpenCode
+      session, `stopped` turn, capacity released, worktree kept.
+- [ ] The HITL label refusing a hand delegation and stopping a pending
+      worker.
+- [ ] Two workers in one project running concurrently in separate worktrees;
+      a `worktree: false` lane running in the project checkout.
+- [ ] `blockedBy` visibly holding a delegation back.
+- [ ] The Linear MCP tools usable from a worker session, writes attributing
+      to the app.
+- [ ] An issue in a mapped team with no Linear project routes; one from a
+      second mapped team works the same checkout.
+- [ ] `projects.sync` fast-forwarding `source/` after a merge.
+- [ ] `projects add <git-url> --linear PEC` and one interactive
+      `projects create` against the real workspace (where verify 5 lands),
+      plus one `--lane`/`--unlane` write.
 
-- [x] `linear.applications` → `linear.apps`; add `listener`, `humanLabel`,
-      `resource`, `progress`, `turnTimeoutMs`; `workspaceId` optional.
-- [x] Secret names resolved from app ids (`linearSecretNames`); missing
-      secrets become a `ConfigurationError` at module start (step 4).
-- [x] `npm run schema`; [configuration.md](../configuration.md) fields and
-      secrets. AGENTS.md wording changes when step 4 lands.
+## Open build items
 
-### 2. Linear client
-
-- [x] `packages/linear/src/client.ts`: token by `client_credentials`
-      (in-memory, refetch on 401, one in-flight refresh), GraphQL over `fetch`.
-- [x] Operations: `viewer { id }` (the app user id, at start), `agentActivityCreate`
-      (all five types, `ephemeral`), `agentSession(id)` (issue, state,
-      activities for reconstruction), `issue(id)` (state, labels, delegate,
-      project), `agentSessionCreateOnIssue`, `issueUpdate` (delegate).
-- [x] Tests against a mock GraphQL server: token refresh, 401 path, error
-      envelopes.
-
-### 3. Webhook route on the host listener
-
-- [x] Host: modules can register a public route (`HostServices.routes`), the
-      only routes outside bearer auth besides `/health`; raw body captured.
-- [x] `POST /v1/linear/webhooks/<app>`: signature (timing-safe) + timestamp
-      window, 200 at once, then dispatch (`registerWebhookRoutes`); unknown
-      app → no route (401 from the host); bad signature → 401 (logged with
-      the delivery id, never the body).
-- [x] Tests: signed fixture accepted, tampered body refused, stale timestamp
-      refused, wrong app's secret refused, acknowledged before dispatch.
-
-### 4. The worker loop (agent session = conversation)
-
-- [x] Shared machinery: `bind(channel, {agent, directory, project, issue})`,
-      the project/issue lock in `claim` plus `waitingOn`, `effects: 'work'`
-      (restart → `blocked`; stops by choice still release through
-      `interrupt`, recorded as `discarded` with the reason) and per-platform
-      `notices`, all behind `ChannelPlatform`; Discord and Slack unchanged.
-      Tested at the store.
-- [x] Worktree: `git fetch origin`, `git worktree add <project>/worktrees/<agent-session> -B <branchName> origin/<default>`
-      at `created` (before the turn is queued; an existing worktree holding
-      the branch is continued); failure → `error` activity, nothing queued.
-      **Left:** worktree pruning by age, never while a turn is pending.
-- [x] `created`: resolve project (`issue.team.id`), lane → app → agent;
-      refuse with an `error` activity when the project is unknown or the HITL
-      label is present (the lane is context, not a gate; an unknown agent
-      surfaces as a not-started turn); otherwise the acknowledging `thought`,
-      then enqueue the first turn with a prompt built from `promptContext`,
-      `guidance`, lane and project names and the worktree path.
-- [x] `prompted`: enqueue as a turn (turn id = activity id); with
-      `signal: "stop"` → the stop path above instead.
-- [x] Delivery: `send` = `response` (`replyLimit` 60 000, Linear's real body
-      limit **verify**); `placeholder`/`edit` = ephemeral `thought` from the
-      progress model (throttle as today; `action` activities later); `delete`
-      = no-op (the response supersedes); notices = `error` activities.
-- [x] Turn runner: `external_directory` allows for the home's knowledge and
-      memory sources as for channels; permission prompts rejected
-      (`elicitation` is later); `metadata.aivi = { origin: "linear", channel:
-      "<app>:<agent session>" }`. **Left:** session title `<identifier> <title>`
-      and richer metadata.
-- [x] CLI: `linear status`, `linear resolve ID --reason … --confirm-stopped`
-      (the unverifiable case only), same shape as Discord/Slack.
-- [x] Module `start`: `ConfigurationError` for missing secrets or a rejected
-      token; everything else degraded with retry. `stop`: interrupt running
-      workers, one `error` activity each ("aivi is going offline; the
-      worktree is at …"), turns end `stopped`, locks released.
-- [x] Dreaming `origins` may include `linear` (origins are free-form; sessions carry `origin: linear`).
-
-### 5. Locks
-
-- [x] Project lock and one-worker-per-issue in the claim transaction; a
-      queued worker's acknowledging `thought` says it is waiting and for what.
-- [x] Tests: two sessions in one project serialize; a stopped worker
-      releases the lock and the next claims; a blocked (unverifiable) worker
-      keeps it until `resolve`.
-
-### 6. HITL label and the listener
-
-- [x] HITL: label by name on `created` (refuse) and on issue `update`
-      (`labelIds` gained the label while a worker is pending → stop path).
-- [x] Listener (`linear.listener: true`): issue `update` with `stateId`
-      changed → eligibility → `agentSessionCreateOnIssue` + `issueUpdate`
-      (delegate) → the worker starts from the mutation; lane left the mapping
-      or the delegate removed while a worker is pending → stop path. Repeated
-      deliveries are idempotent through the delegate and pending-worker checks.
-- [x] Tests: module test drives issue updates through the signed route (title
-      edit ignored, lane entry delegates and runs, same-app lane change keeps
-      running, HITL mid-run stops and interrupts).
-
-### 7. Documentation and live gate
-
-- [x] `docs/linear.md`, CONTEXT.md, roadmap, channels.md, projects.md,
-      AGENTS.md, requirements §4-5 (2026-09-16). **Left:** projects.md gets the
-      verify 3 result.
-- [ ] Live gate: delegate an issue by hand → acknowledging thought → progress
-      activities → response; a follow-up prompt; a stop request → error
-      activity, `stopped` turn, lock released, worktree present; two issues
-      in one project serialize; the listener delegating on a lane change; the
-      HITL label refusing; an issue in a mapped team with **no Linear
-      project** routes, and one from a second mapped team works the same
-      checkout; `projects.sync` fast-forwarding `source/` after a
-      merge. Record in roadmap.
-- [ ] Shrink this file to what is left.
-
-### 8. Data-change receiver (landed 2026-09-18)
-
-- [x] The data-change stream gets its own receiver instead of riding on a
-      worker app (whose rotation would have taken the subscription with it):
-      `POST /v1/linear/webhooks/data`, credentialed under the bare
-      `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET`/`LINEAR_WEBHOOK_SECRET` names,
-      no agent, runs nothing; app routes moved to
-      `POST /v1/linear/webhooks/app/<id>`. A delivery at the wrong endpoint is
-      acknowledged and dropped, logged while `linear.logMisroutes` (default
-      on); no app id is reserved — the receiver's names carry no app segment.
-      The paths in steps 2–3 above describe what was built then.
-- [ ] Live gate: the data app carrying Issues; one misrouted delivery seen in
-      the log.
-
-### 9. Team setup from the CLI (2026-09-18)
-
-- [x] `LinearClient.listTeams` and the pure `resolveTeams` (exact ids first,
-      then case-insensitive keys; an unknown token lists what the app can see).
-      `projects add [--linear KEY_OR_ID[,…] [--app ID]]` resolves **before
-      cloning** and writes `projects.<id>.linear.teams`; `lanes` gained an
-      empty default so teams alone is a valid entry, and the command says out
-      loud when lanes are unset. `projects create` asks URL, id, app and teams
-      interactively — the CLI's one interactive command; a flag given skips
-      its prompt.
-- [ ] Live gate: `projects add <git-url> --linear PEC` against the real
-      workspace, then `projects create` once. Where **verify 5** lands: a
-      private team the app cannot see is absent from `listTeams` and resolves
-      as "not a team this app can see". Record in roadmap.
-
-### 10. Lane convention + interactive setup (2026-09-18)
-
-- [x] `projectDefaults.linear` (`lanes`, `workspaceId`): the company-wide
-      lane convention every Linear project inherits; a project wins one lane
-      at a time (merge, where knowledge replaces) and `null` marks a lane
-      humans work — written in the file, absent from the effective map
-      `loadConfig` hands on, so the listener needs no null check. `teams` is
-      never defaulted. `listTeams` now carries each team's workflow states;
-      completed and canceled ones are never offered as lanes.
-      `writeProjectLinear(path, id, { teams, lanes? })` writes lanes only when
-      given; `--lane "Dev:dev"` (shorthand `"Dev,Review:dev"`, split at the
-      last colon) and `--unlane "Review"` (no reserved words) work on both
-      setup commands and skip the interactive lane questions.
-      `projects create` is now a `@clack/prompts` flow (6-pkg MIT tree, chosen
-      over `@inquirer/prompts` by a live survey of the 2026 landscape): teams
-      multiselect with the id as per-option hint, a note showing the
-      convention, one select per lane it leaves open (apps, or leave it for
-      humans), spinners for the fetch and clone, and it refuses a non-TTY
-      stdin pointing at the flag form. The client's token logs are silent in
-      the setup commands unless `--log-level debug`.
-- [ ] Live gate: one interactive `projects create` against the real
-      workspace (still where **verify 5** lands, now with the lane questions)
-      and one `--lane`/`--unlane` write. Record in roadmap.
+- Worker session title `<identifier> <title>` and richer session metadata.
+- Worktree pruning by age, never while its turn is pending — lands with the
+  sweep ([linear-worktree-lifecycle](../backlog/linear-worktree-lifecycle.md)).
 
 ## Later, deliberately
 
 - Graceful agent-first cleanup with deadlines
   ([requirements §4](../requirements.md#changes-while-work-is-active),
-  [shutdown-hooks](../backlog/shutdown-hooks.md)) for effects a worktree does
-  not contain (a test database migration); needs a way for the agent to
+  [shutdown-hooks](../backlog/shutdown-hooks.md)) for effects a worktree
+  does not contain (a test database migration); needs a way for the agent to
   report "cleanup complete" (a plugin tool) and a per-project definition of
   clean.
-- More than one worker per project (the lock becomes a limit; worktrees
-  already isolate them).
+- More than one worker per project as a configured limit (worktrees already
+  isolate them; the pool is the capacity).
 - Per-project `worktree: { copy: [".env"], setup: ["npm ci"] }` for what a
   fresh worktree cannot regenerate.
 - Permission prompts as `elicitation` (with `select`), answered through
@@ -447,7 +92,5 @@ with `apps.<id>.agent` in the 2026-09-19 rework below). Secrets:
   `externalUrls` once there is something to link to.
 - Moving the issue to the first `started` state on delegation; moving on
   completion by configuration.
-- The project lock shared with jobs and interactive sessions
-  ([projects-and-capacity](../backlog/projects-and-capacity.md)).
 - Reading Linear's Inbox notification category for unassignment if verify 4
   shows it is the only signal.

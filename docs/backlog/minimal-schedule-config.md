@@ -5,7 +5,8 @@ Status: **largely landed 2026-09-18** with the config shrink
 per-job timezone wins over it; hand-written jobs may name their operation as
 a bare string (`"task": "system.check"`); `cron` stayed the one voice; the
 per-job `timezone`/`resource` escape hatches survived; seeded definitions and
-ids were left alone ([task-registry](task-registry.md)). What is left:
+ids were left alone (the task registry, built 2026-09-18; the task kinds are
+owned by [configuration](../configuration.md#tasks)). What is left:
 
 - Operator tuning of *module*-seeded schedules: `HostModule.jobs` still
   returns full `Job` definitions and no `scheduler.<name>` surface exists.

@@ -31,7 +31,7 @@ Mock tests do not establish these; each has its own command.
   with `"tools"` the tool calls are listed beneath; a failing turn leaves the
   notice in the placeholder's place. Not yet seen live: `/model` (autocomplete
   and a pinned answer), `/stop` on a running turn, `/steer`, `/jobs`, `/help`.
-- Linear: not yet run live; the gate is listed in [plans/linear.md](plans/linear.md#7-documentation-and-live-gate).
+- Linear: not yet run live; the gates are listed in [plans/linear.md](plans/linear.md#live-gates).
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
   the thread, a report into `reportChannels`, a reply in that thread,
@@ -46,8 +46,9 @@ Mock tests do not establish these; each has its own command.
 Projects are done (2026-09-15, [projects.md](projects.md)): discovered from
 `<home>/projects`, described from the home, per-project memory, add/remove/purge.
 The Linear module is built (2026-09-19) with worktrees as the isolation and the
-pool as the capacity — there is no per-project lock; maintenance-when-idle
-stays an idea ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
+pool as the capacity — there is no per-project lock; running maintenance
+only when idle stays an idea
+([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 
 1. Next channels once the research lands
    ([backlog/research-channels.md](backlog/research-channels.md)); Signal and
@@ -56,7 +57,7 @@ stays an idea ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.
    produce is now fixed.
 3. Remote access hardening (per-device tokens, SSO via reverse proxy), then
    the Linear live gate (the module is built; what to exercise is in
-   [plans/linear.md](plans/linear.md#11-the-single-app-rework-2026-09-19-built)).
+   [plans/linear.md](plans/linear.md#live-gates)).
 
 ## Decisions to make early, and decisions to defer
 

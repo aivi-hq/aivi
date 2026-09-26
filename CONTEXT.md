@@ -299,6 +299,3 @@ runs the app CLI against it.
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).
 - Client-side aivi — persons, soul, link codes, attribution — is scheduled:
   [plans/client-aivi](docs/plans/client-aivi.md).
-- The docs restructure proposed in `docs/review/docs-consistency.md` §3 landed
-  2026-09-15 (`getting-started.md`, `operations.md`; `application.md` folded
-  into `architecture.md`).

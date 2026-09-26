@@ -1,6 +1,9 @@
 # Integrations and documentation roadmap
 
 Status: collecting. Rule: only features 90% of installations will want.
+Slack was built in 2026-09-15 as this page recommended; the research below
+(2026-09-14, official docs) now serves the remaining candidates: Telegram,
+email, WhatsApp and Signal.
 
 ## Communication channels (adapters)
 
@@ -16,63 +19,36 @@ the channel work (2026-09-15):
 - Dreaming's default `origins` is `["discord"]`; a Slack-only installation must
   list `slack` itself. A default of "every registered channel module" needs the
   task to see the module list.
-- Module health (`/v1/status` `modules[]`) is not yet shown in the channels'
-  own `/status` replies or in any health report.
+- Module health (the `modules[]` in `GET /status`) is not yet shown in the
+  channels' own `/status` replies or in any health report.
 
 ## Documentation
 
 - A proper docs site (GitHub Pages) generated from `docs/`.
 - `docs/install.md` as the newcomer path; keep README short.
 
-## Research wanted
-
-For each channel: official bot API maturity, self-hosting requirements
-(Signal and WhatsApp need bridges or business APIs), thread/reply model, and
-whether DMs + shared channels map cleanly onto `access`. A paste-ready brief
-for an outside model is in [research-channels.md](research-channels.md)
-(2026-09-15); results land in `docs/research/`.
-
 ## Research
 
-Done 2026-09-14 against official docs. Baseline for effort estimates is the
-Discord module (`packages/channel-discord`): gateway websocket via discord.js, the
-shared `accessPolicySchema` (`channels[{id, trigger, sessions}]`; senders are
-admitted by their link, not by config), thread-per-conversation, durable inbox,
-typing keep-alive, `splitReply`, three slash commands, and a `Destinations`
-entry for job reports.
+Baseline for effort estimates is the Discord module (`packages/channel-discord`):
+gateway websocket via discord.js, the shared `accessPolicySchema`
+(`channels[{id, trigger, sessions}]`; senders are admitted by their link, not
+by config), thread-per-conversation, durable inbox, typing keep-alive,
+`splitReply`, the shared command table, and a `Destinations` entry for job
+reports.
 
 ### Channels at a glance
 
-| | Slack | Telegram | Email | WhatsApp | Signal |
-| --- | --- | --- | --- | --- | --- |
-| Connection | Socket Mode websocket (no public URL) or Events API webhook | `getUpdates` long-poll or webhook | IMAP IDLE (push) + SMTP | Webhook only; public HTTPS endpoint required | Unofficial `signal-cli` daemon (JSON-RPC) or its REST container |
-| Account needed | Slack app in the workspace, bot token + app-level token | Bot via @BotFather, free | Any mailbox (IMAP/SMTP; Gmail/M365 need OAuth2 or app password) | Meta developer account, Meta app, WhatsApp Business Account, dedicated business number, system-user token | A phone number (register, or link as secondary device); Java 25 runtime |
-| DM / group / thread | `im` DMs; channels; native threads (`thread_ts`) | Private chats; groups/supergroups; forum topics (`message_thread_id`); no threads in plain groups | Per-address; no groups; threads via `In-Reply-To`/`References` | 1:1 only in practice; groups via API are new and limited; no threads | 1:1 and groups; no threads, only quoted replies |
-| Fits `access`? | Yes, 1:1 with Discord (`sessions: "threads"` works) | Yes; forum topics ≈ threads, plain groups need `sessions: "channel"` | `dm.users` = allowed sender addresses; `channels` has no natural equivalent | `dm.users` = phone numbers; `channels` essentially unused | `dm.users` = numbers/ACIs; groups only as `sessions: "channel"` |
-| Bot identity / mention | Bot user; `app_mention` event, `<@U…>` in text | Bot user; privacy mode means groups deliver only commands, replies and @mentions unless disabled | The mailbox address is the identity; being addressed is the trigger | The business number; no mention concept | Just another phone number; mentions exist in groups |
-| Length / formatting | Recommended < 4,000 chars per message (hard cap ~40,000); Slack `mrkdwn`, not Markdown | 4,096 chars; `MarkdownV2`/HTML parse modes; Bot API 10.x adds rich messages and `sendMessageDraft` streaming | No practical limit; text + HTML alternative | 4,096 chars; WhatsApp-style `*bold*` `_italic_` only | No small hard limit; "styled" text mode for bold/italic/mono |
-| Typing indicator | No classic typing for bots; AI-app "status" via `assistant.threads.setStatus` in threads | `sendChatAction` (≈5 s, repeat like Discord) | None | Typing indicator when marking a message read (≈25 s) | `sendTyping` in signal-cli / REST |
-| Node SDK | Official `@slack/bolt` (Socket Mode built in), `@slack/web-api` | None official; grammY / Telegraf are the maintained community SDKs | `imapflow` + `nodemailer` (same maintainer, MIT, Node 20+, types bundled) | Plain Graph API `fetch`; Meta's Node SDK is not maintained | None official; community `signal-rest-ts` |
-| Effort vs Discord | **M** | **M** | **M–L** | **L** | **L** |
-
-### Slack
-
-Socket Mode replaces the public Request URL with a websocket obtained from
-`apps.connections.open` using an app-level `xapp-` token; the URL rotates and
-Slack asks for a refresh every few hours, each envelope must be acknowledged,
-and up to ten connections may be open (useful for zero-downtime restarts).
-Socket Mode apps cannot be listed in the Marketplace, which is irrelevant for a
-per-workspace install. Bolt handles all of this. Events needed: `message.im`,
-`message.channels`/`message.groups` (for `trigger: "any"` and thread
-follow-ups) and `app_mention`. Slash commands must each be declared in the app
-manifest, and Slack reserves `/status`, so the command set would be
-`/aivi-status` or a single `/aivi …` command. Replies in a thread carry
-`thread_ts`; starting a thread from a top-level message is just replying with
-its `ts`, so the Discord thread model maps directly. The only structural gap is
-the typing indicator; the AI-apps status API needs the Agents & AI Apps feature
-enabled on the app.
-Sources: https://docs.slack.dev/apis/events-api/using-socket-mode,
-https://docs.slack.dev/ (Bolt for JavaScript, Node Slack SDK).
+| | Telegram | Email | WhatsApp | Signal |
+| --- | --- | --- | --- | --- |
+| Connection | `getUpdates` long-poll or webhook | IMAP IDLE (push) + SMTP | Webhook only; public HTTPS endpoint required | Unofficial `signal-cli` daemon (JSON-RPC) or its REST container |
+| Account needed | Bot via @BotFather, free | Any mailbox (IMAP/SMTP; Gmail/M365 need OAuth2 or app password) | Meta developer account, Meta app, WhatsApp Business Account, dedicated business number, system-user token | A phone number (register, or link as secondary device); Java 25 runtime |
+| DM / group / thread | Private chats; groups/supergroups; forum topics (`message_thread_id`); no threads in plain groups | Per-address; no groups; threads via `In-Reply-To`/`References` | 1:1 only in practice; groups via API are new and limited; no threads | 1:1 and groups; no threads, only quoted replies |
+| Fits `access`? | Yes; forum topics ≈ threads, plain groups need `sessions: "channel"` | `dm.users` = allowed sender addresses; `channels` has no natural equivalent | `dm.users` = phone numbers; `channels` essentially unused | `dm.users` = numbers/ACIs; groups only as `sessions: "channel"` |
+| Bot identity / mention | Bot user; privacy mode means groups deliver only commands, replies and @mentions unless disabled | The mailbox address is the identity; being addressed is the trigger | The business number; no mention concept | Just another phone number; mentions exist in groups |
+| Length / formatting | 4,096 chars; `MarkdownV2`/HTML parse modes; Bot API 10.x adds rich messages and `sendMessageDraft` streaming | No practical limit; text + HTML alternative | 4,096 chars; WhatsApp-style `*bold*` `_italic_` only | No small hard limit; "styled" text mode for bold/italic/mono |
+| Typing indicator | `sendChatAction` (≈5 s, repeat like Discord) | None | Typing indicator when marking a message read (≈25 s) | `sendTyping` in signal-cli / REST |
+| Node SDK | None official; grammY / Telegraf are the maintained community SDKs | `imapflow` + `nodemailer` (same maintainer, MIT, Node 20+, types bundled) | Plain Graph API `fetch`; Meta's Node SDK is not maintained | None official; community `signal-rest-ts` |
+| Effort vs Discord | **M** | **M–L** | **L** | **L** |
 
 ### Telegram
 
@@ -143,15 +119,15 @@ https://github.com/bbernhard/signal-cli-rest-api.
 
 ### Ranking by share of installations that would want it
 
-1. **Slack**: aivi is a team tool; Slack is the workplace default and maps 1:1
-   onto the existing model. Effort M.
-2. **Telegram**: cheapest bot API, mobile-first, no inbound port; good for
+(Slack ranked first and was built in 2026-09-15.)
+
+1. **Telegram**: cheapest bot API, mobile-first, no inbound port; good for
    solo and small-team installs. Effort M (formatting is the main work).
-3. **Email**: universal, but a different interaction model and trust
+2. **Email**: universal, but a different interaction model and trust
    boundary; valuable mainly for "mail things to aivi". Effort M–L.
-4. **WhatsApp**: huge consumer reach, but business onboarding, webhook
+3. **WhatsApp**: huge consumer reach, but business onboarding, webhook
    exposure, the 24-hour window and no groups make it a poor fit. Effort L.
-5. **Signal**: privacy niche, unofficial client with a maintenance treadmill.
+4. **Signal**: privacy niche, unofficial client with a maintenance treadmill.
    Effort L.
 
 ### Docs site options
@@ -170,15 +146,16 @@ https://starlight.astro.build/getting-started/.
 
 ## Recommendation
 
-**Channels.** Build Slack next, Telegram after; do not build WhatsApp or
-Signal (neither clears the 90 % bar and both add operational burden that is
-not aivi's). Treat email as a later, separate "mailbox" adapter whose main job
-is ingesting mail into knowledge, not chatting; it needs identity linking and
-a sender-authentication rule first. The channel-agnostic parts now live in the
-host ([channels](../channels.md)), so an adapter is only: platform events →
+**Channels.** Slack went first, as recommended, and mapped 1:1 as predicted.
+Build Telegram next; do not build WhatsApp or Signal (neither clears the 90 %
+bar and both add operational burden that is not aivi's). Treat email as a
+later, separate "mailbox" adapter whose main job is ingesting mail into
+knowledge, not chatting; it needs identity linking and a sender-authentication
+rule first. The channel-agnostic parts live in the host
+([channels](../channels.md)), so an adapter is only: platform events →
 `AccessRoute` + enqueue, and send(text). A plugin framework is still not
 wanted. Extend `accessPolicySchema` only where a platform forces it (Telegram
-forum topics are already covered by `sessions`; Slack needs nothing).
+forum topics are already covered by `sessions`).
 
 **Docs site.** Use VitePress 1.x, pinned as a devDependency, with
 `docs/.vitepress/config.ts` inside `docs/` so the Markdown stays the single
