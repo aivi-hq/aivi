@@ -85,9 +85,11 @@ until the api-only session):
 
 - `aivi people create NAME [--email E]` — on a terminal it offers to mint
   the person's token right away, since nine of ten people are created for
-  exactly that.
+  exactly that. The mint ends with the paste-able connect line: the host's
+  `host.public` URL and the token, shown once.
 - `aivi people list`
-- `aivi people token PERSON [--label L]` — mints another bearer; shown once.
+- `aivi people token PERSON [--label L]` — mints another bearer; shown once,
+  with the same connect line.
 
 ## Link codes (Discord, Slack)
 

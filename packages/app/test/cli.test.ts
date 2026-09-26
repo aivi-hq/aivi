@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -71,6 +72,47 @@ test('server create for another machine prints the token and writes no client co
   assert.equal(out.clientConfig, undefined);
   assert.equal(existsSync(join(xdg, 'aivi.json')), false, 'nothing signed in here');
   assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')), { version: 1 });
+});
+
+test('server create --public stores the reach address, probes it softly, and prints it', async t => {
+  const { home, env, cleanup } = await scratch();
+  t.after(cleanup);
+  const responder = createServer((_req, res) => {
+    res.writeHead(200);
+    res.end('{"ok":true}');
+  });
+  await new Promise<void>(done => responder.listen(0, '127.0.0.1', done));
+  t.after(() => new Promise<void>(done => responder.close(() => done())));
+  const base = `http://127.0.0.1:${(responder.address() as { port: number }).port}`;
+  const done = await run(['server', 'create', '--use', 'another', '--name', 'Nemo', '--public', base], env);
+  assert.equal(done.status, 0, done.stderr);
+  const out = JSON.parse(done.stdout);
+  assert.equal(out.url, base, 'the printed url is the declared reach address, not the bind guess');
+  assert.equal(out.urlNote, undefined, 'a declared address needs no caveat');
+  assert.match(out.probeNote, /answers/, 'the soft probe reported the round trip');
+  assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')).host, { public: base });
+  const bad = await run(['server', 'create', '--use', 'another', '--public', 'https://a.test/'], {
+    ...env,
+    AIVI_HOME: home,
+  });
+  assert.notEqual(bad.status, 0, 'a trailing slash is refused before anything is written');
+  assert.deepEqual(
+    JSON.parse(await readFile(join(home, 'config.json'), 'utf8')).host,
+    { public: base },
+    'config stands',
+  );
+});
+
+test('server create --lan-bind listens on the network address and says so', async t => {
+  const { home, env, cleanup } = await scratch();
+  t.after(cleanup);
+  const done = await run(['server', 'create', '--use', 'another', '--name', 'Nemo', '--lan-bind', '192.0.2.7'], env);
+  assert.equal(done.status, 0, done.stderr);
+  const out = JSON.parse(done.stdout);
+  assert.equal(out.url, 'http://192.0.2.7:4100', 'the printed url is the LAN address, not loopback');
+  assert.match(out.urlNote, /network only/, 'the caveat rides with the guess');
+  assert.equal(out.probeNote, undefined, 'a LAN bind has nothing to probe');
+  assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')).host, { bind: '192.0.2.7' });
 });
 
 test('server create without a flag needs an interactive terminal or --use; --use is validated', async t => {

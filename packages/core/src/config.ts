@@ -337,11 +337,37 @@ export const linearSecretNames = (app: string) => {
  * address or `0.0.0.0` to let remote clients reach the API. Commands are open:
  * a bearer token identifies the caller for association, it never locks
  * anything.
+ *
+ * `public` is where the host is *reached from outside* — the address behind a
+ * tunnel, funnel or reverse proxy. It is never derived and never called:
+ * every URL aivi prints for someone else to paste is composed from it. aivi
+ * itself keeps dialling `bind`/`port`.
  */
 export const hostSchema = z.strictObject({
   bind: z.string().min(1).default('127.0.0.1'),
   port: z.number().int().min(0).max(65535).default(4100),
+  public: z
+    .url()
+    .refine(url => /^https?:\/\//.test(url), 'host.public must use http or https')
+    .refine(url => !url.endsWith('/'), 'host.public must not end in /')
+    .optional(),
 });
+
+/** The URL aivi *calls* itself on: `bind`/`port`, wildcard binds collapsed to loopback. */
+export function hostUrl(host: Config['host']): string {
+  const h = ['0.0.0.0', '::', '[::]'].includes(host.bind) ? '127.0.0.1' : host.bind;
+  return `http://${h.includes(':') && !h.startsWith('[') ? `[${h}]` : h}:${host.port}`;
+}
+
+/**
+ * The URL aivi *prints* for outsiders: the declared `host.public`, else the
+ * listen URL — `declared` says which, so the printer can caveat a guess.
+ */
+export function printedBaseUrl(config: Config): { url: string; declared: boolean } {
+  return config.host.public
+    ? { url: config.host.public, declared: true }
+    : { url: hostUrl(config.host), declared: false };
+}
 /**
  * How to reach OpenCode v2. Without `url`, the host discovers the local
  * background service (`opencode service status`) and uses its credentials.

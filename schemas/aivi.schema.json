@@ -31,6 +31,10 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 65535
+        },
+        "public": {
+          "type": "string",
+          "format": "uri"
         }
       },
       "additionalProperties": false

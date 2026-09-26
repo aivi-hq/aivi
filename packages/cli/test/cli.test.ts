@@ -75,6 +75,7 @@ function fakeIo(overrides: Partial<SetupIo> = {}): {
       machine: async () => 'this-machine',
       background: async () => false,
       name: async () => 'Ada',
+      reach: async () => ({ kind: 'none' as const }),
       url: async () => 'http://127.0.0.1:4100',
       token: async () => TOKEN,
     },

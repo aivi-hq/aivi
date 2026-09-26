@@ -1,10 +1,23 @@
 /** Persons and their tokens, over HTTP to the running host. */
 
+import type { LoadedConfig } from '@aivi/core';
+import { printedBaseUrl } from '@aivi/core';
 import { createHostClient } from '@aivi/host';
 import * as p from '@clack/prompts';
 import type { Command } from 'commander';
 import { context, hostUrl, print } from '../context.ts';
 import { readClientConfigToken } from '../identity.ts';
+
+/** The paste-able connect line: composed from `host.public` when set, else a
+ *  named caveat on the listen address. Both token mints end with it. */
+function connectNote(loaded: LoadedConfig): string {
+  const printed = printedBaseUrl(loaded.config);
+  const how = '`npm install -g @aivi/cli`, run `aivi setup`, choose "Connect to a host", and paste both.';
+  const url = printed.declared
+    ? `url: ${printed.url}`
+    : `url: ${printed.url} (host.public is unset, so that is the listen address)`;
+  return `Shown once. Take these to them — ${url} and this token. There: ${how}`;
+}
 
 export function registerPeople(program: Command): void {
   const people = program.command('people').description('persons and their tokens').helpGroup('People');
@@ -34,7 +47,7 @@ export function registerPeople(program: Command): void {
             person: created.id,
             label: minted.token.label,
             token: minted.secret,
-            next: 'Shown once: this is the bearer for `aivi setup`.',
+            next: connectNote((await context()).loaded),
           });
         }
       }
@@ -55,7 +68,7 @@ export function registerPeople(program: Command): void {
         person,
         label: minted.token.label,
         token: minted.secret,
-        next: 'Shown once: this is the bearer for `aivi setup`.',
+        next: connectNote((await context()).loaded),
       });
     });
 }

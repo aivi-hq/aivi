@@ -63,6 +63,7 @@ containing facts is the wrong file growing.
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
+| `host.public` | Where aivi is *reached from outside*: the funnel, tunnel or reverse-proxy URL (`https://you.tailscale.ts.net`, a path is allowed, no trailing slash). Never derived, never called — aivi dials `bind`/`port` — but every URL aivi prints for someone else to paste is composed from it. `aivi setup` asks for it; changing it later is editing this file |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (set this in any home tests and smoke checks read, so they never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |

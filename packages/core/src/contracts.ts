@@ -41,6 +41,11 @@ export interface ModuleHealth {
 }
 export interface Status {
   version: string;
+  /**
+   * What to point outsiders at: the declared `host.public` when set, else the
+   * listen URL; `declared` says which, so a caller knows a guess needs a caveat.
+   */
+  url: { base: string; declared: boolean };
   counts: Record<RunState, number>;
   sources: number;
   leases: number;

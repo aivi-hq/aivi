@@ -17,6 +17,12 @@ npm run aivi:cli -- setup --use this-machine \
   --plugin "file:../../packages/linear"
 ```
 
+Run without the flags and setup is a conversation: your name, and one
+question about reach — only this machine, your network (aivi listens on a
+LAN or tailnet address you pick), or a URL you tunnel or proxy to. The URL
+answer is stored as [`host.public`](configuration.md), the address every
+printed URL is composed from.
+
 Packages compile to `dist/` with TypeScript 7 (`npm run build`, incremental);
 `npm run aivi` and `npm run aivi:cli` build first and run the compiled
 artifacts — the same files npm publishes, so local and installed behavior are

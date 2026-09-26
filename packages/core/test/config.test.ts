@@ -8,9 +8,11 @@ import {
   assistantAgent,
   configSchema,
   gitIdentity,
+  hostUrl,
   jobSchema,
   linearSecretNames,
   loadConfig,
+  printedBaseUrl,
   projectsSyncJob,
   retentionJob,
   selectSources,
@@ -517,4 +519,26 @@ test('a top-level name is the old shape and says where the persona went', async 
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, name: 'aivi' }));
   await assert.rejects(loadConfig(join(root, 'config.json')), /identity\.name/);
+});
+
+test('host.public: the reach address, validated and preferred when printed', () => {
+  const host = configSchema.parse({ version: 1 }).host;
+  assert.equal(host.public, undefined, 'unset by default: asked, never guessed');
+  assert.equal(hostUrl(host), 'http://127.0.0.1:4100', 'a wildcard-free loopback bind');
+  assert.equal(hostUrl({ bind: '0.0.0.0', port: 8080 }), 'http://127.0.0.1:8080', 'a wildcard bind collapses');
+  const base = 'https://you.tailscale.ts.net/aivi';
+  assert.equal(configSchema.parse({ version: 1, host: { public: base } }).host.public, base, 'a path is allowed');
+  for (const bad of ['https://a.test/', 'ftp://a.test', 'a.test', 'https://a.test/sub/']) {
+    assert.equal(
+      configSchema.safeParse({ version: 1, host: { public: bad } }).success,
+      false,
+      `${bad} is not a valid public base`,
+    );
+  }
+  const declared = configSchema.parse({ version: 1, host: { public: base } });
+  assert.deepEqual(printedBaseUrl(declared), { url: base, declared: true });
+  assert.deepEqual(printedBaseUrl(configSchema.parse({ version: 1 })), {
+    url: 'http://127.0.0.1:4100',
+    declared: false,
+  });
 });

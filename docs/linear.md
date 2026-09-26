@@ -145,7 +145,7 @@ One app in Linear — the 95% case:
 1. **One app.** In Linear, **Settings → API → Applications → New**. Name it
    `identity.name` (the persona; aivi cannot set the name — use the name from
    config here). Enable **Client credentials**. Under **Webhooks**, set the
-   URL to `<public base>/linear/webhooks/app/<app id>` and enable both the
+   URL to `<host.public>/linear/webhooks/app/<app id>` and enable both the
    **Issues** data-change category and **Agent session events**. Copy the
    client id, client secret and webhook signing secret.
 2. In `<home>/.env`: `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and
@@ -176,10 +176,9 @@ exist in **each** mapped team — labels are per team in Linear.
 The agent files: `<home>/.opencode/agents/<agent>.md`, or the repository's
 own `.opencode/agents/<agent>.md` to override it per project.
 
-**Reachability.** Linear must reach the listener over HTTPS. `aivi serve`
-binds `host.bind:host.port`; put a tunnel or proxy in front (Tailscale
-Funnel, cloudflared, a reverse proxy, or run aivi where it is reachable) and
-give Linear that public base. Bearer auth does not apply to the webhook
+**Reachability.** Linear must reach the listener over HTTPS: store the address behind your funnel or tunnel as
+[`host.public`](configuration.md) — `aivi setup` asks for it and `aivi status` shows it — and print that plus
+`/linear/webhooks/app/<app id>` into Linear's dashboard. Bearer auth does not apply to the webhook
 route; the signature is the authentication.
 
 Rejected credentials or a missing variable are a `ConfigurationError` at

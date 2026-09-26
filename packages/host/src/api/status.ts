@@ -1,5 +1,5 @@
 import type { LoadedConfig, ModuleHealth, Status } from '@aivi/core';
-import { taskLabel } from '@aivi/core';
+import { printedBaseUrl, taskLabel } from '@aivi/core';
 import type { Store } from '../store.ts';
 import { hostVersion } from '../version.ts';
 
@@ -8,8 +8,10 @@ import { hostVersion } from '../version.ts';
  * it. The version is the package-set constant every client negotiates with.
  */
 export function status(store: Store, loaded: LoadedConfig, now = Date.now(), modules: ModuleHealth[] = []): Status {
+  const printed = printedBaseUrl(loaded.config);
   return {
     version: hostVersion,
+    url: { base: printed.url, declared: printed.declared },
     counts: store.counts(),
     sources: loaded.sources.length,
     leases: store.leaseCount(),
