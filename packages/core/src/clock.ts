@@ -31,14 +31,23 @@ const DURATION = /^(\d+)\s*(s|m|h|d)$/i;
 const UNIT_MS = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
 
 /**
+ * A duration on its own terms — `--older-than 30d` — as milliseconds.
+ * Natural language is deliberately not accepted; the model translates before calling.
+ */
+export function parseDuration(at: string): number {
+  const relative = DURATION.exec(at.trim());
+  if (!relative) throw new Error(`Not a duration: "${at}". Use a count with s, m, h or d (30m, 2h, 1d, 30d)`);
+  return Number(relative[1]) * UNIT_MS[relative[2]!.toLowerCase() as keyof typeof UNIT_MS];
+}
+
+/**
  * A one-off "run at": an ISO 8601 instant or a relative duration (`30m`, `2h`, `1d`).
  * Natural language is deliberately not accepted; the model translates before calling.
  */
 export function parseDue(at: string, now: number): number {
   const trimmed = at.trim();
-  const relative = DURATION.exec(trimmed);
-  if (relative) {
-    const due = now + Number(relative[1]) * UNIT_MS[relative[2]!.toLowerCase() as keyof typeof UNIT_MS];
+  if (DURATION.test(trimmed)) {
+    const due = now + parseDuration(trimmed);
     if (due <= now) throw new Error('A relative time must be in the future');
     return due;
   }

@@ -8,6 +8,7 @@ import type { JobHandler } from '../jobs.ts';
 import type { Store } from '../store.ts';
 import type { ToolRegistry } from '../tools.ts';
 import { hostVersion } from '../version.ts';
+import { requestDiary } from './diary.ts';
 import type { AppEnv } from './env.ts';
 import { versionGate } from './gate.ts';
 import { claimHostTools } from './host-tools.ts';
@@ -51,7 +52,8 @@ export interface HostApiOptions {
 
 /**
  * The host API as a Hono app, listening on no port. The chain order is the
- * contract: standing headers wrap everything; `/health` and `/version` answer
+ * contract: the request diary journals everything; standing headers wrap
+ * everything; `/health` and `/version` answer
  * first and are exempt from the gate by that order alone; module webhooks
  * dispatch on raw bytes before a client version is ever asked; then the
  * version gate, the bearer's person, and the operator gate on `/people`.
@@ -76,6 +78,9 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   if (tools) claimHostTools(tools, { store, loaded, knowledge, jobs, health, context, log });
 
+  // The diary records every arrival before anything else touches it, so a
+  // request the chain refuses, loses or never routes is still visible.
+  app.use('*', requestDiary(store, log));
   app.use('*', async (c, next) => {
     await next();
     c.res.headers.set('content-type', 'application/json');

@@ -1,7 +1,8 @@
 # Operations
 
 For whoever runs `aivi serve`: what happens at startup and shutdown, how work
-is dispatched, how runs end, and what to do when work is blocked. Configuration
+is dispatched, how runs end, what to do when work is blocked, and what the
+host journaled of what arrived. Configuration
 fields are in [configuration](configuration.md); the reasons behind the
 behaviour are in [architecture](architecture.md).
 
@@ -256,6 +257,21 @@ command as foreground `aivi serve`, so nothing about the server changes —
 `aivi service start|stop|restart|status` control it, `service logs` follows the
 log, `service uninstall` removes it. A headless Linux machine needs
 `loginctl enable-linger` or the service stops with the session.
+
+## The request diary
+
+Every request that reaches the host is journaled into the store: method,
+path, answer, time, the headers, and the body's first 8 KiB. It is recorded
+before routing, so a refused bearer, a path nothing owns and a handler that
+threw are all in the diary — this is the record that answers "did the
+platform ever call us?". The body is read from a clone, so the untouched
+stream still reaches webhook signature verification. `authorization`,
+`proxy-authorization` and `cookie` are journaled as `[present]`, never as
+their values: the diary shows a credential was sent, not what it said.
+
+Retention is a command, not an auto-purge:
+`aivi host clear-logs --older-than 30d` forgets the older rows and says how
+many went; the duration is the same shape `--at` takes (`30m|2h|1d|30d`).
 
 ## Updates
 

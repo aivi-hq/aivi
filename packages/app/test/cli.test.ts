@@ -234,3 +234,43 @@ test('slack manifest dumps the whole app manifest as JSON, prefix from the flag,
     '/aivi-new',
   );
 });
+
+test('host clear-logs forgets only the rows older than the duration', async t => {
+  const { home, env, cleanup } = await scratch();
+  t.after(cleanup);
+  assert.equal((await run(['server', 'create', '--use', 'another', '--name', 'Nemo'], env)).status, 0);
+  const store = new Store(join(home, 'state', 'aivi.sqlite'));
+  const day = 86_400_000;
+  const now = Date.now();
+  store.logRequest({
+    at: now - 40 * day,
+    method: 'POST',
+    path: '/linear/webhooks/app/a',
+    status: 200,
+    body: null,
+    truncated: false,
+    headers: {},
+  });
+  store.logRequest({ at: now, method: 'GET', path: '/health', status: 200, body: null, truncated: false, headers: {} });
+  store.close();
+  const done = await run(['host', 'clear-logs', '--older-than', '30d'], env);
+  assert.equal(done.status, 0, done.stderr);
+  assert.deepEqual(JSON.parse(done.stdout), { removed: 1 });
+  const left = new Store(join(home, 'state', 'aivi.sqlite'));
+  assert.deepEqual(
+    left.requests().map(r => r.path),
+    ['/health'],
+    'the fresh row stays',
+  );
+  left.close();
+});
+
+test('host clear-logs insists on a duration it can read', async t => {
+  const { env, cleanup } = await scratch();
+  t.after(cleanup);
+  assert.equal((await run(['server', 'create', '--use', 'another', '--name', 'Nemo'], env)).status, 0);
+  assert.notEqual((await run(['host', 'clear-logs'], env)).status, 0, 'no --older-than is not success');
+  const bogus = await run(['host', 'clear-logs', '--older-than', 'tomorrow'], env);
+  assert.equal(bogus.status, 1);
+  assert.match(bogus.stderr, /Not a duration/);
+});
