@@ -3,7 +3,7 @@
     "@biomejs/biome": "2.5.13",
     "@changesets/changelog-github": "1.0.1",
     "@changesets/cli": "3.0.3",
-    "@opencode/client": "2.0.14",
+    "@opencode/client": "2.0.18",
     "@types/node": "26.5.1",
     "@types/plist": "3.0.5",
     "@types/semver": "7.8.0",
@@ -18,10 +18,10 @@
   },
   "name": "aivi",
   "overrides": {
-    "@opencode/client": "2.0.14",
-    "@opencode/plugin": "2.0.14",
-    "@opencode/schema": "2.0.14",
-    "@opencode/protocol": "2.0.14"
+    "@opencode/client": "2.0.18",
+    "@opencode/plugin": "2.0.18",
+    "@opencode/schema": "2.0.18",
+    "@opencode/protocol": "2.0.18"
   },
   "private": true,
   "scripts": {
