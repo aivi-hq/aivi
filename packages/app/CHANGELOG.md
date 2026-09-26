@@ -1,5 +1,11 @@
 # @aivi/app
 
+## 0.6.2
+
+### Patch Changes
+
+- [#32](https://github.com/aivi-hq/aivi/pull/32) [`2de2514`](https://github.com/aivi-hq/aivi/commit/2de25148361af4c51c7f1eb93739a37a02e46ef3) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi install discord|slack|browser` no longer dumps the setup result object to the terminal before the closing line. The plugin setup command is interactive (it requires a terminal and `aivi install` reads only its exit status and the module's own state), so its outro is the only human output; the machine-readable record it printed is unconsumed and was rendered as a raw `util.inspect` object on a terminal.
+
 ## 0.6.1
 
 ### Patch Changes
