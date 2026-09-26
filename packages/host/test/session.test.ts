@@ -21,7 +21,7 @@ test('only the matching completed final answer is returned, without reasoning or
       type: 'assistant',
       id: 'answer',
       time: { created: 3, completed: 4 },
-      agent: 'librarian',
+      agent: 'assistant',
       finish: 'stop',
       content: [
         { type: 'reasoning', text: 'private reasoning' },
@@ -30,18 +30,18 @@ test('only the matching completed final answer is returned, without reasoning or
     },
     { type: 'idle', id: 'idle', time: { created: 5 }, outcome: 'succeeded' },
   ] as unknown as Parameters<typeof finalAnswer>[0];
-  assert.equal(finalAnswer(messages, 'msg_one', 'librarian'), 'Public answer');
+  assert.equal(finalAnswer(messages, 'msg_one', 'assistant'), 'Public answer');
   assert.equal(
-    finalAnswer(messages, 'current', 'librarian'),
+    finalAnswer(messages, 'current', 'assistant'),
     'Public answer',
     'the native message id also identifies the turn',
   );
-  assert.throws(() => finalAnswer(messages, 'unknown', 'librarian'), /not present/);
-  assert.throws(() => finalAnswer(messages.slice(0, -1), 'msg_one', 'librarian'), /not complete/);
+  assert.throws(() => finalAnswer(messages, 'unknown', 'assistant'), /not present/);
+  assert.throws(() => finalAnswer(messages.slice(0, -1), 'msg_one', 'assistant'), /not complete/);
   assert.throws(() => finalAnswer(messages, 'msg_one', 'developer'), /No confirmed/);
   const failed = structuredClone(messages);
   (failed.at(-1) as { outcome: string }).outcome = 'failed';
-  assert.throws(() => finalAnswer(failed, 'msg_one', 'librarian'), /No confirmed/);
+  assert.throws(() => finalAnswer(failed, 'msg_one', 'assistant'), /No confirmed/);
   // A /steer into this turn is a user message that belongs to it; any other user message means the session moved on.
   const steered = structuredClone(messages);
   steered.splice(3, 0, {
@@ -51,7 +51,7 @@ test('only the matching completed final answer is returned, without reasoning or
     text: 'also check the handbook',
     metadata: { aivi: { steer: 'msg_one' } },
   } as unknown as (typeof messages)[number]);
-  assert.equal(finalAnswer(steered, 'msg_one', 'librarian'), 'Public answer');
+  assert.equal(finalAnswer(steered, 'msg_one', 'assistant'), 'Public answer');
   const foreign = structuredClone(messages);
   foreign.splice(3, 0, {
     type: 'user',
@@ -59,15 +59,15 @@ test('only the matching completed final answer is returned, without reasoning or
     time: { created: 3.5 },
     text: 'typed in the TUI',
   } as unknown as (typeof messages)[number]);
-  assert.throws(() => finalAnswer(foreign, 'msg_one', 'librarian'), /changed outside this turn/);
+  assert.throws(() => finalAnswer(foreign, 'msg_one', 'assistant'), /changed outside this turn/);
   const otherSteer = structuredClone(steered);
   (otherSteer[3] as unknown as { metadata: { aivi: { steer: string } } }).metadata.aivi.steer = 'msg_two';
-  assert.throws(() => finalAnswer(otherSteer, 'msg_one', 'librarian'), /changed outside this turn/);
+  assert.throws(() => finalAnswer(otherSteer, 'msg_one', 'assistant'), /changed outside this turn/);
 });
 
 /** The agent the fake reports, with a model pin so the agent file's model resolves. */
 const AGENTS_BODY = JSON.stringify({
-  data: [{ id: 'librarian', name: 'librarian', model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } }],
+  data: [{ id: 'assistant', name: 'assistant', model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } }],
 });
 
 /** Mock of the OpenCode 2.0.3 endpoints runTurn touches; the context shape matches the live server. */
@@ -79,7 +79,7 @@ function mockOpenCode(
     /** Runs when `wait` is requested, before it answers: the moment a permission would be asked. */
     waitUntil?: () => void;
     onPermissionList?: () => void;
-    /** What the session reports as its model (`session.get`); the librarian's file pins gemini-3.8-flash. */
+    /** What the session reports as its model (`session.get`); the assistant's file pins gemini-3.8-flash. */
     sessionModel?: { id: string; providerID: string };
   } = {},
 ) {
@@ -88,7 +88,7 @@ function mockOpenCode(
   let lag = options.contextLagsFor ?? 0;
   let promptId = '';
   let sessionModel = options.sessionModel;
-  const agent = options.agent ?? 'librarian';
+  const agent = options.agent ?? 'assistant';
   /** The completed turn the fake reports: user, finished assistant, succeeded idle. */
   const answerBody = () =>
     JSON.stringify({
@@ -110,7 +110,7 @@ function mockOpenCode(
     JSON.stringify({
       data: {
         id: 'ses_test',
-        agent: 'librarian',
+        agent: 'assistant',
         location: { directory: '/lib' },
         ...(sessionModel ? { model: sessionModel } : {}),
       },
@@ -175,7 +175,7 @@ async function withServer<T>(
   return run(await connectOpenCode(config.opencode, {}));
 }
 
-const input = { sessionId: 'ses_test', agent: 'librarian', directory: '/lib', messageId: 'msg_t1', text: 'q' };
+const input = { sessionId: 'ses_test', agent: 'assistant', directory: '/lib', messageId: 'msg_t1', text: 'q' };
 /** A fake host event stream: `emit` pushes an event to whoever watches that session. */
 function fakeEvents(): SessionEvents & { emit(sessionID: string, event: SessionEvent): void; watchers: number } {
   const listeners = new Map<string, Set<SessionEventListener>>();

@@ -28,7 +28,7 @@ const CLIENT_PLUGINS = [AIVI_PLUGIN, ATTRIBUTION_PLUGIN];
 
 /** The OpenCode shape of a server home: the service `aivi serve` runs loads
  *  these from the home. A file that exists is never overwritten. */
-const HOME_AGENTS = ['aivi.md', 'librarian.md', 'dreamer.md'];
+const HOME_AGENTS = ['assistant.md', 'dreamer.md'];
 
 const SCRIPT_FORM =
   'setup needs an interactive terminal; in a script use: aivi setup --use this-machine|another --name TEXT, or aivi setup --connect --url URL --token TOKEN';

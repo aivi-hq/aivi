@@ -13,7 +13,7 @@ import { TurnNotStarted } from '../src/session.ts';
 import { Store } from '../src/store.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
-const config = { agent: 'librarian', directory: '/librarian' };
+const config = { agent: 'assistant', directory: '/assistant' };
 const quiet = { watch: () => () => {} };
 const memory = () => new Store(':memory:');
 const turn = {
@@ -51,7 +51,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     }
     res.setHeader('content-type', 'application/json');
     if (req.url!.startsWith('/api/agent'))
-      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+      return void res.end(JSON.stringify({ data: [{ id: 'assistant', name: 'assistant' }] }));
     if (req.url!.endsWith('/permission') && req.method === 'GET') {
       res.end(JSON.stringify({ data: [] }));
       return;
@@ -69,7 +69,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
             {
               type: 'assistant',
               id: 'answer',
-              agent: 'librarian',
+              agent: 'assistant',
               finish: 'stop',
               time: { created: 2, completed: 3 },
               content: [{ type: 'text', text: 'Answer' }],
@@ -81,7 +81,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
       return;
     }
     res.end(
-      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
+      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'assistant', location: { directory: '/assistant' } } }),
     );
   };
   const server = createServer(respond);
@@ -243,7 +243,7 @@ test('a source whose directory does not exist is skipped, not a module start tha
     }
     res.setHeader('content-type', 'application/json');
     if (req.url!.startsWith('/api/agent'))
-      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+      return void res.end(JSON.stringify({ data: [{ id: 'assistant', name: 'assistant' }] }));
     if (req.url!.endsWith('/permission') && req.method === 'GET') {
       res.end(JSON.stringify({ data: [] }));
       return;
@@ -261,7 +261,7 @@ test('a source whose directory does not exist is skipped, not a module start tha
             {
               type: 'assistant',
               id: 'answer',
-              agent: 'librarian',
+              agent: 'assistant',
               finish: 'stop',
               time: { created: 2, completed: 3 },
               content: [{ type: 'text', text: 'Answer' }],
@@ -273,7 +273,7 @@ test('a source whose directory does not exist is skipped, not a module start tha
       return;
     }
     res.end(
-      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
+      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'assistant', location: { directory: '/assistant' } } }),
     );
   };
   const server = createServer(respond);
@@ -330,7 +330,7 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
     }
     res.setHeader('content-type', 'application/json');
     if (req.url!.startsWith('/api/agent'))
-      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+      return void res.end(JSON.stringify({ data: [{ id: 'assistant', name: 'assistant' }] }));
     if (req.url!.endsWith('/permission') && req.method === 'GET') return void res.end(JSON.stringify({ data: [] }));
     if (req.url!.endsWith('/prompt')) {
       metadata = body.metadata;
@@ -344,7 +344,7 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
             {
               type: 'assistant',
               id: 'answer',
-              agent: 'librarian',
+              agent: 'assistant',
               finish: 'stop',
               time: { created: 2, completed: 3 },
               content: [{ type: 'text', text: 'Answer' }],
@@ -356,7 +356,7 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
       return;
     }
     res.end(
-      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'librarian', location: { directory: '/librarian' } } }),
+      JSON.stringify({ data: { id: 'ses_discord_test', agent: 'assistant', location: { directory: '/assistant' } } }),
     );
   };
   const server = createServer(respond);

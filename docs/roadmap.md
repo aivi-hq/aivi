@@ -8,7 +8,7 @@ requirements are frozen in [requirements.md](requirements.md); decisions in
 | Milestone | Status |
 | --- | --- |
 | 0. OpenCode boundary | **Done, live-verified** on OpenCode 2.0.3 ([opencode.md](opencode.md)). Repeat with `npm run live:opencode`. |
-| 1. Native librarian and minimal core | **Done.** Plugin tools, CLI, schema-validated config, fnox/`.env` secrets. |
+| 1. Native assistant and minimal core | **Done.** Plugin tools, CLI, schema-validated config, fnox/`.env` secrets. |
 | 2. Scoped knowledge search | **Done** for documents: QMD keyword search, kinds, scope never widens on unknown IDs. Conversation export and semantic retrieval not started. |
 | 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_jobs`), one-offs, outcomes re-entering conversations, per-run abort, definitions vs runs, misfire grace and retention as a system job added 2026-09-15 and live-verified on Discord and Slack ([architecture.md#jobs-and-runs](architecture.md#jobs-and-runs)). |
 | 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
@@ -66,7 +66,7 @@ only when idle stays an idea
 | OpenCode owns execution and history; aivi owns operational coordination | Worker process isolation, resolved before milestone 6 ships |
 | Stable core/project/source/session identities | Retrieval tuning and semantic search |
 | Typed plugin/core boundary, with optional channel adapters | Browser credential-fill mechanism |
-| Clear read/write capabilities for librarian, maintenance and workers | Discord message UX beyond the current commands |
+| Clear read/write capabilities for assistant, maintenance and workers | Discord message UX beyond the current commands |
 | Schema migrations and restart reconciliation from the first persistent operation | Linear OAuth/webhook choreography in milestone 7 |
 | Local-model resource accounting before scheduled inference | Memory decay after we observe real usage |
 

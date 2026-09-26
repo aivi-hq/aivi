@@ -68,7 +68,7 @@ test('channel modules are blocks in the one file: presence enables with defaults
   });
   if (typeof on.modules.discord !== 'object' || typeof on.modules.slack !== 'object')
     throw new Error('present blocks parse to settings, not false');
-  assert.equal(on.modules.discord.agent, 'librarian');
+  assert.equal(on.modules.discord.agent, 'assistant');
   assert.equal(on.modules.slack.commandPrefix, 'aivi');
   assert.deepEqual(configSchema.parse({ version: 1, modules: { discord: false } }).modules, { discord: false });
   assert.match(
@@ -472,11 +472,11 @@ test('scheduler.timezone is the host-wide default; a per-job timezone wins over 
 test('identity is the persona, and who a worker commits as comes from the file, the machine, then the app', async () => {
   const bare = configSchema.parse({ version: 1 });
   assert.equal(bare.identity.name, 'aivi', 'the persona has a default');
-  assert.equal(assistantAgent(bare), 'aivi', 'the Linear assistant takes the persona name');
+  assert.equal(assistantAgent(bare), 'assistant', 'the one assistant is the fallback name');
   assert.equal(
     assistantAgent(configSchema.parse({ version: 1, identity: { name: 'Clawd The' } })),
-    'clawd-the',
-    'the agent name is the persona slugged, while the display name stays free-form',
+    'assistant',
+    'the persona name is never slugged into an agent name; the display name stays free-form',
   );
   const app = { name: 'aivi-agent[bot]', email: '331678708+aivi-agent[bot]@users.noreply.github.com' };
   const machine = async (key: string) => (key === 'opencode.coauthor' ? 'Jane Doe <jane@example.com>' : '');

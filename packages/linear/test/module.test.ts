@@ -314,10 +314,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   const assistantSession = [...opencode.sessions.values()].find(s => s.agent === 'assistant')!;
   assert.equal(assistantSession.directory, home, 'no project: the assistant runs in the home');
   assert.deepEqual(linear.delegated.at(-1), ['eng-3', null], 'the wrong delegation was un-taken');
-  assert.match(
-    opencode.prompts[2]!.text,
-    /was delegated to you, but its lane \("In Progress"\) is not mapped to any agent/,
-  );
+  assert.match(opencode.prompts[2]!.text, /came by: delegation to you; lane "In Progress" maps no agent/);
 
   // A delegation into an unmapped lane of a mapped team: the assistant, in the checkout.
   await created('as-5', 'eng-5');

@@ -150,7 +150,7 @@ no sign-in it asks what the machine should be:
   "Signed in as …".
 - **Create a new aivi server here** — installs the server into
   `<home>/app` with npm and seeds the home's OpenCode shape
-  (`opencode.jsonc`, `.opencode/agents/` with `aivi.md`, `librarian.md`,
+  (`opencode.jsonc`, `.opencode/agents/` with `assistant.md` and
   `dreamer.md` — files that exist are never overwritten). Then it asks
   whether *this machine* signs in too or this is a *headless server*:
   this-machine mints the operator person and token (the secret is printed

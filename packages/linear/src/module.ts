@@ -340,9 +340,11 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       await activity(conversation, { type: 'thought', body: `One moment — reading ${issue.identifier}.` }, true).catch(
         error => log.warn('notify.failed', { error }),
       );
+      // Facts only: who is talking and what was brought. How the assistant
+      // behaves with them is the agent file's, the whole boundary.
       const situation = delegated
-        ? `[${issue.identifier} "${issue.title}" was delegated to you, but its lane ("${issue.state.name}") is not mapped to any agent. Do not do the work: respond briefly — a refusal or a clarification — and leave it with the people.]`
-        : `[Someone brought you ${issue.identifier} in ${project ? `project ${project.id}` : 'a team no project maps'}. Answer, clarify or decline; you do not do the work.]`;
+        ? `[platform: linear; issue: ${issue.identifier} "${issue.title}"; project: ${project?.id ?? 'none'}; came by: delegation to you; lane "${issue.state.name}" maps no agent]`
+        : `[platform: linear; issue: ${issue.identifier} "${issue.title}"; project: ${project?.id ?? 'none'}; came by: a person brought you the issue]`;
       const text = [situation, payload.promptContext ?? issueDossier(issue)].join('\n\n');
       store.enqueue(
         { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },

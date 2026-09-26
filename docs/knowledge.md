@@ -35,7 +35,7 @@ Every source declares what it contains, from a registry in
 
 Hits carry `kind`, `scope`, and `projectId`, so an answer can say what kind of
 material it rests on. `knowledge_search`, `/knowledge/search?kind=…`, and
-`/sources?kind=…` accept a kind filter (the `aivi sources` CLI does not yet). The librarian's agent file explains the
+`/sources?kind=…` accept a kind filter (the `aivi sources` CLI does not yet). The assistant's agent file explains the
 kinds to the model; adding a kind means one entry in the registry.
 
 ## Use it
@@ -45,7 +45,7 @@ sends the query to the running host ([getting started](getting-started.md)).
 In OpenCode, the plugin exposes `knowledge_search` with `query`, optional
 `projects`, `includeCore`, `kinds`, and `limit`. Discord's `/search query [project]`
 and Slack's `/<prefix>-search` call the service directly without starting a
-model turn. The librarian can also use the native tool while answering normal
+model turn. The assistant can also use the native tool while answering normal
 conversations.
 
 | Selection | Meaning |
@@ -76,7 +76,7 @@ indexing serialize through one bounded queue, so a large refresh delays searches
 behind it (the plugin's client gives up after 10 s). Sources are small today;
 letting searches run concurrently and only queue behind `index()` is planned
 work, not a knob. Keyword search does not acquire
-another inference slot, so a librarian holding a model slot can search without
+another inference slot, so a assistant holding a model slot can search without
 deadlocking itself. Semantic search will need explicit model-resource accounting.
 
 Updates/deletions appear after refresh. Excerpts represent the indexed version,

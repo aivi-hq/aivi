@@ -480,7 +480,7 @@ const snowflake = z.string().regex(/^\d{17,20}$/);
 export const discordConfigSchema = z
   .strictObject({
     applicationId: snowflake.describe('The Discord application the bot token belongs to.'),
-    agent: z.string().default('librarian'),
+    agent: z.string().default('assistant'),
     /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
     directory: z.string().min(1).default('.'),
     resource: z.string().default('local-model'),
@@ -519,7 +519,7 @@ const channelId = z.string().refine(isChannelId, 'Expected a Slack channel id (C
  */
 export const slackConfigSchema = z
   .strictObject({
-    agent: z.string().default('librarian'),
+    agent: z.string().default('assistant'),
     /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
     directory: z.string().min(1).default('.'),
     /** Slash commands are `/<prefix>-new`, `/<prefix>-status`, `/<prefix>-search`, defined in the Slack app manifest. */
@@ -941,14 +941,9 @@ export function primaryLinearApp(linear: LinearConfig | undefined): string | und
   return ids.length === 1 ? ids[0] : undefined;
 }
 
-/** The assistant's agent name: `linear.agent`, else the aivi name slugged (lower-case, non-alphanumerics to `-`). */
+/** The assistant's agent name: `linear.agent`, else the one assistant everyone gets. */
 export function assistantAgent(config: Config): string {
-  if (config.linear?.agent) return config.linear.agent;
-  const slug = config.identity.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'aivi';
+  return config.linear?.agent ?? 'assistant';
 }
 
 /** Id of the job the host seeds from `scheduler.retention`. */
@@ -1192,7 +1187,7 @@ export function selectSources(
     .filter(s => !kinds || kinds.includes(s.kind));
 }
 
-/** Projects as the librarian and `aivi projects list` see them: id, removed marker, searchable sources. */
+/** Projects as the assistant and `aivi projects list` see them: id, removed marker, searchable sources. */
 export function projectSummaries(loaded: LoadedConfig): ProjectSummary[] {
   return loaded.projects.map(p => ({
     id: p.id,

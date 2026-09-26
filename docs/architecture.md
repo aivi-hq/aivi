@@ -240,7 +240,7 @@ built until someone asks twice:
   OpenCode's inbox for ordering).
 - Retries after the model or the process was reached.
 - Digests and a "home channel".
-- Executable allow-lists for scripts; `[SILENT]`-style markers (the librarian
+- Executable allow-lists for scripts; `[SILENT]`-style markers (the assistant
   reading a re-entered result *is* the silence mechanism).
 - Natural-language time parsing in aivi (the model translates; the tool
   echoes the next occurrences).

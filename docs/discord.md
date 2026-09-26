@@ -10,7 +10,7 @@ the host's. This page has what is Discord's.
 
 ## Behavior
 
-- One configured OpenCode agent and fixed librarian directory for the installation.
+- One configured OpenCode agent and fixed assistant directory for the installation.
 - Each conversation maps to its own native session. A DM is one conversation.
   A configured channel is either `sessions: "threads"` (default: a top-level
   message addressing aivi opens a thread named after its first line, and each thread is a
@@ -44,7 +44,7 @@ the host's. This page has what is Discord's.
   Discord runs it exactly as defined; aivi only adds `external_directory`
   allows for the configured knowledge sources, which the agent file cannot
   know. Want no shell, no edits, no browser in Discord? Deny them in the agent
-  file (the seeded librarian denies edit, shell and subagents). Permission
+  file (the seeded assistant denies edit, shell and subagents). Permission
   prompts are auto-rejected because nobody is at the server to approve them,
   so anything OpenCode would *ask* about is refused.
 - `/new` starts fresh on the next message, preserving old native sessions. It
@@ -125,7 +125,7 @@ the module (`false` is an explicit off):
   "modules": {
     "discord": {
       "applicationId": "10000000000000001",
-      "agent": "librarian",
+      "agent": "assistant",
       "access": {
         "channels": [{ "id": "10000000000000004" }]
       },
@@ -144,7 +144,7 @@ Discord and native chat run the same agent file.
 `DISCORD_BOT_TOKEN` comes from the environment (`<home>/.env`, see
 [secrets](configuration.md#secrets)). The host API takes no token; the host
 discovers the running `opencode service` on its own. Configure your
-provider/model in native OpenCode for the librarian location.
+provider/model in native OpenCode for the assistant location.
 
 `reportChannels` lists channel IDs where job outcomes may be posted
 (`report: { "to": "channel", "module": "discord", "channel": … }`); with an
@@ -210,11 +210,11 @@ failure.
 ### Job outcomes in a thread
 
 A job whose `report` points at a thread's session (`to: "session"`; the default
-for jobs the librarian creates from a thread) does not post text: it re-enters
+for jobs the assistant creates from a thread) does not post text: it re-enters
 the thread as a turn of kind `job` ([channels](channels.md#reports)). The
 prompt says that aivi delivered a job outcome and nobody typed it, and that the
-librarian must pass it on rather than act on it (live finding 2026-09-15: asked
-to relay a riddle, the librarian solved it). If no thread is bound to the
+assistant must pass it on rather than act on it (live finding 2026-09-15: asked
+to relay a riddle, the assistant solved it). If no thread is bound to the
 session, delivery fails and is audited on the job; the job outcome is unchanged.
 
 ## Boundaries
@@ -224,7 +224,7 @@ browser stays denied. Out of scope for now: agent or project switching, ticket
 control, streaming replies, attachment ingestion, a permission-approval UI,
 automatic cleanup. Both jobs and Discord turns use the same verified-final-answer
 driver; only blocked work needs an operator. Use trusted native plugins in the
-librarian location: plugins remain executable OpenCode extensions.
+assistant location: plugins remain executable OpenCode extensions.
 
 Tests in this package cover Discord routing, the slash command definitions
 against the shared table, and the seeded agent files; the shared
@@ -235,5 +235,5 @@ client against a mock server. Live status is in the [README](../README.md#status
 
 - Several Discord agents per installation (per channel or several module
   instances); the config already carries `agent` and `directory`. `/agent` is
-  deliberately not a command: one librarian per bot, personalities by
+  deliberately not a command: one assistant per bot, personalities by
   configuration.

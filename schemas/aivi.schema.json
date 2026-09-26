@@ -348,7 +348,7 @@
                   "pattern": "^\\d{17,20}$"
                 },
                 "agent": {
-                  "default": "librarian",
+                  "default": "assistant",
                   "type": "string"
                 },
                 "directory": {
@@ -464,7 +464,7 @@
               "type": "object",
               "properties": {
                 "agent": {
-                  "default": "librarian",
+                  "default": "assistant",
                   "type": "string"
                 },
                 "directory": {

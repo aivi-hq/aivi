@@ -34,7 +34,7 @@ const HOME = 'C0000000001';
 const TEAM = 'C0000000002';
 const DM = 'D0000000001';
 const config = slackConfigSchema.parse({
-  directory: '/librarian',
+  directory: '/assistant',
   commandPrefix: 'spider',
   access: {
     channels: [{ id: HOME }, { id: TEAM, trigger: 'any', sessions: 'channel' }],
@@ -52,7 +52,7 @@ const message = (over: Partial<SlackEvent> & { channel: string; ts: string }): S
 });
 
 test('config: Slack ids are checked, defaults match Discord’s, the owner’s shape parses', () => {
-  assert.equal(config.agent, 'librarian');
+  assert.equal(config.agent, 'assistant');
   assert.equal(config.maxPending, 100);
   assert.equal(slackConfigSchema.parse({ access: {} }).commandPrefix, 'aivi');
   assert.throws(
@@ -142,7 +142,7 @@ const FAKE_MODEL = {
 
 /** The fake's stateless answers, keyed by nothing but the url; undefined means "ask the state". */
 function canned(url: string, method: string): string | undefined {
-  if (url.startsWith('/api/agent')) return '{"data":[{"id":"librarian","name":"librarian"}]}';
+  if (url.startsWith('/api/agent')) return '{"data":[{"id":"assistant","name":"assistant"}]}';
   if (url === '/api/model') return JSON.stringify({ location: {}, data: [FAKE_MODEL] });
   if (url === '/api/model/default') return '{"location":{},"data":null}';
   if (url.endsWith('/message')) return '{"data":[],"cursor":{"next":null}}';
@@ -159,7 +159,7 @@ const lastTurnBody = (prompts: { id: string; text: string }[], answer: string) =
       {
         type: 'assistant',
         id: 'a',
-        agent: 'librarian',
+        agent: 'assistant',
         finish: 'stop',
         time: { created: 2, completed: 3 },
         content: [{ type: 'text', text: answer }],
@@ -208,7 +208,7 @@ async function fakeOpenCode(
     }
     if (url.endsWith('/context')) return void res.end(lastTurnBody(prompts, answer));
     const id = decodeURIComponent(url.split('/').at(-1)!);
-    const session = sessions.get(id) ?? { agent: 'librarian', directory: '/librarian' };
+    const session = sessions.get(id) ?? { agent: 'assistant', directory: '/assistant' };
     res.end(JSON.stringify({ data: { id, ...session, location: { directory: session.directory } } }));
   };
   const server = createServer(respond);
@@ -345,7 +345,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     `[Slack message from Ada (user ${ME})]\nwhat is aivi?`,
     'a linked account speaks as its person',
   );
-  assert.deepEqual(opencode.sessions.get(first!.session), { agent: 'librarian', directory: '/librarian' });
+  assert.deepEqual(opencode.sessions.get(first!.session), { agent: 'assistant', directory: '/assistant' });
 
   // A follow-up inside that thread needs no mention; a file-only message gets the text-only reply in the thread.
   await slack.event(message({ channel: HOME, ts: '11.0', thread_ts: '10.0', text: 'more' }));
@@ -371,8 +371,8 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     jobId: 'job-1',
     task: {
       kind: 'prompt',
-      agent: 'librarian',
-      directory: '/librarian',
+      agent: 'assistant',
+      directory: '/assistant',
       prompt: 'p',
       timeoutMs: 1,
       onPermission: 'reject',
@@ -456,7 +456,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     '🧠 **Model**',
     'This conversation: the agent’s default.',
     'Last answer: none yet.',
-    'Agent `librarian`: unknown (the agent file pins none and OpenCode reports no default).',
+    'Agent `assistant`: unknown (the agent file pins none and OpenCode reports no default).',
   ]);
   await slack.command({ command: '/spider-model', channel_id: DM, text: 'nope' });
   assert.match(slack.ephemerals.at(-1)!, /^No model is called `nope`\. Nothing in the catalogue matches/);

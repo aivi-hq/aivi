@@ -83,7 +83,7 @@ export function slackManifest(
   return {
     display_information: {
       name,
-      description: info.description ?? "The team's librarian",
+      description: info.description ?? "The team's assistant",
       background_color: info.backgroundColor ?? '#4c7185',
     },
     features: {

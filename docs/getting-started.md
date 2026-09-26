@@ -1,6 +1,6 @@
 # Getting started
 
-From a fresh clone to a librarian answering questions, in a development home
+From a fresh clone to a assistant answering questions, in a development home
 you set up yourself.
 
 ## Run it
@@ -63,7 +63,7 @@ npm run aivi -- runs list
 npm run aivi:cli -- link discord   # mint a link code for your Discord account
 ```
 
-## The librarian in OpenCode
+## The assistant in OpenCode
 
 1. With `opencode.lifecycle: "own"` (the default) `aivi serve` restarts the
    service for you after a plugin change.
@@ -73,7 +73,7 @@ npm run aivi:cli -- link discord   # mint a link code for your Discord account
    client without that method ("client.jobs is not a function", seen
    2026-09-15).
 2. Open `dev/` in OpenCode v2. Its `opencode.jsonc` loads the aivi plugin
-   and `.opencode/agents/` carries the `librarian` and `dreamer` agents
+   and `.opencode/agents/` carries the `assistant` and `dreamer` agents
    setup seeded there.
 3. Ask it to list the projects and read a configured document.
 
