@@ -71,8 +71,6 @@ export async function pluginSetup(
   };
   try {
     const result = await (entry as PluginSetup)(ctx);
-    // The record on stdout is the machine-readable result; the outro is the human truth.
-    print(result);
     p.outro(result.summary);
   } catch (error) {
     if (error instanceof PluginSetupCancelled) p.cancel('Setup stopped. Nothing further was written.');
