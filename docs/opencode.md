@@ -1,6 +1,6 @@
 # Native OpenCode integration
 
-aivi uses the published `@opencode/client` and `@opencode/plugin` 2.0.3 packages:
+aivi uses the published `@opencode/client` and `@opencode/plugin` packages:
 the v2 `Plugin.define` API and native session operations. It does not patch
 OpenCode or read its private storage.
 
@@ -88,7 +88,7 @@ the home as an ancestor of the checkout or worktree, and aivi's own turn runner
 knowledge source — so those agents can both search and read the documents. To
 guarantee the tools anywhere, declare the plugin once in the global config.
 
-## Verified boundary (OpenCode 2.0.3, macOS, 2026-09-15)
+## Verified boundary (macOS, 2026-09-15)
 
 Milestone 0 of the roadmap, run against a real `opencode service` with
 `github-copilot/gemini-3.8-flash`. Repeat it any time with
