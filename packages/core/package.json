@@ -1,6 +1,6 @@
 {
   "name": "@aivi/core",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },

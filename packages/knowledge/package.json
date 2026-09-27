@@ -1,6 +1,6 @@
 {
   "name": "@aivi/knowledge",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" }
@@ -24,7 +24,7 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.0",
+    "@aivi/core": "^0.7.1",
     "@tobilu/qmd": "2.8.3"
   }
 }
