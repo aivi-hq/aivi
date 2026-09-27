@@ -264,7 +264,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Status per milestone, live gates, next steps | [docs/roadmap.md](docs/roadmap.md) |
 | Product requirements | [docs/requirements.md](docs/requirements.md) |
 | Unscheduled ideas | `docs/backlog/` (one file per topic) |
-| Scheduled work in progress, as checklists that shrink as steps land | `docs/plans/` ([linear](docs/plans/linear.md), [client-aivi](docs/plans/client-aivi.md)) |
+| Scheduled work in progress, as checklists that shrink as steps land | `docs/plans/` ([cli-refactor](docs/plans/cli-refactor/index.md), [linear](docs/plans/linear.md), [client-aivi](docs/plans/client-aivi.md), [templates](docs/plans/templates/index.md)) |
 | Review findings (not specs; each has a disposition section) | `docs/review/` |
 
 ## Where things are
