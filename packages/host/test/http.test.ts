@@ -445,4 +445,8 @@ test('the gate as plumbing: exempt paths answer, the shipped client passes, sile
   const silent = await fetch(`${base}/status`);
   assert.equal(silent.status, 403, 'silence is not a pass');
   assert.equal((await silent.json()).code, 'client_version_unsupported');
+  // The gate binds the core surface only: a path nobody serves answers its
+  // honest 404/405 to a silent caller, not a refusal naming a version.
+  assert.equal((await fetch(`${base}/nope`)).status, 404, 'an unknown path is not a stale client');
+  assert.equal((await fetch(`${base}/nope`, { method: 'POST' })).status, 405, 'alike for a POST');
 });

@@ -210,7 +210,10 @@ move: `server_version_too_low` with the host version to reach, or
 host's major or naming no version at all. `/health`, `GET /version` and
 module webhooks answer without the header: the first two are the
 supervisor's and the negotiation's own fixed points, and a platform webhook
-is not an aivi client. Paths themselves carry no version.
+is not an aivi client. The gate binds only the core endpoints the host
+registers — its scope fills from the route table as the app is built: a
+path nobody serves answers a plain 404 or 405 to any caller, never a
+refusal naming a version. Paths themselves carry no version.
 The operator CLI can inspect prompts and operates directly on local state.
 Secrets come from the process environment, preferably resolved with existing
 fnox configuration. aivi does not implement a vault.

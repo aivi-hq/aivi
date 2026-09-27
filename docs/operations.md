@@ -295,9 +295,11 @@ major answers 403 `client_version_unsupported` — run `aivi upgrade`; a
 client behind within the same major is served, using fewer features than
 the host has. `@aivi/cli` and `@aivi/host` share one version through a
 changesets `fixed` group, so the CLI's own number is the API version it
-speaks. The negotiation itself is an [architecture decision](architecture.md);
-`GET /version` answers what a running host speaks, with no header and no
-credentials.
+speaks. The negotiation binds the core API surface only: an unknown path
+answers 404 (or 405) whoever asks, so a browser or a mispointed webhook
+sees a missing path, not a version refusal. The negotiation itself is an
+[architecture decision](architecture.md); `GET /version` answers what a
+running host speaks, with no header and no credentials.
 
 ## Uninstall
 
