@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./setup": { "development": "./src/setup.ts", "default": "./dist/setup.js" },
     "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" }
   },
   "files": [

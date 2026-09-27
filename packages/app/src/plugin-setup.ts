@@ -43,24 +43,8 @@ export async function pluginSetup(
     configPath: options.configPath,
     identityName: options.identityName,
     config: JSON.parse(await readFile(options.configPath, 'utf8')) as Record<string, unknown>,
-    note: (title, lines) => p.note(lines, title),
     print: (value, output) => print(value, output),
-    log: message => console.log(message),
-    ask: {
-      async text({ message, placeholder, secret, validate }) {
-        const check = validate ? (value: string | undefined) => validate(value ?? '') : undefined;
-        const answer = secret
-          ? await p.password({ message, ...(check ? { validate: check } : {}) })
-          : await p.text({ message, ...(placeholder ? { placeholder } : {}), ...(check ? { validate: check } : {}) });
-        if (p.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
-        return String(answer);
-      },
-      async confirm({ message, initial }) {
-        const answer = await p.confirm({ message, initialValue: initial ?? false });
-        if (p.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
-        return answer;
-      },
-    },
+    prompts: p,
     fetch: (url, init) => fetch(url, init),
     async writeConfigBlock(path, value) {
       await writeConfigBlock(options.configPath, path, value);
@@ -71,6 +55,9 @@ export async function pluginSetup(
   };
   try {
     const result = await (entry as PluginSetup)(ctx);
+    // The flow's own last line, printed by the runner as the outro: what
+    // is true now, never what may happen. The CLI adds nothing — when a
+    // service is installed it restarts and reports that as it happens.
     p.outro(result.summary);
   } catch (error) {
     if (error instanceof PluginSetupCancelled) p.cancel('Setup stopped. Nothing further was written.');

@@ -506,8 +506,11 @@ const defaultIo: SetupIo = {
           message: 'How will others reach this machine?',
           options: [
             { value: 'none', label: 'Only this machine (nothing outside can reach it)' },
-            { value: 'lan', label: 'My network — listen on a LAN or tailnet address' },
-            { value: 'url', label: 'A URL I tunnel or proxy to (Tailscale Funnel, cloudflared…)' },
+            { value: 'lan', label: 'My network — anyone on the LAN or tailnet reaches aivi directly' },
+            {
+              value: 'url',
+              label: 'A URL in front of it — a tunnel or proxy reaches loopback (Tailscale Funnel, cloudflared…)',
+            },
           ],
         }),
       ).then(async kind => {

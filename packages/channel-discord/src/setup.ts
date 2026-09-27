@@ -3,11 +3,24 @@
  * this file — how to create the application, which secret to ask for and how
  * to verify it, what to write into config.json and .env. The CLI runs it
  * blind: it installs the package, hands it a context, and brings aivi back
- * when this resolves. Nothing is written before it is true: the token answers
- * Discord first, every id matches the platform's shape, and a config.json
- * that no longer loads is restored to its old bytes.
+ * when this resolves. The flow draws all its own lines with the clack on
+ * the context and settles each animation before it returns or throws.
+ * Nothing is written before it is true: the token answers Discord first,
+ * every id matches the platform's shape, and a config.json that no longer
+ * loads is restored to its old bytes.
  */
-import type { PluginSetup, PluginSetupContext, PluginSetupResult } from '@aivi/core';
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/core';
+
+/** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
+ *  nothing — neither is an answer. The flow stops with
+ *  `PluginSetupCancelled` and the runner says the one cancel line; prompts
+ *  that must not be empty say so in their `validate`, so clack re-asks
+ *  before this ever sees the gap. */
+function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNullable<T>, symbol> {
+  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
+  if (answer === undefined) throw new PluginSetupCancelled('a prompt was submitted empty');
+  return answer as Exclude<NonNullable<T>, symbol>;
+}
 
 /** Discord ids are snowflakes: 17–20 digits (the config schema checks them too). */
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -31,14 +44,15 @@ async function fetchBotUser(ctx: PluginSetupContext, token: string): Promise<Dis
 async function collectIds(ctx: PluginSetupContext, first: string, again: string): Promise<string[]> {
   const ids: string[] = [];
   for (;;) {
-    const answer = (
-      await ctx.ask.text({
+    const answer = settled(
+      ctx,
+      await ctx.prompts.text({
         message: ids.length ? again : first,
-        validate: value =>
-          !value.trim() || SNOWFLAKE.test(value.trim())
-            ? undefined
-            : 'A Discord id is 17–20 digits — or an empty line to stop',
-      })
+        validate: value => {
+          const id = (value ?? '').trim();
+          return !id || SNOWFLAKE.test(id) ? undefined : 'A Discord id is 17–20 digits — or an empty line to stop';
+        },
+      }),
     ).trim();
     if (!answer) return ids;
     ids.push(answer);
@@ -51,28 +65,31 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     throw new Error(
       'Discord is already configured (the modules.discord block in config.json). Edit that block; install configures a module that is not configured yet.',
     );
-  ctx.note(
-    'Create the Discord application',
+  ctx.prompts.note(
     [
       `1. discord.com/developers/applications → New Application → name it ${ctx.identityName}.`,
       '2. On the Bot page: Reset Token → copy the token; you paste it here when asked.',
       '3. Still on the Bot page: leave the Message Content intent off unless you want aivi to read plain messages — asked below.',
       '4. On OAuth2 → URL Generator: scopes bot + applications.commands; Bot Permissions: View Channels, Send Messages, Send Messages in Threads, Create Public Threads, Add Reactions. Copy the URL, open it, Invite the bot to your server.',
     ].join('\n'),
+    'Create the Discord application',
   );
-  const token = (
-    await ctx.ask.text({
+  const token = settled(
+    ctx,
+    await ctx.prompts.password({
       message: 'Bot token — the one the Bot page gave you',
-      secret: true,
-      validate: value => (value.trim() ? undefined : 'Paste the token from Discord'),
-    })
+      validate: value => (value?.trim() ? undefined : 'Paste the token from Discord'),
+    }),
   ).trim();
-  ctx.log('Asking Discord who this token belongs to…');
+  await ctx.prompts.log.message('Asking Discord who this token belongs to…');
   const bot = await fetchBotUser(ctx, token);
-  ctx.log(`Verified: @${bot.username} — application ${bot.id}.`);
+  await ctx.prompts.log.message(`Verified: @${bot.username} — application ${bot.id}.`);
 
   // DMs are open to whoever links (the code is the door); the install only picks the places.
-  const wantsChannels = await ctx.ask.confirm({ message: 'Listen in shared channels?', initial: true });
+  const wantsChannels = settled(
+    ctx,
+    await ctx.prompts.confirm({ message: 'Listen in shared channels?', initialValue: true }),
+  );
   const channelIds = wantsChannels
     ? await collectIds(
         ctx,
@@ -81,16 +98,21 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
       )
     : [];
 
-  const intent = await ctx.ask.confirm({
-    message: 'Did you enable the Message Content intent on the Bot page?',
-    initial: false,
-  });
+  const intent = settled(
+    ctx,
+    await ctx.prompts.confirm({
+      message: 'Did you enable the Message Content intent on the Bot page?',
+      initialValue: false,
+    }),
+  );
   if (!intent && channelIds.length)
-    ctx.log('Without that intent aivi answers only @-mentions and DMs: each channel gets trigger "mention".');
-  const wantsReports = await ctx.ask.confirm({
-    message: 'Post scheduled job outcomes to some channels?',
-    initial: false,
-  });
+    await ctx.prompts.log.message(
+      'Without that intent aivi answers only @-mentions and DMs: each channel gets trigger "mention".',
+    );
+  const wantsReports = settled(
+    ctx,
+    await ctx.prompts.confirm({ message: 'Post scheduled job outcomes to some channels?', initialValue: false }),
+  );
   const reportChannels = wantsReports
     ? await collectIds(ctx, 'A report channel id', 'Another report channel id (empty line stops)')
     : [];

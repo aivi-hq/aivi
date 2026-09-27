@@ -3,13 +3,26 @@
  * this file — the app manifest to paste, which two tokens to ask for and how
  * to verify them, what to write into config.json and .env. The CLI runs it
  * blind: it installs the package, hands it a context, and brings aivi back
- * when this resolves. Nothing is written before it is true: each token
- * answers Slack first, every id matches the platform's shape, and a
- * config.json that no longer loads is restored to its old bytes.
+ * when this resolves. The flow draws all its own lines with the clack on
+ * the context and settles each animation before it returns or throws.
+ * Nothing is written before it is true: each token answers Slack first,
+ * every id matches the platform's shape, and a config.json that no longer
+ * loads is restored to its old bytes.
  */
-import type { PluginSetup, PluginSetupContext, PluginSetupResult } from '@aivi/core';
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/core';
 import { isChannelId } from './config.ts';
 import { slackManifest } from './module.ts';
+
+/** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
+ *  nothing — neither is an answer. The flow stops with
+ *  `PluginSetupCancelled` and the runner says the one cancel line; prompts
+ *  that must not be empty say so in their `validate`, so clack re-asks
+ *  before this ever sees the gap. */
+function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNullable<T>, symbol> {
+  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
+  if (answer === undefined) throw new PluginSetupCancelled('a prompt was submitted empty');
+  return answer as Exclude<NonNullable<T>, symbol>;
+}
 
 /** One Slack POST with bearer auth; the API answers 200 plus {ok:false} for a refusal. */
 async function slackApi(
@@ -40,11 +53,15 @@ async function collectIds(
 ): Promise<string[]> {
   const ids: string[] = [];
   for (;;) {
-    const answer = (
-      await ctx.ask.text({
+    const answer = settled(
+      ctx,
+      await ctx.prompts.text({
         message: ids.length ? again : first,
-        validate: value => (!value.trim() || shape(value.trim()) ? undefined : `${label} — or an empty line to stop`),
-      })
+        validate: value => {
+          const id = (value ?? '').trim();
+          return !id || shape(id) ? undefined : `${label} — or an empty line to stop`;
+        },
+      }),
     ).trim();
     if (!answer) return ids;
     ids.push(answer);
@@ -58,51 +75,56 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
       'Slack is already configured (the modules.slack block in config.json). Edit that block; install configures a module that is not configured yet.',
     );
   const prefix =
-    (
-      await ctx.ask.text({
+    settled(
+      ctx,
+      await ctx.prompts.text({
         message: 'Slash command prefix — the commands become /<prefix>-new, /<prefix>-status, …',
         placeholder: 'aivi',
         validate: value =>
-          !value.trim() || /^[a-z][a-z0-9_-]*$/.test(value.trim()) ? undefined : 'Lowercase letters, digits, _ or -',
-      })
+          !value?.trim() || /^[a-z][a-z0-9_-]*$/.test(value.trim()) ? undefined : 'Lowercase letters, digits, _ or -',
+      }),
     ).trim() || 'aivi';
   // The manifest goes to stdout as raw JSON text — a person pastes it into
   // Slack's app setup, so it must not sit inside a bordered note.
   const manifest = slackManifest(prefix, { name: ctx.identityName });
   ctx.print(manifest, [{ type: 'json', value: manifest }]);
-  ctx.note(
-    'Create the Slack app',
+  ctx.prompts.note(
     [
       '1. api.slack.com/apps?new_app=1 → From an app manifest → pick the workspace → paste the manifest printed above → Create.',
       '2. Install the app to the workspace → copy the Bot User OAuth Token (xoxb-…); you paste it here when asked.',
       '3. Basic Information → App-Level Tokens → Generate Token and Scopes: name it socket, scope connections:write → copy the xapp-… token.',
       `4. In Slack, invite @${ctx.identityName} to every channel it should listen in.`,
     ].join('\n'),
+    'Create the Slack app',
   );
 
-  const botToken = (
-    await ctx.ask.text({
+  const botToken = settled(
+    ctx,
+    await ctx.prompts.password({
       message: 'Bot token — the xoxb-… from the install page',
-      secret: true,
-      validate: value => (value.trim().startsWith('xoxb-') ? undefined : 'A bot token starts with xoxb-'),
-    })
+      validate: value => ((value ?? '').trim().startsWith('xoxb-') ? undefined : 'A bot token starts with xoxb-'),
+    }),
   ).trim();
-  ctx.log('Asking Slack who this token belongs to…');
+  await ctx.prompts.log.message('Asking Slack who this token belongs to…');
   const auth = await slackApi(ctx, 'auth.test', botToken);
   const workspace = String(auth.team ?? auth.team_id ?? 'your workspace');
-  ctx.log(`Verified: bot @${String(auth.user ?? auth.user_id)} in ${workspace}.`);
+  await ctx.prompts.log.message(`Verified: bot @${String(auth.user ?? auth.user_id)} in ${workspace}.`);
 
-  const appToken = (
-    await ctx.ask.text({
+  const appToken = settled(
+    ctx,
+    await ctx.prompts.password({
       message: 'App-level token — the xapp-… with connections:write',
-      secret: true,
-      validate: value => (value.trim().startsWith('xapp-') ? undefined : 'An app-level token starts with xapp-'),
-    })
+      validate: value =>
+        (value ?? '').trim().startsWith('xapp-') ? undefined : 'An app-level token starts with xapp-',
+    }),
   ).trim();
   await slackApi(ctx, 'apps.connections.open', appToken);
-  ctx.log('Verified: the app-level token opens Socket Mode.');
+  await ctx.prompts.log.message('Verified: the app-level token opens Socket Mode.');
   // DMs are open to whoever links (the code is the door); the install only picks the places.
-  const wantsChannels = await ctx.ask.confirm({ message: 'Listen in shared channels?', initial: true });
+  const wantsChannels = settled(
+    ctx,
+    await ctx.prompts.confirm({ message: 'Listen in shared channels?', initialValue: true }),
+  );
   const channelIds = wantsChannels
     ? await collectIds(
         ctx,
@@ -112,10 +134,10 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
         'A Slack channel id starts with C or G',
       )
     : [];
-  const wantsReports = await ctx.ask.confirm({
-    message: 'Post scheduled job outcomes to some channels?',
-    initial: false,
-  });
+  const wantsReports = settled(
+    ctx,
+    await ctx.prompts.confirm({ message: 'Post scheduled job outcomes to some channels?', initialValue: false }),
+  );
   const reportChannels = wantsReports
     ? await collectIds(
         ctx,

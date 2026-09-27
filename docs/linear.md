@@ -18,7 +18,7 @@ in [plans/linear.md](plans/linear.md); configuration fields are in
 | app | One Linear OAuth application acting as an app user (Linear's UI says "agent"); `linear.apps.<id>`. The **primary** carries the data feed and the bare `LINEAR_*` secrets; every other app is a face |
 | face | An extra app: a name and icon in Linear's UI, its own credentials (`LINEAR_<APP>_*`) and webhook route, and no meaning for routing at all. An activity is posted with the token of the app the session lives on |
 | primary | The one app by default; with faces, `linear.primary` names the app that carries the workspace data feed and authorises the Linear MCP. The listener always delegates on the primary, since that is whose token it holds |
-| assistant | The OpenCode agent people address directly on Linear (`linear.agent`, default the aivi name): comment mentions, and delegations that no lane claims. It answers, clarifies or refuses; it does not do work |
+| assistant | The OpenCode agent people address directly on Linear (`linear.agent`, default the aivi name): comment mentions. It answers, clarifies or refuses; it does not do work. Delegations it never sees — one nobody can run gets a fixed answer instead |
 | delegate | `Issue.delegate`: the app working the issue while the human assignee stays responsible. Its one meaning: *an app is working this issue* |
 | agent session | Linear's unit of agent work on an issue; aivi treats each as one conversation, id `<app>:<agent session id>` |
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `response` (the answer) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
@@ -32,19 +32,21 @@ in [plans/linear.md](plans/linear.md); configuration fields are in
    `AgentSessionEvent` `created` webhook to
    `POST /linear/webhooks/app/<app>` on the host listener. aivi verifies the
    signature and answers within the 5 seconds Linear allows, then works.
-2. **Routing is deterministic code, from the issue re-read.** The HITL label
-   (`linear.humanLabel`, default `needs-human`) refuses any agent with one
-   `error` activity. A **delegation whose lane maps an agent** runs that lane's
-   agent — the face is the person's choice, never a routing input, and a
-   delegation into a mapped lane runs the lane agent whatever face was picked.
-   Everything else people send — a comment mention, a delegation into an
-   unmapped lane, an issue whose team maps no project — lands on the
-   **assistant**. The assistant's directory is the project's `source/`
-   checkout when the team maps one, the home otherwise; it never gets a
-   worktree. A delegation nothing claims is un-taken (aivi removes the
-   delegate) and the assistant's response is the comment trail. The issue must
-   not carry the HITL label; otherwise the session gets one `error` activity
-   saying why and nothing else happens.
+2. **Routing is deterministic code, from the issue re-read.** An archived
+   (deleted) ticket gets nothing at all: a session created on it starts no
+   worker and no assistant, and gets not even a refusal — there is nothing
+   left to do. The HITL label (`linear.humanLabel`, default `needs-human`)
+   refuses any agent with one `error` activity. A **delegation whose lane
+   maps an agent** runs that lane's agent — the face is the person's choice,
+   never a routing input, and a delegation into a mapped lane runs the lane
+   agent whatever face was picked. A delegation nothing can run — the lane
+   maps no agent, is marked human's work, or the team maps no project — has
+   the delegation un-taken (aivi removes the delegate) and gets one plain
+   fixed answer saying why; no agent improvises over a job the config never
+   claimed. Anything people send another way — a comment mention above all —
+   lands on the **assistant**. The assistant's directory is the project's
+   `source/` checkout when the team maps one, the home otherwise; it never
+   gets a worktree.
 3. **Acknowledgement** within Linear's 10 seconds: an ephemeral `thought`,
    "Starting as `developer` in project website on branch `…`", or "Queued:
    another worker is busy on this issue; I start when it finishes."
@@ -95,12 +97,15 @@ in [plans/linear.md](plans/linear.md); configuration fields are in
    is stopped as in step 6 with a `thought` saying why. A lane change between
    two lanes of the same agent changes nothing. With the listener on, an issue
    entering a mapped lane with no delegate, no HITL label and no pending
-   worker is delegated to the primary (`agentSessionCreateOnIssue`, then
-   `issueUpdate` with the primary as delegate) and its worker starts at once
-   from the mutation; a `created` webhook arriving for that session afterwards
-   is a redelivery. The issue is re-read from the API for every such change,
-   so label and state names are current, and a change delivered twice finds
-   the delegate already set.
+   worker is delegated to the primary (`issueUpdate` with the primary as
+   delegate): becoming the delegate makes Linear create the agent session
+   itself, and this mutation's own answer names it (live, 2026-09-26). The
+   worker starts from that answer; a `created` webhook arriving for that
+   session afterwards is a redelivery. An answer that names no session undoes
+   the delegation and logs `listener.no-session` at error — the delivery was
+   acknowledged, so no retry would ever come. The issue is re-read from the
+   API for every such change, so label and state names are current, and a
+   change delivered twice finds the delegate already set.
 
 One route shape: `POST /linear/webhooks/app/<id>`, verified by that app's
 signing secret. The primary's route carries both families — its own agent
@@ -140,14 +145,33 @@ webhooks and the workers it serves.
 
 ## Setup
 
-One app in Linear — the 95% case:
+One app in Linear — the 95% case. **aivi must already be running** (a
+foreground `aivi serve` or the service): the installer probes it once up
+front and stops with a clear message if it is not answering `GET /health`,
+because the throwaway-ticket test can only observe webhooks a live host is
+recording.
 
-1. **One app.** In Linear, **Settings → API → Applications → New**. Name it
+1. **One app.** `aivi install linear` walks you through creating, installing
+   and proving the app and writes the secrets and config itself, testing the
+   webhook with a throwaway ticket first. The Linear-side part it guides: open
+   `https://linear.app/settings/api/applications/new`; name the app
    `identity.name` (the persona; aivi cannot set the name — use the name from
-   config here). Enable **Client credentials**. Under **Webhooks**, set the
-   URL to `<host.public>/linear/webhooks/app/<app id>` and enable both the
-   **Issues** data-change category and **Agent session events**. Copy the
-   client id, client secret and webhook signing secret.
+   config here); tick Client credentials and Webhooks; register the callback
+   URL it prints as the Redirect URI; set the Webhook URL to
+   `<host.public>/linear/webhooks/app/<app id>`; tick Issues under Data change
+   events and Agent session events under App events; press Create. Then open
+   the install link once and allow it — an app receives webhooks only after
+   it is installed into the workspace (live, 2026-09-26), and the installer's
+   callback listener catches that round too. Then the test, before anything
+   is written: a throwaway ticket, and two waits that run one after the
+   other — `webhooks`, that Linear posts the ticket's creation to this URL,
+   then `agent events`, that delegating the ticket creates an agent session
+   whose created event arrives the same way. Each wait shows one live line
+   that says what just lands and closes with clack's own marks — a hollow
+   green diamond for passed, a red square for failed; the ticket
+   is archived when the test ends. The install ends with one line saying
+   what is true and that restarting aivi loads Linear — with the service
+   installed, the CLI restarts it and reports that as it happens.
 2. In `<home>/.env`: `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and
    `LINEAR_WEBHOOK_SECRET` — the bare names are the one app, whose
    credentials also authorise the Linear MCP. Tokens are requested with
@@ -156,7 +180,8 @@ One app in Linear — the 95% case:
 3. `soul.md` in the home, and the assistant's agent file shipped in
    `packages/cli/templates/agents/` as the strong default — rename both if you choose another name.
 4. `aivi projects add <git-url> --linear PEC`. Empty lanes means the listener
-   delegates nothing; the assistant still answers pings and delegations.
+   delegates nothing; the assistant still answers pings. A hand delegation an
+   empty lane cannot run gets the fixed answer, not the assistant.
 5. Later, only if a second face in Linear's UI is wanted: another app, its
    `LINEAR_<FACE>_*` secrets, `apps.<face>: {}`, and `linear.primary` naming
    the data-carrying app (required once several apps are configured).
@@ -191,5 +216,6 @@ Worktree pruning, permission prompts as `elicitation`, agent plans,
 `externalUrls`, graceful agent-first cleanup, the worktree sweep and staged
 removals ([linear-worktree-lifecycle](backlog/linear-worktree-lifecycle.md)),
 multi-workspace routing: all in
-[plans/linear.md](plans/linear.md). Nothing here has run against a real
-Linear workspace yet; the live gate is listed there too.
+[plans/linear.md](plans/linear.md). The installer and the delegate-first
+listener ran against a real Linear workspace (2026-09-26); the remaining live
+gates are listed there.

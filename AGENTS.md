@@ -20,6 +20,10 @@ changing runtime behavior.
   from whoever changed state, a promise that resolves. A timer is acceptable
   only to wait for a known instant (a due job, a retry backoff) or to satisfy
   a protocol keep-alive. A "safety net" interval is a poll with a better name.
+  `setInterval` is banned outright; where a re-read is the only cross-process
+  signal (the installer's diary watch, whose file events macOS never
+  delivers), the wait is a `setTimeout` calling itself, re-armed only after
+  the previous read finished.
 
 Rules for the worker/Linear lifecycle (built: `docs/linear.md`; what is left:
 `docs/plans/linear.md`):
@@ -33,7 +37,9 @@ Rules for the worker/Linear lifecycle (built: `docs/linear.md`; what is left:
   for inspection. `blocked` is only for a stop that cannot be verified.
   Graceful agent-first cleanup is a later upgrade, not a precondition.
 - Linear lanes select OpenCode agents directly; one app (the primary) does the
-  receiving and the assistant (`linear.agent`) answers what no lane claims.
+  receiving, and the assistant (`linear.agent`) answers what people mention it
+  on. A delegation no lane can run is not the assistant's: its delegate is
+  un-taken and it gets one plain fixed answer saying why.
 
 When behavior changes, update the one document that owns that fact (the map is
 in `CONTEXT.md`) in the same commit; a change is not done while a document

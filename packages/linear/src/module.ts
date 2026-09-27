@@ -236,6 +236,19 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       await activity(conversation, { type: 'error', body: why }).catch(error => log.warn('notify.failed', { error }));
     };
 
+    /** A delegation no lane can run gets one plain, fixed answer: the
+     *  assistant holds conversations people bring it, it does not improvise
+     *  over a job the config never claimed. The delegate is un-taken first —
+     *  the app must not sit on the ticket as a worker it cannot be. */
+    const unclaimed = async (app: LinearAppRuntime, issue: LinearIssue, conversation: string, why: string) => {
+      log.info('session.unclaimed', { conversation, issue: issue.identifier, why });
+      await app.client.setDelegate(issue.id, null).catch(error => log.warn('delegate.undone', { error }));
+      await activity(conversation, {
+        type: 'response',
+        body: `I looked into ${issue.identifier}, and there is nothing I can do at this time: ${why} I have removed myself as delegate — @mention me if you want to talk about it.`,
+      }).catch(error => log.warn('notify.failed', { error }));
+    };
+
     // The Linear MCP: the module's own loopback forwarder, authorised with the
     // primary's app-actor token. Agents act in Linear; writes attribute to the app.
     if (config.mcp) {
@@ -329,9 +342,6 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       project: Project | undefined,
       conversation: string,
     ) => {
-      const delegated = issue.delegate?.id === app.userId;
-      if (delegated)
-        await app.client.setDelegate(issue.id, null).catch(error => log.warn('delegate.undone', { error }));
       store.bind(conversation, {
         agent: assistantAgent(services.loaded.config),
         directory: project ? project.directory : home,
@@ -341,10 +351,10 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
         error => log.warn('notify.failed', { error }),
       );
       // Facts only: who is talking and what was brought. How the assistant
-      // behaves with them is the agent file's, the whole boundary.
-      const situation = delegated
-        ? `[platform: linear; issue: ${issue.identifier} "${issue.title}"; project: ${project?.id ?? 'none'}; came by: delegation to you; lane "${issue.state.name}" maps no agent]`
-        : `[platform: linear; issue: ${issue.identifier} "${issue.title}"; project: ${project?.id ?? 'none'}; came by: a person brought you the issue]`;
+      // behaves with them is the agent file's, the whole boundary. A
+      // delegation never arrives here: what no lane can run is answered
+      // plainly before any agent is bound.
+      const situation = `[platform: linear; issue: ${issue.identifier} "${issue.title}"; project: ${project?.id ?? 'none'}; came by: a person brought you the issue]`;
       const text = [situation, payload.promptContext ?? issueDossier(issue)].join('\n\n');
       store.enqueue(
         { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },
@@ -354,12 +364,15 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
 
     /**
      * A session started. Routing is deterministic, from the issue re-read:
-     * the HITL label refuses for any agent; a delegation whose lane maps an
-     * agent is a worker (the lane decides worktree or checkout); everything
-     * else people send — a mention, a delegation into an unmapped lane, a
-     * team that maps no project — lands on the assistant, in the checkout or
-     * the home. The face is never a routing input: a delegation into a mapped
-     * lane runs the lane's agent whatever app the session lives on.
+     * an archived ticket gets nothing at all — it is deleted as far as work
+     * is concerned; the HITL label refuses for any agent; a delegation whose
+     * lane maps an agent is a worker (the lane decides worktree or checkout);
+     * a delegation no lane can run gets its delegate un-taken and one plain
+     * fixed answer saying why — nobody improvises over work the config never
+     * claimed; and what a person brings us any other way — a comment mention
+     * above all — lands on the assistant, in the checkout or the home. The
+     * face is never a routing input: a delegation into a mapped lane runs the
+     * lane's agent whatever app the session lives on.
      */
     const onCreated = async (app: LinearAppRuntime, payload: AgentSessionEventPayload) => {
       const conversation = conversationFor(app.id, payload.agentSession.id);
@@ -367,6 +380,7 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
       const issueId = payload.agentSession.issue?.id;
       if (!issueId) return refuse(conversation, 'I only work on issues; this session has none.');
       const issue = await app.client.issue(issueId);
+      if (issue.archivedAt) return log.debug('session.archived', { issue: issue.identifier });
       if (issue.labels.some(l => l.name === config.humanLabel))
         return refuse(
           conversation,
@@ -377,11 +391,25 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
         organizationId: payload.organizationId,
       });
       const lane = project?.linear?.lanes[issue.state.name];
-      if (project && lane && issue.delegate?.id === app.userId) {
-        if (!(await startWorker(app, payload, issue, project, lane, conversation))) return;
-      } else {
-        await startAssistant(app, payload, issue, project, conversation);
+      if (issue.delegate?.id === app.userId) {
+        // The app was named to work: a lane that claims it runs the worker;
+        // a delegation nothing can run is answered plainly, and no agent is
+        // left behind to improvise.
+        if (project && lane) {
+          if (!(await startWorker(app, payload, issue, project, lane, conversation))) return;
+          engine?.tick();
+        } else if (!project) {
+          await unclaimed(app, issue, conversation, 'its team is not connected to an aivi project.');
+        } else if (lane === null) {
+          await unclaimed(app, issue, conversation, `the "${issue.state.name}" lane is marked as human's work.`);
+        } else {
+          await unclaimed(app, issue, conversation, `the "${issue.state.name}" lane has no agent mapping.`);
+        }
+        return;
       }
+      // A person addressing us is a conversation the assistant holds,
+      // mapped lanes or not.
+      await startAssistant(app, payload, issue, project, conversation);
       engine?.tick();
     };
 
@@ -441,7 +469,10 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
     };
 
     /** The listener's pickup: an issue entering a mapped lane with nobody on
-     *  it. The delegation and the session are its doing. */
+     *  it. The delegation is the whole start: making the app the delegate
+     *  makes Linear create the agent session itself and hand it back in the
+     *  mutation's own answer (live, 2026-09-26) — nothing opens a session by
+     *  hand, and the `created` webhook that follows is a redelivery. */
     const listenerPickup = async (
       primary: LinearAppRuntime,
       payload: IssueEventPayload,
@@ -454,22 +485,31 @@ async function startLinear(config: LinearConfig, services: HostServices, givenCl
         log.info('listener.blocked', { issue: issue.identifier, by: issue.blockedBy.map(b => b.id) });
         return;
       }
-      const agentSession = await primary.client.createSessionOnIssue(issue.id);
-      await primary.client.setDelegate(issue.id, primary.userId);
+      const answer = await primary.client.setDelegate(issue.id, primary.userId);
+      const made = answer.issue?.agentSessions.nodes.find(s => s.status === 'pending');
+      if (!made) {
+        // Linear made no session, so there is nothing to start. The route
+        // acknowledged the delivery already — nothing will retry this — so
+        // the failure is loud, and the delegation is undone: the issue must
+        // not sit in the lane wearing the app as if a worker were coming.
+        await primary.client.setDelegate(issue.id, null).catch(error => log.warn('delegate.undone', { error }));
+        log.error('listener.no-session', { issue: issue.identifier, lane: issue.state.name });
+        return;
+      }
       log.info('listener.delegated', {
         issue: issue.identifier,
         lane: issue.state.name,
         agent: lane.agent,
-        agentSession,
+        agentSession: made.id,
       });
-      // Whether Linear also sends a `created` for a session we opened ourselves is open (plan, verify 2);
-      // starting from the mutation is right either way, the later webhook being a redelivery.
+      // The `created` webhook for this session may still arrive; one worker
+      // per issue (docs/linear.md) folds it into this one as a redelivery.
       await onCreated(primary, {
         type: 'AgentSessionEvent',
         action: 'created',
         organizationId: payload.organizationId,
         webhookTimestamp: Date.now(),
-        agentSession: { id: agentSession, issue: { id: issue.id, identifier: issue.identifier } },
+        agentSession: { id: made.id, issue: { id: issue.id, identifier: issue.identifier } },
       });
     };
 
