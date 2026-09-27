@@ -12,10 +12,11 @@ start another scheduler, create a daemon per session, or load embedding models.
 The plugin uses `@aivi/host/client`, a fetch-only client. Future native
 plugins can reuse that client without importing the SQLite store.
 
-`@aivi/app` is the composition root: it loads configured modules and launches
-`runHost`. The host owns the shared store, scheduler, native client, knowledge
+`@aivi/host` is the composition root: its `./cli` command surface loads
+configured modules and launches `runHost`. The host owns the shared store,
+scheduler, native client, knowledge
 service, API listener, startup, and shutdown. Discord receives those services in
-its `start` method. Linear will be another in-process module with webhook routes
+its `start` method. Linear is another in-process module with webhook routes
 on the same listener, not another application server.
 
 There is no general-purpose plugin registry, decorator system, or service locator.

@@ -1,6 +1,7 @@
 # 1 · One CLI (local, primary)
 
-Status: **in progress**, built in two shippable halves (recon below). Depends:
+Status: **landed 2026-09-27** in two shippable halves (recon below), both on
+`refactor/single-cli-command`; only the D22 dev-home nuke remains. Depends:
 nothing — this lands first. Unlocks: everything.
 Goal: one user-facing `aivi`. Machine commands built in; every other command
 loaded **in-process** from the installed app and mounted. `forward.ts` deleted,
@@ -214,17 +215,50 @@ from the plan while landing:
 
 Half 2 — the move and burial:
 
-- [ ] `packages/host/src/cli/` — move `commands/*`, `context.ts`, `identity.ts`,
+- [x] `packages/host/src/cli/` — move `commands/*`, `context.ts`, `identity.ts`,
       `plugin-setup.ts`, `help.ts` bodies; subpath export `./cli`; host gains
       `@aivi/knowledge`, `commander`, `@clack/prompts` deps and the tsconfig
       references `@aivi/app` carried.
-- [ ] Setup installs `@aivi/host` (+ plugins) into `<home>/app`; plist
+- [x] Setup installs `@aivi/host` (+ plugins) into `<home>/app`; plist
       `ProgramArguments`, `update.ts`, `install.ts`' refusal, `mount.ts`'s
       import path and the dev scripts repoint at `@aivi/host/dist/cli.js`.
-- [ ] Delete `packages/app` (bin, README, changeset membership, root tsconfig
+- [x] Delete `packages/app` (bin, README, changeset membership, root tsconfig
       reference, workspace package).
-- [ ] `packages/app/test/cli.test.ts` relocates into `packages/host/test/`.
-- [ ] [CONTEXT.md](../../../CONTEXT.md) package list; changesets: `@aivi/app`
-      major (removed), `@aivi/host` minor, fixed group.
+- [x] `packages/app/test/cli.test.ts` relocates into `packages/host/test/`.
+- [x] [CONTEXT.md](../../../CONTEXT.md) package list; changesets: **deferred
+      by the operator** (see what differed) — `@aivi/app` major (removed),
+      `@aivi/host` minor, fixed group come back at the end of the refactor.
 - [ ] No migration (D22): `rm -rf dev` after the phase lands, `aivi setup`
-      again — the dev home exists to be nuked.
+      again — the dev home exists to be nuked. Pending the operator's go.
+
+Half 2 landed 2026-09-27 on `refactor/single-cli-command`. What differed
+from the plan while landing:
+
+- **The tsconfig references were a cycle, so the host's build is split.**
+  Half 2 gives host dynamic `import()`s of `@aivi/browser`,
+  `@aivi/channel-discord`, `@aivi/channel-slack` and `@aivi/linear` (the
+  `serve` if-chain and `projects add --linear`), and all of those packages
+  import `@aivi/host` — so host cannot reference them in *one* project
+  (`error TS6202`). The split is build-plumbing only: `tsconfig.build.json`
+  is the engine (`src` minus `src/cli.ts`/`src/cli`, refs core), new
+  `tsconfig.cli.build.json` is the command surface (refs core, knowledge,
+  the four plugins). Both emit into the same `dist/`; root `build` and the
+  host's `prepack` build both. Zero source changes, all types stay real.
+  Phase 3 (plugin-registry) kills the if-chain and the plugin references
+  retire, so the split can collapse back to one project there.
+- **No changeset in the half-2 commit, by the operator** ("changesets aren't
+  needed. We're not doing a release yet. Keep these until the end of the
+  refactor"). The pending `.changeset/*.md` files — including the ones
+  naming `@aivi/app` (`one-cli-mount`'s `@aivi/app: minor` among them) —
+  stay untouched for now; sorting them out (app's removal as a major,
+  host minor, the `fixed` group) is end-of-refactor work.
+- `mount.ts`'s three import sites repoint as a group: the mount
+  (`dist/cli.js` — unchanged name, new package dir), setup's identity step
+  (`dist/identity.js` → `dist/cli/identity.js`), install's plugin-setup step
+  (`dist/context.js`/`dist/plugin-setup.js` → `dist/cli/…`). The
+  `No aivi server installed` error text is verbatim.
+- Docs repointed in the same commit: CONTEXT package list, README table
+  (app row gone), architecture's composition-root sentence (host's `./cli`
+  now), operations/people setup-plumbing wording, getting-started and
+  dev/README `--app-spec` (`file:../../packages/host`), host and cli
+  READMEs. `pack-smoke.mjs` stayed untouched as the recon predicted.

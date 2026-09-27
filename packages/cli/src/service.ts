@@ -26,8 +26,8 @@ export interface ServiceOptions {
   nodePath: string;
 }
 
-function appCli(appDir: string): string {
-  return join(appDir, 'node_modules', '@aivi', 'app', 'dist', 'cli.js');
+function hostCli(appDir: string): string {
+  return join(appDir, 'node_modules', '@aivi', 'host', 'dist', 'cli.js');
 }
 
 function launchdPlistPath(): string {
@@ -51,7 +51,7 @@ export function serviceUnitPath(): string | undefined {
 export function launchdPlist(options: ServiceOptions): string {
   return buildPlistXml({
     Label: SERVICE_LABEL,
-    ProgramArguments: [options.nodePath, appCli(options.appDir), 'serve'],
+    ProgramArguments: [options.nodePath, hostCli(options.appDir), 'serve'],
     KeepAlive: true,
     RunAtLoad: true,
     ProcessType: 'Interactive',
@@ -69,7 +69,7 @@ export function systemdUnit(options: ServiceOptions): string {
     'After=network-online.target',
     '',
     '[Service]',
-    `ExecStart=${options.nodePath} ${appCli(options.appDir)} serve`,
+    `ExecStart=${options.nodePath} ${hostCli(options.appDir)} serve`,
     `Environment=AIVI_HOME=${options.home}`,
     `WorkingDirectory=${options.appDir}`,
     'Restart=on-failure',

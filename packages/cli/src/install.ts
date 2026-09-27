@@ -62,19 +62,19 @@ const defaultIo: InstallIo = {
     if (result.status !== 0) throw new Error(`npm install ${spec} failed (exit ${result.status ?? 'signal'})`);
   },
   async setupPlugin(spec, options) {
-    // The plugin's setup entry runs in-process, as the app's own action does:
-    // the app context first (it loads .env and the config the way every
-    // command reaches them), then pluginSetup with its writers. A stop is
-    // not a rejection: pluginSetup says its own words and marks the exit.
+    // The plugin's setup entry runs in-process, as the server's own action
+    // does: the host cli context first (it loads .env and the config the way
+    // every command reaches them), then pluginSetup with its writers. A stop
+    // is not a rejection: pluginSetup says its own words and marks the exit.
     const app = await importApp<{
       home: string;
       configPath: string;
       context: () => Promise<{ loaded: { config: { identity: { name: string } } } }>;
-    }>(options.appDir, options.home, 'dist/context.js');
+    }>(options.appDir, options.home, 'dist/cli/context.js');
     const { loaded } = await app.context();
     const { pluginSetup } = await importApp<{
       pluginSetup: (spec: string, options: { home: string; configPath: string; identityName: string }) => Promise<void>;
-    }>(options.appDir, options.home, 'dist/plugin-setup.js');
+    }>(options.appDir, options.home, 'dist/cli/plugin-setup.js');
     await pluginSetup(spec, { home: app.home, configPath: app.configPath, identityName: loaded.config.identity.name });
   },
   healthUrl,
@@ -146,11 +146,11 @@ export async function install(args: string[], options: InstallOptions, io: Insta
   const name = args[0];
   if (!name) throw new Error('Install what? aivi install browser|discord|slack|NPM-SPEC');
   const spec = PLUGIN_ALIASES[name] ?? name;
-  if (spec === '@aivi/app' || spec === '@aivi/cli')
+  if (spec === '@aivi/host' || spec === '@aivi/cli')
     throw new Error('The server and this CLI come from `aivi setup` and npm, not from install.');
   const moduleId = MODULE_BY_SPEC[spec];
   const label = moduleId ? `${moduleId[0]!.toUpperCase()}${moduleId.slice(1)}` : spec;
-  if (!existsSync(packageDir(options.appDir, '@aivi/app')))
+  if (!existsSync(packageDir(options.appDir, '@aivi/host')))
     throw new Error(`No aivi server installed at ${options.appDir}. Run \`aivi setup\` first.`);
 
   installPackage(io, spec, options.appDir);

@@ -269,7 +269,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 ## Where things are
 
-`packages/{core,host,knowledge,browser,channel-discord,channel-slack,linear,opencode,app}` with tests in
+`packages/{core,host,knowledge,browser,channel-discord,channel-slack,linear,opencode,cli}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `dist/` is built by `npm run build`
 (TypeScript 7, incremental); tests need no build — they run from sources
@@ -282,7 +282,7 @@ under Node's type stripping, resolving workspace packages through the
 `dev/` is a real development home, produced by `npm run aivi:cli setup` against
 the local build (only its README is tracked; everything else, including the
 app manifest setup writes, is generated or git-ignored). `npm run aivi`
-runs the app CLI against it.
+runs the host's `./cli` directly against it.
 
 ## Open threads
 

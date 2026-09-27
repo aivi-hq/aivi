@@ -1,25 +1,25 @@
 #!/usr/bin/env node
-/** The aivi server CLI's entry: `registerCommands` hangs the operator
- *  commands on any commander tree — its own, or the thin `@aivi/cli`'s when
- *  that mounts it in-process — and `main` is the direct bin launchd and the
- *  dev script run. The commands themselves live in commands/, grouped by
- *  category; the shared plumbing in context.ts. */
+/** The host's command surface (`@aivi/host/cli`): `registerCommands` hangs the
+ *  operator commands on any commander tree — its own, or the thin `@aivi/cli`'s
+ *  when that mounts it in-process — and `main` is the direct entry launchd and
+ *  the dev script run. The commands themselves live in cli/commands/, grouped
+ *  by category; the shared plumbing in cli/context.ts. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { configureLogging, isTty } from '@aivi/core';
 import { Command, CommanderError } from 'commander';
-import { registerChannels } from './commands/channels.ts';
-import { registerGettingStarted } from './commands/getting-started.ts';
-import { registerHost } from './commands/host.ts';
-import { registerJobs } from './commands/jobs.ts';
-import { registerKnowledge } from './commands/knowledge.ts';
-import { registerPeople } from './commands/people.ts';
-import { registerProjects } from './commands/projects.ts';
-import { registerServer } from './commands/server.ts';
-import { home } from './context.ts';
-import { rootBanner } from './help.ts';
+import { registerChannels } from './cli/commands/channels.ts';
+import { registerGettingStarted } from './cli/commands/getting-started.ts';
+import { registerHost } from './cli/commands/host.ts';
+import { registerJobs } from './cli/commands/jobs.ts';
+import { registerKnowledge } from './cli/commands/knowledge.ts';
+import { registerPeople } from './cli/commands/people.ts';
+import { registerProjects } from './cli/commands/projects.ts';
+import { registerServer } from './cli/commands/server.ts';
+import { home } from './cli/context.ts';
+import { rootBanner } from './cli/help.ts';
 
 // Set once the preAction hook configured logging; the finally below flushes sinks on every exit path.
 let closeLogging: () => Promise<void> = async () => {};

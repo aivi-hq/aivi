@@ -10,7 +10,7 @@ let directory: string;
 
 beforeEach(() => {
   directory = join(tmpdir(), `aivi-install-test-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(join(directory, 'app', 'node_modules', '@aivi', 'app'), { recursive: true });
+  mkdirSync(join(directory, 'app', 'node_modules', '@aivi', 'host'), { recursive: true });
 });
 
 afterEach(() => {
@@ -140,7 +140,7 @@ test('install wants a name and refuses the server and cli themselves', async () 
     /Unknown install flag/,
   );
   await assert.rejects(
-    install(['@aivi/app'], { home: directory, appDir: join(directory, 'app'), nodePath: 'node' }, io),
+    install(['@aivi/host'], { home: directory, appDir: join(directory, 'app'), nodePath: 'node' }, io),
     /aivi setup/,
   );
   assert.deepEqual(calls.installs, []);

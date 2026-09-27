@@ -80,8 +80,9 @@ One file, identical shape everywhere (`XDG_CONFIG_HOME` wins when set,
 (connect branch) or creates the server and the operator person (create
 branch) — the flow is described in
 [operations](operations.md#first-run-aivi-setup). The identity minting
-itself stays in the installed app's `server create`, which `aivi setup`
-drives. Every other identity command talks HTTP (ungated like everything
+itself stays in the installed server's `server create` code
+(`@aivi/host/cli`), which `aivi setup` calls in-process. Every other
+identity command talks HTTP (ungated like everything
 until the api-only session):
 
 - `aivi people create NAME [--email E]` — on a terminal it offers to mint

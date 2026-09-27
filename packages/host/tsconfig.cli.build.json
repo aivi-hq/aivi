@@ -3,12 +3,12 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo"
+    "tsBuildInfoFile": "./tsconfig.cli.build.tsbuildinfo"
   },
-  "include": ["src"],
+  "//": "The command surface (@aivi/host/cli): serve's if-chain dynamically imports the plugin packages, so this project references them; the engine project excludes these files. Phase 3's plugin list removes the plugin references again.",
+  "include": ["src/cli.ts", "src/cli"],
   "references": [
-    { "path": "../core/tsconfig.build.json" },
-    { "path": "../host/tsconfig.build.json" },
+    { "path": "./tsconfig.build.json" },
     { "path": "../knowledge/tsconfig.build.json" },
     { "path": "../browser/tsconfig.build.json" },
     { "path": "../channel-discord/tsconfig.build.json" },

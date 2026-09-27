@@ -84,14 +84,14 @@ function installedDependencies(appDir: string): Record<string, string> {
  *  A plugin whose peer range excludes the new host is pinned where it is and excluded
  *  from this and future retries until its range catches up. */
 function installPeers(io: UpdateIo, appDir: string, installed: Record<string, string>, targetVersion: string): void {
-  const plugins = Object.entries(installed).filter(([name]) => name !== '@aivi/app');
+  const plugins = Object.entries(installed).filter(([name]) => name !== '@aivi/host');
   const excluded = new Set<string>();
-  let specs = [`@aivi/app@${targetVersion}`, ...plugins.map(([name]) => `${name}@latest`)];
+  let specs = [`@aivi/host@${targetVersion}`, ...plugins.map(([name]) => `${name}@latest`)];
   for (;;) {
     const attempt = io.install(specs, appDir);
     if (attempt.status === 0) return;
     const conflict = attempt.stderr.match(/While resolving: (@aivi\/[a-z-]+)@/)?.[1];
-    if (!conflict || conflict === '@aivi/app' || excluded.has(conflict))
+    if (!conflict || conflict === '@aivi/host' || excluded.has(conflict))
       throw new Error(`npm install failed:\n${attempt.stderr}`);
     excluded.add(conflict);
     const kept = installed[conflict];
@@ -129,7 +129,7 @@ async function restartAndWait(io: UpdateIo, url: string): Promise<void> {
 /** The target's engines gate the update before anything is stopped. An unsuitable
  *  Node provisions the managed runtime first, recorded for the service's benefit. */
 async function provisionNode(io: UpdateIo, home: string, targetVersion: string, nodePath: string): Promise<void> {
-  const engines = await io.npmView(`@aivi/app@${targetVersion}`, 'engines.node').catch(() => '');
+  const engines = await io.npmView(`@aivi/host@${targetVersion}`, 'engines.node').catch(() => '');
   if (!engines || satisfies(nodeVersion(nodePath), engines)) return;
   io.log(`The target needs Node ${engines}; provisioning the managed runtime.`);
   saveClientConfig({ nodePath: await ensureNode(home, engines) });
@@ -144,14 +144,14 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
   if (!CHANNELS.includes(channel as (typeof CHANNELS)[number])) throw new Error(`Unknown update channel: ${channel}`);
 
   const installed = installedDependencies(appDir);
-  if (!installed['@aivi/app']) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi setup\`.`);
+  if (!installed['@aivi/host']) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi setup\`.`);
   const currentVersion = JSON.parse(
-    readFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), 'utf8'),
+    readFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), 'utf8'),
   ) as { version: string };
 
-  const targetVersion = await io.npmView(`@aivi/app@${channel === 'stable' ? 'latest' : channel}`, 'version');
+  const targetVersion = await io.npmView(`@aivi/host@${channel === 'stable' ? 'latest' : channel}`, 'version');
   if (targetVersion === currentVersion.version) {
-    io.log(`Already up to date: @aivi/app ${targetVersion}.`);
+    io.log(`Already up to date: @aivi/host ${targetVersion}.`);
     return;
   }
 
@@ -165,7 +165,7 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
 
   installPeers(io, appDir, installed, targetVersion);
 
-  io.log(`Updated @aivi/app: ${currentVersion.version} → ${targetVersion}.`);
+  io.log(`Updated @aivi/host: ${currentVersion.version} → ${targetVersion}.`);
   if (managed) await restartAndWait(io, url);
   else io.log('Done. Start the server with `aivi serve`.');
 }

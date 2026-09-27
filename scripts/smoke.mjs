@@ -13,7 +13,7 @@ const { version: aiviVersion } = JSON.parse(
   readFileSync(fileURLToPath(new URL('../packages/host/package.json', import.meta.url)), 'utf8'),
 );
 
-const cli = fileURLToPath(new URL('../packages/app/dist/cli.js', import.meta.url));
+const cli = fileURLToPath(new URL('../packages/host/dist/cli.js', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));
 const config = join(directory, 'config.json');
 let daemon;

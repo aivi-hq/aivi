@@ -3,10 +3,10 @@
  *  operator in; either way the OpenCode plugins go in and the last line says
  *  a verified truth ("Signed in as …"), never a promise the CLI cannot keep.
  *  `server create` folded into the create branch: its identity step stays as
- *  the plumbing that mints person and token inside the freshly installed app.
- *  This file spawns npm and `opencode plugin add` and reaches the identity
- *  step through a dynamic import of the installed app (mount.ts); it imports
- *  no host code statically — the whoami check is one plain fetch. */
+ *  the plumbing that mints person and token inside the freshly installed
+ *  server. This file spawns npm and `opencode plugin add` and reaches the
+ *  identity step through a dynamic import of the installed server (mount.ts);
+ *  it imports no host code statically — the whoami check is one plain fetch. */
 
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -306,7 +306,7 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   const appDir = writeHomeSkeleton(home);
 
   io.log(`Installing the aivi server into ${appDir}`);
-  io.install([flags.appSpec ?? '@aivi/app', ...flags.plugins], appDir);
+  io.install([flags.appSpec ?? '@aivi/host', ...flags.plugins], appDir);
   saveClientConfig({ home, appDir, nodePath, installMethod: 'npm' });
 
   // The OpenCode shape of the home, before identity: the service finds its
@@ -442,9 +442,9 @@ const defaultIo: SetupIo = {
     return JSON.parse(result.stdout.trim()) as string;
   },
   async createIdentity(step, home, appDir) {
-    // The identity step is the installed app's own code, called in-process:
-    // it answers with the object, no child's stdout carries it. The app's
-    // context reads the home importApp puts in the environment.
+    // The identity step is the installed server's own code, called in-process:
+    // it answers with the object, no child's stdout carries it. The host's
+    // cli context reads the home importApp puts in the environment.
     const { serverCreate } = await importApp<{
       serverCreate: (options: {
         home: string;
@@ -454,7 +454,7 @@ const defaultIo: SetupIo = {
         public?: string;
         lanBind?: string;
       }) => Promise<Identity>;
-    }>(appDir, home, 'dist/identity.js');
+    }>(appDir, home, 'dist/cli/identity.js');
     return serverCreate({ home, configPath: join(home, 'config.json'), ...step });
   },
   opencodeOnPath: () => spawnPrintable('opencode', ['--version']),

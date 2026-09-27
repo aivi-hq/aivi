@@ -22,7 +22,7 @@ test('the LaunchAgent plist carries the launchd lessons: Interactive, WorkingDir
   assert.equal(parsed.Label, 'ai.aivi.server');
   assert.deepEqual(parsed.ProgramArguments, [
     '/usr/local/bin/node',
-    '/Users/me/.aivi/app/node_modules/@aivi/app/dist/cli.js',
+    '/Users/me/.aivi/app/node_modules/@aivi/host/dist/cli.js',
     'serve',
   ]);
   assert.equal(parsed.ProcessType, 'Interactive');
@@ -37,7 +37,7 @@ test('the systemd unit runs the same command and restarts on failure', () => {
   const unit = systemdUnit({ home: '/home/me/.aivi', appDir: '/home/me/.aivi/app', nodePath: '/usr/bin/node' });
   assert.match(
     unit,
-    /ExecStart=\/usr\/bin\/node \/home\/me\/.aivi\/app\/node_modules\/@aivi\/app\/dist\/cli\.js serve/,
+    /ExecStart=\/usr\/bin\/node \/home\/me\/.aivi\/app\/node_modules\/@aivi\/host\/dist\/cli\.js serve/,
   );
   assert.match(unit, /Environment=AIVI_HOME=\/home\/me\/.aivi/);
   assert.match(unit, /Restart=on-failure/);
@@ -64,10 +64,10 @@ function fakeIo(over: Partial<UpdateIo>): UpdateIo {
 test('update is a no-op when the installed version is the target', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
-  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/app': '0.1.0' } }));
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
+  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/host': '0.1.0' } }));
   writeFileSync(
-    join(appDir, 'node_modules', '@aivi', 'app', 'package.json'),
+    join(appDir, 'node_modules', '@aivi', 'host', 'package.json'),
     JSON.stringify({ version: '0.2.0', engines: { node: '>=26 <27' } }),
   );
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1 }));
@@ -88,12 +88,12 @@ test('update is a no-op when the installed version is the target', async () => {
 test('update installs the new server plus plugins at latest, stops and starts the service, and probes health', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
   writeFileSync(
     join(appDir, 'package.json'),
-    JSON.stringify({ dependencies: { '@aivi/app': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
+    JSON.stringify({ dependencies: { '@aivi/host': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
   );
-  writeFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  writeFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), JSON.stringify({ version: '0.1.0' }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1, host: { port: 4100 } }));
   const installs: string[][] = [];
   const service: string[] = [];
@@ -107,19 +107,19 @@ test('update installs the new server plus plugins at latest, stops and starts th
       service: { installed: () => true, stop: () => service.push('stop'), start: () => service.push('start') },
     }),
   );
-  assert.deepEqual(installs, [['@aivi/app@0.2.0', '@aivi/channel-discord@latest']]);
+  assert.deepEqual(installs, [['@aivi/host@0.2.0', '@aivi/channel-discord@latest']]);
   assert.deepEqual(service, ['stop', 'start']);
 });
 
 test('a plugin whose peer range excludes the new host is pinned and excluded from the retry', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
   writeFileSync(
     join(appDir, 'package.json'),
-    JSON.stringify({ dependencies: { '@aivi/app': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
+    JSON.stringify({ dependencies: { '@aivi/host': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
   );
-  writeFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  writeFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), JSON.stringify({ version: '0.1.0' }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1 }));
   const logs: string[] = [];
   const installs: string[][] = [];
@@ -140,16 +140,16 @@ test('a plugin whose peer range excludes the new host is pinned and excluded fro
       log: message => logs.push(message),
     }),
   );
-  assert.deepEqual(installs, [['@aivi/app@0.2.0', '@aivi/channel-discord@latest'], ['@aivi/app@0.2.0']]);
+  assert.deepEqual(installs, [['@aivi/host@0.2.0', '@aivi/channel-discord@latest'], ['@aivi/host@0.2.0']]);
   assert.ok(logs.some(line => line.includes('disabled: no compatible release (kept 0.1.0)')));
 });
 
 test('update refuses to touch a server that is running in the foreground', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
-  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/app': '0.1.0' } }));
-  writeFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
+  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/host': '0.1.0' } }));
+  writeFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), JSON.stringify({ version: '0.1.0' }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1 }));
   await assert.rejects(
     updateServer(

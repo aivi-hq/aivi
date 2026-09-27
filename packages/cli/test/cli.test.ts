@@ -128,14 +128,14 @@ test('setup flags are pulled out; unknown flags are refused', () => {
     '--plugin',
     '@aivi/channel-discord',
     '--app-spec',
-    '@aivi/app@0.2.0',
+    '@aivi/host@0.2.0',
     '--use',
     'this-machine',
     '--name',
     'Ada',
   ]);
   assert.deepEqual(flags.plugins, ['@aivi/channel-discord']);
-  assert.equal(flags.appSpec, '@aivi/app@0.2.0');
+  assert.equal(flags.appSpec, '@aivi/host@0.2.0');
   assert.equal(flags.use, 'this-machine');
   assert.equal(flags.name, 'Ada');
   assert.equal(flags.connect, false);
@@ -180,7 +180,7 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
     { name: 'aivi-server', private: true },
     'the manifest npm installs against, so the app dir anchors the install',
   );
-  assert.deepEqual(calls.installs, [['@aivi/app']]);
+  assert.deepEqual(calls.installs, [['@aivi/host']]);
   assert.deepEqual(calls.identity, [[{ use: 'this-machine', name: 'Ada' }]]);
   const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
   assert.match(jsonc, /"@aivi\/opencode@9\.9\.9"/);
@@ -373,11 +373,11 @@ test('seeding the home keeps what exists and fills only the gaps', () => {
   assert.equal(existsSync(join(home, '.opencode', 'agents', 'dreamer.md')), true, 'missing agents are added');
 });
 
-/** A fake installed app: an ESM `dist/cli.js` the CLI can import. */
+/** A fake installed server: an ESM `dist/cli.js` the CLI can import. */
 function fakeInstalledApp(home: string, body: string): void {
-  const pkg = join(home, 'app', 'node_modules', '@aivi', 'app');
+  const pkg = join(home, 'app', 'node_modules', '@aivi', 'host');
   mkdirSync(join(pkg, 'dist'), { recursive: true });
-  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@aivi/app', type: 'module' }));
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@aivi/host', type: 'module' }));
   writeFileSync(join(pkg, 'dist', 'cli.js'), body);
 }
 

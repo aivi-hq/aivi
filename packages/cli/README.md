@@ -3,8 +3,8 @@
 The thin aivi CLI. One `setup` signs a machine in or creates the server;
 `service` runs it in the background; `update`/`upgrade` keep it current;
 `uninstall` removes everything. It never imports host code statically —
-every operator command is mounted in-process from the installed app onto
-the same command tree.
+every operator command is mounted in-process from the installed server
+(`@aivi/host/cli`) onto the same command tree.
 
 ## Install
 
@@ -24,7 +24,7 @@ npm i -g @aivi/cli
 | `aivi upgrade` | Update this CLI through its install method |
 | `aivi uninstall` | Delete the aivi home, client config, and this CLI |
 | `aivi service install\|uninstall\|start\|stop\|restart\|status\|logs` | Manage the background service |
-| `aivi jobs\|runs\|people\|projects\|sources\|knowledge\|status\|config\|discord\|slack\|linear …` | Mounted in-process from the installed app |
+| `aivi jobs\|runs\|people\|projects\|sources\|knowledge\|status\|config\|discord\|slack\|linear …` | Mounted in-process from the installed server (`@aivi/host/cli`) |
 
 ## Home
 

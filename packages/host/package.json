@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" },
     "./client": { "development": "./src/client.ts", "default": "./dist/client.js" }
   },
   "files": [
@@ -22,13 +23,16 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "tsc -b tsconfig.build.json"
+    "prepack": "tsc -b tsconfig.build.json tsconfig.cli.build.json"
   },
   "dependencies": {
     "@aivi/core": "^0.7.1",
+    "@aivi/knowledge": "^0.1.7",
+    "@clack/prompts": "1.8.1",
     "@hono/node-server": "2.1.1",
     "@hono/zod-validator": "0.9.1",
     "@opencode/client": "2.0.18",
+    "commander": "15.0.0",
     "hono": "4.13.9",
     "zod": "4.1.13"
   }

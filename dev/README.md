@@ -9,7 +9,7 @@ this README is tracked; everything else is generated or yours, and git-ignored.
 
 ```sh
 npm run aivi:cli -- setup --use this-machine \
-  --app-spec "file:../../packages/app" \
+  --app-spec "file:../../packages/host" \
   --plugin "file:../../packages/channel-discord" \
   --plugin "file:../../packages/channel-slack" \
   --plugin "file:../../packages/linear"
@@ -33,13 +33,14 @@ local plugin build instead, replace that spec with `../packages/opencode/dist`.
 
 ```sh
 npm run aivi:cli -- serve        # the server (foreground)
-npm run aivi -- status           # the app CLI, same home
+npm run aivi -- status           # the host's command surface directly, same home
 npm run aivi -- jobs list
 npm run aivi:cli -- link discord # mints a link code (needs the server up)
 ```
 
-`npm run aivi:cli` builds first and runs the compiled thin CLI, which forwards
-into `dev/app`; `npm run aivi` runs the app CLI directly. Both point at this
+`npm run aivi:cli` builds first and runs the compiled thin CLI, which
+mounts the server's operator commands in-process from `dev/app`;
+`npm run aivi` runs the host's `./cli` directly. Both point at this
 home. Secrets go in `dev/.env`; the live `config.json` is yours to edit.
 
 ## Reset
