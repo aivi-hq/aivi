@@ -199,6 +199,12 @@ from the plan while landing:
   "Nothing was restarted." for both.
 - `pack-smoke.mjs`'s no-home assertion still holds verbatim; only its
   "forward path" sentence was reworded.
+- Live check on the dev home (a workspace-linked install, so the new code
+  ran): `aivi jobs list` answered from the store in-process, `aivi --help`
+  and `aivi help jobs` show one merged tree, `version`/`--version` stay the
+  CLI's. Known cosmetic: `--log-level`/`--log-format` now appear in the CLI
+  root's options (declared on the receiving tree's root);
+  [visibility.md](visibility.md) owns state-based help trimming.
 
 Half 2 — the move and burial:
 
