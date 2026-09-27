@@ -142,8 +142,12 @@ class FakeLinear extends LinearClient {
 }
 
 const noEvents: SessionEvents = { watch: () => () => {} };
+// The window bounds only a failing wait: a passing one ends at once. 3 s
+// passed alone and starved under the full suite's parallel load (measured
+// 2026-09-27: a worker turn builds a real git worktree), so the budget is
+// what a saturated machine cannot blow.
 const until = async (check: () => boolean, what: string) => {
-  for (let i = 0; i < 300 && !check(); i++) await new Promise(r => setTimeout(r, 10));
+  for (let i = 0; i < 3000 && !check(); i++) await new Promise(r => setTimeout(r, 10));
   assert.ok(check(), what);
 };
 const knowledge: KnowledgeService = { search: async () => [], index: async () => ({}), close: async () => {} };
