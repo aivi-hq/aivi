@@ -33,12 +33,18 @@ Recon (2026-09-27, verified against the tree):
   (which imports knowledge) cleanly. Channel packages and `@aivi/linear`
   arrive only through dynamic `import()` and resolve from `<home>/app`'s
   `node_modules` whatever package hosts the call site.
-- **`@aivi/app` consumers to rewire in Half 2**: `setup.ts:296` (installs
-  `@aivi/app` into the appDir) and `:371` (installed check); `service.ts:30`
-  (plist `ProgramArguments` target); `update.ts:87-168` (updates the server
-  package by name, reads its `package.json`/`engines`); `install.ts:133`
-  (refuses `@aivi/app` as a plugin); root `package.json` script `aivi` and
-  `tsconfig.build.json` reference; `packages/cli/test/cli.test.ts` fixtures.
+- **`@aivi/app` consumers to rewire in Half 2** (line anchors predate
+  half 1 — grep for `@aivi/app` instead of trusting them): `setup.ts`
+  (installs `@aivi/app` into the appDir; installed check); `service.ts:30`
+  (plist `ProgramArguments` target); `update.ts` (updates the server
+  package by name, reads its `package.json`/`engines`); `install.ts`
+  (refuses `@aivi/app` as a plugin); `mount.ts` (Half 1's import path and
+  its `No aivi server installed` error — both become `@aivi/host`); root
+  `package.json` script `aivi`; `scripts/smoke.mjs:16` (spawns
+  `packages/app/dist/cli.js` directly — `npm run check` smokes the host
+  through it); `tsconfig.build.json` reference;
+  `packages/cli/test/cli.test.ts` fixtures; `packages/app/test/cli.test.ts`
+  relocates to `packages/host/test/` (it spawns `../src/cli.ts`).
   `pack-smoke.mjs` names only the CLI — untouched.
 - **Machine-vs-operator decision without an OWN set**: commander already
   knows — the mounted tree's top-level command names are the machine set
