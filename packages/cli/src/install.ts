@@ -8,7 +8,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { forward } from './forward.ts';
+import { importApp } from './mount.ts';
 import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
 import { healthUrl, waitHealthy } from './update.ts';
 import { aiviVersion } from './version.ts';
@@ -43,7 +43,8 @@ export interface ModuleState {
 
 export interface InstallIo {
   install(spec: string, appDir: string): void;
-  forwardSetup(spec: string, options: InstallOptions): number;
+  /** Run the plugin's own `./setup` in-process in the installed app's code. */
+  setupPlugin(spec: string, options: InstallOptions): Promise<void>;
   healthUrl(home: string): Promise<string>;
   healthProbe(url: string): Promise<boolean>;
   moduleStates(url: string): Promise<ModuleState[]>;
@@ -60,7 +61,22 @@ const defaultIo: InstallIo = {
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`npm install ${spec} failed (exit ${result.status ?? 'signal'})`);
   },
-  forwardSetup: (spec, options) => forward(['plugin', 'setup', spec], options),
+  async setupPlugin(spec, options) {
+    // The plugin's setup entry runs in-process, as the app's own action does:
+    // the app context first (it loads .env and the config the way every
+    // command reaches them), then pluginSetup with its writers. A stop is
+    // not a rejection: pluginSetup says its own words and marks the exit.
+    const app = await importApp<{
+      home: string;
+      configPath: string;
+      context: () => Promise<{ loaded: { config: { identity: { name: string } } } }>;
+    }>(options.appDir, options.home, 'dist/context.js');
+    const { loaded } = await app.context();
+    const { pluginSetup } = await importApp<{
+      pluginSetup: (spec: string, options: { home: string; configPath: string; identityName: string }) => Promise<void>;
+    }>(options.appDir, options.home, 'dist/plugin-setup.js');
+    await pluginSetup(spec, { home: app.home, configPath: app.configPath, identityName: loaded.config.identity.name });
+  },
   healthUrl,
   async healthProbe(url) {
     try {
@@ -140,12 +156,17 @@ export async function install(args: string[], options: InstallOptions, io: Insta
   installPackage(io, spec, options.appDir);
 
   // The plugin configures itself: instructions, prompts, verification and
-  // writes all live in its ./setup entry; the human sees it through inherited
-  // stdio, and the flow ends with its own last line.
-  const status = io.forwardSetup(spec, options);
-  if (status !== 0) {
+  // writes all live in its ./setup entry, run in-process; the flow's ending
+  // is its own last line. A marked exit code is a stop; a thrown error is a
+  // setup that could not even start.
+  try {
+    await io.setupPlugin(spec, options);
+  } catch (error) {
+    io.log(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+  if (process.exitCode) {
     io.log('Nothing was restarted.');
-    process.exitCode = status;
     return;
   }
 

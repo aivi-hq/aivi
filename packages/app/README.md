@@ -1,10 +1,10 @@
 # @aivi/app
 
 The installed server: the `aivi` binary that composes configured modules
-and launches the host. The thin CLI (`@aivi/cli`) forwards every operator
-command here. `aivi serve` starts the host with Discord, Slack, and
-Linear modules; the other commands talk to the running host or the SQLite
-store directly.
+and launches the host. The thin CLI (`@aivi/cli`) mounts these commands
+onto its own tree in-process. `aivi serve` starts the host with Discord,
+Slack, and Linear modules; the other commands talk to the running host or
+the SQLite store directly.
 
 ## Entrypoint
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-/** The aivi server CLI's entry: commander's tree, the logging preAction hook,
- *  and the register calls that hang the commands on it. The commands
- *  themselves live in commands/, grouped by category; the shared
- *  plumbing in context.ts. */
+/** The aivi server CLI's entry: `registerCommands` hangs the operator
+ *  commands on any commander tree — its own, or the thin `@aivi/cli`'s when
+ *  that mounts it in-process — and `main` is the direct bin launchd and the
+ *  dev script run. The commands themselves live in commands/, grouped by
+ *  category; the shared plumbing in context.ts. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,30 +28,16 @@ const version = (
   JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version: string }
 ).version;
 
-async function main(argv: string[]): Promise<void> {
-  const program = new Command('aivi')
-    .version(version)
-    .showHelpAfterError('(run `aivi --help` for a list of commands)')
+/** Hang the operator commands on a commander tree and keep their logging.
+ *  The options are declared on the tree's root, but the hooks are hung on
+ *  each command this register adds — never on the root — so a host tree (the
+ *  thin CLI's machine commands) is untouched by them. The hooks inherit down
+ *  to subcommands; the root's option values are read from the root. */
+export async function registerCommands(program: Command): Promise<void> {
+  program
     .option('--log-level <level>', 'debug|info|warn|error', 'info')
     .option('--log-format <format>', 'auto|pretty|json (auto: pretty on a terminal, JSON lines when piped)', 'auto');
-
-  // Logging is configured once, before any action, for the whole process: stderr mirrors the
-  // run — pretty on a terminal, JSON lines when piped — and serve additionally appends JSON
-  // lines to state/logs/aivi.log whatever the console does. stdout stays reserved for output.
-  program.hook('preAction', async thisCommand => {
-    const values = thisCommand.opts<{ logLevel?: string; logFormat?: string }>();
-    const level = values.logLevel ?? 'info';
-    const format = values.logFormat ?? 'auto';
-    if (!['debug', 'info', 'warn', 'error'].includes(level))
-      throw new Error(`Unknown log level: ${level}. Use debug, info, warn, or error.`);
-    if (!['auto', 'pretty', 'json'].includes(format))
-      throw new Error(`Unknown log format: ${format}. Use auto, pretty, or json.`);
-    closeLogging = await configureLogging({
-      level: level as 'debug' | 'info' | 'warn' | 'error',
-      format: (format === 'auto' ? (isTty(process.stderr) ? 'pretty' : 'json') : format) as 'pretty' | 'json',
-      ...(thisCommand.name() === 'serve' ? { logFile: resolve(home, 'state', 'logs', 'aivi.log') } : {}),
-    });
-  });
+  const host = new Set(program.commands.map(command => command.name()));
 
   registerGettingStarted(program);
   registerServer(program);
@@ -62,6 +49,38 @@ async function main(argv: string[]): Promise<void> {
   // The plugin commands mount before parsing: their packages are asked for
   // their ./cli subpath, so `aivi --help` already shows what is installed.
   await registerChannels(program);
+
+  // Logging is configured once, before any action: stderr mirrors the
+  // run — pretty on a terminal, JSON lines when piped — and serve additionally
+  // appends JSON lines to state/logs/aivi.log whatever the console does.
+  // stdout stays reserved for output.
+  const configure = async (_owner: Command, actionCommand: Command): Promise<void> => {
+    const values = program.opts<{ logLevel?: string; logFormat?: string }>();
+    const level = values.logLevel ?? 'info';
+    const format = values.logFormat ?? 'auto';
+    if (!['debug', 'info', 'warn', 'error'].includes(level))
+      throw new Error(`Unknown log level: ${level}. Use debug, info, warn, or error.`);
+    if (!['auto', 'pretty', 'json'].includes(format))
+      throw new Error(`Unknown log format: ${format}. Use auto, pretty, or json.`);
+    closeLogging = await configureLogging({
+      level: level as 'debug' | 'info' | 'warn' | 'error',
+      format: (format === 'auto' ? (isTty(process.stderr) ? 'pretty' : 'json') : format) as 'pretty' | 'json',
+      ...(actionCommand.name() === 'serve' ? { logFile: resolve(home, 'state', 'logs', 'aivi.log') } : {}),
+    });
+  };
+  for (const command of program.commands) {
+    if (host.has(command.name())) continue;
+    command.hook('preAction', configure);
+    // The same close the direct bin's finally does, for the mounted case;
+    // closeLogging is idempotent, so the bin flushing twice is silence.
+    command.hook('postAction', () => closeLogging());
+  }
+}
+
+async function main(argv: string[]): Promise<void> {
+  const program = new Command('aivi').version(version).showHelpAfterError('(run `aivi --help` for a list of commands)');
+
+  await registerCommands(program);
 
   program.addHelpText('before', rootBanner(version, home, process.stdout));
   program.addHelpText(
@@ -92,9 +111,12 @@ No secrets in config files.`,
   }
 }
 
-main(process.argv.slice(2))
-  .catch(error => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeLogging());
+// The bin runs itself; the thin CLI's mount imports this module for
+// registerCommands alone, and must not start a second parse.
+if (import.meta.main)
+  main(process.argv.slice(2))
+    .catch(error => {
+      console.error(error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    })
+    .finally(() => closeLogging());

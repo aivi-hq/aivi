@@ -35,7 +35,7 @@ try {
   if (!help.includes('Usage: aivi') || !help.includes('setup')) throw new Error(`aivi help lost its words:\n${help}`);
   const version = run(installed, ['--version']).trim();
   if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`aivi --version said: ${version}`);
-  // The forward path without any home must say so, not crash with a module
+  // The mount path without any home must say so, not crash with a module
   // error. HOME and XDG_CONFIG_HOME are fenced to the prefix so a development
   // machine's own installation cannot answer for the smoke.
   const fenced = {

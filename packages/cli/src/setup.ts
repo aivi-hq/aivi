@@ -4,8 +4,9 @@
  *  a verified truth ("Signed in as …"), never a promise the CLI cannot keep.
  *  `server create` folded into the create branch: its identity step stays as
  *  the plumbing that mints person and token inside the freshly installed app.
- *  This file spawns npm, the app CLI and `opencode plugin add`; it imports no
- *  host code — the whoami check is one plain fetch. */
+ *  This file spawns npm and `opencode plugin add` and reaches the identity
+ *  step through a dynamic import of the installed app (mount.ts); it imports
+ *  no host code statically — the whoami check is one plain fetch. */
 
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,7 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { loadClientConfig, saveClientConfig } from './client-config.ts';
-import { appCliPath } from './forward.ts';
+import { importApp } from './mount.ts';
 import { serviceInstall } from './service.ts';
 import { aiviVersion } from './version.ts';
 
@@ -67,6 +68,15 @@ export interface Identity {
   probeNote?: string;
 }
 
+/** What the identity step is asked for: where the server will run, the
+ *  operator's name, and the reach address when one was given. */
+export interface IdentityStep {
+  use: 'this-machine' | 'another';
+  name: string;
+  public?: string;
+  lanBind?: string;
+}
+
 export interface WhoamiResult {
   person: { id: string; name: string };
   roles: string[];
@@ -75,7 +85,10 @@ export interface WhoamiResult {
 export interface SetupIo {
   install(specs: string[], appDir: string): void;
   npmView(spec: string, field: string): Promise<string>;
-  forwardIdentity(args: string[], home: string, appDir: string, nodePath: string): Identity;
+  /** The identity step, called in-process in the installed app's code: the
+   *  person and token are minted in its store, the answer is the object, no
+   *  stdout carries it. */
+  createIdentity(step: IdentityStep, home: string, appDir: string): Promise<Identity>;
   opencodeOnPath(): boolean;
   pluginAdd(pkg: string): void;
   health(url: string): Promise<boolean>;
@@ -252,11 +265,11 @@ function writeHomeSkeleton(home: string): string {
   return appDir;
 }
 
-/** The identity-step flags that carry the reach answer. */
-function reachFlags(reach: Reach): string[] {
-  if (reach.kind === 'url') return ['--public', reach.url];
-  if (reach.kind === 'lan') return ['--lan-bind', reach.bind];
-  return [];
+/** The reach answer carried into the identity step. */
+function reachStep(reach: Reach): Pick<IdentityStep, 'public' | 'lanBind'> {
+  if (reach.kind === 'url') return { public: reach.url };
+  if (reach.kind === 'lan') return { lanBind: reach.bind };
+  return {};
 }
 
 /** Say what the identity step returned: caveats first, then the paste-able
@@ -305,7 +318,7 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
 
   // Identity is the installed app's own act: person and token are minted in
   // its store, and this-machine signs `~/.config/aivi.json` there.
-  const identity = io.forwardIdentity(['--use', use, '--name', name, ...reachFlags(reach)], home, appDir, nodePath);
+  const identity = await io.createIdentity({ use, name, ...reachStep(reach) }, home, appDir);
   printIdentity(identity, use, home, io);
   if (use === 'another') return;
 
@@ -428,20 +441,21 @@ const defaultIo: SetupIo = {
     if (result.status !== 0) throw new Error(`npm view ${spec} ${field} failed`);
     return JSON.parse(result.stdout.trim()) as string;
   },
-  forwardIdentity(args, home, appDir, nodePath) {
-    // stdout is captured, not inherited: the identity step prints exactly one
-    // JSON object, and the flow says the human-facing words itself.
-    const result = spawnSync(nodePath, [appCliPath(appDir), 'server', 'create', ...args], {
-      stdio: ['inherit', 'pipe', 'inherit'],
-      env: { ...process.env, AIVI_HOME: home },
-      encoding: 'utf8',
-    });
-    if (result.status !== 0) throw new Error(`The identity step failed (exit ${result.status ?? 'signal'}).`);
-    try {
-      return JSON.parse(result.stdout) as Identity;
-    } catch {
-      throw new Error('The identity step answered with something setup could not read.');
-    }
+  async createIdentity(step, home, appDir) {
+    // The identity step is the installed app's own code, called in-process:
+    // it answers with the object, no child's stdout carries it. The app's
+    // context reads the home importApp puts in the environment.
+    const { serverCreate } = await importApp<{
+      serverCreate: (options: {
+        home: string;
+        configPath: string;
+        use?: string;
+        name?: string;
+        public?: string;
+        lanBind?: string;
+      }) => Promise<Identity>;
+    }>(appDir, home, 'dist/identity.js');
+    return serverCreate({ home, configPath: join(home, 'config.json'), ...step });
   },
   opencodeOnPath: () => spawnPrintable('opencode', ['--version']),
   pluginAdd(pkg) {

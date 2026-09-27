@@ -17,7 +17,10 @@ const bareImports = (file: string): string[] =>
 test('the thin CLI stands alone: every import is a declared dependency', () => {
   // The published package has no workspace hoisting to lean on — `aivi help`
   // died in the wild when the banner reached for @aivi/core, which resolves
-  // in the repo and nowhere else. This test is that release gate.
+  // in the repo and nowhere else. This test is that release gate. App and
+  // host code is allowed only through dynamic import of files under the
+  // appDir (mount.ts), which never appears as a `from` specifier; a bare
+  // `@aivi/*` here would resolve in the repo and nowhere else.
   const declared = new Set(Object.keys(pkg.dependencies));
   for (const file of readdirSync(src).filter(name => name.endsWith('.ts'))) {
     for (const spec of bareImports(join(src, file))) {

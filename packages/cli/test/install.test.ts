@@ -29,9 +29,8 @@ function harness(states: ModuleState[] = []): Harness {
   const calls = { installs: [] as string[], forwards: [] as string[][], restarts: 0, logs: [] as string[] };
   const io: InstallIo = {
     install: spec => calls.installs.push(spec),
-    forwardSetup: spec => {
+    setupPlugin: async spec => {
       calls.forwards.push(['plugin', 'setup', spec]);
-      return 0;
     },
     healthUrl: async () => 'http://127.0.0.1:4100',
     healthProbe: async () => true,
@@ -93,9 +92,9 @@ test('install without a server home refuses before anything runs', async () => {
 
 test('a failed setup stops before the restart', async () => {
   const { io, calls } = harness(RUNNING);
-  io.forwardSetup = () => {
+  io.setupPlugin = async () => {
     calls.forwards.push([]);
-    return 1;
+    process.exitCode = 1;
   };
   process.exitCode = undefined;
   await install(['discord'], { home: directory, appDir: join(directory, 'app'), nodePath: 'node' }, io);

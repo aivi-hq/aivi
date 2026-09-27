@@ -1,6 +1,9 @@
 # The CLI refactor (epic)
 
-Status: planned (designed 2026-09-27, one long session; nothing built yet).
+Status: in progress (designed 2026-09-27, one long session). Phase 1 lands in
+two shippable halves: half 1 — `forward.ts` deleted, the CLI mounts the
+installed app's command tree in-process — landed 2026-09-27; half 2 (the
+`@aivi/app` move into `@aivi/host` and burial) is next.
 Goal: one `aivi` binary, one command source, plugins as plain commander
 subtrees with a registered list, and remote operator access over the existing
 aivi port — with the two-binary `forward` deleted, not relocated.
@@ -55,7 +58,7 @@ One user-facing binary. One command mechanism for host and plugins alike.
 
 | # | Document | Lands | Depends on |
 | --- | --- | --- | --- |
-| 1 | [one-cli.md](one-cli.md) | one bin; `forward.ts`, `forwardIdentity`, and `@aivi/app` deleted; host gains `./cli` | — |
+| 1 | [one-cli.md](one-cli.md) | one bin; `forward.ts`, `forwardIdentity`, and `@aivi/app` deleted; host gains `./cli` — half 1 landed, half 2 open | — |
 | 2 | [plugin-contract.md](plugin-contract.md) | `@aivi/plugin` kit; plugins export `(ctx) => Command`; `ask` wrappers die; `@aivi/tracker-linear` rename | 1 |
 | 3 | [plugin-registry.md](plugin-registry.md) | `aivi-plugins` list in `<home>/app/package.json`; per-plugin zod schemas; `state/cache/schema.json`; the hardcoded `serve` if-chain dies | 2 |
 | 4 | [remote-exec.md](remote-exec.md) | `/v1/exec` websocket relay + server-side PTY; operator gate; person id + token pairing; announce-before-disconnect | 1 (2 makes it smaller) |

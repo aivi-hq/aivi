@@ -1,21 +1,19 @@
 #!/usr/bin/env node
 /** The thin aivi CLI. It installs and controls the server; the server does the
  *  assistant work. The CLI owns `setup` (sign in or create), `update`,
- *  `upgrade`, `uninstall` and the service commands, and forwards every other
- *  command — argv untouched — into the installed app; it never imports host
- *  code. Commander owns parsing and help for the commands it owns; anything
- *  else is forwarded before commander sees it, so the app's own help and
- *  errors are the ones a person gets. */
+ *  `upgrade`, `uninstall` and the service commands, and mounts every other
+ *  command **in-process** from the installed app (mount.ts) onto the same
+ *  commander tree — one help, one parse, no relay. The CLI itself never
+ *  imports app or host code statically. */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { brandBanner } from './brand.ts';
 import { loadClientConfig } from './client-config.ts';
-import { forward } from './forward.ts';
 import { homeForCreate, homeFromEnvOrConfig, requireHome } from './home.ts';
 import { install } from './install.ts';
 import { link } from './link.ts';
+import { appDirFor, mountAppCommands } from './mount.ts';
 import {
   serviceInstall,
   serviceLogs,
@@ -34,10 +32,6 @@ const version = (
   JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version: string }
 ).version;
 
-/** The commands this CLI owns; everything else forwards into the installed app. */
-const OWN = new Set(['setup', 'link', 'install', 'update', 'upgrade', 'uninstall', 'service']);
-const HELP_FORMS = new Set(['help', '--help', '-h', '--version', 'version']);
-
 export async function main(argv: string[]): Promise<void> {
   const [command, subcommand] = argv;
 
@@ -49,14 +43,6 @@ export async function main(argv: string[]): Promise<void> {
   // `aivi version` is this CLI's version, not the app's.
   if (command === 'version') {
     process.stdout.write(`${version}\n`);
-    return;
-  }
-
-  // The forwarding contract is argv, byte for byte: what this CLI does not own
-  // runs in the installed app, and so does `aivi help X` for a command the app
-  // describes better — its help knows the jobs, channels and the rest.
-  if (goesToApp(command, subcommand)) {
-    forwardToApp(argv);
     return;
   }
 
@@ -87,7 +73,7 @@ export async function main(argv: string[]): Promise<void> {
       const config = loadClientConfig();
       await install(args, {
         home,
-        appDir: config?.appDir ?? join(home, 'app'),
+        appDir: appDirFor(home),
         nodePath: config?.nodePath ?? process.execPath,
       });
     });
@@ -101,7 +87,7 @@ export async function main(argv: string[]): Promise<void> {
       const config = loadClientConfig();
       await updateServer({
         home,
-        appDir: config?.appDir ?? join(home, 'app'),
+        appDir: appDirFor(home),
         nodePath: config?.nodePath ?? process.execPath,
       });
     });
@@ -139,7 +125,7 @@ export async function main(argv: string[]): Promise<void> {
       const config = loadClientConfig();
       const options = {
         home,
-        appDir: config?.appDir ?? join(home, 'app'),
+        appDir: appDirFor(home),
         nodePath: config?.nodePath ?? process.execPath,
       };
       switch (verb) {
@@ -162,6 +148,25 @@ export async function main(argv: string[]): Promise<void> {
       }
     });
 
+  // The installed app's commands join this tree only when the request is not
+  // a machine command built above: commander's own registry is the machine
+  // set, so there is no second list to keep in step. A help form mounts on
+  // best effort — help shows what is mounted, and a missing or broken install
+  // says so in the footer instead of hiding the machine commands; an operator
+  // command mounts or says why it cannot run.
+  const machine = new Set(program.commands.map(c => c.name()));
+  const helpForm = command === undefined || command === 'help' || command === '--help' || command === '-h';
+  let mountError: string | undefined;
+  if (helpForm) {
+    try {
+      await mountAppCommands(program);
+    } catch (error) {
+      mountError = error instanceof Error ? error.message : String(error);
+    }
+  } else if (command !== '--version' && !machine.has(command)) {
+    await mountAppCommands(program);
+  }
+
   program.addHelpText(
     'before',
     `${brandBanner(
@@ -174,11 +179,16 @@ export async function main(argv: string[]): Promise<void> {
   );
   program.addHelpText(
     'after',
-    `
+    mountError === undefined
+      ? `
 Home: ~/.aivi (AIVI_HOME leads over the home recorded in ~/.config/aivi.json)
 holds config.json, .env, app/ (the installed server) and state/.
-Every other command — jobs, runs, people, projects, sources, knowledge, status,
-config, discord, slack, linear — runs in the installed app, arguments and all.`,
+The installed app's commands — status, jobs, runs, people, projects, sources,
+knowledge, serve and the channels — mount onto this tree.`
+      : `
+Home: ~/.aivi (AIVI_HOME leads over the home recorded in ~/.config/aivi.json)
+holds config.json, .env, app/ (the installed server) and state/.
+App commands unavailable: ${mountError}`,
   );
 
   try {
@@ -192,29 +202,18 @@ config, discord, slack, linear — runs in the installed app, arguments and all.
   }
 }
 
-/** Whether the installed app should run this argv: a command this CLI does not
- *  own, or `help X` for a command it does not own either. */
-const goesToApp = (command: string | undefined, subcommand: string | undefined): boolean =>
-  (command !== undefined && !OWN.has(command) && !HELP_FORMS.has(command)) ||
-  (command === 'help' && subcommand !== undefined && !OWN.has(subcommand));
-
-/** Run the installed app with the same arguments — byte for byte. */
-function forwardToApp(argv: string[]): void {
-  const home = requireHome();
-  const appDir = loadClientConfig()?.appDir ?? `${home}/app`;
-  process.exitCode = forward(argv, { home, appDir, nodePath: loadClientConfig()?.nodePath });
-}
-
 /** Commander has written its message already; showing help or the version is success. */
 const commanderExit = (error: CommanderError): number =>
   error.code === 'commander.help' || error.code === 'commander.helpDisplayed' || error.code === 'commander.version'
     ? 0
     : error.exitCode;
 
-try {
-  await main(process.argv.slice(2));
-  if (process.exitCode === undefined) process.exitCode = 0;
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-}
+// The bin runs itself; tests import main() without starting a parse.
+if (import.meta.main)
+  try {
+    await main(process.argv.slice(2));
+    if (process.exitCode === undefined) process.exitCode = 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
