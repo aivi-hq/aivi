@@ -1,5 +1,12 @@
 # @aivi/knowledge
 
+## 0.1.8
+
+### Patch Changes
+
+- Updated dependencies [[`b45e357`](https://github.com/aivi-hq/aivi/commit/b45e35767ad5d77d3c4e9cc5672e596b46defb2b), [`5eb13d2`](https://github.com/aivi-hq/aivi/commit/5eb13d21bb5df7ac0e738929c50a5e9400207147), [`551d893`](https://github.com/aivi-hq/aivi/commit/551d893fa140af07b00f5a9253334f0d346dd464), [`84de686`](https://github.com/aivi-hq/aivi/commit/84de68697cc0956859093432517b43392cec66ae)]:
+  - @aivi/core@0.8.0
+
 ## 0.1.7
 
 ### Patch Changes

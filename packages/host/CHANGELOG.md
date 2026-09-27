@@ -1,5 +1,17 @@
 # @aivi/host
 
+## 0.8.2
+
+### Patch Changes
+
+- [#34](https://github.com/aivi-hq/aivi/pull/34) [`b45e357`](https://github.com/aivi-hq/aivi/commit/b45e35767ad5d77d3c4e9cc5672e596b46defb2b) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `host.public`: the address others reach aivi at (funnel, tunnel or proxy URL), asked once by `aivi setup`, softly probed against `/health`, and preferred in every URL aivi prints for someone else to paste — the "another machine" connect lines, `aivi people create`'s token handoff, and `/status`. aivi keeps dialling `host.bind`/`host.port`; nothing is derived.
+
+- [#34](https://github.com/aivi-hq/aivi/pull/34) [`84de686`](https://github.com/aivi-hq/aivi/commit/84de68697cc0956859093432517b43392cec66ae) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The request diary: the host journals every arriving request — method, path, answer, time, headers, and the body's first 8 KiB — before any routing, so a refused bearer, an unowned path and a throwing handler are all visible. Credential headers are recorded as `[present]`, never as their value, and bodies are read from a clone so webhook signature verification still gets every byte. `aivi host clear-logs --older-than 30d` retires the old rows.
+
+- [#34](https://github.com/aivi-hq/aivi/pull/34) [`5146981`](https://github.com/aivi-hq/aivi/commit/51469810da8a67fb5299969d560bfba9e76997f8) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The version gate binds the core API surface only. The host applies the client-version negotiation to the endpoints it registers itself — the set fills from the route table as the app is built, so it cannot drift — and everything else passes untouched: a path nobody serves answers its honest 404 or 405 to any caller, so a browser probe or a mispointed webhook sees a missing path, never a refusal naming a version it was never asked about.
+- Updated dependencies [[`b45e357`](https://github.com/aivi-hq/aivi/commit/b45e35767ad5d77d3c4e9cc5672e596b46defb2b), [`5eb13d2`](https://github.com/aivi-hq/aivi/commit/5eb13d21bb5df7ac0e738929c50a5e9400207147), [`551d893`](https://github.com/aivi-hq/aivi/commit/551d893fa140af07b00f5a9253334f0d346dd464), [`84de686`](https://github.com/aivi-hq/aivi/commit/84de68697cc0956859093432517b43392cec66ae)]:
+  - @aivi/core@0.8.0
+
 ## 0.8.1
 
 ### Patch Changes

@@ -1,5 +1,23 @@
 # @aivi/app
 
+## 0.6.2
+
+### Patch Changes
+
+- [#32](https://github.com/aivi-hq/aivi/pull/32) [`2de2514`](https://github.com/aivi-hq/aivi/commit/2de25148361af4c51c7f1eb93739a37a02e46ef3) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi install discord|slack|browser` no longer dumps the setup result object to the terminal before the closing line. The plugin setup command is interactive (it requires a terminal and `aivi install` reads only its exit status and the module's own state), so its outro is the only human output; the machine-readable record it printed is unconsumed and was rendered as a raw `util.inspect` object on a terminal.
+
+- [#34](https://github.com/aivi-hq/aivi/pull/34) [`b45e357`](https://github.com/aivi-hq/aivi/commit/b45e35767ad5d77d3c4e9cc5672e596b46defb2b) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `host.public`: the address others reach aivi at (funnel, tunnel or proxy URL), asked once by `aivi setup`, softly probed against `/health`, and preferred in every URL aivi prints for someone else to paste — the "another machine" connect lines, `aivi people create`'s token handoff, and `/status`. aivi keeps dialling `host.bind`/`host.port`; nothing is derived.
+
+- [#34](https://github.com/aivi-hq/aivi/pull/34) [`5eb13d2`](https://github.com/aivi-hq/aivi/commit/5eb13d21bb5df7ac0e738929c50a5e9400207147) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - `aivi install linear` is a guided install. It starts only when a live aivi answers `GET /health`, walks through creating the Linear app, catches the browser's install round on a loopback listener bound before the instructions print, and proves the wiring before writing anything: one throwaway ticket, waited on twice in sequence — Linear must post its creation to the webhook URL, then delegating it must create an agent session whose event arrives the same way. Each wait owns one live spinner line and settles with a verdict naming the likeliest cause; the installer archives the ticket and ends with its own last line. The Linear worker starts from the delegate mutation's own answer, a delegation no lane can run is un-taken and gets one plain fixed answer, and an archived ticket gets nothing from a session.
+  
+  The install contract hands the flow the runner's own `@clack/prompts` as `ctx.prompts` and drops the `note`/`log`/`ask` proxies: the slack, discord and browser installers draw their own lines with it, refusing clack's cancel symbol and empty submits as the non-answers they are. After a successful setup the CLI adds nothing — the flow's own outro is the last word; the CLI reports only a restart it performs itself.
+
+- [#34](https://github.com/aivi-hq/aivi/pull/34) [`84de686`](https://github.com/aivi-hq/aivi/commit/84de68697cc0956859093432517b43392cec66ae) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The request diary: the host journals every arriving request — method, path, answer, time, headers, and the body's first 8 KiB — before any routing, so a refused bearer, an unowned path and a throwing handler are all visible. Credential headers are recorded as `[present]`, never as their value, and bodies are read from a clone so webhook signature verification still gets every byte. `aivi host clear-logs --older-than 30d` retires the old rows.
+- Updated dependencies [[`b45e357`](https://github.com/aivi-hq/aivi/commit/b45e35767ad5d77d3c4e9cc5672e596b46defb2b), [`5eb13d2`](https://github.com/aivi-hq/aivi/commit/5eb13d21bb5df7ac0e738929c50a5e9400207147), [`551d893`](https://github.com/aivi-hq/aivi/commit/551d893fa140af07b00f5a9253334f0d346dd464), [`84de686`](https://github.com/aivi-hq/aivi/commit/84de68697cc0956859093432517b43392cec66ae), [`5146981`](https://github.com/aivi-hq/aivi/commit/51469810da8a67fb5299969d560bfba9e76997f8)]:
+  - @aivi/core@0.8.0
+  - @aivi/host@0.8.2
+  - @aivi/knowledge@0.1.8
+
 ## 0.6.1
 
 ### Patch Changes
