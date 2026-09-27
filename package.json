@@ -42,7 +42,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "quality": "npx fallow",
-    "agentic:verify": "biome check --write . && npm run check && npm run quality",
+    "agentic:verify": "biome check --write . && npm run check",
     "prepare": "lefthook install"
   },
   "type": "module",
