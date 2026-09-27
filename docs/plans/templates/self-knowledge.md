@@ -18,6 +18,15 @@ of them.
 - Each installed package's docs directory becomes a knowledge source, kind
   `manual`, **indexed straight from the source — no copying** (copying drifts
   and is fragile; the index stays rebuildable, the sources stay authoritative).
+- **The sources must arrive with the package.** Measured 2026-09-27: packages
+  publish `files: ["dist"]` only (cli adds `templates/`), so an installed
+  home's `node_modules` holds no docs at all, and "no copying" would have no
+  source to honor. Decided: plugins ship their docs — `files: ["dist",
+  "docs"]` — so each source arrives version-matched with the code it
+  describes and the index reads it in place. Shipping is delivery, not
+  copying: the file keeps its one owner and `aivi upgrade` refreshes it. The
+  per-plugin chapters of `configuration.md` move with the schemas that own
+  them (cli-refactor D7); `configuration.md` itself ships with `@aivi/host`.
 - Sources carry **tags with the package name**, so a search narrows to
   `manual` + `@aivi/linear` and never drags in company docs, project docs,
   dreaming memory, or transcripts. The same kind filter that already keeps
