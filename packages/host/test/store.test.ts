@@ -21,7 +21,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   old.db.exec(`
     DROP TABLE runs; DROP TABLE jobs; DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job;
     DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
-    DROP TABLE IF EXISTS link_codes; DROP TABLE IF EXISTS channel_identities;
+    DROP TABLE IF EXISTS link_codes; DROP TABLE IF EXISTS channel_identities; DROP TABLE IF EXISTS requests;
     CREATE TABLE schedules(id TEXT PRIMARY KEY, spec TEXT NOT NULL, fingerprint TEXT NOT NULL,
       next_at INTEGER NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
@@ -37,7 +37,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   const upgraded = new Store(path);
   t.after(() => upgraded.close());
   assert.equal(upgraded.run('run-1').state, 'queued');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 10);
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 11);
   assert.equal(upgraded.run('run-1').report, null);
   assert.equal(upgraded.history('run-1')[0]!.action, 'enqueued');
   assert.equal(upgraded.acquireLease('discord:one', 'discord', 'local-model', 1, pools), true);
@@ -62,7 +62,7 @@ test('schema v7 gives every one-off its own job definition and keeps schedule an
     INSERT INTO schedules SELECT id,spec,fingerprint,next_at,1,source FROM jobs;
     DROP TABLE jobs; DROP TABLE runs;
     DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
-    DROP TABLE IF EXISTS link_codes; DROP TABLE IF EXISTS channel_identities;
+    DROP TABLE IF EXISTS link_codes; DROP TABLE IF EXISTS channel_identities; DROP TABLE IF EXISTS requests;
     CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
       task TEXT NOT NULL, resource TEXT NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','blocked','cancelled')),
@@ -531,4 +531,45 @@ test('link codes: minted hashed, consumed once, already-bound refused without co
   );
   assert.equal(store.redeemLinkCode(live.code, 'discord', 'new', start + 10).reason, 'bound');
   store.close();
+});
+
+test('the request diary reads oldest-first through its filters; clearRequests retires only the old', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const day = 86_400_000;
+  const delivery = {
+    method: 'POST',
+    path: '/linear/webhooks/app/a',
+    status: 200,
+    body: '{}',
+    truncated: false,
+    headers: { 'linear-signature': 'v0=abc' },
+  };
+  store.logRequest({ ...delivery, at: start - 40 * day });
+  store.logRequest({
+    method: 'GET',
+    path: '/health',
+    status: 200,
+    body: null,
+    truncated: false,
+    headers: {},
+    at: start,
+  });
+  store.logRequest({ ...delivery, at: start + day });
+  assert.deepEqual(
+    store.requests({ sinceId: 1 }).map(r => r.path),
+    ['/health', '/linear/webhooks/app/a'],
+    'everything after the first row, oldest-first',
+  );
+  assert.deepEqual(
+    store.requests({ method: 'POST', path: '/linear/webhooks/app/a' }).map(r => r.at),
+    [start - 40 * day, start + day],
+  );
+  assert.equal(store.requests({ path: '/health', limit: 1 }).length, 1);
+  assert.equal(store.clearRequests(start - 30 * day), 1, 'only the 40-day row went');
+  assert.deepEqual(
+    store.requests({ path: '/linear/webhooks/app/a' }).map(r => r.at),
+    [start + day],
+  );
+  assert.equal(store.clearRequests(start - 30 * day), 0, 'nothing left that old');
 });

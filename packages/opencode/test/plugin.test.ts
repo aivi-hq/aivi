@@ -394,7 +394,7 @@ test('the soul is appended to every agent at each replay, never twice, and an ed
   await writeFile(soulFile, 'I am aivi. I route rather than do.');
   const base = await hostServing(t, toolsRoute());
   const agents = new Map<string, AgentLike>([
-    ['librarian', { id: 'librarian', system: 'base prompt' }],
+    ['assistant', { id: 'assistant', system: 'base prompt' }],
     ['worker', { id: 'worker' }],
   ]);
   const fake = fakeAgentDomain(agents);
@@ -410,7 +410,7 @@ test('the soul is appended to every agent at each replay, never twice, and an ed
   });
 
   // The transform ran once; both agents carry the soul, however their prompt was written.
-  assert.equal(agents.get('librarian')!.system, 'base prompt\n\nI am aivi. I route rather than do.');
+  assert.equal(agents.get('assistant')!.system, 'base prompt\n\nI am aivi. I route rather than do.');
   assert.equal(agents.get('worker')!.system, 'I am aivi. I route rather than do.');
 
   // The registry replays the transform over a rebuilt state: appending stays idempotent.
@@ -433,7 +433,7 @@ test('the persona name is said from config.json, watched like the soul, and read
   await writeFile(soulFile, 'I route rather than do.');
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, identity: { name: 'Clawd' } }));
   const base = await hostServing(t, toolsRoute());
-  const agents = new Map<string, AgentLike>([['librarian', { id: 'librarian', system: 'base prompt' }]]);
+  const agents = new Map<string, AgentLike>([['assistant', { id: 'assistant', system: 'base prompt' }]]);
   const fake = fakeAgentDomain(agents);
   const cleanup = await setupWith(
     { soul: soulFile, url: base },
@@ -447,7 +447,7 @@ test('the persona name is said from config.json, watched like the soul, and read
   });
 
   // One place states the name: the config, so soul.md never repeats it.
-  assert.equal(agents.get('librarian')!.system, 'base prompt\n\nYour name is Clawd.\n\nI route rather than do.');
+  assert.equal(agents.get('assistant')!.system, 'base prompt\n\nYour name is Clawd.\n\nI route rather than do.');
 
   // The name is config, so it changes without a restart: config.json is watched like the soul.
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, identity: { name: 'Cline' } }));

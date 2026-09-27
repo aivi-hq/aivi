@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import type { LoadedConfig, Logger, OutputBlock } from '@aivi/core';
-import { print as corePrint, errorMessage, getLogger, loadConfig } from '@aivi/core';
+import { hostUrl as coreHostUrl, print as corePrint, errorMessage, getLogger, loadConfig } from '@aivi/core';
 import { createHostClient, Store } from '@aivi/host';
 
 /** One home holds everything: config.json, .env, state/. Paths in the config resolve against it. */
@@ -73,8 +73,7 @@ function loadEnvFile(path: string, log: { debug(event: string, fields?: Record<s
   return Object.keys(parseEnv(readFileSync(path, 'utf8')));
 }
 
+/** The URL aivi calls itself on; the printed one is `host.public` (core's rule). */
 export function hostUrl(loaded: LoadedConfig): string {
-  const { bind, port } = loaded.config.host;
-  const host = ['0.0.0.0', '::', '[::]'].includes(bind) ? '127.0.0.1' : bind;
-  return `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${port}`;
+  return coreHostUrl(loaded.config.host);
 }

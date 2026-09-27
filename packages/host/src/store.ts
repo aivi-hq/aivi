@@ -56,7 +56,33 @@ const run = (r: Row): Run => ({
   report: r.report === null || r.report === undefined ? null : (JSON.parse(String(r.report)) as Report),
 });
 
-const HOST_SCHEMA_VERSION = 10;
+/** One arriving request, journaled by the API's diary middleware: what came
+ *  in and what was answered, with credentials in the headers redacted by
+ *  the middleware itself. `truncated` says the body was larger than the cap
+ *  and only its first bytes were stored. */
+export interface RequestLogEntry {
+  id: number;
+  at: number;
+  method: string;
+  path: string;
+  status: number;
+  body: string | null;
+  truncated: boolean;
+  headers: Record<string, string>;
+}
+
+const request = (r: Row): RequestLogEntry => ({
+  id: Number(r.id),
+  at: Number(r.at),
+  method: String(r.method),
+  path: String(r.path),
+  status: Number(r.status),
+  body: r.body === null || r.body === undefined ? null : String(r.body),
+  truncated: Number(r.truncated) === 1,
+  headers: JSON.parse(String(r.headers)) as Record<string, string>,
+});
+
+const HOST_SCHEMA_VERSION = 11;
 
 /** Pre-v6 reports overloaded `channel`: a session id for `to: "session"`, a platform channel id for a module name. */
 function migrateReport(raw: unknown): Report | null {
@@ -207,6 +233,13 @@ export class Store {
           created_at INTEGER NOT NULL,
           PRIMARY KEY(channel, user_id));
         PRAGMA user_version=10;
+      `);
+    if (version < 11)
+      this.db.exec(`
+        CREATE TABLE requests(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL,
+          status INTEGER NOT NULL, body TEXT, truncated INTEGER NOT NULL DEFAULT 0, headers TEXT NOT NULL);
+        CREATE INDEX requests_at ON requests(at);
+        PRAGMA user_version=11;
       `);
   }
 
@@ -1034,5 +1067,50 @@ export class Store {
       this.db.prepare('SELECT 1 FROM channel_identities WHERE channel=? AND person_id=?').get(channel, personId) !==
       undefined
     );
+  }
+
+  // Requests: the diary of everything that arrived from outside.
+
+  /** Journal one arrival. The API's diary middleware is the only caller;
+   *  `requests` and `clearRequests` are how anyone else reads or retires it. */
+  logRequest(entry: Omit<RequestLogEntry, 'id'>): void {
+    this.db
+      .prepare('INSERT INTO requests(at,method,path,status,body,truncated,headers) VALUES(?,?,?,?,?,?,?)')
+      .run(
+        entry.at,
+        entry.method,
+        entry.path,
+        entry.status,
+        entry.body,
+        entry.truncated ? 1 : 0,
+        JSON.stringify(entry.headers),
+      );
+  }
+  /** Diary rows oldest-first — the order a watcher consumes them; the filters
+   *  scope one delivery (an installer polling for its webhook, say). */
+  requests(filter: { sinceId?: number; method?: string; path?: string; limit?: number } = {}): RequestLogEntry[] {
+    const where: string[] = [];
+    const args: (string | number)[] = [];
+    if (filter.sinceId !== undefined) {
+      where.push('id > ?');
+      args.push(filter.sinceId);
+    }
+    if (filter.method) {
+      where.push('method=?');
+      args.push(filter.method);
+    }
+    if (filter.path) {
+      where.push('path=?');
+      args.push(filter.path);
+    }
+    const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+    const rows = this.db
+      .prepare(`SELECT * FROM requests${clause} ORDER BY id LIMIT ?`)
+      .all(...args, filter.limit ?? 500);
+    return (rows as Row[]).map(request);
+  }
+  /** Forget diary rows older than the instant; says how many went. */
+  clearRequests(olderThan: number): number {
+    return Number(this.db.prepare('DELETE FROM requests WHERE at < ?').run(olderThan).changes);
   }
 }

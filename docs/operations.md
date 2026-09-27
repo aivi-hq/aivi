@@ -1,7 +1,8 @@
 # Operations
 
 For whoever runs `aivi serve`: what happens at startup and shutdown, how work
-is dispatched, how runs end, and what to do when work is blocked. Configuration
+is dispatched, how runs end, what to do when work is blocked, and what the
+host journaled of what arrived. Configuration
 fields are in [configuration](configuration.md); the reasons behind the
 behaviour are in [architecture](architecture.md).
 
@@ -149,7 +150,7 @@ no sign-in it asks what the machine should be:
   "Signed in as …".
 - **Create a new aivi server here** — installs the server into
   `<home>/app` with npm and seeds the home's OpenCode shape
-  (`opencode.jsonc`, `.opencode/agents/` with `aivi.md`, `librarian.md`,
+  (`opencode.jsonc`, `.opencode/agents/` with `assistant.md` and
   `dreamer.md` — files that exist are never overwritten). Then it asks
   whether *this machine* signs in too or this is a *headless server*:
   this-machine mints the operator person and token (the secret is printed
@@ -257,6 +258,21 @@ command as foreground `aivi serve`, so nothing about the server changes —
 log, `service uninstall` removes it. A headless Linux machine needs
 `loginctl enable-linger` or the service stops with the session.
 
+## The request diary
+
+Every request that reaches the host is journaled into the store: method,
+path, answer, time, the headers, and the body's first 8 KiB. It is recorded
+before routing, so a refused bearer, a path nothing owns and a handler that
+threw are all in the diary — this is the record that answers "did the
+platform ever call us?". The body is read from a clone, so the untouched
+stream still reaches webhook signature verification. `authorization`,
+`proxy-authorization` and `cookie` are journaled as `[present]`, never as
+their values: the diary shows a credential was sent, not what it said.
+
+Retention is a command, not an auto-purge:
+`aivi host clear-logs --older-than 30d` forgets the older rows and says how
+many went; the duration is the same shape `--at` takes (`30m|2h|1d|30d`).
+
 ## Updates
 
 `aivi update` brings the installed server and plugins to their newest releases.
@@ -279,9 +295,11 @@ major answers 403 `client_version_unsupported` — run `aivi upgrade`; a
 client behind within the same major is served, using fewer features than
 the host has. `@aivi/cli` and `@aivi/host` share one version through a
 changesets `fixed` group, so the CLI's own number is the API version it
-speaks. The negotiation itself is an [architecture decision](architecture.md);
-`GET /version` answers what a running host speaks, with no header and no
-credentials.
+speaks. The negotiation binds the core API surface only: an unknown path
+answers 404 (or 405) whoever asks, so a browser or a mispointed webhook
+sees a missing path, not a version refusal. The negotiation itself is an
+[architecture decision](architecture.md); `GET /version` answers what a
+running host speaks, with no header and no credentials.
 
 ## Uninstall
 

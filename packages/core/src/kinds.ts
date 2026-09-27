@@ -1,6 +1,6 @@
 /**
  * What a knowledge source contains. This is the single registry of kinds: the
- * librarian sees these descriptions and search can filter by kind. Add a kind
+ * the assistant sees these descriptions and search can filter by kind. Add a kind
  * here when a new class of material appears. Dependency-free so the OpenCode
  * plugin can import it without pulling in the config machinery.
  */

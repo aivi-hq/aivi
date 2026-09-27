@@ -31,6 +31,10 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 65535
+        },
+        "public": {
+          "type": "string",
+          "format": "uri"
         }
       },
       "additionalProperties": false
@@ -344,7 +348,7 @@
                   "pattern": "^\\d{17,20}$"
                 },
                 "agent": {
-                  "default": "librarian",
+                  "default": "assistant",
                   "type": "string"
                 },
                 "directory": {
@@ -460,7 +464,7 @@
               "type": "object",
               "properties": {
                 "agent": {
-                  "default": "librarian",
+                  "default": "assistant",
                   "type": "string"
                 },
                 "directory": {

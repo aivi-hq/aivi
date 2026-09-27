@@ -75,6 +75,7 @@ function fakeIo(overrides: Partial<SetupIo> = {}): {
       machine: async () => 'this-machine',
       background: async () => false,
       name: async () => 'Ada',
+      reach: async () => ({ kind: 'none' as const }),
       url: async () => 'http://127.0.0.1:4100',
       token: async () => TOKEN,
     },
@@ -182,8 +183,14 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
   assert.deepEqual(calls.identity, [['--use', 'this-machine', '--name', 'Ada']]);
   const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
   assert.match(jsonc, /"@aivi\/opencode@9\.9\.9"/);
-  for (const agent of ['aivi.md', 'librarian.md', 'dreamer.md'])
+  for (const agent of ['assistant.md', 'dreamer.md'])
     assert.equal(existsSync(join(home, '.opencode', 'agents', agent)), true, agent);
+  const assistant = readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8');
+  assert.match(
+    assistant,
+    /you do not perform\nproject work/,
+    'the do-not-do-the-work rule lives in the agent file, not in module code',
+  );
   const record = loadClientConfig()!;
   assert.equal(record.home, home);
   assert.equal(record.appDir, join(home, 'app'));
@@ -358,11 +365,11 @@ test('seeding the home keeps what exists and fills only the gaps', () => {
   const home = join(directory, 'home');
   mkdirSync(join(home, '.opencode', 'agents'), { recursive: true });
   writeFileSync(join(home, 'opencode.jsonc'), '{"kept":true}');
-  writeFileSync(join(home, '.opencode', 'agents', 'librarian.md'), 'custom');
+  writeFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'custom');
   seedHomeOpenCode(home, '@aivi/opencode@1.0.0');
   assert.equal(readFileSync(join(home, 'opencode.jsonc'), 'utf8'), '{"kept":true}');
-  assert.equal(readFileSync(join(home, '.opencode', 'agents', 'librarian.md'), 'utf8'), 'custom');
-  assert.equal(existsSync(join(home, '.opencode', 'agents', 'aivi.md')), true, 'missing agents are added');
+  assert.equal(readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8'), 'custom');
+  assert.equal(existsSync(join(home, '.opencode', 'agents', 'dreamer.md')), true, 'missing agents are added');
 });
 
 test('forwarding runs the installed app CLI with AIVI_HOME and passes argv through', () => {

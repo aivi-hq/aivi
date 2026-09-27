@@ -11,6 +11,7 @@ import { configureLogging, isTty } from '@aivi/core';
 import { Command, CommanderError } from 'commander';
 import { registerChannels } from './commands/channels.ts';
 import { registerGettingStarted } from './commands/getting-started.ts';
+import { registerHost } from './commands/host.ts';
 import { registerJobs } from './commands/jobs.ts';
 import { registerKnowledge } from './commands/knowledge.ts';
 import { registerPeople } from './commands/people.ts';
@@ -53,6 +54,7 @@ async function main(argv: string[]): Promise<void> {
 
   registerGettingStarted(program);
   registerServer(program);
+  registerHost(program);
   registerPeople(program);
   registerProjects(program);
   registerKnowledge(program);

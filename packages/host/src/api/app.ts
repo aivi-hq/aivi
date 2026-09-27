@@ -8,8 +8,9 @@ import type { JobHandler } from '../jobs.ts';
 import type { Store } from '../store.ts';
 import type { ToolRegistry } from '../tools.ts';
 import { hostVersion } from '../version.ts';
+import { requestDiary } from './diary.ts';
 import type { AppEnv } from './env.ts';
-import { versionGate } from './gate.ts';
+import { coreVersionGate, pathHead } from './gate.ts';
 import { claimHostTools } from './host-tools.ts';
 import { respond } from './http.ts';
 import { requireOperator, resolvePerson } from './person.ts';
@@ -51,10 +52,12 @@ export interface HostApiOptions {
 
 /**
  * The host API as a Hono app, listening on no port. The chain order is the
- * contract: standing headers wrap everything; `/health` and `/version` answer
+ * contract: the request diary journals everything; standing headers wrap
+ * everything; `/health` and `/version` answer
  * first and are exempt from the gate by that order alone; module webhooks
  * dispatch on raw bytes before a client version is ever asked; then the
- * version gate, the bearer's person, and the operator gate on `/people`.
+ * version gate, on the core endpoints the host registers and nowhere else;
+ * then the bearer's person, and the operator gate on `/people`.
  * Unknown paths answer 404 to a GET and 405 to anything else, as the API has
  * always done, and a known path with the wrong method answers 405 with the
  * methods it takes.
@@ -75,7 +78,13 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
   } = options;
   const app = new Hono<AppEnv>();
   if (tools) claimHostTools(tools, { store, loaded, knowledge, jobs, health, context, log });
+  // The version contract binds the paths this host itself serves; the set
+  // fills from the route table once the endpoints below are registered.
+  const coreSurface = new Set<string>();
 
+  // The diary records every arrival before anything else touches it, so a
+  // request the chain refuses, loses or never routes is still visible.
+  app.use('*', requestDiary(store, log));
   app.use('*', async (c, next) => {
     await next();
     c.res.headers.set('content-type', 'application/json');
@@ -86,7 +95,7 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
   app.get('/health', c => c.json({ ok: true }));
   app.get('/version', c => c.json({ version: hostVersion }));
   app.use('*', publicDispatch(routes, log));
-  app.use('*', versionGate);
+  app.use('*', coreVersionGate(coreSurface));
   app.use('*', resolvePerson(store));
   app.use('/people', requireOperator);
   app.use('/people/*', requireOperator);
@@ -100,6 +109,9 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
   registerPeople(app, { store });
   registerJobs(app, { jobs, log });
   registerTools(app, { tools, log });
+  // Endpoints, not middleware: the gate's scope is the core surface, and a
+  // middleware registration ('*' paths) is not an endpoint anyone calls.
+  for (const route of app.routes) if (route.method !== 'ALL') coreSurface.add(pathHead(route.path));
 
   app.use(
     '*',

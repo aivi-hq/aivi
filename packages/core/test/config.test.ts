@@ -8,9 +8,11 @@ import {
   assistantAgent,
   configSchema,
   gitIdentity,
+  hostUrl,
   jobSchema,
   linearSecretNames,
   loadConfig,
+  printedBaseUrl,
   projectsSyncJob,
   retentionJob,
   selectSources,
@@ -66,7 +68,7 @@ test('channel modules are blocks in the one file: presence enables with defaults
   });
   if (typeof on.modules.discord !== 'object' || typeof on.modules.slack !== 'object')
     throw new Error('present blocks parse to settings, not false');
-  assert.equal(on.modules.discord.agent, 'librarian');
+  assert.equal(on.modules.discord.agent, 'assistant');
   assert.equal(on.modules.slack.commandPrefix, 'aivi');
   assert.deepEqual(configSchema.parse({ version: 1, modules: { discord: false } }).modules, { discord: false });
   assert.match(
@@ -470,11 +472,11 @@ test('scheduler.timezone is the host-wide default; a per-job timezone wins over 
 test('identity is the persona, and who a worker commits as comes from the file, the machine, then the app', async () => {
   const bare = configSchema.parse({ version: 1 });
   assert.equal(bare.identity.name, 'aivi', 'the persona has a default');
-  assert.equal(assistantAgent(bare), 'aivi', 'the Linear assistant takes the persona name');
+  assert.equal(assistantAgent(bare), 'assistant', 'the one assistant is the fallback name');
   assert.equal(
     assistantAgent(configSchema.parse({ version: 1, identity: { name: 'Clawd The' } })),
-    'clawd-the',
-    'the agent name is the persona slugged, while the display name stays free-form',
+    'assistant',
+    'the persona name is never slugged into an agent name; the display name stays free-form',
   );
   const app = { name: 'aivi-agent[bot]', email: '331678708+aivi-agent[bot]@users.noreply.github.com' };
   const machine = async (key: string) => (key === 'opencode.coauthor' ? 'Jane Doe <jane@example.com>' : '');
@@ -517,4 +519,26 @@ test('a top-level name is the old shape and says where the persona went', async 
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, name: 'aivi' }));
   await assert.rejects(loadConfig(join(root, 'config.json')), /identity\.name/);
+});
+
+test('host.public: the reach address, validated and preferred when printed', () => {
+  const host = configSchema.parse({ version: 1 }).host;
+  assert.equal(host.public, undefined, 'unset by default: asked, never guessed');
+  assert.equal(hostUrl(host), 'http://127.0.0.1:4100', 'a wildcard-free loopback bind');
+  assert.equal(hostUrl({ bind: '0.0.0.0', port: 8080 }), 'http://127.0.0.1:8080', 'a wildcard bind collapses');
+  const base = 'https://you.tailscale.ts.net/aivi';
+  assert.equal(configSchema.parse({ version: 1, host: { public: base } }).host.public, base, 'a path is allowed');
+  for (const bad of ['https://a.test/', 'ftp://a.test', 'a.test', 'https://a.test/sub/']) {
+    assert.equal(
+      configSchema.safeParse({ version: 1, host: { public: bad } }).success,
+      false,
+      `${bad} is not a valid public base`,
+    );
+  }
+  const declared = configSchema.parse({ version: 1, host: { public: base } });
+  assert.deepEqual(printedBaseUrl(declared), { url: base, declared: true });
+  assert.deepEqual(printedBaseUrl(configSchema.parse({ version: 1 })), {
+    url: 'http://127.0.0.1:4100',
+    declared: false,
+  });
 });

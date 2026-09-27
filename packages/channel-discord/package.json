@@ -33,6 +33,7 @@
     "@aivi/host": "^0.8.1"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^0.8.1",
+    "@clack/prompts": "1.8.1"
   }
 }

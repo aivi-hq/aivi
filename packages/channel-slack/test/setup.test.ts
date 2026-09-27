@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { PluginSetupContext } from '@aivi/core';
 import { PluginSetupCancelled } from '@aivi/core';
+import * as prompts from '@clack/prompts';
 import setup from '../src/setup.ts';
 
 /** A context that answers prompts from a script, records what is written, and
- *  fetches canned Slack responses. Nothing touches disk or the network. */
+ *  fetches canned Slack responses. Nothing touches disk or the network.
+ *  The flow draws with `ctx.prompts`, so the script replaces clack's drawing
+ *  verbs — a real prompt asks again when `validate` refuses, and so does
+ *  this: a bad shape is modelled by the next scripted answer. */
 interface Harness {
   ctx: PluginSetupContext;
   secrets: Map<string, string>;
@@ -22,32 +26,40 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
   const notes: string[] = [];
   const logs: string[] = [];
   const printed: unknown[] = [];
+  const answered = async (
+    validate?: ((value: string | undefined) => string | undefined) | undefined,
+  ): Promise<string> => {
+    for (;;) {
+      const answer = queue.shift();
+      if (answer === undefined) throw new Error('the answer script ran dry');
+      const problem = validate?.(answer);
+      if (!problem) return answer;
+      if (queue.length === 0) throw new Error(`validate refused "${answer}" and nothing follows: ${problem}`);
+    }
+  };
   const ctx: PluginSetupContext = {
     home: '/home',
     configPath: '/home/config.json',
     identityName: 'Clawd',
     config: { version: 1, modules: {} },
-    note: (title, lines) => notes.push(`${title}: ${lines}`),
     print: value => printed.push(value),
-    log: message => logs.push(message),
-    ask: {
-      async text({ validate }) {
-        // A real prompt asks again when validate refuses; the script answers
-        // until one passes, so a bad shape is modelled by the next answer.
-        for (;;) {
-          const answer = queue.shift();
-          if (answer === undefined) throw new Error('the answer script ran dry');
-          const problem = validate?.(answer);
-          if (!problem) return answer;
-          if (queue.length === 0) throw new Error(`validate refused "${answer}" and nothing follows: ${problem}`);
-        }
+    prompts: {
+      ...prompts,
+      note: (lines = '', title = '') => {
+        notes.push(`${title}: ${lines}`);
       },
-      async confirm() {
-        const answer = queue.shift();
-        if (answer === undefined) throw new Error('the answer script ran dry');
-        return answer === 'yes';
+      text: async (options?: { validate?: (value: string | undefined) => string | undefined }) =>
+        answered(options?.validate),
+      password: async (options?: { validate?: (value: string | undefined) => string | undefined }) =>
+        answered(options?.validate),
+      confirm: async () => (await answered()) === 'yes',
+      select: async () => answered(),
+      log: {
+        message: async (message?: string) => {
+          logs.push(String(message));
+        },
       },
-    },
+    } as unknown as typeof prompts,
     async fetch(url) {
       const hit = responses.find(r => r.match.test(url));
       if (!hit) throw new Error(`no canned response for ${url}`);
@@ -141,9 +153,7 @@ test('slack setup refuses an already configured module', async () => {
 
 test('slack setup stops on a cancelled prompt with nothing written', async () => {
   const h = harness(['aivi'], [AUTH_OK, SOCKETS_OK]);
-  h.ctx.ask.text = async () => {
-    throw new PluginSetupCancelled('a prompt was cancelled');
-  };
+  h.ctx.prompts = { ...h.ctx.prompts, text: async () => prompts.CANCEL_SYMBOL } as typeof prompts;
   await assert.rejects(setup(h.ctx), PluginSetupCancelled);
   assert.equal(h.blocks.length, 0);
 });

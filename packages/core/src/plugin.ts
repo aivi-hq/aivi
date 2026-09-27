@@ -6,6 +6,7 @@
  * instructions and is testable without a terminal or a platform account.
  */
 
+import type * as prompts from '@clack/prompts';
 import type { OutputBlock } from './output.ts';
 
 /** A prompt the person cancelled; the runner says it stopped and writes nothing further. */
@@ -19,23 +20,19 @@ export interface PluginSetupContext {
   identityName: string;
   /** The raw parsed `config.json`, so a flow can see what is already configured. */
   config: Record<string, unknown>;
-  /** Print the instructions the plugin owns: how to create the platform app, what to copy where. */
-  note(title: string, lines: string): void;
   /** The command output record on stdout: raw JSON text on the terminal when the
    *  value is for copying (core's `print`), so paste-able output stays paste-able. */
   print(value: unknown, output?: OutputBlock[] | string): void;
-  log(message: string): void;
-  ask: {
-    /** One line of text; `secret` asks it hidden. Throws PluginSetupCancelled on cancel. */
-    text(options: {
-      message: string;
-      placeholder?: string | undefined;
-      secret?: boolean | undefined;
-      validate?: ((value: string) => string | undefined) | undefined;
-    }): Promise<string>;
-    /** Yes or no; throws PluginSetupCancelled on cancel. */
-    confirm(options: { message: string; initial?: boolean | undefined }): Promise<boolean>;
-  };
+  /** The very `@clack/prompts` module the runner renders with, handed over
+   *  so a flow draws all its own lines — notes, log lines, prompts,
+   *  spinners — with the same instance and style as the runner's intro and
+   *  cancel line. Whoever is called owns the screen: two clacks animating
+   *  one terminal mangle each other (measured 2026-09-27), so a flow opens
+   *  one animation at a time, prints nothing beside it, and settles it
+   *  before returning or throwing. A prompt cancelled on Ctrl+C is no
+   *  answer: the flow throws `PluginSetupCancelled` and nothing further
+   *  is written. */
+  prompts: typeof prompts;
   /** Platform calls the flow verifies with; the runner supplies the real fetch. */
   fetch(url: string, init?: RequestInit): Promise<Response>;
   /** Write this plugin's block into `config.json`; the file must load again or the old bytes return. */

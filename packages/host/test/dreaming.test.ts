@@ -31,7 +31,7 @@ const messages: Record<string, unknown[]> = {
     {
       type: 'assistant',
       id: 'a1',
-      agent: 'librarian',
+      agent: 'assistant',
       time: { created: T0 + 2950, completed: T0 + 2999 },
       content: [
         { type: 'reasoning', text: 'hmm' },
@@ -46,7 +46,7 @@ const messages: Record<string, unknown[]> = {
     {
       type: 'assistant',
       id: 'a2',
-      agent: 'librarian',
+      agent: 'assistant',
       time: { created: T0 + 1950, completed: T0 + 1999 },
       content: [{ type: 'text', text: 'new answer' }],
     },
@@ -76,7 +76,7 @@ function mockOpenCode(agent = 'dreamer') {
       return;
     }
     if (url.pathname === '/api/agent')
-      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+      return void res.end(JSON.stringify({ data: [{ id: 'assistant', name: 'assistant' }] }));
     if (req.method === 'PATCH' || url.pathname.endsWith('/wait')) {
       res.writeHead(204);
       res.end();
@@ -134,7 +134,7 @@ test('collectSessions picks aivi sessions by origin updated after the cursor, ol
   assert.equal(found[0]!.lines.length, 2, 'messages before the cursor are skipped');
   assert.match(
     found[1]!.lines[1]!,
-    /^\*\*librarian\*\* .*\nNoted: Tuesdays\.$/,
+    /^\*\*assistant\*\* .*\nNoted: Tuesdays\.$/,
     'reasoning is excluded, agent is named',
   );
   const capped = await collectSessions(client, T0, ['discord'], 1, AbortSignal.timeout(5000));

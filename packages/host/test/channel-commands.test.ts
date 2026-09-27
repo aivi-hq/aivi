@@ -31,7 +31,7 @@ import { Store } from '../src/store.ts';
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 const scheduler = configSchema.parse({ version: 1 }).scheduler;
 const limits = { resource: 'local-model', maxConcurrent: 1, turnTimeoutMs: 300_000 };
-const binding = { agent: 'librarian', directory: '/home' };
+const binding = { agent: 'assistant', directory: '/home' };
 const message = (id: string, channel = 'dm-a') => ({
   id,
   channel,
@@ -95,7 +95,7 @@ async function mockOpenCode(t: { after(fn: () => Promise<void>): void }) {
       return void res.end(
         JSON.stringify({
           data: [
-            { id: 'librarian', name: 'librarian', model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } },
+            { id: 'assistant', name: 'assistant', model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } },
           ],
         }),
       );
@@ -106,7 +106,7 @@ async function mockOpenCode(t: { after(fn: () => Promise<void>): void }) {
             {
               type: 'assistant',
               id: 'a2',
-              agent: 'librarian',
+              agent: 'assistant',
               model: { providerID: 'github-copilot', id: 'gpt-5.2', variant: 'high' },
               time: { created: 4 },
               content: [],
@@ -230,7 +230,7 @@ test('/model shows the pin, the last answer and the agent default; switching val
     '🧠 **Model**',
     'This conversation: the agent’s default.',
     'Last answer: none yet.',
-    'Agent `librarian`: `github-copilot/gemini-3.8-flash` (agent file).',
+    'Agent `assistant`: `github-copilot/gemini-3.8-flash` (agent file).',
   ]);
   assert.match(
     await switchModel(store, 'dm-a', binding, opencode, 'gpt'),

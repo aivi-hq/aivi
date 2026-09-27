@@ -337,11 +337,37 @@ export const linearSecretNames = (app: string) => {
  * address or `0.0.0.0` to let remote clients reach the API. Commands are open:
  * a bearer token identifies the caller for association, it never locks
  * anything.
+ *
+ * `public` is where the host is *reached from outside* — the address behind a
+ * tunnel, funnel or reverse proxy. It is never derived and never called:
+ * every URL aivi prints for someone else to paste is composed from it. aivi
+ * itself keeps dialling `bind`/`port`.
  */
 export const hostSchema = z.strictObject({
   bind: z.string().min(1).default('127.0.0.1'),
   port: z.number().int().min(0).max(65535).default(4100),
+  public: z
+    .url()
+    .refine(url => /^https?:\/\//.test(url), 'host.public must use http or https')
+    .refine(url => !url.endsWith('/'), 'host.public must not end in /')
+    .optional(),
 });
+
+/** The URL aivi *calls* itself on: `bind`/`port`, wildcard binds collapsed to loopback. */
+export function hostUrl(host: Config['host']): string {
+  const h = ['0.0.0.0', '::', '[::]'].includes(host.bind) ? '127.0.0.1' : host.bind;
+  return `http://${h.includes(':') && !h.startsWith('[') ? `[${h}]` : h}:${host.port}`;
+}
+
+/**
+ * The URL aivi *prints* for outsiders: the declared `host.public`, else the
+ * listen URL — `declared` says which, so the printer can caveat a guess.
+ */
+export function printedBaseUrl(config: Config): { url: string; declared: boolean } {
+  return config.host.public
+    ? { url: config.host.public, declared: true }
+    : { url: hostUrl(config.host), declared: false };
+}
 /**
  * How to reach OpenCode v2. Without `url`, the host discovers the local
  * background service (`opencode service status`) and uses its credentials.
@@ -454,7 +480,7 @@ const snowflake = z.string().regex(/^\d{17,20}$/);
 export const discordConfigSchema = z
   .strictObject({
     applicationId: snowflake.describe('The Discord application the bot token belongs to.'),
-    agent: z.string().default('librarian'),
+    agent: z.string().default('assistant'),
     /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
     directory: z.string().min(1).default('.'),
     resource: z.string().default('local-model'),
@@ -493,7 +519,7 @@ const channelId = z.string().refine(isChannelId, 'Expected a Slack channel id (C
  */
 export const slackConfigSchema = z
   .strictObject({
-    agent: z.string().default('librarian'),
+    agent: z.string().default('assistant'),
     /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
     directory: z.string().min(1).default('.'),
     /** Slash commands are `/<prefix>-new`, `/<prefix>-status`, `/<prefix>-search`, defined in the Slack app manifest. */
@@ -915,14 +941,9 @@ export function primaryLinearApp(linear: LinearConfig | undefined): string | und
   return ids.length === 1 ? ids[0] : undefined;
 }
 
-/** The assistant's agent name: `linear.agent`, else the aivi name slugged (lower-case, non-alphanumerics to `-`). */
+/** The assistant's agent name: `linear.agent`, else the one assistant everyone gets. */
 export function assistantAgent(config: Config): string {
-  if (config.linear?.agent) return config.linear.agent;
-  const slug = config.identity.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'aivi';
+  return config.linear?.agent ?? 'assistant';
 }
 
 /** Id of the job the host seeds from `scheduler.retention`. */
@@ -1166,7 +1187,7 @@ export function selectSources(
     .filter(s => !kinds || kinds.includes(s.kind));
 }
 
-/** Projects as the librarian and `aivi projects list` see them: id, removed marker, searchable sources. */
+/** Projects as the assistant and `aivi projects list` see them: id, removed marker, searchable sources. */
 export function projectSummaries(loaded: LoadedConfig): ProjectSummary[] {
   return loaded.projects.map(p => ({
     id: p.id,

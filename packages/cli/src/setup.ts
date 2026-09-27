@@ -9,6 +9,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
@@ -27,13 +28,31 @@ const CLIENT_PLUGINS = [AIVI_PLUGIN, ATTRIBUTION_PLUGIN];
 
 /** The OpenCode shape of a server home: the service `aivi serve` runs loads
  *  these from the home. A file that exists is never overwritten. */
-const HOME_AGENTS = ['aivi.md', 'librarian.md', 'dreamer.md'];
+const HOME_AGENTS = ['assistant.md', 'dreamer.md'];
 
 const SCRIPT_FORM =
   'setup needs an interactive terminal; in a script use: aivi setup --use this-machine|another --name TEXT, or aivi setup --connect --url URL --token TOKEN';
 
 /** A prompt the person cancelled; the flow stops with nothing further written. */
 class Cancelled extends Error {}
+
+/** How others reach the machine, from the create flow's one question. */
+export type Reach = { kind: 'none' } | { kind: 'lan'; bind: string } | { kind: 'url'; url: string };
+
+/** Usable LAN/tailnet addresses: non-internal IPv4, de-duplicated. */
+function lanBinds(): { name: string; addr: string }[] {
+  const seen = new Set<string>();
+  const binds: { name: string; addr: string }[] = [];
+  for (const [name, addrs] of Object.entries(networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family === 'IPv4' && !addr.internal && !seen.has(addr.address)) {
+        seen.add(addr.address);
+        binds.push({ name, addr: addr.address });
+      }
+    }
+  }
+  return binds;
+}
 
 export interface Identity {
   home: string;
@@ -42,6 +61,10 @@ export interface Identity {
   name?: string;
   token: string;
   next?: string;
+  /** Caveat on the printed url (a loopback or LAN guess the operator should know about), if any. */
+  urlNote?: string;
+  /** What the soft reachability probe saw, when a public base was given. */
+  probeNote?: string;
 }
 
 export interface WhoamiResult {
@@ -63,6 +86,7 @@ export interface SetupIo {
     machine(): Promise<'this-machine' | 'another'>;
     background(): Promise<boolean>;
     name(): Promise<string>;
+    reach(): Promise<Reach>;
     url(): Promise<string>;
     token(): Promise<string>;
   };
@@ -83,6 +107,7 @@ export interface SetupFlags {
   url: string | undefined;
   token: string | undefined;
   name: string | undefined;
+  public: string | undefined;
 }
 
 /** The valued flags, each with its setter. `--plugin` collects; the rest take
@@ -104,6 +129,9 @@ const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = 
   '--name': (flags, value) => {
     flags.name = value;
   },
+  '--public': (flags, value) => {
+    flags.public = value;
+  },
 };
 
 export function extractSetupFlags(args: string[]): SetupFlags {
@@ -115,6 +143,7 @@ export function extractSetupFlags(args: string[]): SetupFlags {
     url: undefined,
     token: undefined,
     name: undefined,
+    public: undefined,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -223,6 +252,32 @@ function writeHomeSkeleton(home: string): string {
   return appDir;
 }
 
+/** The identity-step flags that carry the reach answer. */
+function reachFlags(reach: Reach): string[] {
+  if (reach.kind === 'url') return ['--public', reach.url];
+  if (reach.kind === 'lan') return ['--lan-bind', reach.bind];
+  return [];
+}
+
+/** Say what the identity step returned: caveats first, then the paste-able
+ *  handoff for the other machine when that is where the person will sign in. */
+function printIdentity(identity: Identity, use: string, home: string, io: SetupIo): void {
+  if (identity.urlNote) io.warn(identity.urlNote);
+  if (identity.probeNote) io.log(identity.probeNote);
+  if (use !== 'another') return;
+  io.log(`The server home is ready at ${home}. Take these to the other machine — the token is shown once:`);
+  io.log(`  url:   ${identity.url}`);
+  io.log(`  token: ${identity.token}`);
+  io.log('There: `npm install -g @aivi/cli`, run `aivi setup`, choose "Connect to a host", and paste both.');
+}
+
+/** The reach answer: a flag wins; a scripted `--use` skips the question (unset is a valid answer). */
+async function resolveReach(flags: SetupFlags, io: SetupIo): Promise<Reach> {
+  if (flags.public) return { kind: 'url', url: flags.public };
+  if (flags.use !== undefined) return { kind: 'none' };
+  return io.ask.reach();
+}
+
 async function createFlow(flags: SetupFlags, home: string, nodePath: string, io: SetupIo): Promise<void> {
   const major = Number(process.versions.node.split('.')[0]);
   if (major !== 26) throw new Error(`aivi needs Node 26 (below 27); running ${process.versions.node}.`);
@@ -230,6 +285,10 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   // A flag given skips its prompt, the identity step's own rule; a script
   // passing --use without --name gets the default operator name.
   const name = flags.name ?? (flags.use !== undefined ? 'Operator' : await io.ask.name());
+
+  // The reach address: asked once here, stored by the identity step, used by
+  // every printed URL.
+  const reach = await resolveReach(flags, io);
 
   const appDir = writeHomeSkeleton(home);
 
@@ -246,14 +305,9 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
 
   // Identity is the installed app's own act: person and token are minted in
   // its store, and this-machine signs `~/.config/aivi.json` there.
-  const identity = io.forwardIdentity(['--use', use, '--name', name], home, appDir, nodePath);
-  if (use === 'another') {
-    io.log(`The server home is ready at ${home}. Take these to the other machine — the token is shown once:`);
-    io.log(`  url:   ${identity.url}`);
-    io.log(`  token: ${identity.token}`);
-    io.log('There: `npm install -g @aivi/cli`, run `aivi setup`, choose "Connect to a host", and paste both.');
-    return;
-  }
+  const identity = io.forwardIdentity(['--use', use, '--name', name, ...reachFlags(reach)], home, appDir, nodePath);
+  printIdentity(identity, use, home, io);
+  if (use === 'another') return;
 
   await ensurePlugins(io);
   const background = process.stdin.isTTY ? await io.ask.background() : false;
@@ -446,6 +500,49 @@ const defaultIo: SetupIo = {
       guarded(() => p.text({ message: 'Your name — aivi associates records with it', placeholder: 'Operator' })).then(
         value => value.trim() || 'Operator',
       ),
+    reach: () =>
+      guarded<'none' | 'lan' | 'url'>(() =>
+        p.select({
+          message: 'How will others reach this machine?',
+          options: [
+            { value: 'none', label: 'Only this machine (nothing outside can reach it)' },
+            { value: 'lan', label: 'My network — anyone on the LAN or tailnet reaches aivi directly' },
+            {
+              value: 'url',
+              label: 'A URL in front of it — a tunnel or proxy reaches loopback (Tailscale Funnel, cloudflared…)',
+            },
+          ],
+        }),
+      ).then(async kind => {
+        if (kind === 'url') {
+          const url = await guarded<string>(() =>
+            p.text({
+              message: 'The URL others reach this machine at',
+              placeholder: 'https://you.tailscale.ts.net',
+              validate: value => {
+                const v = String(value ?? '').trim();
+                if (!v) return 'A URL, or cancel back to "only this machine".';
+                if (!/^https?:\/\/\S+$/.test(v)) return 'An http(s) URL, like https://you.tailscale.ts.net';
+                if (v.endsWith('/')) return 'Drop the trailing slash.';
+                return undefined;
+              },
+            }),
+          );
+          return { kind: 'url', url: url.trim() } as const;
+        }
+        if (kind === 'lan') {
+          const binds = lanBinds();
+          if (binds.length === 0) throw new Cancelled('no LAN or tailnet address was found on this machine');
+          const bind = await guarded<string>(() =>
+            p.select({
+              message: 'Which address should aivi listen on?',
+              options: binds.map(b => ({ value: b.addr, label: `${b.name} — ${b.addr}` })),
+            }),
+          );
+          return { kind: 'lan', bind } as const;
+        }
+        return { kind: 'none' } as const;
+      }),
     url: () =>
       guarded(() =>
         p.text({

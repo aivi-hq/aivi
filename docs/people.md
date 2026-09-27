@@ -31,7 +31,8 @@ array** on the person (`roles` column, JSON): `operator` manages people and
 maintenance, the default for a new person is `member`; a future role is data,
 not a migration. The store migration granted `operator` to everyone who
 existed when the column arrived (the v1 stub was simply true). Enforcement
-widens with the ops dispatcher ([plans/operator-api](plans/operator-api.md));
+widens with the remote exec channel, whose gate is the `operator` role
+([plans/cli-refactor](plans/cli-refactor/remote-exec.md#security));
 until then a non-loopback bind logs a warning: anyone who can reach the
 address can use the commands.
 
@@ -85,9 +86,11 @@ until the api-only session):
 
 - `aivi people create NAME [--email E]` — on a terminal it offers to mint
   the person's token right away, since nine of ten people are created for
-  exactly that.
+  exactly that. The mint ends with the paste-able connect line: the host's
+  `host.public` URL and the token, shown once.
 - `aivi people list`
-- `aivi people token PERSON [--label L]` — mints another bearer; shown once.
+- `aivi people token PERSON [--label L]` — mints another bearer; shown once,
+  with the same connect line.
 
 ## Link codes (Discord, Slack)
 

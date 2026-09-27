@@ -99,7 +99,18 @@ test('GraphQL errors and HTTP failures surface as LinearApiError; mutations chec
             labels: { nodes: [{ id: 'l', name: 'needs-human' }] },
             delegate: null,
             assignee: null,
-            blockedBy: { nodes: [] },
+            inverseRelations: {
+              nodes: [
+                {
+                  type: 'blocks',
+                  issue: { id: 'blk', state: { id: 's0', name: 'In Progress', type: 'started' } },
+                },
+                {
+                  type: 'related',
+                  issue: { id: 'rel', state: { id: 's9', name: 'Done', type: 'completed' } },
+                },
+              ],
+            },
           },
         },
       },
@@ -119,6 +130,11 @@ test('GraphQL errors and HTTP failures surface as LinearApiError; mutations chec
   );
   const issue = await client.issue('i1');
   assert.deepEqual(issue.labels, [{ id: 'l', name: 'needs-human' }], 'label connection flattened');
+  assert.deepEqual(
+    issue.blockedBy,
+    [{ id: 'blk', state: { id: 's0', name: 'In Progress', type: 'started' } }],
+    'inverseRelations of type blocks are the blockers; other relation types are dropped',
+  );
   assert.equal(issue.branchName, 'me/eng-1-t');
 });
 

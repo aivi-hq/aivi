@@ -15,8 +15,19 @@ export function registerGettingStarted(program: Command): void {
     .description('The identity step behind aivi setup: init the home, create your person and its token')
     .option('--use <where>', 'this-machine | another; a flag given skips its prompt')
     .option('--name <text>', "your name; records associate with it ('Operator' when unasked)")
+    .option('--public <url>', 'the public base others reach this host at (host.public); stored and soft-probed')
+    .option('--lan-bind <ip>', 'listen on this LAN/tailnet address instead of loopback')
     .action(async values => {
-      print(await serverCreate({ home: home, configPath, use: values.use, name: values.name }));
+      print(
+        await serverCreate({
+          home: home,
+          configPath,
+          use: values.use,
+          name: values.name,
+          public: values.public,
+          lanBind: values.lanBind,
+        }),
+      );
     });
 
   const plugin = program.command('plugin').description('plugin install-time plumbing').helpGroup('Getting started');

@@ -28,7 +28,7 @@ const loaded = {
     },
   ],
 };
-const binding = { agent: 'librarian', directory: '/home' };
+const binding = { agent: 'assistant', directory: '/home' };
 
 test('/context describes the bound session from OpenCode: agent, model, counts, tokens, scope, pending work', async t => {
   const server = createServer((req, res) => {
@@ -39,7 +39,7 @@ test('/context describes the bound session from OpenCode: agent, model, counts, 
         JSON.stringify({
           data: {
             id: 'ses_x',
-            agent: 'librarian',
+            agent: 'assistant',
             location: { directory: '/home' },
             time: { created: Date.parse('2026-09-15T08:00:00Z'), updated: 1 },
           },
@@ -73,7 +73,7 @@ test('/context describes the bound session from OpenCode: agent, model, counts, 
             {
               type: 'assistant',
               id: 'a1',
-              agent: 'librarian',
+              agent: 'assistant',
               model: { providerID: 'github-copilot', id: 'gemini-3.8-flash' },
               time: { created: 2 },
               content: [{ type: 'text', text: 'hello' }],
@@ -93,7 +93,7 @@ test('/context describes the bound session from OpenCode: agent, model, counts, 
             {
               type: 'assistant',
               id: 'a2',
-              agent: 'librarian',
+              agent: 'assistant',
               model: { providerID: 'github-copilot', id: 'gpt-5.2', variant: 'high' },
               time: { created: 4 },
               content: [{ type: 'text', text: 'sure' }],
@@ -120,15 +120,15 @@ test('/context describes the bound session from OpenCode: agent, model, counts, 
 
   // Before any session: says what the first message would start, and what is in scope.
   const fresh = await describeConversation(store, 'dm-a', binding, loaded, async () => client);
-  assert.match(fresh, /^🧠 \*\*Context\*\* · no session yet\n.*agent `librarian` in `\/home`\./);
+  assert.match(fresh, /^🧠 \*\*Context\*\* · no session yet\n.*agent `assistant` in `\/home`\./);
   assert.match(fresh, /2 core sources · projects: demo/, 'removed projects are not in scope');
 
-  store.adopt('dm-a', { session: 'ses_x', agent: 'librarian', directory: '/home' });
+  store.adopt('dm-a', { session: 'ses_x', agent: 'assistant', directory: '/home' });
   store.enqueue({ id: 't1', channel: 'dm-a', user: 'u', name: 'Bob', text: 'later' }, 10);
   const text = await describeConversation(store, 'dm-a', binding, loaded, async () => client);
   // The window is the last call's prompt (input + cache) plus its output: 800 + 500 + 200 = 1,500 of 128,000.
   assert.deepEqual(text.split('\n'), [
-    '🧠 **Context** · `librarian` in `/home`',
+    '🧠 **Context** · `assistant` in `/home`',
     'Model `github-copilot/gpt-5.2 (high)` · window 128,000 tokens',
     'In use 1,500 / 128,000 (1%)',
     '░░░░░░░░░░░░░░░░░░░░░░░░',

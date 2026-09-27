@@ -5,9 +5,9 @@ conversations people had with aivi since the last run and distils what should be
 remembered into plain markdown files. Those files sit in `<home>/memory` (the
 org) and `<home>/projects/<id>/memory` (one per project), which are always `memory`
 knowledge sources, so they are indexed and searchable like any other document,
-and the librarian retrieves them through `knowledge_search` when relevant.
+and the assistant retrieves them through `knowledge_search` when relevant.
 Memory never goes into a system prompt, so prompt caches stay warm and the
-librarian's soul stays stable.
+assistant's soul stays stable.
 
 ## How a run works
 

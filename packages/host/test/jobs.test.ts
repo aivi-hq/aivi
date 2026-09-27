@@ -89,8 +89,8 @@ test('an agent creates a recurring agent job for its own agent and directory; re
   t.after(() => store.close());
   const url = await fakeOpenCode(
     t,
-    { ses_discord_1: { agent: 'librarian', directory: '/team', origin: 'discord' } },
-    { '/team': ['librarian'] },
+    { ses_discord_1: { agent: 'assistant', directory: '/team', origin: 'discord' } },
+    { '/team': ['assistant'] },
   );
   const { handler } = setup(store, url);
   const base = () =>
@@ -120,7 +120,7 @@ test('an agent creates a recurring agent job for its own agent and directory; re
   assert.equal(item.state, 'active');
   assert.deepEqual(entry.spec.task, {
     kind: 'prompt',
-    agent: 'librarian',
+    agent: 'assistant',
     directory: '/team',
     prompt: 'Summarize last week',
     timeoutMs: 1_800_000,
@@ -251,11 +251,11 @@ test('jobs do not create jobs, unless a conversation adopted the session; disabl
   const url = await fakeOpenCode(
     t,
     {
-      ses_aivi_job: { agent: 'librarian', directory: '/team', origin: 'job' },
-      ses_discord_adopted: { agent: 'librarian', directory: '/team', origin: 'job' },
+      ses_aivi_job: { agent: 'assistant', directory: '/team', origin: 'job' },
+      ses_discord_adopted: { agent: 'assistant', directory: '/team', origin: 'job' },
       ses_dream: { agent: 'dreamer', directory: '/team', origin: 'dreaming' },
     },
-    { '/team': ['librarian'] },
+    { '/team': ['assistant'] },
   );
   const { handler } = setup(store, url);
   const create = { action: 'create', prompt: 'again', at: '1h', report: 'none', on: 'always' } as const;

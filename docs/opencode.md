@@ -42,7 +42,7 @@ grant or withhold each tool with `permissions`.
 | `aivi_status` | `aivi_status` | aivi version, job counts and capabilities | Read-only; does not start work. |
 | `aivi_context` | `aivi_context` | This conversation's context window, tokens, cost and knowledge scope | Read-only; takes the session id from the tool context. |
 | `aivi_jobs` | `aivi_jobs` | Create/list/pause/resume/remove/run jobs | Schedules work. Turn the tool off host-wide with `scheduler.agentSchedules: false`. |
-| `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The seeded librarian denies `browser` (OpenCode's), **not** this one. |
+| `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The seeded assistant denies `browser` (OpenCode's), **not** this one. |
 
 ### Giving tools to an agent
 
@@ -124,9 +124,9 @@ config's `person.token` — except on a server home (a directory holding
 would claim every one of them. On a pure client the cached bearer is what
 makes sessions associate with the person without any env setup.
 
-## Librarian in native chat
+## Assistant in native chat
 
-Walkthrough in [getting started](getting-started.md#the-librarian-in-opencode).
+Walkthrough in [getting started](getting-started.md#the-assistant-in-opencode).
 The home is the OpenCode location, so knowledge, memory and
 project directories inside it need no `external_directory` rules; sources elsewhere get
 those rules from aivi per session. The OpenCode service caches
@@ -152,7 +152,7 @@ npm run aivi -- opencode check
 npm run aivi -- runs list
 ```
 
-`aivi setup` seeds the home's `.opencode/agents/` (`aivi.md`, `librarian.md`,
+`aivi setup` seeds the home's `.opencode/agents/` (`assistant.md`,
 `dreamer.md`) from `packages/cli/templates/agents/`.
 
 The running host dispatches queued runs through the session driver
@@ -162,7 +162,7 @@ verify the final answer (`assistant.finish === "stop"`, `idle.outcome ===
 "succeeded"`, no unfinished tools, text present). The run then succeeds with
 `{ sessionId, text, rejectedPermissions }`. The model is a session property that
 the API does not fill in from the agent file (seen live 2026-09-15: sessions ran
-OpenCode's default model instead of the librarian's), so every turn resolves it:
+OpenCode's default model instead of the assistant's), so every turn resolves it:
 the agent's `model` from `agent.list` for the directory, or a conversation's
 `/model` pin; it goes into `session.create` and, when `session.get` shows
 something else, through `session.switchModel` before the prompt. An agent file

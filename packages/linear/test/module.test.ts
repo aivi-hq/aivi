@@ -100,6 +100,7 @@ class FakeLinear extends LinearClient {
   issues = new Map<string, LinearIssue>();
   delegated: [string, string | null][] = [];
   sessionsCreated: string[] = [];
+  sessions = new Map<string, string[]>();
   constructor() {
     super({ clientId: 'x', clientSecret: 'y' }, { baseUrl: 'http://127.0.0.1:1' });
   }
@@ -115,25 +116,43 @@ class FakeLinear extends LinearClient {
     if (!issue) throw new Error(`no issue ${id}`);
     return issue;
   }
-  override async createSessionOnIssue(issueId: string) {
-    this.sessionsCreated.push(issueId);
-    return `as-auto-${this.sessionsCreated.length}`;
-  }
   override async setDelegate(issueId: string, delegateId: string | null) {
     this.delegated.push([issueId, delegateId]);
     const issue = this.issues.get(issueId);
     if (issue) issue.delegate = delegateId ? { id: delegateId } : null;
+    // Linear's live behavior (2026-09-26): making an app the delegate
+    // creates the agent session, and the answer names it.
+    const nodes = (this.sessions.get(issueId) ?? []).map(id => ({
+      id,
+      status: 'pending',
+      startedAt: null,
+      url: null,
+    }));
+    if (delegateId) {
+      const made = `as-auto-${this.sessionsCreated.length + 1}`;
+      this.sessionsCreated.push(issueId);
+      this.sessions.set(issueId, [...(this.sessions.get(issueId) ?? []), made]);
+      nodes.push({ id: made, status: 'pending', startedAt: null, url: null });
+    }
+    return {
+      success: true,
+      issue: { identifier: issue?.identifier ?? issueId, agentSessions: { nodes } },
+    };
   }
 }
 
 const noEvents: SessionEvents = { watch: () => () => {} };
+// The window bounds only a failing wait: a passing one ends at once. 3 s
+// passed alone and starved under the full suite's parallel load (measured
+// 2026-09-27: a worker turn builds a real git worktree), so the budget is
+// what a saturated machine cannot blow.
 const until = async (check: () => boolean, what: string) => {
-  for (let i = 0; i < 300 && !check(); i++) await new Promise(r => setTimeout(r, 10));
+  for (let i = 0; i < 3000 && !check(); i++) await new Promise(r => setTimeout(r, 10));
   assert.ok(check(), what);
 };
 const knowledge: KnowledgeService = { search: async () => [], index: async () => ({}), close: async () => {} };
 
-test('a delegation in a mapped lane runs the lane agent in a worktree; people reach the assistant; a wrong delegation is un-taken; HITL refuses', async t => {
+test('a delegation in a mapped lane runs the lane agent in a worktree; people reach the assistant; a delegation nothing can run gets one plain answer; HITL refuses', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = join(root, 'upstream');
@@ -188,13 +207,16 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     delegate: { id: 'app-user-dev' },
     assignee: { id: 'u', name: 'Me' },
     blockedBy: [],
+    archivedAt: null,
     ...extra,
   });
   linear.issues.set('eng-1', issue('eng-1'));
   linear.issues.set('eng-2', issue('eng-2', { labels: [{ id: 'l', name: 'needs-human' }] }));
-  // A team no project maps: the assistant's ground, in the home.
+  // A team no project maps: a delegation there gets the fixed answer; a
+  // mention still reaches the assistant, whose ground is the home.
   linear.issues.set('eng-3', issue('eng-3', { team: { id: 't9', key: 'OTH' } }));
-  // A delegation into a lane nobody mapped: the assistant refuses it and the delegate is removed.
+  // A delegation into a lane nobody mapped: the fixed answer names the lane
+  // and the delegate is un-taken.
   linear.issues.set('eng-5', issue('eng-5', { state: { id: 's9', name: 'Deploy', type: 'started' } }));
   // A mention (no delegate) on the face, in a mapped team.
   linear.issues.set('eng-6', issue('eng-6', { delegate: null }));
@@ -245,6 +267,12 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
       agentSession: { id: agentSession, issue: { id: issueId } },
       promptContext: `<issue identifier="${issueId.toUpperCase()}"><title>Fix header</title></issue>`,
     });
+  /** The plain fixed answers the module posts itself, found by issue. */
+  const answerFor = (issue: string) =>
+    linear.activities
+      .filter(a => a.content.type === 'response')
+      .map(a => (a.content as { body: string }).body)
+      .find(body => body.includes(issue)) ?? '';
 
   assert.equal((await created('as-1', 'eng-1')).status, 200);
   await until(() => linear.activities.some(a => a.content.type === 'response'), 'the worker answered');
@@ -305,28 +333,43 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     'HITL refused',
   );
 
-  // A team no project maps: the assistant answers from the home, the delegate is un-taken.
-  await created('as-3', 'eng-3');
-  // The prompt is the last thing a dispatch posts (create the session, read it back, then prompt),
-  // so waiting for it covers the session too. The stored turn would not: it exists the moment the
-  // webhook is routed, long before anything reached OpenCode.
-  await until(() => opencode.prompts.length === 3, 'the assistant turn reached OpenCode');
-  const assistantSession = [...opencode.sessions.values()].find(s => s.agent === 'assistant')!;
-  assert.equal(assistantSession.directory, home, 'no project: the assistant runs in the home');
-  assert.deepEqual(linear.delegated.at(-1), ['eng-3', null], 'the wrong delegation was un-taken');
-  assert.match(
-    opencode.prompts[2]!.text,
-    /was delegated to you, but its lane \("In Progress"\) is not mapped to any agent/,
-  );
+  // An archived ticket is deleted as far as work is concerned: a session
+  // created on it gets no worker, no assistant — not even a refusal. The
+  // route awaits the dispatch, so a settled delivery with quiet counts is
+  // the proof, no timer needed.
+  linear.issues.set('eng-7', issue('eng-7', { archivedAt: '2026-09-26T10:00:00.000Z' }));
+  const quietActivities = linear.activities.length;
+  const quietPrompts = opencode.prompts.length;
+  assert.equal((await created('as-7', 'eng-7')).status, 200);
+  assert.equal(linear.activities.length, quietActivities, 'the archived ticket gets no activity');
+  assert.equal(opencode.prompts.length, quietPrompts, 'the archived ticket starts no agent');
 
-  // A delegation into an unmapped lane of a mapped team: the assistant, in the checkout.
+  // A delegation a config cannot run — the team maps no project — gets one
+  // plain fixed answer and the delegate un-taken. No agent improvises over
+  // a job nobody claimed: the OpenCode sessions stay at the worker's alone.
+  await created('as-3', 'eng-3');
+  await until(() => answerFor('ENG-3') !== '', 'the unclaimed delegation was answered');
+  assert.match(answerFor('ENG-3'), /its team is not connected to an aivi project/);
+  assert.match(answerFor('ENG-3'), /removed myself as delegate/);
+  assert.deepEqual(linear.delegated.at(-1), ['eng-3', null], 'the delegation was un-taken');
+  assert.equal(opencode.sessions.size, 1, 'no agent was started for it');
+
+  // A delegation into an unmapped lane of a mapped team: the same fixed
+  // answer, naming the lane.
   await created('as-5', 'eng-5');
-  await until(() => inbox.list().length === 4, 'the assistant turn for the unmapped lane');
-  assert.deepEqual(linear.delegated.at(-1), ['eng-5', null]);
-  await until(
-    () => [...opencode.sessions.values()].filter(s => s.agent === 'assistant' && s.directory === source).length === 1,
-    'the assistant runs in the project checkout when the team maps one',
-  );
+  await until(() => answerFor('ENG-5') !== '', 'the unmapped-lane delegation was answered');
+  assert.match(answerFor('ENG-5'), /the "Deploy" lane has no agent mapping/);
+  assert.deepEqual(linear.delegated.at(-1), ['eng-5', null], 'un-taken as well');
+  assert.equal(opencode.sessions.size, 1, 'and still no agent was started');
+
+  // A mention (not a delegation) on a team no project maps still reaches
+  // the assistant, and the assistant works from the home then.
+  linear.issues.set('eng-8', issue('eng-8', { team: { id: 't9', key: 'OTH' }, delegate: null }));
+  await created('as-8', 'eng-8');
+  await until(() => inbox.list().length === 3, 'the mention on the unmapped team became a turn');
+  const homeAssistant = () => [...opencode.sessions.values()].find(s => s.agent === 'assistant');
+  await until(() => homeAssistant() !== undefined, 'the assistant session opened');
+  assert.equal(homeAssistant()!.directory, home, 'no project: the assistant runs in the home');
 
   // A mention on the face reaches the same assistant; the conversation lives on the face.
   await deliver('face', 'face-whsec', {
@@ -335,7 +378,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     agentSession: { id: 'as-6', issue: { id: 'eng-6' } },
     promptContext: '<issue identifier="ENG-6">…</issue>',
   });
-  await until(() => inbox.list().length === 5, 'the face mention became a turn');
+  await until(() => inbox.list().length === 4, 'the face mention became a turn');
   assert.equal(inbox.sessionOf(conversationFor('face', 'as-6'))!.agent, 'assistant');
   assert.deepEqual(
     linear.delegated.filter(d => d[0] === 'eng-6'),
@@ -343,6 +386,10 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     'a mention is not un-delegated',
   );
   await until(() => inbox.list().every(t => t.state === 'sent'), 'all answered');
+  assert.ok(
+    [...opencode.sessions.values()].some(s => s.agent === 'assistant' && s.directory === source),
+    'the assistant runs in the project checkout when the team maps one',
+  );
 
   // A data change on a face's route is a misroute: acknowledged, dropped.
   const activitiesBefore = linear.activities.length;
@@ -432,6 +479,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
     delegate: { id: 'app-user-dev' },
     assignee: { id: 'u', name: 'Me' },
     blockedBy: [],
+    archivedAt: null,
   });
   const store = new Store(':memory:');
   const routes = new PublicRoutes();
@@ -547,6 +595,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     delegate: null,
     assignee: { id: 'u', name: 'Me' },
     blockedBy: [],
+    archivedAt: null,
   };
   linear.issues.set('api-7', issue);
   const store = new Store(':memory:');

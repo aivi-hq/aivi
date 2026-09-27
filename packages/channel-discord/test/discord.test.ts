@@ -8,7 +8,7 @@ import { DISCORD, discordCommands } from '../src/module.ts';
 
 const config = discordConfigSchema.parse({
   applicationId: '10000000000000001',
-  directory: '/librarian',
+  directory: '/assistant',
   messageContent: true,
   access: {
     channels: [

@@ -104,19 +104,22 @@ test('a failed setup stops before the restart', async () => {
   assert.equal(process.exitCode, 1);
 });
 
-test('install without a service says how aivi comes up; a foreground server is the operator’s', async () => {
+test('install with no service installed adds nothing: the setup flow’s own last line is the last word', async () => {
   const { io, calls } = harness(RUNNING);
   io.service.installed = () => false;
   io.healthProbe = async () => false;
   await install(['discord'], { home: directory, appDir: join(directory, 'app'), nodePath: 'node' }, io);
   assert.equal(calls.restarts, 0);
-  assert.match(calls.logs.at(-1)!, /Start aivi to bring Discord up/);
+  assert.ok(
+    calls.logs.every(message => message.startsWith('Installing ')),
+    'the CLI says nothing after a flow that ended on its own',
+  );
 
   const foreground = harness(RUNNING);
   foreground.io.service.installed = () => false;
   foreground.io.healthProbe = async () => true;
   await install(['discord'], { home: directory, appDir: join(directory, 'app'), nodePath: 'node' }, foreground.io);
-  assert.match(foreground.calls.logs.at(-1)!, /Ctrl\+C/);
+  assert.ok(foreground.calls.logs.every(message => message.startsWith('Installing ')));
 });
 
 test('a degraded module fails the command but says aivi keeps retrying', async () => {

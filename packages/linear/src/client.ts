@@ -10,7 +10,8 @@ export interface LinearCredentials {
 export interface LinearClientOptions {
   /** `https://api.linear.app` unless a test points elsewhere. */
   baseUrl?: string | undefined;
-  fetch?: typeof fetch | undefined;
+  /** Called with string URLs only; exactly what the setup context can give. */
+  fetch?: ((url: string, init?: RequestInit) => Promise<Response>) | undefined;
   log?: Logger | undefined;
   /** Scopes requested with the token; the agent scopes are what make the app delegable and mentionable. */
   scope?: string | undefined;
@@ -48,6 +49,9 @@ export interface LinearIssue {
   labels: { id: string; name: string }[];
   delegate: { id: string } | null;
   assignee: { id: string; name: string } | null;
+  /** ISO instant the issue was archived — Linear's delete — null while it
+   *  lives. A dead ticket gets nothing from a session: there is no work. */
+  archivedAt: string | null;
   /** Issues blocking this one; a blocker not in a finished state holds the listener back. */
   blockedBy: { id: string; state: { id: string; name: string; type: string } }[];
 }
@@ -56,6 +60,22 @@ export interface LinearAgentSession {
   id: string;
   status: string;
   issue: { id: string } | null;
+}
+
+/**
+ * What the delegate mutation answers: whether it worked, and the issue's
+ * agent sessions as Linear sees them in that very moment. Making the app
+ * the delegate creates the session itself, and it appears here — the
+ * listener starts the worker from this answer, not from a webhook.
+ */
+export interface DelegateAnswer {
+  success: boolean;
+  issue?:
+    | {
+        identifier: string;
+        agentSessions: { nodes: { id: string; status: string; startedAt: string | null; url: string | null }[] };
+      }
+    | undefined;
 }
 
 /** A team in the workspace: the `id` is what aivi's config holds, the `key`
@@ -86,17 +106,21 @@ const ISSUE_FIELDS = `
   labels { nodes { id name } }
   delegate { id }
   assignee { id name }
-  blockedBy { nodes { id state { id name type } } }
+  archivedAt
+  inverseRelations { nodes { type issue { id state { id name type } } } }
 `;
 
 type RawIssue = Omit<LinearIssue, 'labels' | 'blockedBy'> & {
   labels: { nodes: LinearIssue['labels'] };
-  blockedBy: { nodes: LinearIssue['blockedBy'] };
+  inverseRelations: { nodes: { type: string; issue: LinearIssue['blockedBy'][number] }[] };
 };
-const issueOf = (raw: RawIssue): LinearIssue => ({
-  ...raw,
-  labels: raw.labels.nodes,
-  blockedBy: raw.blockedBy.nodes,
+const issueOf = ({ labels, inverseRelations, ...rest }: RawIssue): LinearIssue => ({
+  ...rest,
+  labels: labels.nodes,
+  // The live Linear schema has no `blockedBy` on Issue: relations are
+  // directional, and in `inverseRelations` the relation's source (`issue`) is
+  // the blocker of our issue, with `type` the lowercase string `blocks`.
+  blockedBy: inverseRelations.nodes.filter(r => r.type === 'blocks').map(r => r.issue),
 });
 
 /**
@@ -108,7 +132,7 @@ const issueOf = (raw: RawIssue): LinearIssue => ({
 export class LinearClient {
   private readonly credentials: LinearCredentials;
   private readonly baseUrl: string;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: (url: string, init?: RequestInit) => Promise<Response>;
   private readonly log: Logger;
   private readonly scope: string;
   private readonly skew: number;
@@ -212,23 +236,36 @@ export class LinearClient {
     return issueOf(data.issue);
   }
 
-  /** Start an agent session on an issue without waiting to be delegated; the listener uses this. */
-  async createSessionOnIssue(issueId: string): Promise<string> {
-    const data = await this.graphql<{ agentSessionCreateOnIssue: { success: boolean; agentSession: { id: string } } }>(
-      `mutation($input: AgentSessionCreateOnIssueInput!) { agentSessionCreateOnIssue(input: $input) { success agentSession { id } } }`,
-      { input: { issueId } },
-    );
-    if (!data.agentSessionCreateOnIssue.success) throw new LinearApiError('agentSessionCreateOnIssue failed', 200);
-    return data.agentSessionCreateOnIssue.agentSession.id;
-  }
-
-  /** Make (or unmake, with `null`) this app the issue's delegate; the human assignee stays. */
-  async setDelegate(issueId: string, delegateId: string | null): Promise<void> {
-    const data = await this.graphql<{ issueUpdate: { success: boolean } }>(
-      `mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`,
+  /** Make (or unmake, with `null`) this app the issue's delegate; the human
+   *  assignee stays. Making the app the delegate is what creates the agent
+   *  session — Linear returns it in this very answer (live, 2026-09-26). */
+  async setDelegate(issueId: string, delegateId: string | null): Promise<DelegateAnswer> {
+    const data = await this.graphql<{ issueUpdate: DelegateAnswer }>(
+      `mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { identifier agentSessions { nodes { id status startedAt url } } } } }`,
       { id: issueId, input: { delegateId } },
     );
     if (!data.issueUpdate.success) throw new LinearApiError('issueUpdate(delegateId) failed', 200);
+    return data.issueUpdate;
+  }
+
+  /** Create an issue in a team; the installer's throwaway ticket. */
+  async createIssue(input: { teamId: string; title: string; description?: string }): Promise<LinearIssue> {
+    const data = await this.graphql<{ issueCreate: { success: boolean; issue: RawIssue } }>(
+      `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { ${ISSUE_FIELDS} } } }`,
+      { input },
+    );
+    if (!data.issueCreate.success) throw new LinearApiError('issueCreate failed', 200);
+    return issueOf(data.issueCreate.issue);
+  }
+
+  /** Archive an issue — Linear's delete, off the board. The installer tidies
+   *  its own throwaway ticket with this. */
+  async deleteIssue(issueId: string): Promise<void> {
+    const data = await this.graphql<{ issueDelete: { success: boolean } }>(
+      `mutation($id: String!) { issueDelete(id: $id) { success } }`,
+      { id: issueId },
+    );
+    if (!data.issueDelete.success) throw new LinearApiError('issueDelete failed', 200);
   }
 }
 

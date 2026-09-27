@@ -69,12 +69,30 @@ export function negotiate(client: string | undefined, server: string): Negotiati
 }
 
 /**
- * The gate as middleware: the rule above against this host's own version.
- * The paths exempt from the gate (`/health`, `/version`, module webhooks)
- * are exempt by registration order, not here.
+ * The gate's rule against this host's own version. `/health` and
+ * `GET /version` are exempt by registration order; the core surface it is
+ * applied to is `coreVersionGate`'s doing, and module webhooks dispatch
+ * before the gate is ever reached.
  */
-export const versionGate: AppMiddleware = async (c, next) => {
+const versionGate: AppMiddleware = async (c, next) => {
   const outcome = negotiate(c.req.header(CLIENT_HEADER), hostVersion);
   if (!outcome.ok) return respond({ code: outcome.code, minVersion: outcome.minVersion, error: outcome.error }, 403);
   await next();
 };
+
+/** The first segment of a path: the grain the core API surface is declared at. */
+export const pathHead = (path: string): string => (path === '/' ? '/' : `/${path.slice(1).split('/', 1)[0]}`);
+
+/**
+ * The gate scoped to the core API surface: the version contract binds the
+ * endpoints the host itself registers, and nothing else. The set is filled
+ * from the route table as the app is built, so it cannot drift. Everything
+ * outside it passes untouched — a module webhook path has already dispatched
+ * before the gate, and a path nobody serves answers its honest 404 or 405
+ * rather than a version refusal addressed at a caller that never claimed to
+ * be an aivi client at all.
+ */
+export const coreVersionGate =
+  (core: ReadonlySet<string>): AppMiddleware =>
+  async (c, next) =>
+    core.has(pathHead(c.req.path)) ? versionGate(c, next) : next();

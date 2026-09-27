@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { browserConfigSchema, type PluginSetupContext } from '@aivi/core';
+import * as prompts from '@clack/prompts';
 import setup from '../src/setup.ts';
 
-/** A context that answers confirms from a script and records writes. Nothing touches disk. */
+/** A context that answers confirms from a script and records writes. Nothing touches disk.
+ *  The flow draws with `ctx.prompts`, so the script replaces clack's drawing
+ *  verbs; the ones the browser flow has no business calling still say so. */
 function harness(answers: string[], config: Record<string, unknown>) {
   const queue = [...answers];
   const blocks: { path: string[]; value: unknown }[] = [];
@@ -13,19 +16,28 @@ function harness(answers: string[], config: Record<string, unknown>) {
     configPath: '/home/config.json',
     identityName: 'Clawd',
     config,
-    note: (title, lines) => notes.push(`${title}: ${lines}`),
     print: () => {},
-    log: () => {},
-    ask: {
-      async text() {
+    prompts: {
+      ...prompts,
+      note: (lines = '', title = '') => {
+        notes.push(`${title}: ${lines}`);
+      },
+      text: async () => {
         throw new Error('the browser has no secrets to ask for');
       },
-      async confirm() {
+      password: async () => {
+        throw new Error('the browser has no secrets to ask for');
+      },
+      confirm: async () => {
         const answer = queue.shift();
         if (answer === undefined) throw new Error('the answer script ran dry');
         return answer === 'yes';
       },
-    },
+      select: async () => {
+        throw new Error('the browser has no choices to ask for');
+      },
+      log: { message: async () => {} },
+    } as unknown as typeof prompts,
     async fetch() {
       throw new Error('no platform to fetch');
     },

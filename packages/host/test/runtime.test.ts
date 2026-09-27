@@ -14,7 +14,7 @@ const quiet = { watch: () => () => {} };
 test('opencode.prompt jobs run a full verified turn and succeed with the final answer', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'Read the handbook' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'assistant', directory: '/team', prompt: 'Read the handbook' }),
     'local-model',
     'request',
   );
@@ -40,7 +40,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
     res.setHeader('content-type', 'application/json');
     const url = req.url!;
     if (url.startsWith('/api/agent'))
-      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+      return void res.end(JSON.stringify({ data: [{ id: 'assistant', name: 'assistant' }] }));
     if (url.endsWith('/wait')) {
       res.writeHead(204);
       res.end();
@@ -63,7 +63,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
             {
               type: 'assistant',
               id: 'a',
-              agent: 'librarian',
+              agent: 'assistant',
               finish: 'stop',
               time: { created: 2, completed: 3 },
               content: [{ type: 'text', text: 'Handbook read.' }],
@@ -76,7 +76,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
     }
     res.end(
       JSON.stringify({
-        data: { id: body.id ?? received[0]!.body.id, agent: 'librarian', location: { directory: '/team' } },
+        data: { id: body.id ?? received[0]!.body.id, agent: 'assistant', location: { directory: '/team' } },
       }),
     );
   };
@@ -109,7 +109,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
   scheduler.tick();
   await scheduler.drain();
   const create = received.find(r => r.method === 'POST' && r.path === '/api/session')!;
-  assert.equal(create.body.agent, 'librarian');
+  assert.equal(create.body.agent, 'assistant');
   assert.equal(create.attached, create.body.id, 'session id is persisted before the create request');
   assert.equal(create.auth, `Basic ${Buffer.from('opencode:secret').toString('base64')}`);
   assert.deepEqual(create.body.metadata, { aivi: { origin: 'job', run: job.id } });
@@ -124,7 +124,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   const store = new Store(':memory:');
   t.after(() => store.close());
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'hi' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'assistant', directory: '/team', prompt: 'hi' }),
     'local-model',
     'unreachable',
   );
@@ -157,7 +157,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
 test('a turn that times out while session.wait is pending reports the timeout, not the SDK transport wrapper', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'slow' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'assistant', directory: '/team', prompt: 'slow' }),
     'local-model',
     'slow-turn',
   );
@@ -165,11 +165,11 @@ test('a turn that times out while session.wait is pending reports the timeout, n
     for await (const _ of req) void _;
     res.setHeader('content-type', 'application/json');
     if (req.url!.startsWith('/api/agent'))
-      return void res.end(JSON.stringify({ data: [{ id: 'librarian', name: 'librarian' }] }));
+      return void res.end(JSON.stringify({ data: [{ id: 'assistant', name: 'assistant' }] }));
     if (req.url!.endsWith('/wait')) return; // never answers: the turn is still running
     if (req.url!.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (req.url!.endsWith('/prompt')) return void res.end('{"data":{"id":"m"}}');
-    res.end(JSON.stringify({ data: { id: 'x', agent: 'librarian', location: { directory: '/team' } } }));
+    res.end(JSON.stringify({ data: { id: 'x', agent: 'assistant', location: { directory: '/team' } } }));
   };
   const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -203,7 +203,7 @@ test('a turn that times out while session.wait is pending reports the timeout, n
 test('a prompt job whose session cannot be created fails; nothing was submitted to an agent', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
-    taskSchema.parse({ kind: 'prompt', agent: 'librarian', directory: '/team', prompt: 'hi' }),
+    taskSchema.parse({ kind: 'prompt', agent: 'assistant', directory: '/team', prompt: 'hi' }),
     'local-model',
     'no-session',
   );

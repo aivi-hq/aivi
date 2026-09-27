@@ -18,6 +18,7 @@ export const PLUGIN_ALIASES: Record<string, string> = {
   discord: '@aivi/channel-discord',
   slack: '@aivi/channel-slack',
   browser: '@aivi/browser',
+  linear: '@aivi/linear',
 };
 
 /** The module each first-party plugin enables — the id `/status` reports. */
@@ -25,6 +26,7 @@ const MODULE_BY_SPEC: Record<string, string> = {
   '@aivi/channel-discord': 'discord',
   '@aivi/channel-slack': 'slack',
   '@aivi/browser': 'browser',
+  '@aivi/linear': 'linear',
 };
 
 export interface InstallOptions {
@@ -138,7 +140,8 @@ export async function install(args: string[], options: InstallOptions, io: Insta
   installPackage(io, spec, options.appDir);
 
   // The plugin configures itself: instructions, prompts, verification and
-  // writes all live in its ./setup entry; the human sees it through inherited stdio.
+  // writes all live in its ./setup entry; the human sees it through inherited
+  // stdio, and the flow ends with its own last line.
   const status = io.forwardSetup(spec, options);
   if (status !== 0) {
     io.log('Nothing was restarted.');
@@ -146,13 +149,10 @@ export async function install(args: string[], options: InstallOptions, io: Insta
     return;
   }
 
-  // A running foreground server is the operator's to restart; the CLI never kills it.
+  // With no service installed the CLI has nothing to add: a running
+  // foreground server is the operator's to restart, and the setup flow has
+  // just said so in its own last line.
+  if (!io.service.installed()) return;
   const url = await io.healthUrl(options.home);
-  if (!io.service.installed()) {
-    if (await io.healthProbe(url))
-      io.log(`Configured. aivi is running in the foreground: stop it (Ctrl+C) and start it again to load ${label}.`);
-    else io.log(`Configured. Start aivi to bring ${label} up.`);
-    return;
-  }
   await restartAndReport(io, url, label, moduleId);
 }

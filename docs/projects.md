@@ -1,10 +1,10 @@
 # Projects
 
 aivi is one digital team. The **org** has its knowledge (handbook, decisions,
-memory) and a generalist agent, the librarian, that knows
+memory) and a generalist agent, the assistant, that knows
 the org and knows *about* every project. A **project** is a repository the team
 works on. Its knowledge lives in the repository (`docs/`), is indexed so the
-librarian can search it, and what dreaming learns about a project is kept as
+assistant can search it, and what dreaming learns about a project is kept as
 that project's memory in the home.
 
 ## Where things are
@@ -123,9 +123,9 @@ deleting `state/knowledge` reclaims the space.
 
 **Removed is a state, not an absence.** A memory home with a `facts.md` and no
 checkout is a removed project: `projects list`, `/projects` and the
-librarian's `knowledge_projects` show it with `removed: true` and only its
+assistant's `knowledge_projects` show it with `removed: true` and only its
 `memory` source, so "what did we decide for website?" still has an answer, and
-the librarian says the project is gone. Nothing is forgotten until someone runs
+the assistant says the project is gone. Nothing is forgotten until someone runs
 `purge --confirm`, which is the one destructive command here. `enabled: false`
 is different: the checkout stays and the project is hidden entirely, memory
 included.

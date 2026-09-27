@@ -41,6 +41,11 @@ export interface ModuleHealth {
 }
 export interface Status {
   version: string;
+  /**
+   * What to point outsiders at: the declared `host.public` when set, else the
+   * listen URL; `declared` says which, so a caller knows a guess needs a caveat.
+   */
+  url: { base: string; declared: boolean };
   counts: Record<RunState, number>;
   sources: number;
   leases: number;
@@ -151,7 +156,7 @@ export interface KnowledgeService {
   index(): Promise<unknown>;
   close(): Promise<void>;
 }
-/** What the librarian sees of a project: enough to know it exists (or existed) and what can be searched. */
+/** What the assistant sees of a project: enough to know it exists (or existed) and what can be searched. */
 export interface ProjectSummary {
   id: string;
   /** The checkout is gone; only memory remains until purged. */

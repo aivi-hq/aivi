@@ -57,12 +57,13 @@ containing facts is the wrong file growing.
 | Field | Default / purpose |
 | --- | --- |
 | `version` | Required; `1` |
-| `identity.name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Agent-file and handle names derive from its slug; the display name stays free-form. The plugin says it to every agent (`Your name is aivi.`) ahead of the soul, so `soul.md` never repeats it. aivi cannot set names on the platforms: the operator uses this name in each console |
+| `identity.name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Nothing derives agent names from it (the assistant is `assistant` unless a module says otherwise); the display name stays free-form. The plugin says it to every agent (`Your name is aivi.`) ahead of the soul, so `soul.md` never repeats it. aivi cannot set names on the platforms: the operator uses this name in each console |
 | `identity.github` | Who a **worker aivi launched** commits as, as a `{user, email}` pair: name the pair or neither, never half. Default: `opencode.coauthor` in the machine's git config, else the aivi app `aivi-agent[bot] <331678708+aivi-agent[bot]@users.noreply.github.com>`. GitHub resolves a bot commit's avatar and link from the email *inside the commit*, never from who pushed, so no token and no app installation is involved ([linear](linear.md)) |
 | `identity.github.app` | The GitHub App id. Nothing reads it yet: whoever mints an installation token to act on GitHub as the app signs a JWT issued to this |
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
+| `host.public` | Where aivi is *reached from outside*: the funnel, tunnel or reverse-proxy URL (`https://you.tailscale.ts.net`, a path is allowed, no trailing slash). Never derived, never called — aivi dials `bind`/`port` — but every URL aivi prints for someone else to paste is composed from it. `aivi setup` asks for it; changing it later is editing this file |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (set this in any home tests and smoke checks read, so they never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
@@ -243,7 +244,7 @@ Presence of `linear` enables the module ([linear](linear.md)).
 
 | Field | Meaning |
 | --- | --- |
-| `agent` | The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the **assistant**. Default: the aivi name |
+| `agent` | The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the **assistant**. Default: `assistant` |
 | `primary` | The app that carries the workspace's data feed, signs the bare `LINEAR_*` secrets and authorises the Linear MCP. Default: the one app; required once several apps are configured |
 | `apps.<id>` | A Linear OAuth application acting as an app user. The primary does the receiving; every other app is a **face** — a name and icon in Linear's UI with its own credentials, no routing meaning |
 | `logMisroutes` | `true`: log at warn a webhook delivered to the wrong endpoint — a data change on a face's route. It is dropped either way |

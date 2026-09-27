@@ -9,7 +9,7 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 
 ## Behavior
 
-- One configured OpenCode agent and fixed librarian directory for the
+- One configured OpenCode agent and fixed assistant directory for the
   installation; `agent` and `directory` work as for Discord.
 - A conversation is a DM channel (`D…`), a thread (`channel:thread_ts`), or a
   whole channel. A configured channel is either `sessions: "threads"`
@@ -178,7 +178,7 @@ module (`false` is an explicit off):
 {
   "modules": {
     "slack": {
-      "agent": "librarian",
+      "agent": "assistant",
       "commandPrefix": "aivi",
       "access": {
         "channels": [{ "id": "C0000000001" }]
