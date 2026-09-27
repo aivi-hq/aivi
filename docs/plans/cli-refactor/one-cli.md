@@ -229,7 +229,9 @@ Half 2 — the move and burial:
       by the operator** (see what differed) — `@aivi/app` major (removed),
       `@aivi/host` minor, fixed group come back at the end of the refactor.
 - [ ] No migration (D22): `rm -rf dev` after the phase lands, `aivi setup`
-      again — the dev home exists to be nuked. Pending the operator's go.
+      again — the dev home exists to be nuked. **Deferred by the operator:**
+      a fresh `setup` wants an interactive terminal; it happens in a real
+      terminal when the program is ready for the live pass, not before.
 
 Half 2 landed 2026-09-27 on `refactor/single-cli-command`. What differed
 from the plan while landing:
@@ -262,3 +264,15 @@ from the plan while landing:
   now), operations/people setup-plumbing wording, getting-started and
   dev/README `--app-spec` (`file:../../packages/host`), host and cli
   READMEs. `pack-smoke.mjs` stayed untouched as the recon predicted.
+- **Half 2's verification is the suite, not a fresh home.** `npm run check`
+  (typecheck + tests + schema:check + smoke + pack:smoke) is green, and the
+  mount is tested at both ends: the host's `test/cli.test.ts` spawns the
+  real command surface, the CLI's tests mount it onto the machine tree.
+  The dev home is now stale by design (D22): its `app` link points at the
+  deleted package and `@aivi/host` is not in `dev/app/node_modules`, so
+  operator commands with `AIVI_HOME=dev` answer `No aivi server installed
+  at dev/app` while machine commands still work. Recreate it in a real
+  terminal at the program's live gate — `npm run aivi:cli -- setup --use
+  this-machine --app-spec "file:../../packages/host" --plugin "file:..."`
+  — which then proves the fresh record, the identity step through
+  `dist/cli/identity.js`, and the sign-in end to end.

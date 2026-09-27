@@ -3,9 +3,10 @@
 Status: in progress (designed 2026-09-27, one long session). Phase 1 landed in
 two shippable halves on `refactor/single-cli-command`: half 1 — `forward.ts`
 deleted, the CLI mounts the installed server's command tree in-process — and
-half 2 — the `@aivi/app` move into `@aivi/host` and burial. Only the D22
-dev-home nuke (`rm -rf dev`, `aivi setup` again) and the deferred changesets
-are open there before phase 2 can start.
+half 2 — the `@aivi/app` move into `@aivi/host` and burial. Two items wait at
+the program's live gate, not in the code: the D22 dev-home nuke (an
+interactive `aivi setup` in a real terminal) and the changesets, which the
+operator parked until the end of the refactor.
 Goal: one `aivi` binary, one command source, plugins as plain commander
 subtrees with a registered list, and remote operator access over the existing
 aivi port — with the two-binary `forward` deleted, not relocated.
