@@ -142,7 +142,8 @@ Messages (client → server first):
 ```
 
 Server side: `node-pty` spawns
-`[nodePath, <home>/…/host/dist/cli.js, ...argv]` with `env` =
+`aivi ...argv` — the CLI binary on PATH, the same tree the operator typed
+into (the host parses no argv of its own since the purity pass) — with `env` =
 `{ AIVI_HOME, TERM, COLORTERM, AIVI_OPERATOR_BEARER }`. Child close ⇒
 `{t:"exit"}` then socket close; socket close ⇒ kill the child. Client side:
 `process.stdin.setRawMode(true)`, forward bytes, `SIGWINCH` ⇒ `resize`,

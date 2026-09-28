@@ -285,11 +285,13 @@ says so and the change takes effect at the next dispatch.
 `aivi service install` writes a per-user LaunchAgent (macOS,
 `~/Library/LaunchAgents/ai.aivi.server.plist`, `ProcessType=Interactive`,
 `KeepAlive`, logs under `<home>/state/logs/`) or a systemd user unit (Linux,
-`~/.config/systemd/user/aivi.service`), then starts it. The unit runs the same
-command as foreground `aivi serve`, so nothing about the server changes —
-`aivi service start|stop|restart|status` control it, `service logs` follows the
-log, `service uninstall` removes it. A headless Linux machine needs
-`loginctl enable-linger` or the service stops with the session.
+`~/.config/systemd/user/aivi.service`), then starts it. The unit runs the
+server's boot file (`@aivi/host/server`) directly — no CLI, no arguments to
+parse — reaching the same boot foreground `aivi serve` runs in-process, so
+nothing about the server changes. `aivi service start|stop|restart|status`
+control it, `service logs` follows the log, `service uninstall` removes it. A
+headless Linux machine needs `loginctl enable-linger` or the service stops
+with the session.
 
 ## The request diary
 

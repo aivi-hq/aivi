@@ -1,15 +1,13 @@
-#!/usr/bin/env node
-/** The host's command surface (`@aivi/host/cli`): `registerCommands` hangs the
- *  operator commands on any commander tree — its own, or the thin `@aivi/cli`'s
- *  when that mounts it in-process — and `main` is the direct entry launchd and
- *  the dev script run. The commands themselves live in cli/commands/, grouped
- *  by category; the shared plumbing in cli/context.ts. */
-import { readFileSync } from 'node:fs';
+/** What the host *provides*: `registerCommands` hangs the operator commands
+ *  on any commander tree it is handed — the `@aivi/cli` bin collects them into
+ *  its own, the one bin on PATH and the one thing that parses argv. The host
+ *  parses nothing: it boots through `@aivi/host/server`. The commands
+ *  themselves live in cli/commands/, grouped by category; the shared plumbing
+ *  in cli/context.ts. */
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { configureLogging, isTty } from '@aivi/core';
-import { Command, CommanderError } from 'commander';
+import type { Command } from 'commander';
 import { registerChannels } from './cli/commands/channels.ts';
 import { registerGettingStarted } from './cli/commands/getting-started.ts';
 import { registerHost } from './cli/commands/host.ts';
@@ -19,14 +17,9 @@ import { registerPeople } from './cli/commands/people.ts';
 import { registerProjects } from './cli/commands/projects.ts';
 import { registerServer } from './cli/commands/server.ts';
 import { home } from './cli/context.ts';
-import { rootBanner } from './cli/help.ts';
 
-// Set once the preAction hook configured logging; the finally below flushes sinks on every exit path.
+// Set once the preAction hook configured logging; the collector's exit path flushes sinks.
 let closeLogging: () => Promise<void> = async () => {};
-
-const version = (
-  JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version: string }
-).version;
 
 /** Hang the operator commands on a commander tree and keep their logging.
  *  The options are declared on the tree's root, but the hooks are hung on
@@ -76,47 +69,3 @@ export async function registerCommands(program: Command): Promise<void> {
     command.hook('postAction', () => closeLogging());
   }
 }
-
-async function main(argv: string[]): Promise<void> {
-  const program = new Command('aivi').version(version).showHelpAfterError('(run `aivi --help` for a list of commands)');
-
-  await registerCommands(program);
-
-  program.addHelpText('before', rootBanner(version, home, process.stdout));
-  program.addHelpText(
-    'after',
-    `
-Home: ~/.aivi (override with AIVI_HOME) holds config.json, .env, and state/.
-The live config.json is yours and aivi's to edit; it stays out of version control.
-Secrets come from the environment: DISCORD_BOT_TOKEN, SLACK_BOT_TOKEN/SLACK_APP_TOKEN,
-OPENCODE_USERNAME/OPENCODE_PASSWORD (only with opencode.url).
-<home>/.env is loaded without overriding existing variables; fnox exec works too.
-No secrets in config files.`,
-  );
-
-  try {
-    await program.parseAsync(argv, { from: 'user' });
-  } catch (error) {
-    if (error instanceof CommanderError) {
-      // Commander has written its message already; showing help or the version is success.
-      process.exitCode =
-        error.code === 'commander.help' ||
-        error.code === 'commander.helpDisplayed' ||
-        error.code === 'commander.version'
-          ? 0
-          : error.exitCode;
-      return;
-    }
-    throw error;
-  }
-}
-
-// The bin runs itself; the thin CLI's mount imports this module for
-// registerCommands alone, and must not start a second parse.
-if (import.meta.main)
-  main(process.argv.slice(2))
-    .catch(error => {
-      console.error(error instanceof Error ? error.message : error);
-      process.exitCode = 1;
-    })
-    .finally(() => closeLogging());

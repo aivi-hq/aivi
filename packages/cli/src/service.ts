@@ -1,9 +1,10 @@
 /** Background operation: a per-user LaunchAgent on macOS, a systemd user unit
- *  on Linux. The unit runs the same Node-plus-server command the foreground
- *  `aivi serve` runs, so an update is a stop, an install and a start no matter
- *  who started the server. Hand-rolled on purpose — OpenClaw and Hermes do the
- *  same and there is no maintained library for it; the plist XML comes from the
- *  `plist` package so paths are escaped properly.
+ *  on Linux. The unit runs the server's boot file directly — the same boot the
+ *  foreground `aivi serve` reaches — with no CLI and no arguments to parse, so
+ *  an update is a stop, an install and a start no matter who started the
+ *  server. Hand-rolled on purpose — OpenClaw and Hermes do the same and there
+ *  is no maintained library for it; the plist XML comes from the `plist`
+ *  package so paths are escaped properly.
  *
  *  LaunchAgent lessons learned from OpenClaw's launchd issues, baked in here:
  *  ProcessType=Interactive (without it launchd cold-start stalls for minutes),
@@ -26,8 +27,10 @@ export interface ServiceOptions {
   nodePath: string;
 }
 
-function hostCli(appDir: string): string {
-  return join(appDir, 'node_modules', '@aivi', 'host', 'dist', 'cli.js');
+/** The server's boot file: what the unit runs, no argv, no CLI in the path.
+ *  It reaches the same `runHost` the CLI's `serve` command calls in-process. */
+function hostServer(appDir: string): string {
+  return join(appDir, 'node_modules', '@aivi', 'host', 'dist', 'server.js');
 }
 
 function launchdPlistPath(): string {
@@ -51,7 +54,7 @@ export function serviceUnitPath(): string | undefined {
 export function launchdPlist(options: ServiceOptions): string {
   return buildPlistXml({
     Label: SERVICE_LABEL,
-    ProgramArguments: [options.nodePath, hostCli(options.appDir), 'serve'],
+    ProgramArguments: [options.nodePath, hostServer(options.appDir)],
     KeepAlive: true,
     RunAtLoad: true,
     ProcessType: 'Interactive',
@@ -69,7 +72,7 @@ export function systemdUnit(options: ServiceOptions): string {
     'After=network-online.target',
     '',
     '[Service]',
-    `ExecStart=${options.nodePath} ${hostCli(options.appDir)} serve`,
+    `ExecStart=${options.nodePath} ${hostServer(options.appDir)}`,
     `Environment=AIVI_HOME=${options.home}`,
     `WorkingDirectory=${options.appDir}`,
     'Restart=on-failure',

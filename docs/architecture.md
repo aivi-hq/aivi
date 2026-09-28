@@ -13,8 +13,9 @@ The plugin uses `createHostClient` from `@aivi/plugin/api`, a fetch-only
 client that ships in the kit, not in the host. Future native
 plugins can reuse that client without importing the SQLite store.
 
-`@aivi/host` is the composition root: its `./cli` command surface loads
-configured modules and launches `runHost`. The host owns the shared store,
+`@aivi/host` is the composition root: its server entry (`./server`) loads
+configured modules and launches `runHost`; its `./cli` command surface is what
+the `@aivi/cli` bin collects. The host owns the shared store,
 scheduler, native client, knowledge
 service, API listener, startup, and shutdown. Discord receives those services in
 its `start` method. Linear is another in-process module with webhook routes

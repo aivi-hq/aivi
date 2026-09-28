@@ -108,8 +108,10 @@ from configuration exactly as today (the if-chain is replaced in
 
 launchd is **unchanged plumbing**: the plist's `ProgramArguments` is a file
 path (`service.ts:54` records `[nodePath, <appDir>/…/cli.js, serve]`), and a
-file path needs no bin declaration. After this phase it points at
-`<appDir>/node_modules/@aivi/host/dist/cli.js serve`. One bin on PATH: `aivi`.
+file path needs no bin declaration. It pointed at
+`<appDir>/node_modules/@aivi/host/dist/cli.js serve` until half 3 moved the
+unit to `dist/server.js` — same file-path logic, a file that parses nothing.
+One bin on PATH: `aivi`.
 
 ## The ctrl+c receipt (why this phase is the fix)
 
@@ -148,8 +150,8 @@ host code arrives only through dynamic import from `appDir`.*
 
 Dev scripts converge: `npm run aivi:cli` (global CLI sources) becomes the
 primary dev entry for everything; `npm run aivi` stays as the direct
-server-machine shortcut (`node packages/host/dist/cli.js serve …` once phase
-1 lands).
+server-machine shortcut (`node packages/host/dist/server.js`, no argument,
+since the purity pass below).
 
 ## Poke, unchanged
 
@@ -278,3 +280,32 @@ from the plan while landing:
   local `file:` app and plugin specs) — which then proves the fresh record,
   the identity step through `dist/cli/identity.js`, and the sign-in end to
   end.
+
+## Half 3 — the host goes pure (2026-09-28)
+
+Decided by the operator while preparing phase 4: host must not know it is
+behind a CLI — **the CLI collects, the host provides, exactly like a plugin**
+("Host has NO cli knowledge. Why would it need `serve` as an argument?"). The
+boot living behind an argv parser was the last proof of the old shape.
+
+- **`@aivi/host/server`** is the new boot: `startServer()` loads the home
+  context, builds the modules from the plugin list, and runs `runHost` with
+  the graceful SIGINT/SIGTERM stop. Run as a file, it is what launchd/systemd
+  execute: no bin, no arguments — the `serve` argument existed only because
+  the boot sat behind a parser.
+- **`@aivi/host/cli` lost its self-boot**: the private `main` and its
+  `import.meta.main` block are deleted; `registerCommands` is the module's
+  only job. `rootBanner` (`cli/help.ts`) is deleted with the entry — the
+  banner belongs to the bin alone, which draws its own.
+- **The `serve` command calls the boot in-process.** Commander exists in
+  exactly one place: the bin's tree, on every path.
+- **Units point at `dist/server.js` with no argument** (`service.ts`'s
+  `hostCli` became `hostServer`); `npm run aivi` runs the same file. An
+  installed home reruns `aivi service install` — nothing to stay compatible
+  with (D22, no installs exist).
+- **The host tests and the smoke spawn
+  `packages/host/test/command-surface.mjs`**: `registerCommands` on a bare
+  commander tree, which is what the bin collects. It lives under the host so
+  `commander` resolves to the pinned 15, not the 10 the repo root hoists.
+- Consequence for phase 4: the exec child is plain `aivi <argv>` from PATH;
+  [remote-exec.md](remote-exec.md)'s protocol line is amended to that.

@@ -5,8 +5,8 @@
     "rootDir": "src",
     "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo"
   },
-  "//": "The engine only: the command surface builds as tsconfig.cli.build.json, because it dynamically imports the plugin packages while every plugin imports this one — one project would be a reference cycle.",
+  "//": "The engine only: the command surface (src/cli.ts, src/cli) and the server boot (src/server.ts) build as tsconfig.cli.build.json, because they dynamically import the plugin packages while every plugin imports this one — one project would be a reference cycle.",
   "include": ["src"],
-  "exclude": ["src/cli.ts", "src/cli"],
+  "exclude": ["src/cli.ts", "src/cli", "src/server.ts"],
   "references": [{ "path": "../core/tsconfig.build.json" }]
 }

@@ -22,8 +22,7 @@ test('the LaunchAgent plist carries the launchd lessons: Interactive, WorkingDir
   assert.equal(parsed.Label, 'ai.aivi.server');
   assert.deepEqual(parsed.ProgramArguments, [
     '/usr/local/bin/node',
-    '/Users/me/.aivi/app/node_modules/@aivi/host/dist/cli.js',
-    'serve',
+    '/Users/me/.aivi/app/node_modules/@aivi/host/dist/server.js',
   ]);
   assert.equal(parsed.ProcessType, 'Interactive');
   assert.equal(parsed.KeepAlive, true);
@@ -35,10 +34,7 @@ test('the LaunchAgent plist carries the launchd lessons: Interactive, WorkingDir
 
 test('the systemd unit runs the same command and restarts on failure', () => {
   const unit = systemdUnit({ home: '/home/me/.aivi', appDir: '/home/me/.aivi/app', nodePath: '/usr/bin/node' });
-  assert.match(
-    unit,
-    /ExecStart=\/usr\/bin\/node \/home\/me\/.aivi\/app\/node_modules\/@aivi\/host\/dist\/cli\.js serve/,
-  );
+  assert.match(unit, /ExecStart=\/usr\/bin\/node \/home\/me\/.aivi\/app\/node_modules\/@aivi\/host\/dist\/server\.js/);
   assert.match(unit, /Environment=AIVI_HOME=\/home\/me\/.aivi/);
   assert.match(unit, /Restart=on-failure/);
   assert.match(unit, /WantedBy=default\.target/);

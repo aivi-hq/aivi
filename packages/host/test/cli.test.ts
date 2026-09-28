@@ -9,12 +9,16 @@ import { fileURLToPath } from 'node:url';
 import { configSchema } from '@aivi/core';
 import { createApp, Store, serveApp } from '@aivi/host';
 
-const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+// The host parses no argv of its own (it boots via server.ts), so the command
+// surface is driven the way the @aivi/cli bin collects it: registerCommands on
+// a bare tree, mounted by the shared driver. NODE_OPTIONS carries the
+// development condition, so this drives the sources.
+const surface = fileURLToPath(new URL('./command-surface.mjs', import.meta.url));
 
 /** Async spawn: the in-test host keeps serving while the CLI child runs. */
 const run = (args: string[], env: NodeJS.ProcessEnv) =>
   new Promise<{ status: number; stdout: string; stderr: string }>(resolve => {
-    const child = spawn(process.execPath, [cli, ...args], { env });
+    const child = spawn(process.execPath, [surface, ...args], { env });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', chunk => (stdout += chunk));

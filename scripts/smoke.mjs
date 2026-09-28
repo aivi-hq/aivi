@@ -13,7 +13,10 @@ const { version: aiviVersion } = JSON.parse(
   readFileSync(fileURLToPath(new URL('../packages/host/package.json', import.meta.url)), 'utf8'),
 );
 
-const cli = fileURLToPath(new URL('../packages/host/dist/cli.js', import.meta.url));
+// The command surface the bin collects (the host parses no argv of its own),
+// and the boot file launchd would run.
+const surface = fileURLToPath(new URL('../packages/host/test/command-surface.mjs', import.meta.url));
+const server = fileURLToPath(new URL('../packages/host/dist/server.js', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));
 const config = join(directory, 'config.json');
 let daemon;
@@ -48,7 +51,7 @@ try {
   const run = (...args) => {
     try {
       return JSON.parse(
-        execFileSync(process.execPath, [cli, ...args], {
+        execFileSync(process.execPath, [surface, ...args], {
           encoding: 'utf8',
           env,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -69,7 +72,7 @@ try {
     'the key deduplicates',
   );
 
-  daemon = spawn(process.execPath, [cli, 'serve'], {
+  daemon = spawn(process.execPath, [server], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
