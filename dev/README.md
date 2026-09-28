@@ -9,7 +9,7 @@ this README is tracked; everything else is generated or yours, and git-ignored.
 
 ```sh
 npm run aivi:cli -- setup --use this-machine \
-  --app-spec "file:../../packages/host" \
+  --host-package "file:../../packages/host" \
   --plugin "file:../../packages/channel-discord" \
   --plugin "file:../../packages/channel-slack" \
   --plugin "file:../../packages/tracker-linear"
@@ -20,10 +20,12 @@ That is the ordinary thin CLI (`packages/cli`), pointed at this directory by
 never touches a real `~/.aivi` or `~/.config/aivi.json`. The `file:` specs make
 npm install your workspace packages instead of the registry — same code path a
 real install runs, local `dist/` on the end. Drop any `--plugin` you do not
-want; add plugins later with `npm run aivi:cli -- install discord` — once a
-plugin's package is present, `install` runs its own setup wizard (writes
-`config.json` and `.env` here). Without the package it installs from npm, so
-in this home install the `file:` spec at setup first.
+want; add plugins later with `npm run aivi:cli -- add discord` (aliases:
+`discord`, `slack`, `browser`, `linear`) — `add` runs the plugin's own setup
+wizard (writes `config.json` and `.env` here). The alias installs from npm, so
+in this home prefer the `file:` spec — `npm run aivi:cli -- add
+"file:../../packages/channel-slack"` — to install your workspace package;
+`aivi remove <name>` takes a plugin out again.
 
 Setup seeds the OpenCode shape (`opencode.jsonc`, `.opencode/agents/`) and pins
 `@aivi/opencode` **from npm** in `opencode.jsonc`; to run OpenCode against your
