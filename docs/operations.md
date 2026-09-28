@@ -290,7 +290,12 @@ says so and the change takes effect at the next dispatch.
 server's boot file (`@aivi/host/server`) directly — no CLI, no arguments to
 parse — reaching the same boot foreground `aivi serve` runs in-process, so
 nothing about the server changes. `aivi service start|stop|restart|status`
-control it, `service logs` follows the log, `service uninstall` removes it. A
+control it, `service logs` follows the log, `service uninstall` removes it.
+A stop or a restart says so first — `server stopping…`, `server restarting…`
+printed before the host goes down, so a session driven over the exec relay
+reads the line before the drop — and where no unit is installed both answer
+`not running as a service`. `add` and `remove` restart the host through the
+same announced, atomic restart. A
 headless Linux machine needs `loginctl enable-linger` or the service stops
 with the session.
 
@@ -314,9 +319,11 @@ many went; the duration is the same shape `--at` takes (`30m|2h|1d|30d`).
 `aivi update` brings the installed server and plugins to their newest releases.
 The channel comes from `config.json` (`update.channel`, default `stable`). The
 command resolves the target version, checks its Node requirement (provisioning
-`<home>/runtime/` first when the machine's Node is unsuitable), stops the
-server, installs with npm, restarts and probes `/health` before calling it
-done. npm is the compatibility resolver: a plugin whose `@aivi/host` peer range
+`<home>/runtime/` first when the machine's Node is unsuitable), installs with
+npm while the server keeps answering, and ends with the announced restart
+(`server restarting…`) and a `/health` probe before calling it done — the one
+disconnect comes last, never before the slow part. npm is the compatibility
+resolver: a plugin whose `@aivi/host` peer range
 excludes the new host fails the install, is pinned at its current version —
 logged as **disabled: no compatible release** — and is re-checked on every
 future update. There is no rollback; sessions resume because state is SQLite

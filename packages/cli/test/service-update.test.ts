@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { parse as parsePlist } from 'plist';
 import { tarballName } from '../src/runtime.ts';
-import { launchdPlist, systemdUnit } from '../src/service.ts';
+import { launchdPlist, serviceRestart, serviceStop, systemdUnit } from '../src/service.ts';
 import { type UpdateIo, updateServer } from '../src/update.ts';
 
 let directory: string;
@@ -46,6 +46,21 @@ test('the managed Node tarball name maps platform and arch', () => {
   assert.throws(() => tarballName('win32', 'x64', '26.2.0'), /No managed Node/);
 });
 
+test('service stop and restart answer `not running as a service` where no unit is installed', () => {
+  // homedir() honors HOME on darwin and linux, so a scratch home is a
+  // machine with neither plist nor unit — and the guard answers there,
+  // before launchctl or systemctl would be touched.
+  const saved = process.env.HOME;
+  process.env.HOME = join(directory, 'no-such-home');
+  try {
+    assert.throws(() => serviceStop(), /not running as a service/);
+    assert.throws(() => serviceRestart(), /not running as a service/);
+  } finally {
+    if (saved === undefined) delete process.env.HOME;
+    else process.env.HOME = saved;
+  }
+});
+
 function fakeIo(over: Partial<UpdateIo>): UpdateIo {
   return {
     npmView: async (_spec, field) => (field === 'engines.node' ? '>=26 <27' : '0.2.0'),
@@ -53,7 +68,7 @@ function fakeIo(over: Partial<UpdateIo>): UpdateIo {
     rebuildSchema: async () => {},
     log: () => {},
     healthProbe: async () => true,
-    service: { installed: () => false, stop: () => {}, start: () => {} },
+    service: { installed: () => false, restart: () => {} },
     ...over,
   };
 }
@@ -82,7 +97,7 @@ test('update is a no-op when the installed version is the target', async () => {
   assert.deepEqual(calls, []);
 });
 
-test('update installs the new server plus plugins at latest, stops and starts the service, and probes health', async () => {
+test('update installs while the host keeps answering, then makes one announced restart the final step', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
   mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
@@ -92,20 +107,27 @@ test('update installs the new server plus plugins at latest, stops and starts th
   );
   writeFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), JSON.stringify({ version: '0.1.0' }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1, host: { port: 4100 } }));
-  const installs: string[][] = [];
-  const service: string[] = [];
+  const events: string[] = [];
   await updateServer(
     { home, appDir, nodePath: process.execPath },
     fakeIo({
       install: specs => {
-        installs.push(specs);
+        events.push(`install ${specs.join(' ')}`);
         return { status: 0, stderr: '' };
       },
-      service: { installed: () => true, stop: () => service.push('stop'), start: () => service.push('start') },
+      service: {
+        installed: () => true,
+        restart: () => {
+          events.push('restart');
+        },
+      },
     }),
   );
-  assert.deepEqual(installs, [['@aivi/host@0.2.0', '@aivi/channel-discord@latest']]);
-  assert.deepEqual(service, ['stop', 'start']);
+  // The order is the point (D13): the managed host answers through the
+  // install — an exec session driving this command is its own child and
+  // would die mid-npm if it disconnected first — and the one disconnect
+  // comes last.
+  assert.deepEqual(events, ['install @aivi/host@0.2.0 @aivi/channel-discord@latest', 'restart']);
 });
 
 test('a plugin whose peer range excludes the new host is pinned and excluded from the retry', async () => {
@@ -153,7 +175,7 @@ test('update refuses to touch a server that is running in the foreground', async
       { home, appDir, nodePath: process.execPath },
       fakeIo({
         healthProbe: async () => true,
-        service: { installed: () => false, stop: () => {}, start: () => {} },
+        service: { installed: () => false, restart: () => {} },
       }),
     ),
     /running in the foreground/,

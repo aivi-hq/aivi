@@ -55,8 +55,7 @@ function harness(states: ModuleState[] = [], moduleId: string | undefined = 'dis
     moduleStates: async () => states,
     service: {
       installed: () => true,
-      stop: () => {},
-      start: () => {
+      restart: () => {
         calls.restarts++;
       },
     },

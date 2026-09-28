@@ -14,7 +14,7 @@ import { satisfies } from 'semver';
 import { saveClientConfig } from './client-config.ts';
 import { importApp } from './mount.ts';
 import { ensureNode } from './runtime.ts';
-import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
+import { serviceInstalled, serviceRestart } from './service.ts';
 
 export interface UpdateIo {
   npmView(spec: string, field: string): Promise<string>;
@@ -24,7 +24,10 @@ export interface UpdateIo {
   rebuildSchema(home: string, appDir: string): Promise<void>;
   log(message: string): void;
   healthProbe(url: string): Promise<boolean>;
-  service: { installed(): boolean; stop(): void; start(): void };
+  /** The managed host keeps answering through the install; the one
+   *  disconnect is the final restart, and its announce rides inside
+   *  serviceRestart (D13: announce first, then do the disconnecting thing). */
+  service: { installed(): boolean; restart(): void };
 }
 
 const defaultIo: UpdateIo = {
@@ -54,7 +57,7 @@ const defaultIo: UpdateIo = {
       return false;
     }
   },
-  service: { installed: serviceInstalled, stop: serviceStop, start: serviceStart },
+  service: { installed: serviceInstalled, restart: serviceRestart },
 };
 
 function spawnNpm(args: string[], cwd?: string) {
@@ -129,7 +132,7 @@ export async function waitHealthy(
 
 /** Restart the managed service and wait for it to answer. */
 async function restartAndWait(io: UpdateIo, url: string): Promise<void> {
-  io.service.start();
+  io.service.restart();
   await waitHealthy(
     io,
     url,
@@ -169,10 +172,14 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
 
   await provisionNode(io, home, targetVersion, options.nodePath);
 
+  // A foreground host is the person's own process to stop and files cannot
+  // be swapped safely under it — refuse before touching anything. A managed
+  // host keeps answering through the install: an exec session driving this
+  // command is the host's own child, and the one disconnect comes last,
+  // announced — stopping first would kill the updater mid-npm (D13).
   const url = await healthUrl(home);
   const managed = io.service.installed();
-  if (managed) io.service.stop();
-  else if (await io.healthProbe(url))
+  if (!managed && (await io.healthProbe(url)))
     throw new Error('aivi is running in the foreground; stop it (Ctrl+C) and re-run `aivi update`.');
 
   installPeers(io, appDir, installed, targetVersion);

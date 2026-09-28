@@ -50,8 +50,7 @@ function harness(blockRemoved = true): Harness {
     healthProbe: async () => true,
     service: {
       installed: () => true,
-      stop: () => {},
-      start: () => {
+      restart: () => {
         calls.restarts++;
       },
     },

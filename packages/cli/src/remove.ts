@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { PLUGIN_ALIASES } from './add.ts';
 import { pluginNames, removePluginName } from './manifest.ts';
 import { importApp } from './mount.ts';
-import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
+import { serviceInstalled, serviceRestart } from './service.ts';
 import { healthUrl, waitHealthy } from './update.ts';
 
 export interface RemoveOptions {
@@ -25,7 +25,7 @@ export interface RemoveIo {
   rebuildSchema(home: string, appDir: string): Promise<void>;
   healthUrl(home: string): Promise<string>;
   healthProbe(url: string): Promise<boolean>;
-  service: { installed(): boolean; stop(): void; start(): void };
+  service: { installed(): boolean; restart(): void };
   log(message: string): void;
   warn(message: string): void;
 }
@@ -61,7 +61,7 @@ const defaultIo: RemoveIo = {
       return false;
     }
   },
-  service: { installed: serviceInstalled, stop: serviceStop, start: serviceStart },
+  service: { installed: serviceInstalled, restart: serviceRestart },
   log: message => console.log(message),
   warn: message => console.log(message),
 };
@@ -120,9 +120,9 @@ export async function remove(args: string[], options: RemoveOptions, io: RemoveI
     return;
   }
   const url = await io.healthUrl(options.home);
-  io.log('Restarting aivi…');
-  io.service.stop();
-  io.service.start();
+  // The one notice ("server restarting…") rides inside serviceRestart, the
+  // same chokepoint `aivi add` and `aivi update` use.
+  io.service.restart();
   await waitHealthy(io, url, 'aivi did not come back healthy within 30 s. Check `aivi service logs`.');
   io.log(`${pkg} is removed and aivi is back and healthy.`);
 }

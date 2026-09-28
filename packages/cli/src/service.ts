@@ -11,7 +11,7 @@
  *  an explicit WorkingDirectory, and owner-only 0600 on the plist. */
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { build as buildPlistXml } from 'plist';
@@ -152,15 +152,43 @@ export function serviceStart(): void {
   else throw new Error(`aivi service is not supported on ${process.platform}.`);
 }
 
+/** The D13 discipline, in the one place the host actually dies: a command
+ *  about to disconnect a session says so first, to stdout, in plain bytes —
+ *  `server restarting…` reaches the client before the host behind it does.
+ *  The write is synchronous (`writeSync`, not console.log): the disconnecting
+ *  call below blocks this process in a spawnSync, and a queued async write
+ *  could strand in the event loop while the exec relay's server is already
+ *  dying. Best effort: a closed stdout has nobody to tell and must not abort
+ *  the thing the person asked for. */
+function announce(text: string): void {
+  try {
+    writeSync(1, `${text}\n`);
+  } catch {
+    // nowhere left to announce; the action proceeds
+  }
+}
+
 export function serviceStop(): void {
+  if (!serviceInstalled()) throw new Error('not running as a service');
+  announce('server stopping…');
   if (process.platform === 'darwin') runOrThrow('launchctl', ['bootout', `gui/${uid()}/${SERVICE_LABEL}`], true);
   else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'stop', 'aivi.service']);
   else throw new Error(`aivi service is not supported on ${process.platform}.`);
 }
 
 export function serviceRestart(): void {
-  if (process.platform === 'darwin') runOrThrow('launchctl', ['kickstart', '-k', `gui/${uid()}/${SERVICE_LABEL}`]);
-  else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'restart', 'aivi.service']);
+  if (!serviceInstalled()) throw new Error('not running as a service');
+  announce('server restarting…');
+  if (process.platform === 'darwin') {
+    try {
+      runOrThrow('launchctl', ['kickstart', '-k', `gui/${uid()}/${SERVICE_LABEL}`]);
+    } catch {
+      // Nothing to kick: the service was booted out (`aivi service stop`)
+      // after its plist was written. The start path boots it fresh —
+      // `systemctl restart` does that in one call on Linux.
+      serviceStart();
+    }
+  } else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'restart', 'aivi.service']);
   else throw new Error(`aivi service is not supported on ${process.platform}.`);
 }
 

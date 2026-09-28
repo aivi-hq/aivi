@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { addPluginName, dependencyNames, pluginDependencies, serverPackage } from './manifest.ts';
 import { importApp } from './mount.ts';
-import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
+import { serviceInstalled, serviceRestart } from './service.ts';
 import { healthUrl, waitHealthy } from './update.ts';
 import { aiviVersion } from './version.ts';
 
@@ -49,7 +49,7 @@ export interface AddIo {
   healthUrl(home: string): Promise<string>;
   healthProbe(url: string): Promise<boolean>;
   moduleStates(url: string): Promise<ModuleState[]>;
-  service: { installed(): boolean; stop(): void; start(): void };
+  service: { installed(): boolean; restart(): void };
   log(message: string): void;
   warn(message: string): void;
 }
@@ -110,7 +110,7 @@ const defaultIo: AddIo = {
     if (!response.ok) throw new Error(`/status answered ${response.status}.`);
     return ((await response.json()) as { modules: ModuleState[] }).modules;
   },
-  service: { installed: serviceInstalled, stop: serviceStop, start: serviceStart },
+  service: { installed: serviceInstalled, restart: serviceRestart },
   log: message => console.log(message),
   warn: message => console.log(message),
 };
@@ -179,9 +179,10 @@ export function dependencyFor(appDir: string, spec: string, before: string[]): s
 /** Bring it up: restart aivi, then read the module's own health. The command
  *  ends only when the module itself reports running (or gives a reason). */
 async function restartAndReport(io: AddIo, url: string, label: string, moduleId: string | undefined) {
-  io.log('Restarting aivi…');
-  io.service.stop();
-  io.service.start();
+  // The one notice ("server restarting…") rides inside serviceRestart: the
+  // chokepoint announces before the host drops, whoever asked — over an exec
+  // relay this command's own process is the host's child and dies with it.
+  io.service.restart();
   // A bounded wait for a known instant: the restarted server coming healthy,
   // the same probe `aivi update` runs.
   await waitHealthy(io, url, 'aivi did not come back healthy within 30 s. Check `aivi service logs`.');

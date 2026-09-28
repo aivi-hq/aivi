@@ -231,10 +231,10 @@ color is the decoration that drops, as it already does.
 ## Restart — a log line, not a mechanism (decision D13)
 
 There is **no retry, no close-reason vocabulary, no resume, and no step
-tracking anywhere**: the child dies with the host, gone is gone. Two commands
-can end the host (`service restart`, `service stop`) plus `update`; each
-prints its own notice to stdout — normal bytes — **before** doing the thing
-that disconnects it:
+tracking anywhere**: the child dies with the host, gone is gone. The commands
+that can end the host — `service restart`, `service stop`, `update`, and the
+plugin `add`/`remove` restarts — print a notice to stdout — normal bytes —
+**before** doing the thing that disconnects it:
 
 ```
 server restarting…      # then launchctl kickstart -k, then the drop
@@ -247,6 +247,18 @@ did not come back, the *next* command discovers that. The whole discipline is:
 while the host is alive and the announce+self-restart is the final step.
 `uninstall` **refuses** the relay entirely (decision D14). Foreground `serve`
 (no service installed) answers `not running as a service`.
+
+Landed 2026-09-28 with one correction to the sentence above: `add` and
+`remove` can end the host too, so the notice lives in the chokepoint —
+`serviceStop`/`serviceRestart` in `packages/cli/src/service.ts` — and every
+caller gets it. The write is a `writeSync` to stdout: the disconnecting call
+blocks the event loop in a `spawnSync`, and a queued async write could
+strand there while the relay's server is already dying. Both refuse with
+`not running as a service` before touching launchctl. `serviceRestart` is
+one atomic `kickstart -k` (falling back to the start path when the service
+was booted out), and `update`, `add` and `remove` all restart through it —
+the old stop-then-start would have left the service booted out whenever the
+dying host killed the child in between. operations.md owns the behavior.
 
 ## Attribution
 
@@ -391,10 +403,12 @@ flag and what it teaches around it, then the strings and docs.
       `#F59E0B` won the weighing (caution, not brand), entered `BRAND` as
       `remote`; the driven child's machine fact decides the marker, and the
       title's `(remote)` word is plain text that survives colorless streams.
-- [ ] Announce-before-disconnect in `service restart`, `service stop`, and
-      `update` (the notice is printed before the self-stop; no mechanism
-      beyond that sentence). No top-level `restart` command: restart is
-      `aivi service restart`, relayed like the rest of `service`.
+- [x] Announce-before-disconnect in `service restart`, `service stop`, and
+      `update`. Landed 2026-09-28: one `writeSync` notice in the chokepoint
+      (`serviceStop`/`serviceRestart`), the `not running as a service` guard
+      before launchctl is touched, and `update`/`add`/`remove` restarted
+      through that one atomic call. No top-level `restart` command: restart
+      is `aivi service restart`, relayed like the rest of `service`.
 - [ ] `AIVI_OPERATOR_BEARER` env + scrub list update in configuration docs.
 - [ ] Tests: help output per state (fixture configs); `--remote setup`
       gives the guard, hidden commands invoked anyway give guard messages,
