@@ -270,7 +270,12 @@ semantics stay owned by [people.md](../../people.md).
 ## Packaging
 
 `node-pty` is a **server-side** dependency only (the client is raw mode +
-websocket, both native to node). It is a native module: `npm install` fetches
+websocket; raw mode is native to node). Landed fact (2026-09-28): the client
+websocket is the `ws` package, not node's global — the web-standard client
+swallows a refusal entirely (empty error, no status, no body), and D23
+promised the server's honest one-liner, not the client's guess at it. `ws`
+is a small pure-JS dependency, the same library the door already speaks.
+node-pty is a native module: `npm install` fetches
 a prebuilt binary per platform (darwin/linux exist). If a machine has none
 and the build fails too, that must not take the host down at import time —
 the host starts fine and answers exec attempts with `remote exec unavailable
@@ -321,8 +326,11 @@ flag and what it teaches around it, then the strings and docs.
 - [x] Server: node-pty spawn, env contract, `exit`/close semantics, kill on
       disconnect, missing-prebuild degradation — and the spawn-helper repair
       the broken tarball needs. Landed 2026-09-28.
-- [ ] Client relay: raw mode, SIGWINCH, byte forwarding, exit propagation,
-      restore-every-path; pipe-mode session branch.
+- [x] Client relay: raw mode, SIGWINCH, byte forwarding, exit propagation,
+      restore-every-path; pipe-mode session branch. Landed 2026-09-28 — the
+      pipe branch is tested in-process; the raw-mode branch (a real terminal)
+      is for the dev-home live gate, with `process.on('exit')` as the
+      restore guarantee under every path.
 - [ ] State resolution once per run (client config → `fresh`/`local`); no
       third state anywhere. `--remote`/`-r` parsing: config `url` + token →
       exec channel; honest `no server configured` / `host unreachable`

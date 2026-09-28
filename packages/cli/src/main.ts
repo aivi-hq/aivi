@@ -11,6 +11,7 @@ import { Command, CommanderError } from 'commander';
 import { add } from './add.ts';
 import { brandBanner } from './brand.ts';
 import { loadClientConfig } from './client-config.ts';
+import { execRemote } from './exec.ts';
 import { homeForCreate, homeFromEnvOrConfig, requireHome } from './home.ts';
 import { link } from './link.ts';
 import { appDirFor, mountAppCommands } from './mount.ts';
@@ -34,6 +35,13 @@ const version = (
 ).version;
 
 export async function main(argv: string[]): Promise<void> {
+  // Driving another machine is intent, typed as `--remote`/`-r`: the flag
+  // comes out, everything else travels verbatim, and local execution never
+  // happens (decision D23 — there is no fallback to a different machine's
+  // answer, and plain commands never touch the network).
+  const remoteAt = argv.findIndex(argument => argument === '--remote' || argument === '-r');
+  if (remoteAt !== -1) return execRemote(argv.toSpliced(remoteAt, 1));
+
   const [command, subcommand] = argv;
 
   // `server create` moved behind `aivi setup`; say so rather than forwarding
