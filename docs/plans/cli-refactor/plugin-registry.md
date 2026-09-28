@@ -107,5 +107,6 @@ points at it.
       file), [CONTEXT.md](../../../CONTEXT.md) (amended decision line),
       [operations.md](../../operations.md) (plugins section),
       [architecture.md](../../architecture.md) (`./cli` mount facts).
-- [ ] Changesets (fixed group) — parked by the operator until the end of the
-      refactor, with the D22 dev-home nuke.
+- [x] Changesets (fixed group) — landed 2026-09-28 in `53e55f4`
+      (`.changeset/one-cli.md`: cli, host and plugin minor, all at 0.9.0).
+      The D22 dev-home nuke stays parked with the operator.

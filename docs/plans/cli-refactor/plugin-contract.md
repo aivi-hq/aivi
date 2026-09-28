@@ -176,6 +176,7 @@ subtree); its runtime dependencies stay `@aivi/core` only.
       [opencode.md](../../opencode.md) (plugin loading),
       [linear.md](../../linear.md), [CONTEXT.md](../../../CONTEXT.md)
       (packages, vocabulary).
-- [ ] Changesets for every package under `packages/` touched (fixed group).
-      (Parked by the operator until the end of the refactor; the `fixed`
-      group already includes `@aivi/plugin`.)
+- [x] Changesets for every package under `packages/` touched (fixed group).
+      Landed 2026-09-28 in `53e55f4`: `.changeset/plugin-contract.md`
+      (core minor, `@aivi/tracker-linear` minor, the three plugins minor);
+      the `fixed` group carried `@aivi/plugin` along at the group's 0.9.0.
