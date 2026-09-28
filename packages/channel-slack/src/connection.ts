@@ -1,7 +1,7 @@
 import type { Logger } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
 import { ConfigurationError } from '@aivi/host';
-import { SocketModeClient } from '@slack/socket-mode';
+import { LogLevel, SocketModeClient } from '@slack/socket-mode';
 import type { MarkdownBlock } from '@slack/web-api';
 import { WebClient } from '@slack/web-api';
 
@@ -63,9 +63,48 @@ export function requireSlackTokens(env: NodeJS.ProcessEnv = process.env): { bot:
   return { bot, app };
 }
 
+/** The SDK's own log lines, routed into aivi's logging. Once `disconnect()`
+ *  is called — which only the module's own teardown does — the SDK's warnings
+ *  are dropped: its pong watchdog then complains about the silence our own
+ *  shutdown drains caused (measured on the dev home 2026-09-28: every Ctrl+C
+ *  printed `A pong wasn't received…` five seconds in). A socket we are closing
+ *  on purpose has nothing left to warn about; errors still travel.
+ *  Exported for its own test: a live socket cannot exist before `connect`. */
+export function sdkLog(log: Logger) {
+  let closing = false;
+  let level = LogLevel.INFO;
+  let name = 'slack';
+  const line = (msg: unknown) => `${name}: ${String(msg)}`;
+  return {
+    logger: {
+      debug: (msg: unknown) => log.debug('slack.debug', { msg: line(msg) }),
+      info: (msg: unknown) => log.info('slack.info', { msg: line(msg) }),
+      warn: (msg: unknown) => {
+        if (!closing) log.warn('slack.warn', { msg: line(msg) });
+      },
+      error: (msg: unknown) => log.error('slack.error', { msg: line(msg) }),
+      setLevel: (next: LogLevel) => {
+        level = next;
+      },
+      getLevel: () => level,
+      setName: (next: string) => {
+        name = next;
+      },
+    },
+    noteClosing: () => {
+      closing = true;
+    },
+  };
+}
+
 export function createSocketModeConnection(tokens: { bot: string; app: string }, log: Logger): SlackConnection {
+  const sdk = sdkLog(log);
   const web = new WebClient(tokens.bot, { retryConfig: { retries: 0 }, timeout: 15000 });
-  const socket = new SocketModeClient({ appToken: tokens.app, clientOptions: { retryConfig: { retries: 0 } } });
+  const socket = new SocketModeClient({
+    appToken: tokens.app,
+    clientOptions: { retryConfig: { retries: 0 } },
+    logger: sdk.logger,
+  });
   const guard = (promise: Promise<unknown>, event: string) => promise.catch(error => log.error(event, { error }));
   // Agents write standard Markdown; a plain `text` field is parsed as Slack's own mrkdwn dialect and
   // mangles it. The `markdown` block renders it as written; `text` stays the notification preview.
@@ -107,6 +146,7 @@ export function createSocketModeConnection(tokens: { bot: string; app: string },
       await socket.start();
     },
     async disconnect() {
+      sdk.noteClosing();
       await socket.disconnect();
     },
     async post(channel, text, threadTs) {

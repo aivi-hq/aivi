@@ -112,6 +112,15 @@ browser/MCP and QMD close, and ownership is released. A grace period that lets
 work finish first is a design choice not yet made
 ([shutdown-hooks](backlog/shutdown-hooks.md)).
 
+The first `SIGINT`/`SIGTERM` logs `host.stopping` before any of this, because
+the drains can take seconds (idle keep-alive sockets expire on their own) and
+silence reads to the operator as a hung terminal (measured on the dev home
+2026-09-28: the first Ctrl+C looked stuck for ~5 s). A second signal ends the
+process at once. Once the Slack module starts its own teardown, the SDK's pong
+watchdog warnings are dropped — the socket is closing on purpose, and the
+watchdog would only be complaining about our drains starving its event loop;
+SDK errors still travel.
+
 A conversation turn interrupted by the shutdown is the one exception to
 "blocked": its only external effect is the reply, so it is discarded and the
 person is told aivi is going offline and to send the message again; waiting

@@ -74,6 +74,12 @@ try {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   stopped = once(daemon, 'exit');
+  // stderr is collected (not passed through) so the shutdown assertion below
+  // can read the stop signal's own log line.
+  let shutdownLog = '';
+  daemon.stderr.on('data', chunk => {
+    shutdownLog += chunk;
+  });
   const listening = await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Host startup timed out')), 10000);
     let buffer = '';
@@ -120,6 +126,7 @@ try {
   daemon.kill('SIGTERM');
   const [code] = await stopped;
   assert.equal(code, 0);
+  assert.ok(shutdownLog.includes('host.stopping'), 'the stop signal says so at once: silence reads as a hang');
 
   // Every CLI read happens after the clean shutdown released singleton ownership: the store reopens,
   // and the run the host executed is durable in SQLite.

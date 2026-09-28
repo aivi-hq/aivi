@@ -22,7 +22,16 @@ export function registerServer(program: Command): void {
       // (their ./config declarations); the module code itself loads here.
       const modules: AiviModule[] = await buildModules(registry, loaded, home);
       const abort = new AbortController();
-      const stop = () => abort.abort();
+      // Stop means stop, and the operator sees it: the drains after this can
+      // take seconds (idle keep-alive sockets expire on their own), so silence
+      // here reads as a hung terminal. Measured on the dev home 2026-09-28:
+      // the first Ctrl+C looked stuck for ~5 s.
+      const stop = () => {
+        log.info('host.stopping', {
+          hint: 'shutting down gracefully — modules stop, in-flight work drains; a second Ctrl+C ends now',
+        });
+        abort.abort();
+      };
       process.once('SIGINT', stop);
       process.once('SIGTERM', stop);
       await withStore(loaded, async store => {

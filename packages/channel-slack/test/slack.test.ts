@@ -19,6 +19,7 @@ import {
 import type { AiviServices } from '@aivi/plugin';
 import { slackConfigSchema } from '../src/config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
+import { sdkLog } from '../src/connection.ts';
 import type { Routed, UnlinkedSender } from '../src/module.ts';
 import {
   conversationParts,
@@ -766,4 +767,20 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
   await until(() => slack.reactions.at(-1) === `-eyes@${DM}:40.0`, 'the working reaction is cleared');
   await slack.command({ command: '/spider-stop', channel_id: DM });
   assert.equal(slack.ephemerals.at(-1), 'Nothing is running in this conversation.');
+});
+
+test('the SDK logger guard: warnings travel until we close the socket on purpose, errors always', () => {
+  const lines: string[] = [];
+  const log = {
+    debug: () => {},
+    info: () => {},
+    warn: (event: string) => lines.push(`warn:${event}`),
+    error: (event: string) => lines.push(`error:${event}`),
+  } as unknown as Parameters<typeof sdkLog>[0];
+  const guard = sdkLog(log);
+  guard.logger.warn('gateway lost');
+  guard.noteClosing();
+  guard.logger.warn("A pong wasn't received from the server before the timeout of 5000ms!");
+  guard.logger.error('socket died mid-close');
+  assert.deepEqual(lines, ['warn:slack.warn', 'error:slack.error'], 'the teardown pong is dropped, the error stays');
 });

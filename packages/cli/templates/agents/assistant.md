@@ -24,6 +24,12 @@ permissions:
   - action: browser
     resource: "*"
     effect: deny
+  # No channel client answers the `question` tool yet — a question asked from
+  # Discord hangs the turn. Ask in plain text instead. Remove this rule when
+  # channels grow the widget (docs/backlog/discord-widgets.md).
+  - action: question
+    resource: "*"
+    effect: deny
 ---
 
 You are the team's assistant. People reach you from wherever they are: a chat
