@@ -208,10 +208,15 @@ underneath is an ordinary message under the channel's access policy.
 
 `describeSession` (host) renders one session's context: the window in use
 against the model's limit (last answer's input + cache + output vs
-`model.list().limit.context`), compactions, the session's token and cost
-totals and the knowledge in scope, as markdown both platforms render, read
-from OpenCode's transcript and catalogue. It backs three surfaces: the
-channels' `/context` command (`describeConversation`, which adds the
+`model.list().limit.context`), what OpenCode has loaded beyond its built-ins
+(`plugin.list`: id, version, and the source target when it differs — the aivi
+plugin's line is where a missing or failed load shows up in the channel), the
+session's lifetime token and cost totals and the knowledge in scope, as
+markdown both platforms render. It reads three bounded OpenCode calls — the
+session object (lifetime totals), `session.context` (the effective context,
+starting at its compaction; the same read the TUI's context display makes) and
+the plugin list — and never walks the full transcript. It backs three surfaces:
+the channels' `/context` command (`describeConversation`, which adds the
 conversation's binding and pending turns), `GET /context?session=` and the
 plugin tool `aivi_context`, so an agent asked "what's the context?" answers
 with the same text. Slack refuses slash commands inside threads; there the
