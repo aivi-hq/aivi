@@ -81,7 +81,7 @@ Three rules, and they are the whole design:
 2. **One commander tree, one help.** No `OWN` set, no `goesToApp`, no
    `HELP_FORMS`, no `aivi help X` forwarding special case. What is mounted is
    what help shows (state-based visibility arrives in
-   [visibility.md](visibility.md)).
+   [remote-exec.md](remote-exec.md)).
 3. **Missing install = the mount-time error above**, the same sentence today's
    `appCliPath()` throws at spawn time (`forward.ts:13`).
 
@@ -211,7 +211,7 @@ from the plan while landing:
   and `aivi help jobs` show one merged tree, `version`/`--version` stay the
   CLI's. Known cosmetic: `--log-level`/`--log-format` now appear in the CLI
   root's options (declared on the receiving tree's root);
-  [visibility.md](visibility.md) owns state-based help trimming.
+  [remote-exec.md](remote-exec.md) owns state-based help trimming.
 
 Half 2 — the move and burial:
 
