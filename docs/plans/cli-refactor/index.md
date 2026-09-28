@@ -63,13 +63,14 @@ One user-facing binary. One command mechanism for host and plugins alike.
 | `@aivi/knowledge`, `@aivi/browser`, `@aivi/channel-discord`, `@aivi/channel-slack`, `@aivi/tracker-linear` | plugins: main entry `{ moduleId, configSchema, createModule }`, `./cli`, `./setup` |
 | `@aivi/opencode` | the OpenCode-side plugin (unchanged shape; imports `@aivi/plugin/api`) |
 
-`@aivi/app` is deleted. `aivi <cmd>` in the three process states:
+`@aivi/app` is deleted. `aivi <cmd>` in the two machine states — driving
+another machine is the typed `--remote` flag, not a state
+([remote-exec](remote-exec.md) owns it):
 
 | State | Decided by | Operator commands |
 | --- | --- | --- |
-| `fresh` | no client config, no home here | none yet — help is `setup` (and `version`, `upgrade`) |
+| `fresh` | no client config, no home here | none registered — help is `setup`, `upgrade`, `uninstall` (`version` via `-V`); the header says `home: none`; drive another machine with `-r` |
 | `local` | home on this machine | in-process: dynamic `import()` of `@aivi/host/cli` from `<appDir>`, then the plugin list. Works with the host down, as today |
-| `remote` | client config `url`, home elsewhere | relayed over the aivi port as a PTY byte stream |
 
 ## Phases (each is its own session)
 

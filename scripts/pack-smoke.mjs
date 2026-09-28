@@ -49,7 +49,7 @@ try {
     throw new Error('aivi status without a home should fail');
   } catch (error) {
     const stderr = String(error.stderr ?? '');
-    if (error.status === 0 || !/No aivi home known|No aivi server/.test(stderr))
+    if (error.status === 0 || !/unknown command|No aivi server/.test(stderr))
       throw new Error(`aivi status without a home said: ${stderr || error.message}`);
   }
   console.log(`pack-smoke: @aivi/cli ${version} installed alone and answers.`);

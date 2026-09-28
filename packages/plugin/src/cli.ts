@@ -14,9 +14,21 @@ import type { LoadedConfig, OutputBlock } from '@aivi/core';
 import type { ConversationStore, Store } from '@aivi/host';
 import type * as prompts from '@clack/prompts';
 
+/** What the machine this CLI runs on *is*: the one fact that decides command
+ *  membership. `home` is the aivi home this machine has, or absent when it has
+ *  none. The CLI resolves it once per run (AIVI_HOME, then the client record)
+ *  and hands it to every command provider; a provider that cannot run without
+ *  a home simply does not register the command — membership is decided by the
+ *  provider at mount time, never by hiding a command after the fact. */
+export interface MachineStatus {
+  home?: string | undefined;
+}
+
 /** What the CLI hands a plugin's command factory: the same home the built-ins
  *  see, the same stdout contract, and nothing platform-specific. */
 export interface PluginCliContext {
+  /** The machine's state, for commands that decide whether to exist here. */
+  machine: MachineStatus;
   /** The aivi home that owns `config.json` and `.env`. */
   home: string;
   configPath: string;

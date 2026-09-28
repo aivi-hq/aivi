@@ -38,7 +38,7 @@ export function appDirFor(home: string): string {
 export async function mountAppCommands(program: Command): Promise<void> {
   const home = requireHome();
   const { registerCommands } = await importApp<{
-    registerCommands: (program: Command) => Promise<void>;
+    registerCommands: (program: Command, machine: { home?: string | undefined }) => Promise<void>;
   }>(appDirFor(home), home, 'dist/cli.js');
-  await registerCommands(program);
+  await registerCommands(program, { home });
 }

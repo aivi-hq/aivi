@@ -4,7 +4,13 @@
  *  `update`, `upgrade`, `uninstall` and the service commands, and mounts every
  *  other command **in-process** from the installed app (mount.ts) onto the same
  *  commander tree — one help, one parse, no relay. The CLI itself never
- *  imports app or host code statically. */
+ *  imports app or host code statically.
+ *
+ *  Commands that cannot run on this machine are never registered: the one
+ *  machine fact — a home here, or none — is decided once per run, shown in
+ *  the help header (`home: ~/.aivi` / `home: none`), and handed to every
+ *  command provider. A machine without a home sees only what it can do
+ *  there; a typed command it does not have is honestly an unknown command. */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
@@ -12,7 +18,7 @@ import { add } from './add.ts';
 import { brandBanner } from './brand.ts';
 import { loadClientConfig } from './client-config.ts';
 import { execRemote } from './exec.ts';
-import { homeForCreate, homeFromEnvOrConfig, requireHome } from './home.ts';
+import { homeForCreate, homeFromEnvOrConfig, machineStatus, requireHome } from './home.ts';
 import { link } from './link.ts';
 import { appDirFor, mountAppCommands } from './mount.ts';
 import { remove } from './remove.ts';
@@ -44,6 +50,10 @@ export async function main(argv: string[]): Promise<void> {
 
   const [command, subcommand] = argv;
 
+  // The machine's one fact, decided once per run from two sources and no
+  // probe: a home here, or none. The header shows it; providers receive it.
+  const machine = machineStatus();
+
   // `server create` moved behind `aivi setup`; say so rather than forwarding
   // into the app, whose copy would do the identity step twice.
   if (command === 'server' && subcommand === 'create')
@@ -55,7 +65,13 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  const program = new Command('aivi').version(version).showHelpAfterError('(run `aivi --help` for a list of commands)');
+  const program = new Command('aivi')
+    .version(version)
+    .showHelpAfterError('(run `aivi --help` for a list of commands)')
+    // Commander never exits the process itself: it throws CommanderError and
+    // main maps it to an exit code below. The bin keeps one owner of the
+    // exit, and main stays callable from tests without killing the runner.
+    .exitOverride();
 
   // These commands keep their own flag handling (they pass unknown flags to
   // plugins and scripts), so they are declared as catch-alls: commander routes,
@@ -67,54 +83,62 @@ export async function main(argv: string[]): Promise<void> {
     const args = rest.at(-1).args as string[];
     await setup(args, { home: homeForCreate() });
   });
-  passThrough('link', 'Mint a one-time code that links a channel account to your person').action(async (...rest) => {
-    const args = rest.at(-1).args as string[];
-    await link(args);
-  });
-  passThrough(
-    'add',
-    'Add a plugin to the server home: it installs, configures itself through its own setup entry, joins the plugin list, and aivi comes back with it running',
-  )
-    .helpGroup('Plugins')
-    .action(async (...rest) => {
-      const args = rest.at(-1).args as string[];
-      const home = requireHome();
-      const config = loadClientConfig();
-      await add(args, {
-        home,
-        appDir: appDirFor(home),
-        nodePath: config?.nodePath ?? process.execPath,
-      });
-    });
-  passThrough(
-    'remove',
-    'Remove a plugin from the server home: out of the plugin list, its config block dropped, the package uninstalled, and aivi comes back without it',
-  )
-    .helpGroup('Plugins')
-    .action(async (...rest) => {
-      const args = rest.at(-1).args as string[];
-      const home = requireHome();
-      const config = loadClientConfig();
-      await remove(args, {
-        home,
-        appDir: appDirFor(home),
-        nodePath: config?.nodePath ?? process.execPath,
-      });
-    });
 
-  program
-    .command('update')
-    .description('Update the installed server and plugins (channel: config.json update.channel)')
-    .helpGroup('Updates')
-    .action(async () => {
-      const home = requireHome();
-      const config = loadClientConfig();
-      await updateServer({
-        home,
-        appDir: appDirFor(home),
-        nodePath: config?.nodePath ?? process.execPath,
-      });
+  // Everything below here acts on a home. A machine that has none — a laptop
+  // that only ever drives the server with `-r` — never registers these;
+  // `setup`, `upgrade` and `uninstall` are what such a machine can do, and
+  // the exit ramp is among them because a CLI that refuses to exist when
+  // there is no home could never be uninstalled.
+  if (machine.home !== undefined) {
+    passThrough('link', 'Mint a one-time code that links a channel account to your person').action(async (...rest) => {
+      const args = rest.at(-1).args as string[];
+      await link(args);
     });
+    passThrough(
+      'add',
+      'Add a plugin to the server home: it installs, configures itself through its own setup entry, joins the plugin list, and aivi comes back with it running',
+    )
+      .helpGroup('Plugins')
+      .action(async (...rest) => {
+        const args = rest.at(-1).args as string[];
+        const home = requireHome();
+        const config = loadClientConfig();
+        await add(args, {
+          home,
+          appDir: appDirFor(home),
+          nodePath: config?.nodePath ?? process.execPath,
+        });
+      });
+    passThrough(
+      'remove',
+      'Remove a plugin from the server home: out of the plugin list, its config block dropped, the package uninstalled, and aivi comes back without it',
+    )
+      .helpGroup('Plugins')
+      .action(async (...rest) => {
+        const args = rest.at(-1).args as string[];
+        const home = requireHome();
+        const config = loadClientConfig();
+        await remove(args, {
+          home,
+          appDir: appDirFor(home),
+          nodePath: config?.nodePath ?? process.execPath,
+        });
+      });
+
+    program
+      .command('update')
+      .description('Update the installed server and plugins (channel: config.json update.channel)')
+      .helpGroup('Updates')
+      .action(async () => {
+        const home = requireHome();
+        const config = loadClientConfig();
+        await updateServer({
+          home,
+          appDir: appDirFor(home),
+          nodePath: config?.nodePath ?? process.execPath,
+        });
+      });
+  }
 
   program
     .command('upgrade')
@@ -140,57 +164,61 @@ export async function main(argv: string[]): Promise<void> {
       if (!done) process.exitCode = 1;
     });
 
-  program
-    .command('service [verb]')
-    .description(
-      'Run the server in the background (LaunchAgent / systemd user unit): install, uninstall, start, stop, restart, status, logs',
-    )
-    .helpGroup('Service')
-    .action(async verb => {
-      const home = requireHome();
-      const config = loadClientConfig();
-      const options = {
-        home,
-        appDir: appDirFor(home),
-        nodePath: config?.nodePath ?? process.execPath,
-      };
-      switch (verb) {
-        case 'install':
-          return serviceInstall(options);
-        case 'uninstall':
-          return serviceUninstall();
-        case 'start':
-          return serviceStart();
-        case 'stop':
-          return serviceStop();
-        case 'restart':
-          return serviceRestart();
-        case 'status':
-          return serviceStatus();
-        case 'logs':
-          return serviceLogs(home);
-        default:
-          throw new Error('Unknown service command. One of: install, uninstall, start, stop, restart, status, logs');
-      }
-    });
+  if (machine.home !== undefined)
+    program
+      .command('service [verb]')
+      .description(
+        'Run the server in the background (LaunchAgent / systemd user unit): install, uninstall, start, stop, restart, status, logs',
+      )
+      .helpGroup('Service')
+      .action(async verb => {
+        const home = requireHome();
+        const config = loadClientConfig();
+        const options = {
+          home,
+          appDir: appDirFor(home),
+          nodePath: config?.nodePath ?? process.execPath,
+        };
+        switch (verb) {
+          case 'install':
+            return serviceInstall(options);
+          case 'uninstall':
+            return serviceUninstall();
+          case 'start':
+            return serviceStart();
+          case 'stop':
+            return serviceStop();
+          case 'restart':
+            return serviceRestart();
+          case 'status':
+            return serviceStatus();
+          case 'logs':
+            return serviceLogs(home);
+          default:
+            throw new Error('Unknown service command. One of: install, uninstall, start, stop, restart, status, logs');
+        }
+      });
 
   // The installed app's commands join this tree only when the request is not
   // a machine command built above: commander's own registry is the machine
   // set, so there is no second list to keep in step. A help form mounts on
   // best effort — help shows what is mounted, and a missing or broken install
   // says so in the footer instead of hiding the machine commands; an operator
-  // command mounts or says why it cannot run.
-  const machine = new Set(program.commands.map(c => c.name()));
+  // command mounts or says why it cannot run. Without a home there is no app
+  // to mount and no attempt is made: what is not here stays not here.
+  const machineCommands = new Set(program.commands.map(c => c.name()));
   const helpForm = command === undefined || command === 'help' || command === '--help' || command === '-h';
   let mountError: string | undefined;
-  if (helpForm) {
-    try {
+  if (machine.home !== undefined) {
+    if (helpForm) {
+      try {
+        await mountAppCommands(program);
+      } catch (error) {
+        mountError = error instanceof Error ? error.message : String(error);
+      }
+    } else if (command !== '--version' && !machineCommands.has(command)) {
       await mountAppCommands(program);
-    } catch (error) {
-      mountError = error instanceof Error ? error.message : String(error);
     }
-  } else if (command !== '--version' && !machine.has(command)) {
-    await mountAppCommands(program);
   }
 
   program.addHelpText(
@@ -199,21 +227,25 @@ export async function main(argv: string[]): Promise<void> {
       [
         { text: `aivi v${version} — the always-on teammate around OpenCode` },
         { text: 'The server does the work; this CLI installs and controls it.', muted: true },
+        { text: `home: ${machine.home ?? 'none'}`, muted: true },
       ],
       process.stdout,
     )}\n`,
   );
+  const footer = `
+Home: ~/.aivi (AIVI_HOME leads over the home recorded in ~/.config/aivi.json)
+holds config.json, .env, app/ (the installed server) and state/.`;
   program.addHelpText(
     'after',
-    mountError === undefined
-      ? `
-Home: ~/.aivi (AIVI_HOME leads over the home recorded in ~/.config/aivi.json)
-holds config.json, .env, app/ (the installed server) and state/.
+    machine.home === undefined
+      ? `${footer}
+No server here: \`aivi setup\` creates one, or signs this machine in to another
+(the header line says what this machine is). What is not listed is not here.`
+      : mountError === undefined
+        ? `${footer}
 The installed app's commands — status, jobs, runs, people, projects, sources,
 knowledge, serve and the channels — mount onto this tree.`
-      : `
-Home: ~/.aivi (AIVI_HOME leads over the home recorded in ~/.config/aivi.json)
-holds config.json, .env, app/ (the installed server) and state/.
+        : `${footer}
 App commands unavailable: ${mountError}`,
   );
 

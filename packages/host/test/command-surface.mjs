@@ -12,7 +12,7 @@ import { registerCommands } from '@aivi/host/cli';
 import { Command, CommanderError } from 'commander';
 
 const program = new Command('aivi');
-await registerCommands(program);
+await registerCommands(program, { home: process.env.AIVI_HOME });
 try {
   await program.parseAsync(process.argv.slice(2), { from: 'user' });
 } catch (error) {

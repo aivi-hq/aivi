@@ -7,6 +7,7 @@ import type { PluginCliContext } from '../src/cli.ts';
 /** A context that answers: the factory must not touch any of it to build
  *  its subtree — building costs nothing at rest. */
 const ctx: PluginCliContext = {
+  machine: { home: '/home' },
   home: '/home',
   configPath: '/home/config.json',
   loaded: async () => {

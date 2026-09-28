@@ -29,8 +29,12 @@ Process state is two facts about this machine, decided once per run from
 
 | State | Decided by | Help shows | Plain commands run |
 | --- | --- | --- | --- |
-| `fresh` | no client config, no home here | `setup`, `version`, `upgrade` — that is it | locally; anything needing a home answers (decision A): `no home on this machine — run aivi setup, or drive the server: aivi -r status` |
+| `fresh` | no client config, no home here | `setup`, `version`, `upgrade`, `uninstall` — that is it | locally; anything needing a home is **not registered** (decision A, 2026-09-28): a typed command is honestly `unknown command`, and the help header carries the machine fact (`home: none`) |
 | `local` | home on this machine | everything (host down is fine: store-direct commands work) | in-process |
+
+`uninstall` belongs to the homeless machine too: the exit ramp exists
+wherever the CLI is installed — a CLI that refused to exist without a home
+could never be uninstalled.
 
 The old design inferred a third state, `remote`, from a config `url`, and
 made the laptop behave as the server. That killed the very command the
@@ -68,7 +72,10 @@ help-time probe.)
   around the fact that the server already has a complete, honest help
   page.
 - `fresh` streams nothing without the flag: there is no server to ask, and
-  the decision-A answer teaches the flag instead.
+  the help header — `home: none` — states the machine fact instead of any
+  bolt-on answer. Commands that need a home are not registered here at all:
+  membership belongs to the provider, decided by not registering, never by
+  hiding after the fact.
 
 The "server running" axis needs no per-command flag: a `--remote` command
 has the connection as its stated precondition, and a plain `local` command
@@ -302,8 +309,8 @@ laptop, never through the channel.
 ## Live gates (mock tests do not establish these)
 
 - Fresh laptop: `aivi setup --connect --url --token`, then
-  `aivi -r jobs list` (and plain `aivi jobs list` answers the
-  `no home on this machine` teaching error, decision A).
+  `aivi -r jobs list` (and plain `aivi jobs list` is honestly
+  `unknown command`, the header saying `home: none`).
 - A clack prompt over the relay (`people create` mint confirm); masked
   password echo; resize mid-prompt.
 - ctrl+c mid-command: child SIGINT'd correctly, client terminal restored.
@@ -331,13 +338,21 @@ flag and what it teaches around it, then the strings and docs.
       pipe branch is tested in-process; the raw-mode branch (a real terminal)
       is for the dev-home live gate, with `process.on('exit')` as the
       restore guarantee under every path.
-- [ ] State resolution once per run (client config → `fresh`/`local`); no
-      third state anywhere. `--remote`/`-r` parsing: config `url` + token →
-      exec channel; honest `no server configured` / `host unreachable`
-      answers; plain path never touches the network.
-- [ ] Decision-A answers: a home-needing command in `fresh` prints
-      `no home on this machine — … or drive the server: aivi -r …`;
-      the `fresh` help allow-list.
+- [x] State resolution once per run: the one machine fact — a home here or
+      none (`AIVI_HOME` → client record, no probe, no third state anywhere);
+      `--remote`/`-r` parsing into the exec channel with the honest
+      `no server configured` / `host unreachable` answers; the plain path
+      never touches the network. Landed 2026-09-28.
+- [x] Membership by not registering (supersedes the decision-A teaching
+      error, 2026-09-28): the machine fact rides the help header
+      (`home: ~/.aivi` / `home: none`) and is injected into every command
+      provider — `registerCommands(program, machine)` and
+      `PluginCliContext.machine` — so a provider excludes a command by not
+      registering it. A homeless machine registers `setup`, `upgrade`,
+      `uninstall` (the exit ramp) and nothing else; a typed non-command is
+      commander's own `unknown command`. The logging flags moved off the
+      root onto `serve`, the command that logs, so a provider pollutes no
+      commands that are not its own.
 - [ ] `client-side` guard messages against `--remote`; `refuse-relay`
       refusals; `serve`'s `server already running` answer.
 - [ ] `--remote --help`: server renders the remote operator's view

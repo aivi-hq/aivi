@@ -54,7 +54,8 @@ purple, `aivi·host·slack` cyan, `aivi·host·linear` indigo, `aivi·host·brow
 orange, `aivi·host·scheduler` deep pink, `aivi·knowledge` amber; the CLI root and dreaming keep the muted
 gray. Message text uses the terminal's own foreground; the log file stays
 colorless JSON.
-`--log-level debug` shows job materialization.
+`aivi serve --log-level debug` shows job materialization (the logging flags
+belong to serve, the command that logs).
 stdout is reserved for command output: `aivi serve` writes its raw JSON ready
 line to stdout only when stdout is not a terminal (scripts and smoke parse it);
 a human on a terminal sees the pretty `host.listening` record instead, which

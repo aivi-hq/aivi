@@ -10,7 +10,7 @@
 import type { LoadedConfig } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
 import type { Store } from '@aivi/host';
-import type { PluginCliContext } from '@aivi/plugin';
+import type { MachineStatus, PluginCliContext } from '@aivi/plugin';
 import * as p from '@clack/prompts';
 import type { Command } from 'commander';
 import { configPath, context, home, print, withStore } from '../context.ts';
@@ -20,8 +20,9 @@ import { pluginRegistry } from '../registry.ts';
 /** The capabilities the CLI lends a plugin's commands: its own context and
  *  store bracket, the shared streams, the host poke, and the very clack the
  *  built-ins render with — whoever is called owns the screen. */
-function pluginCliContext(): PluginCliContext {
+function pluginCliContext(machine: MachineStatus): PluginCliContext {
   return {
+    machine,
     home,
     configPath,
     loaded: async (): Promise<LoadedConfig> => (await context()).loaded,
@@ -39,7 +40,7 @@ function pluginCliContext(): PluginCliContext {
  *  the tree. A list that cannot load (a package npm does not hold) is printed as
  *  a note here — `--help` keeps working, and the commands that need the config
  *  fail with the registry's own named fix. */
-export async function registerChannels(program: Command): Promise<void> {
+export async function registerChannels(program: Command, machine: MachineStatus): Promise<void> {
   let entries: PluginEntry[];
   try {
     entries = (await pluginRegistry(home)).entries;
@@ -64,7 +65,7 @@ export async function registerChannels(program: Command): Promise<void> {
     }
     // The package is the whole boundary: its subtree is mounted as it stands, and
     // only the name collision with a built-in would be refused, which none has.
-    const command = await (factory as (ctx: PluginCliContext) => Promise<Command> | Command)(pluginCliContext());
+    const command = await (factory as (ctx: PluginCliContext) => Promise<Command> | Command)(pluginCliContext(machine));
     if (!command.helpGroup()) command.helpGroup('Plugins');
     program.addCommand(command);
   }
