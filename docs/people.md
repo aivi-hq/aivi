@@ -30,11 +30,14 @@ callers (it is the person lookup) and answers the caller's real roles:
 array** on the person (`roles` column, JSON): `operator` manages people and
 maintenance, the default for a new person is `member`; a future role is data,
 not a migration. The store migration granted `operator` to everyone who
-existed when the column arrived (the v1 stub was simply true). Enforcement
-widens with the remote exec channel, whose gate is the `operator` role
-([plans/cli-refactor](plans/cli-refactor/remote-exec.md#security));
-until then a non-loopback bind logs a warning: anyone who can reach the
-address can use the commands.
+existed when the column arrived (the v1 stub was simply true). The remote
+exec channel is the enforcement landed 2026-09-28: opening `/exec` requires a
+recognised bearer whose person carries the `operator` role — the channel hands
+out the widest privilege aivi knows, a PTY that can run `people create` and
+`service`. Anonymous and member-only bearers get the door's refusal in its own
+words, and every arrival, accepted or refused, writes one diary line
+([operations](operations.md#running-remotely)). A non-loopback bind still logs
+a warning: anyone who can reach the address can use the open commands.
 
 ## Persons and tokens (aivi.sqlite)
 

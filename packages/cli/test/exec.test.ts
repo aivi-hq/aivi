@@ -112,7 +112,7 @@ test('the relay carries argv verbatim, prints the answer, and exits with the ser
 test('no server configured answers the teaching line and touches no network', async t => {
   await signIn(t, { configVersion: 1 });
   await assert.rejects(() => execRemote(['status'], { stdout: collect(), stderr: collect() }), {
-    message: 'no server configured — run aivi configure',
+    message: 'no server configured — run aivi setup',
   });
 });
 
@@ -153,6 +153,6 @@ test('main strips -r wherever it sits and relays instead of parsing', async t =>
   // A local commander parse of ['status', '--json'] would have answered with
   // output, not this line: the flag routed the argv to the relay, whole.
   await assert.rejects(() => main(['status', '-r', '--json']), {
-    message: 'no server configured — run aivi configure',
+    message: 'no server configured — run aivi setup',
   });
 });

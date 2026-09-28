@@ -130,6 +130,10 @@ dead: every remote person installs the aivi CLI to run `aivi setup` anyway.
 The relay instead reuses the existing port, bearer auth, request diary, and
 version gate; no host keys, no password daemon, no second listener.
 
+Landed 2026-09-28. [operations](../../operations.md#running-remotely) owns
+the transport and the visibility table; this section keeps only the two
+rejected alternatives and why.
+
 ## Protocol
 
 Endpoint: `/exec` as an upgrade on the host's HTTP server — not `/v1/exec`:
@@ -417,13 +421,28 @@ flag and what it teaches around it, then the strings and docs.
       in the Secrets and shell-task paragraphs. The name is stamped by the
       door today but not yet consumed by the CLI — attribution of remote
       commands is the credentials pass's opening.
-- [ ] Tests: help output per state (fixture configs); `--remote setup`
-      gives the guard, hidden commands invoked anyway give guard messages,
-      never `unknown command`; the remote render shows and hides the
-      right sets.
-- [ ] Docs: [operations.md](../../operations.md) (transport/visibility
+- [x] Tests: help output per state (fixture configs), guard messages at
+      invocation, the right sets per state. Landed 2026-09-28 in
+      `packages/cli/test/machine-state.test.ts`, driving the real `main`
+      with captured streams: facts resolve once, a homeless machine lists
+      `setup`/`upgrade`/`uninstall`, a homed machine shows the whole tree
+      and names its home in the header, driven sessions refuse
+      `setup`/`upgrade`/`uninstall`/`-r` with the set's own lines, and
+      `(remote)` appears on driven pages only. The "hidden commands
+      invoked anyway give guard messages, never `unknown command`" clause
+      died with the hiding mechanism: a command not registered is not
+      there, and `unknown command` is the honest answer (the membership
+      row's supersession).
+- [x] Docs: [operations.md](../../operations.md) (transport/visibility
       table), [people.md](../../people.md) (exec gate),
       [CONTEXT.md](../../../CONTEXT.md) (vocabulary: relay, exec channel),
       `packages/cli/README.md` (one command table with state and flag
-      notes).
+      notes). Landed 2026-09-28: operations.md owns *Running remotely*
+      (transport, closed env, the visibility table, the `(remote)` banner,
+      the announce-before-drop); people.md's auth section lost its future
+      tense about the gate; CONTEXT gains *exec channel / relay* and
+      *driven session*; the CLI README's table gained `-r`, the state note,
+      and lost the stale `aivi install` rows (also in the channel READMEs).
+      The relay's `no server configured` line points at `aivi setup`, the
+      command that exists — `configure` stays the plan's later chapter.
 - [ ] Changesets (fixed group).

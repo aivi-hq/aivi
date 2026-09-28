@@ -9,11 +9,11 @@ contract; the host owns the inbox, bindings, engine, and turn runner.
 | Path | Contents |
 | --- | --- |
 | `@aivi/channel-discord` | `createDiscordModule` — the `HostModule` a running server composes |
-| `@aivi/channel-discord/setup` | self-configuration entry used by `aivi install discord` |
+| `@aivi/channel-discord/setup` | self-configuration entry used by `aivi add discord` |
 
 ## Enable it
 
-The short way is `aivi install discord`: it prints how to create the
+The short way is `aivi add discord`: it prints how to create the
 Discord app, asks for the tokens, verifies each, writes `config.json` and
 `.env` itself, and aivi comes back with the module running.
 

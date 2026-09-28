@@ -299,6 +299,46 @@ same announced, atomic restart. A
 headless Linux machine needs `loginctl enable-linger` or the service stops
 with the session.
 
+## Running remotely
+
+`aivi -r <command>` types the command on the machine the host runs on.
+The transport is a websocket upgrade on the host's own port (`/exec`):
+the client presents the bearer from its client config, sends the argv,
+and the host runs the same `aivi` as a child process — on a real PTY
+when the caller sits at a terminal (raw mode, window resizes travel), on
+pipes when its output is a pipe — relaying bytes both ways. The wire
+carries terminal bytes, not JSON operations: the CLI is the protocol, so
+the payload is version-independent by construction. The child's
+environment is closed: PATH, HOME, the home, the terminal, and the
+bearer this connection presented (as `AIVI_OPERATOR_BEARER`) — none of
+the host's secrets travel ([configuration](configuration.md#secrets)).
+
+Opening the channel requires a bearer whose person carries the
+`operator` role, and every arrival — accepted or refused — writes one
+diary line: person, argv, address, exit code
+([people](people.md#auth-commands-are-open-roles-gate-people-management),
+[the request diary](#the-request-diary)). A refusal reaches the person
+as the server's own words, printed verbatim.
+
+What a driven session may run is the commands' own decision, answered at
+invocation — never by hiding anything:
+
+| Command | Over `--remote` |
+| --- | --- |
+| `setup`, `upgrade` | refused: `this acts on the machine you type on` — they act where the CLI process sits, and the relay does not move that |
+| `serve`, `uninstall` | refused: the server is the thing being driven; `uninstall` deletes the home this session drives |
+| `-r` itself | refused: remote exec does not chain a second hop |
+| everything else — `status`, `jobs`, `runs`, `people`, `projects`, `knowledge`, `link`, `add`, `update`, `service` … | runs on the server's home |
+
+The answer says whose machine it came from: a driven session's banner
+carries `(remote)` after the version and its lettermark draws in caution
+amber, so `aivi -r --help` streams the server's own page and nobody
+mistakes it for their laptop's. When a relayed command ends the host —
+`service stop`, `service restart`, `update`, `add`, `remove` — the
+notice (`server stopping…`, `server restarting…`) arrives before the
+drop; there is no resume, gone is gone, and the next command discovers
+whether the host came back.
+
 ## The request diary
 
 Every request that reaches the host is journaled into the store: method,

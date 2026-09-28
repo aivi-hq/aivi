@@ -10,11 +10,11 @@ turn runner.
 | Path | Contents |
 | --- | --- |
 | `@aivi/channel-slack` | `createSlackModule`, `openSlackStore`, `slackManifest` |
-| `@aivi/channel-slack/setup` | self-configuration entry used by `aivi install slack` |
+| `@aivi/channel-slack/setup` | self-configuration entry used by `aivi add slack` |
 
 ## Enable it
 
-The short way is `aivi install slack`: it prints how to create the Slack
+The short way is `aivi add slack`: it prints how to create the Slack
 app, asks for the tokens, verifies each, writes `config.json` and `.env`
 itself, and aivi comes back with the module running.
 

@@ -42,6 +42,8 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | attribution | which names a commit carries: the bot as author/co-author from aivi's identity, the human as author from their own git config — a git fact, it never consults whoami ([people](docs/people.md)) |
 | association | which person a record belongs to: link codes, job ownership, session stamps, memories — a host fact, taken from the calling bearer, never from what a message claimed ([people](docs/people.md)) |
 | link | a channel account bound to a person, minted by `aivi link` and redeemed by `/link`; the binding is also the channel admission — who may talk, while config names only where ([people](docs/people.md)) |
+| exec channel / relay | `aivi --remote`: a websocket (`/exec`) on the host's own port carrying terminal bytes — argv and keystrokes go out, the child's terminal comes back; commands are never remapped to JSON operations, the CLI itself is the protocol ([operations](docs/operations.md#running-remotely)) |
+| driven session | the far end of an exec channel: the host's child with a closed environment, `(remote)` in its banner, refusing at invocation the commands that act on the machine you type on ([operations](docs/operations.md#running-remotely)) |
 
 ## Decisions and why
 

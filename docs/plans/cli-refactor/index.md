@@ -79,7 +79,7 @@ another machine is the typed `--remote` flag, not a state
 | 1 | [one-cli.md](one-cli.md) | one bin; `forward.ts`, `forwardIdentity`, and `@aivi/app` deleted; host gains `./cli` — both halves landed; D22 nuke + changesets open | — |
 | 2 | [plugin-contract.md](plugin-contract.md) | `@aivi/plugin` kit; plugins export `(ctx) => Command`; `ask` wrappers die; `@aivi/tracker-linear` rename — landed (changesets still parked) | 1 |
 | 3 | [plugin-registry.md](plugin-registry.md) | `aivi-plugins` list in `<home>/app/package.json`; per-plugin zod schemas; `state/cache/schema.json`; the hardcoded `serve` if-chain dies | 2 |
-| 4 | [remote-exec.md](remote-exec.md) | `/v1/exec` websocket relay + server-side PTY; operator gate; announce-before-disconnect; two machine states × two small command sets + the typed `--remote` (visibility folded in 2026-09-28) | 1 (2 makes it smaller) |
+| 4 | [remote-exec.md](remote-exec.md) | `/exec` websocket relay + server-side PTY; operator gate; announce-before-disconnect; two machine states × two small command sets + the typed `--remote` (visibility folded in 2026-09-28) | 1 (2 makes it smaller) |
 
 Phases 1–3 are the local CLI; 4 is the bolt-on. Nothing in 4 may constrain 1–3:
 local execution is the primary path and stays direct and optimal.

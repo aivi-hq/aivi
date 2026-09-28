@@ -32,7 +32,7 @@ export async function execRemote(argv: string[], io: ExecIo = {}): Promise<void>
   const config = loadClientConfig();
   const url = config?.url;
   const token = config?.person?.token;
-  if (!url || !token) throw new Error('no server configured — run aivi configure');
+  if (!url || !token) throw new Error('no server configured — run aivi setup');
   const endpoint = new URL('/exec', url);
   endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(endpoint, {
