@@ -1,3 +1,8 @@
+/** The browser plugin's wire vocabulary and registry declaration, at its
+ *  `./config` subpath: the block's schema, the tool-call schemas the module
+ *  validates with, and the lazy bridge to the module code. */
+import { absolutePath } from '@aivi/core';
+import type { AiviPlugin } from '@aivi/plugin';
 import { z } from 'zod';
 
 const profile = z.string().min(1);
@@ -13,6 +18,11 @@ const loopback = z.url().refine(value => {
     !u.hash
   );
 }, 'Use a loopback Chrome debugging URL without credentials');
+/**
+ * The browser module: one persistent Chrome for unattended work. Its block lives at
+ * `plugins.browser` in config.json; the `aivi-plugins` list in app/package.json says
+ * whether the module runs. It claims its own `aivi_browser` tool at start.
+ */
 export const browserConfigSchema = z.strictObject({
   connection: z.discriminatedUnion('mode', [
     z.strictObject({
@@ -72,3 +82,28 @@ export interface BrowserService {
   execute(sessionId: string, request: BrowserRequest): Promise<BrowserResult>;
   close(): Promise<void>;
 }
+
+/** The registry entry: paths in the connection (profile directories, the executable)
+ *  are written relative to the home and resolved here; the module code — and with it
+ *  any browser machinery — loads lazily. */
+export const plugin: AiviPlugin<BrowserConfig> = {
+  id: 'browser',
+  configSchema: browserConfigSchema,
+  createModule: (config, home) => {
+    const connection = config.connection;
+    const resolved =
+      connection.mode === 'attach'
+        ? config
+        : {
+            ...config,
+            connection: {
+              ...connection,
+              userDataDir: absolutePath(home, connection.userDataDir),
+              ...(connection.mode === 'launch' && connection.executablePath
+                ? { executablePath: absolutePath(home, connection.executablePath) }
+                : {}),
+            },
+          };
+    return import('./module.ts').then(m => m.createBrowserModule(resolved));
+  },
+};

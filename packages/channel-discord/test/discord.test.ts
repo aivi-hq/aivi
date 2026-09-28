@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { discordConfigSchema } from '@aivi/core';
 import { CHAT_COMMANDS } from '@aivi/host';
 import { ApplicationCommandOptionType } from 'discord.js';
-import { authorized, reaches } from '../src/config.ts';
+import { authorized, discordConfigSchema, reaches } from '../src/config.ts';
 import { DISCORD, discordCommands } from '../src/module.ts';
 
 const config = discordConfigSchema.parse({

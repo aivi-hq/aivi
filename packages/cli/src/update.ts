@@ -12,12 +12,16 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { satisfies } from 'semver';
 import { saveClientConfig } from './client-config.ts';
+import { importApp } from './mount.ts';
 import { ensureNode } from './runtime.ts';
 import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
 
 export interface UpdateIo {
   npmView(spec: string, field: string): Promise<string>;
   install(specs: string[], appDir: string): { status: number; stderr: string };
+  /** Rebuild `<state>/cache/schema.json` and config.json's `$schema` line, in
+   *  the installed app's code; called after the peers are updated. */
+  rebuildSchema(home: string, appDir: string): Promise<void>;
   log(message: string): void;
   healthProbe(url: string): Promise<boolean>;
   service: { installed(): boolean; stop(): void; start(): void };
@@ -32,6 +36,14 @@ const defaultIo: UpdateIo = {
   install(specs, appDir) {
     const result = spawnNpm(['install', '--save-exact', '--no-fund', ...specs], appDir);
     return { status: result.status ?? 1, stderr: result.stderr?.toString() ?? '' };
+  },
+  async rebuildSchema(home, appDir) {
+    const { writeEditorSchema } = await importApp<{ writeEditorSchema: (home: string) => Promise<string> }>(
+      appDir,
+      home,
+      'dist/cli/schema-cache.js',
+    );
+    await writeEditorSchema(home);
   },
   log: message => console.log(message),
   async healthProbe(url) {
@@ -164,6 +176,19 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
     throw new Error('aivi is running in the foreground; stop it (Ctrl+C) and re-run `aivi update`.');
 
   installPeers(io, appDir, installed, targetVersion);
+
+  // The `aivi-plugins` list and every other field of app/package.json are
+  // invisible to these installs: npm rewrites dependencies only, so the list
+  // — the enablement fact — survives the update untouched. The editor schema
+  // is rebuilt from the new code; a cache that cannot rebuild is a warning,
+  // the same rule as `aivi add`.
+  try {
+    await io.rebuildSchema(home, appDir);
+  } catch (error) {
+    io.log(
+      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); \`aivi add\` or a later \`aivi update\` rebuilds it once config.json loads again.`,
+    );
+  }
 
   io.log(`Updated @aivi/host: ${currentVersion.version} → ${targetVersion}.`);
   if (managed) await restartAndWait(io, url);

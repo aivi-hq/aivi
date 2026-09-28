@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { BrowserConfig } from '@aivi/core';
-import { browserConfigSchema, getLogger } from '@aivi/core';
+
+import { getLogger } from '@aivi/core';
 import { ToolError, ToolRegistry } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
+import type { BrowserConfig } from '../src/config.ts';
+import { browserConfigSchema } from '../src/config.ts';
 import type { BrowserTransport } from '../src/index.ts';
 import { createBrowserModule } from '../src/index.ts';
 

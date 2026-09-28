@@ -1,5 +1,5 @@
 /**
- * The install contract an installable plugin package fills. `aivi install`
+ * The install contract an installable plugin package fills. `aivi add`
  * npm-installs the package into the server home and then runs its `./setup`
  * entry; the CLI knows nothing platform-specific. Everything the flow needs
  * arrives through the context, so the flow prints its own platform
@@ -48,7 +48,7 @@ export interface PluginSetupContext {
 }
 
 export interface PluginSetupResult {
-  /** The module the flow enabled — the id `aivi install` watches in `/status`. */
+  /** The module the flow enabled — the id `aivi add` watches in `/status`. */
   module: string;
   /** The verified last line: what is true now, never what may happen. */
   summary: string;

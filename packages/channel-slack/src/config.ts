@@ -1,8 +1,50 @@
-import type { AccessRoute, SlackConfig } from '@aivi/core';
-import { accessAllows, accessReaches } from '@aivi/core';
+/** The Slack plugin's registry declaration, at its `./config` subpath: the
+ *  module id, the block's own schema, and the lazy bridge to the module code.
+ *  The CLI imports this for every command, so nothing here pulls @slack/* —
+ *  the id shapes live here too, they are the schema's vocabulary. */
+import { type AccessRoute, absolutePath, accessAllows, accessPolicySchema, accessReaches } from '@aivi/core';
+import type { AiviPlugin } from '@aivi/plugin';
+import { z } from 'zod';
 
-export { isChannelId, isDMChannelId, isUserId } from '@aivi/core';
-export type { SlackConfig };
+/** Slack ids: channels `C…`/`G…`, DM channels `D…`, users `U…`/`W…`. */
+export const isChannelId = (id: string) => /^[CG][A-Z0-9]{8,}$/.test(id);
+export const isDMChannelId = (id: string) => /^D[A-Z0-9]{8,}$/.test(id);
+export const isUserId = (id: string) => /^[UW][A-Z0-9]{8,}$/.test(id);
+const channelId = z.string().refine(isChannelId, 'Expected a Slack channel id (C… or G…)');
+/**
+ * The Slack module: access policy, command prefix and reply behaviour. Its block lives
+ * at `plugins.slack` in config.json; the `aivi-plugins` list in app/package.json says
+ * whether the module runs. Its secrets, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, come
+ * from the environment.
+ */
+export const slackConfigSchema = z
+  .strictObject({
+    agent: z.string().default('assistant'),
+    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
+    directory: z.string().min(1).default('.'),
+    /** Slash commands are `/<prefix>-new`, `/<prefix>-status`, `/<prefix>-search`, defined in the Slack app manifest. */
+    commandPrefix: z
+      .string()
+      .regex(/^[a-z][a-z0-9_-]*$/)
+      .max(24)
+      .default('aivi'),
+    resource: z.string().default('local-model'),
+    /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
+    access: accessPolicySchema,
+    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "slack" }`). Empty: never post proactively. */
+    reportChannels: z.array(channelId).default([]),
+    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
+    progress: z.enum(['silent', 'status', 'tools']).default('status'),
+    maxConcurrent: z.number().int().min(1).max(32).default(1),
+    maxPending: z.number().int().min(1).max(1000).default(100),
+    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
+  })
+  .superRefine((config, ctx) => {
+    for (const [i, channel] of config.access.channels.entries())
+      if (!isChannelId(channel.id))
+        ctx.addIssue({ code: 'custom', path: ['access', 'channels', i, 'id'], message: 'Expected a Slack channel id' });
+  });
+export type SlackConfig = z.infer<typeof slackConfigSchema>;
 
 /** Runs before anything is queued: unauthorized messages never reach the database or the model. */
 export function authorized(config: SlackConfig, route: AccessRoute): boolean {
@@ -13,3 +55,15 @@ export function authorized(config: SlackConfig, route: AccessRoute): boolean {
 export function reaches(config: SlackConfig, route: AccessRoute): boolean {
   return accessReaches(config.access, route);
 }
+
+/** The registry entry: `aivi serve` builds the module from the validated block.
+ *  `directory` is the one path the block holds; it resolves against the home here,
+ *  and the module code is imported lazily so composing the schema stays cheap. */
+export const plugin: AiviPlugin<SlackConfig> = {
+  id: 'slack',
+  configSchema: slackConfigSchema,
+  createModule: (config, home) =>
+    import('./module.ts').then(m =>
+      m.createSlackModule({ ...config, directory: absolutePath(home, config.directory) }),
+    ),
+};

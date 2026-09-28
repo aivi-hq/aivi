@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +32,16 @@ const scratch = async () => {
     env: { ...process.env, AIVI_HOME: home, XDG_CONFIG_HOME: xdg },
     cleanup: () => Promise.all([rm(home, { recursive: true, force: true }), rm(xdg, { recursive: true, force: true })]),
   };
+};
+
+/** The enablement fact: packages in the `aivi-plugins` list get their commands
+ *  mounted and their blocks validated; a home without this file has no plugins. */
+const listPlugins = async (home: string, names: unknown[]) => {
+  await mkdir(join(home, 'app'), { recursive: true });
+  await writeFile(
+    join(home, 'app', 'package.json'),
+    JSON.stringify({ name: 'aivi-server', private: true, dependencies: {}, ['aivi-plugins']: names }),
+  );
 };
 
 test('server create initializes the home, mints the operator, and signs this machine in', async t => {
@@ -175,7 +185,7 @@ test('plugin setup needs a terminal; scripts are told what to do instead', async
   // A package that is not installed says so in install terms.
   const missing = await run(['plugin', 'setup', '@acme/nowhere'], env);
   assert.equal(missing.status, 1);
-  assert.match(missing.stderr, /aivi install @acme\/nowhere/);
+  assert.match(missing.stderr, /aivi add @acme\/nowhere/);
 
   // An installed package without a ./setup export has nothing to say at install time.
   const noSetup = await run(['plugin', 'setup', '@aivi/core'], env);
@@ -192,6 +202,7 @@ test('slack manifest dumps the whole app manifest as JSON, prefix from the flag,
   const { home, env, cleanup } = await scratch();
   t.after(cleanup);
   await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1 }));
+  await listPlugins(home, ['@aivi/channel-slack']);
 
   // Without a configured module and without --prefix, a script is told what to pass.
   const guarded = await run(['slack', 'manifest'], env);
@@ -217,7 +228,7 @@ test('slack manifest dumps the whole app manifest as JSON, prefix from the flag,
     JSON.stringify({
       version: 1,
       identity: { name: 'Clawd' },
-      modules: { slack: { commandPrefix: 'spider', access: { channels: [] } } },
+      plugins: { slack: { commandPrefix: 'spider', access: { channels: [] } } },
     }),
   );
   const configured = await run(['slack', 'manifest'], env);
@@ -233,6 +244,39 @@ test('slack manifest dumps the whole app manifest as JSON, prefix from the flag,
       .slash_commands[0]!.command,
     '/aivi-new',
   );
+});
+
+test('the plugin list is the mount table: no list no commands, a listed package mounts, a broken list is a note', async t => {
+  const { home, env, cleanup } = await scratch();
+  t.after(cleanup);
+  await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1 }));
+
+  // A fresh home has no app/package.json at all: zero plugins, help intact.
+  const bare = await run(['--help'], env);
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.ok(!bare.stdout.includes('slack'), 'nothing listed, nothing mounted');
+
+  // Listing the package mounts its commands, and the composed schema now
+  // knows its block.
+  await listPlugins(home, ['@aivi/channel-slack']);
+  const listed = await run(['--help'], env);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /slack/, 'the listed plugin joined the help');
+
+  // A package npm does not hold breaks the list, not the help: the built-ins
+  // stay and the note names the trouble.
+  await listPlugins(home, ['@aivi/channel-slack', '@acme/not-here']);
+  const broken = await run(['--help'], env);
+  assert.equal(broken.status, 0, broken.stderr);
+  assert.match(broken.stderr, /@acme\/not-here/);
+  assert.match(broken.stdout, /serve/, 'the built-in commands are still there');
+
+  // A disabled tuple still mounts its commands: standing down is serve's
+  // business, the operator still needs the plugin's commands.
+  await listPlugins(home, [['@aivi/channel-slack', false]]);
+  const disabled = await run(['--help'], env);
+  assert.equal(disabled.status, 0, disabled.stderr);
+  assert.match(disabled.stdout, /slack/, 'a plugin on standby still speaks in the CLI');
 });
 
 test('host clear-logs forgets only the rows older than the duration', async t => {

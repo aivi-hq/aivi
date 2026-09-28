@@ -6,22 +6,31 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import type { LoadedConfig, Logger, OutputBlock } from '@aivi/core';
-import { hostUrl as coreHostUrl, print as corePrint, errorMessage, getLogger, loadConfig } from '@aivi/core';
+import { hostUrl as coreHostUrl, print as corePrint, errorMessage, getLogger } from '@aivi/core';
 import { Store } from '@aivi/host';
 import { createHostClient } from '@aivi/plugin/api';
+import { loadComposedConfig, type PluginRegistry, pluginRegistry } from './registry.ts';
 
 /** One home holds everything: config.json, .env, state/. Paths in the config resolve against it. */
 export const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
 export const configPath = resolve(home, 'config.json');
 
 let contextPromise:
-  | Promise<{ loaded: LoadedConfig; protectedEnv: string[]; log: Logger; poke: () => Promise<void> }>
+  | Promise<{
+      loaded: LoadedConfig;
+      registry: PluginRegistry;
+      protectedEnv: string[];
+      log: Logger;
+      poke: () => Promise<void>;
+    }>
   | undefined;
 
 /** Everything an action needs from the home, loaded once, lazily: logging is
  *  configured by the preAction hook in cli.ts, so an action that asks for the
  *  context gets a ready log. `server create` runs before any config exists and
- *  never asks for the context. */
+ *  never asks for the context. The config is validated against the **composed**
+ *  schema — core's fields plus the block of every plugin in the home's list —
+ *  so the registry arrives with it. */
 export const context = () =>
   (contextPromise ??= (async () => {
     if (!existsSync(configPath))
@@ -29,7 +38,8 @@ export const context = () =>
     const log = getLogger(['aivi']);
     // .env is loaded without overriding existing variables, so `fnox exec` and CI overrides behave.
     const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
-    const loaded = await loadConfig(configPath);
+    const loaded = await loadComposedConfig(home, configPath);
+    const registry = await pluginRegistry(home);
     // The CLI writes to SQLite directly; the running host learns about it through this poke and
     // nothing else, so a poke that cannot be delivered is said out loud rather than swallowed.
     const poke = async () => {
@@ -41,7 +51,7 @@ export const context = () =>
           ),
         );
     };
-    return { loaded, protectedEnv, log, poke };
+    return { loaded, registry, protectedEnv, log, poke };
   })());
 
 /** What a command puts on stdout: `data` is the machine form every pipe gets;

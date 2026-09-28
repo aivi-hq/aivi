@@ -4,11 +4,13 @@
 import type { PluginCliContext } from '@aivi/plugin';
 import { resolveBlocked } from '@aivi/plugin';
 import { Command } from 'commander';
+import type { LinearConfig } from './config.ts';
 
 const enabled = async (ctx: PluginCliContext) => {
   const loaded = await ctx.loaded();
-  if (!loaded.config.linear) throw new Error('Linear is not configured in config.json');
-  return loaded.config.linear;
+  const config = loaded.config.plugins.linear as LinearConfig | undefined;
+  if (!config) throw new Error('Linear is not configured in config.json (no plugins.linear block)');
+  return config;
 };
 
 export default (ctx: PluginCliContext): Command => {

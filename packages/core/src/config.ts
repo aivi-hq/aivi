@@ -2,7 +2,6 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import { z } from 'zod';
-import { browserConfigSchema } from './browser.ts';
 import type { ProjectSummary } from './contracts.ts';
 import type { KnowledgeKind } from './kinds.ts';
 import { knowledgeKindHelp, knowledgeKindNames } from './kinds.ts';
@@ -241,98 +240,6 @@ export const projectSchema = z.strictObject({
 });
 type ProjectEntry = z.infer<typeof projectSchema>;
 /**
- * The Linear module. One app does the work: it carries the workspace's
- * **Issues** data feed on its webhook route, receives every agent-session
- * event, and its token authorises the Linear MCP. Extra apps are *faces* — a
- * name and icon in Linear's UI, their own credentials (`LINEAR_<APP>_*`) and
- * webhook route, no routing meaning. Lanes in `projects.<id>.linear.lanes`
- * name OpenCode agents directly. Presence of this block enables the module.
- */
-export const linearSchema = z.strictObject({
-  agent: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      'The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the assistant. Default: the aivi name.',
-    ),
-  primary: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      'The app that carries the workspace data feed, signs the bare LINEAR_* secrets and authorises the Linear MCP; default the one app. Required once several apps are configured.',
-    ),
-  apps: z
-    .record(
-      id,
-      z
-        .strictObject({})
-        .describe(
-          'Empty today: credentials come from the environment; the id is the app identity and its webhook route.',
-        ),
-    )
-    .describe(
-      'Linear apps by id. The primary (see `primary`) carries the data feed; every other app is a face — a name and icon in Linear’s UI with its own credentials, no routing meaning.',
-    ),
-  logMisroutes: z
-    .boolean()
-    .default(true)
-    .describe(
-      'Log at warn a webhook delivered to the wrong endpoint (a data change on a face’s route); it is dropped either way.',
-    ),
-  listener: z
-    .boolean()
-    .default(false)
-    .describe(
-      'React to issue lane changes by delegating eligible issues to the lane’s app. Off: only delegations and mentions made in Linear start a worker.',
-    ),
-  humanLabel: z
-    .string()
-    .min(1)
-    .default('needs-human')
-    .describe(
-      'Issues carrying this label are never worked automatically; a hand delegation is refused with an explanation.',
-    ),
-  resource: id.default('local-model').describe('Pool a worker turn takes a slot in.'),
-  mcp: z
-    .union([
-      z.strictObject({
-        port: z.number().int().min(0).max(65535).default(4101),
-      }),
-      z.literal(false),
-    ])
-    .default({ port: 4101 })
-    .describe(
-      "On by default: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app; OpenCode connects as a remote MCP at http://127.0.0.1:<port>/mcp. `false` disables it. Loopback only.",
-    ),
-  progress: z
-    .enum(['silent', 'status', 'tools'])
-    .default('tools')
-    .describe('What the ephemeral activities in the agent session show while a worker runs.'),
-  turnTimeoutMs: z
-    .number()
-    .int()
-    .min(60_000)
-    .max(24 * 3_600_000)
-    .default(2 * 3_600_000)
-    .describe('A worker turn longer than this is interrupted and ends stopped.'),
-});
-export type LinearConfig = z.infer<typeof linearSchema>;
-/**
- * Environment variable names for one app's credentials. The **primary** app
- * uses the bare `linearPrimarySecretNames`; this prefixed convention is for
- * every other app (a face) — `<APP>` = the id upper-cased, `-` → `_`.
- */
-export const linearSecretNames = (app: string) => {
-  const key = app.toUpperCase().replaceAll('-', '_');
-  return {
-    clientId: `LINEAR_${key}_CLIENT_ID`,
-    clientSecret: `LINEAR_${key}_CLIENT_SECRET`,
-    webhookSecret: `LINEAR_${key}_WEBHOOK_SECRET`,
-  };
-};
-/**
  * Where the host API listens. `bind` defaults to loopback; use a LAN/tailnet
  * address or `0.0.0.0` to let remote clients reach the API. Commands are open:
  * a bearer token identifies the caller for association, it never locks
@@ -471,80 +378,6 @@ export function accessReaches(policy: AccessPolicy, route: AccessRoute): boolean
   if (route.isDM) return true;
   return accessEntry(policy, route) !== undefined;
 }
-const snowflake = z.string().regex(/^\d{17,20}$/);
-/**
- * The Discord module: gateway, access policy and reply behaviour. Presence of
- * this block enables the module; `false` is an explicit off. Its one secret,
- * `DISCORD_BOT_TOKEN`, comes from the environment.
- */
-export const discordConfigSchema = z
-  .strictObject({
-    applicationId: snowflake.describe('The Discord application the bot token belongs to.'),
-    agent: z.string().default('assistant'),
-    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
-    directory: z.string().min(1).default('.'),
-    resource: z.string().default('local-model'),
-    /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
-    access: accessPolicySchema,
-    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "discord" }`). Empty: never post proactively. */
-    reportChannels: z.array(snowflake).default([]),
-    /** Requires the Message Content intent in the developer portal; needed for any trigger other than "mention". */
-    messageContent: z.boolean().default(false),
-    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
-    progress: z.enum(['silent', 'status', 'tools']).default('status'),
-    maxConcurrent: z.number().int().min(1).max(32).default(1),
-    maxPending: z.number().int().min(1).max(1000).default(100),
-    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
-  })
-  .superRefine((config, ctx) => {
-    if (!config.messageContent && config.access.channels.some(c => c.trigger !== 'mention')) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['messageContent'],
-        message:
-          'triggers other than "mention" need messageContent: true (Discord only delivers unmentioned message text with that intent)',
-      });
-    }
-  });
-export type DiscordConfig = z.infer<typeof discordConfigSchema>;
-/** Slack ids: channels `C…`/`G…`, DM channels `D…`, users `U…`/`W…`. */
-export const isChannelId = (id: string) => /^[CG][A-Z0-9]{8,}$/.test(id);
-export const isDMChannelId = (id: string) => /^D[A-Z0-9]{8,}$/.test(id);
-export const isUserId = (id: string) => /^[UW][A-Z0-9]{8,}$/.test(id);
-const channelId = z.string().refine(isChannelId, 'Expected a Slack channel id (C… or G…)');
-/**
- * The Slack module: access policy, command prefix and reply behaviour.
- * Presence of this block enables the module; `false` is an explicit off. Its
- * secrets, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, come from the environment.
- */
-export const slackConfigSchema = z
-  .strictObject({
-    agent: z.string().default('assistant'),
-    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
-    directory: z.string().min(1).default('.'),
-    /** Slash commands are `/<prefix>-new`, `/<prefix>-status`, `/<prefix>-search`, defined in the Slack app manifest. */
-    commandPrefix: z
-      .string()
-      .regex(/^[a-z][a-z0-9_-]*$/)
-      .max(24)
-      .default('aivi'),
-    resource: z.string().default('local-model'),
-    /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
-    access: accessPolicySchema,
-    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "slack" }`). Empty: never post proactively. */
-    reportChannels: z.array(channelId).default([]),
-    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
-    progress: z.enum(['silent', 'status', 'tools']).default('status'),
-    maxConcurrent: z.number().int().min(1).max(32).default(1),
-    maxPending: z.number().int().min(1).max(1000).default(100),
-    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
-  })
-  .superRefine((config, ctx) => {
-    for (const [i, channel] of config.access.channels.entries())
-      if (!isChannelId(channel.id))
-        ctx.addIssue({ code: 'custom', path: ['access', 'channels', i, 'id'], message: 'Expected a Slack channel id' });
-  });
-export type SlackConfig = z.infer<typeof slackConfigSchema>;
 /**
  * The aivi GitHub App, created 2026-09-20. The last resort for the git identity
  * and the only identity that works unattended: GitHub resolves a bot commit's
@@ -674,24 +507,6 @@ const configShape = z.strictObject({
     .describe(
       'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
     ),
-  modules: z
-    .strictObject({
-      discord: z
-        .union([discordConfigSchema, z.literal(false)])
-        .optional()
-        .describe('Presence of this block enables the Discord module; `false` is an explicit off.'),
-      slack: z
-        .union([slackConfigSchema, z.literal(false)])
-        .optional()
-        .describe('Presence of this block enables the Slack module; `false` is an explicit off.'),
-    })
-    .default({}),
-  browser: z
-    .union([browserConfigSchema, z.literal(false)])
-    .optional()
-    .describe(
-      'Presence of this block enables browser control and builds the service at serve; `false` is an explicit off. `aivi install browser` writes a launch default.',
-    ),
   search: z
     .strictObject({
       provider: z.literal('qmd'),
@@ -699,7 +514,6 @@ const configShape = z.strictObject({
       maxPending: z.number().int().min(1).max(100).default(32),
     })
     .optional(),
-  linear: linearSchema.optional(),
   update: z
     .strictObject({
       channel: z
@@ -789,6 +603,12 @@ const configShape = z.strictObject({
       projectsSync: { cron: '0 * * * *' },
     }),
   jobs: z.array(jobSchema).default([]),
+  plugins: z
+    .record(id, z.unknown())
+    .default({})
+    .describe(
+      'One block per plugin, keyed by the plugin’s own module id. Core validates the keys; each block validates against the schema of the plugin that wrote it, composed by the server — see the aivi-plugins list in <home>/app/package.json.',
+    ),
 });
 
 export type Config = z.infer<typeof configShape>;
@@ -827,18 +647,6 @@ function memoryIsReserved(config: Config, report: AddIssue): void {
         report([...path, i, 'id'], 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically');
 }
 
-/** Several apps need a named primary, and the primary must be one of the configured apps. */
-function primaryIsSound(config: Config, report: AddIssue): void {
-  const appIds = Object.keys(config.linear?.apps ?? {});
-  if (config.linear && appIds.length > 1 && !config.linear.primary)
-    report(
-      ['linear', 'primary'],
-      'Required once several apps are configured: which app carries the data feed and the bare LINEAR_* secrets',
-    );
-  if (config.linear?.primary && !appIds.includes(config.linear.primary))
-    report(['linear', 'primary'], 'Not a configured app');
-}
-
 /** An issue lands in one checkout, so a Linear team may belong to exactly one project. */
 function teamsHaveOneProject(config: Config, report: AddIssue): void {
   const owners = new Map<string, string>();
@@ -851,19 +659,18 @@ function teamsHaveOneProject(config: Config, report: AddIssue): void {
     }
 }
 
-/** The pools configured on linear and the channel modules must exist in the scheduler. */
-function modulePoolsAreNamed(config: Config, report: AddIssue): void {
+/** A plugin block that names a capacity pool must name one that exists. Generic on
+ *  purpose: core never learns what a module is, only that a block may carry `resource`. */
+function pluginPoolsAreNamed(config: Config, report: AddIssue): void {
   const resources = config.scheduler.resources;
-  if (config.linear && !(config.linear.resource in resources)) report(['linear', 'resource'], 'Unknown resource pool');
-  for (const [name, module] of [
-    ['discord', config.modules.discord],
-    ['slack', config.modules.slack],
-  ] as const)
-    if (module && !(module.resource in resources))
+  for (const [moduleId, block] of Object.entries(config.plugins)) {
+    const resource = (block as { resource?: unknown } | undefined)?.resource;
+    if (typeof resource === 'string' && !(resource in resources))
       report(
-        ['modules', name, 'resource'],
-        `Unknown resource pool; name one of scheduler.resources or set modules.${name} to false`,
+        ['plugins', moduleId, 'resource'],
+        `Unknown resource pool; name one of scheduler.resources or remove the plugins.${moduleId} block`,
       );
+  }
 }
 
 /** A job's pool must exist, and no job may take a system job's reserved id. */
@@ -913,37 +720,48 @@ function schedulerKnobsAreSound(config: Config, report: AddIssue): void {
   }
 }
 
-/** The cross-field rules the shape cannot express: unique and reserved ids, named pools,
- *  crons that parse. The order the rules run is the order issues surface. */
-export const configSchema = configShape.superRefine((config, ctx) => {
-  const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+/** The cross-field rules the shape cannot express: unique and reserved ids, pools that
+ *  exist, crons that parse. Rules about a module's own fields (a Linear primary, a Discord
+ *  intent) live in that module's schema; these are core's fields plus the one generic
+ *  block rule. The order the rules run is the order issues surface. */
+function crossFieldRules(config: Config, report: AddIssue): void {
   idsAreUnique(config, report);
   memoryIsReserved(config, report);
-  primaryIsSound(config, report);
   teamsHaveOneProject(config, report);
-  modulePoolsAreNamed(config, report);
+  pluginPoolsAreNamed(config, report);
   jobsObeyTheirPools(config, report);
   schedulerKnobsAreSound(config, report);
-});
-
-/** The environment names of the one app: the primary's credentials, no app segment. */
-export const linearPrimarySecretNames = {
-  clientId: 'LINEAR_CLIENT_ID',
-  clientSecret: 'LINEAR_CLIENT_SECRET',
-  webhookSecret: 'LINEAR_WEBHOOK_SECRET',
-} as const;
-
-/** The app that carries the workspace data feed and the bare secrets: `linear.primary`, else the one configured app. */
-export function primaryLinearApp(linear: LinearConfig | undefined): string | undefined {
-  if (!linear) return undefined;
-  if (linear.primary) return linear.primary;
-  const ids = Object.keys(linear.apps);
-  return ids.length === 1 ? ids[0] : undefined;
 }
 
-/** The assistant's agent name: `linear.agent`, else the one assistant everyone gets. */
-export function assistantAgent(config: Config): string {
-  return config.linear?.agent ?? 'assistant';
+/** The core schema with plugin blocks as an open record: what `loadConfig` parses when
+ *  nothing is composed in — the thin installer's path, tests, and the write-then-validate
+ *  guarantee of `writeConfigBlock`. Core's own fields keep every rule; a `plugins` block
+ *  passes through as written, its contents the business of the plugin that owns it. The
+ *  server and the operator CLI load the composed, closed schema instead. */
+export const configSchema = configShape.catchall(z.unknown()).superRefine((config, ctx) => {
+  const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+  crossFieldRules(config, report);
+});
+
+/** Plugin blocks as the registered plugins bring them: module id → the plugin's own schema. */
+export type PluginConfigSchemas = Record<string, z.ZodType>;
+
+/** The closed, complete config schema: core's shape with the `plugins` record specialized
+ *  to one known key per registered plugin, each block validated by the schema of the
+ *  plugin that wrote it. A block for an unregistered plugin fails as an unrecognized key
+ *  and an editor says so too; a registered plugin with no block gets its own defaults
+ *  (or its own "enabled but unconfigured" complaint — the plugin's schema decides).
+ *  Disabled plugins belong here as well: the list says which plugins exist and stay valid,
+ *  only `serve` honors enabled. */
+export function composeConfigSchema(pluginSchemas: PluginConfigSchemas): z.ZodType<Config> {
+  const blocks = Object.fromEntries(
+    Object.entries(pluginSchemas).map(([moduleId, schema]) => [moduleId, schema.optional()]),
+  ) as z.ZodRawShape;
+  const composed = configShape.extend({ plugins: z.strictObject(blocks).default({}) });
+  return composed.superRefine((config, ctx) => {
+    const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+    crossFieldRules(config, report);
+  });
 }
 
 /** Id of the job the host seeds from `scheduler.retention`. */
@@ -1028,6 +846,10 @@ export interface LoadedConfig {
 }
 
 const absolute = (base: string, value: string): string => (isAbsolute(value) ? value : resolve(base, value));
+/** One path written relative to a base (a home, a checkout) resolved to absolute; an
+ *  absolute value passes through. Plugins absolutize their own config paths with it —
+ *  core never learns which fields of a plugin block are paths. */
+export const absolutePath = absolute;
 
 /** Sub-directories of `root` (following symlinks), sorted, skipping dotfiles; `[]` when `root` is absent. */
 async function subdirectories(root: string): Promise<string[]> {
@@ -1082,37 +904,10 @@ async function discoverProjects(
   return found;
 }
 
-/** A config shape aivi has moved past: a clear error saying where the contents live now,
- *  rather than a schema complaint about unknown keys. */
-function rejectRetiredShapes(raw: unknown, path: string): void {
-  // Module settings are inline now; a `config` pointer is the old shape, so say where its contents belong.
-  for (const name of ['discord', 'slack'] as const) {
-    const pointer = (raw as { modules?: Record<string, unknown> }).modules?.[name];
-    const file = (pointer as { config?: unknown } | undefined)?.config;
-    if (typeof file === 'string')
-      throw new Error(
-        `modules.${name}.config is gone: the ${name} settings live inline in ${path}. Move the contents of ${file} into that block, without its "version".`,
-      );
-  }
-  const persona = (raw as { name?: unknown }).name;
-  if (persona !== undefined)
-    throw new Error(
-      `name is gone: the persona lives in identity.name in ${path}. Write "identity": { "name": ${JSON.stringify(String(persona))} } there.`,
-    );
-}
-
 /** Rewrites every path the config holds relative to itself into an absolute one, based on
  *  the config file's directory. */
 function absolutizePaths(config: Config, base: string): void {
   config.stateDirectory = absolute(base, config.stateDirectory);
-  if (config.modules.discord) config.modules.discord.directory = absolute(base, config.modules.discord.directory);
-  if (config.modules.slack) config.modules.slack.directory = absolute(base, config.modules.slack.directory);
-  const browser = config.browser ? config.browser.connection : undefined;
-  if (browser && browser.mode !== 'attach') {
-    browser.userDataDir = absolute(base, browser.userDataDir);
-    if (browser.mode === 'launch' && browser.executablePath)
-      browser.executablePath = absolute(base, browser.executablePath);
-  }
   for (const job of config.jobs) {
     const task = job.task;
     if (task.kind === 'prompt') task.directory = absolute(base, task.directory);
@@ -1139,11 +934,10 @@ function projectLinearBinding(config: Config, entry: ProjectEntry): ProjectLinea
   return { teams: entry.linear.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
 }
 
-export async function loadConfig(path: string): Promise<LoadedConfig> {
+export async function loadConfig(path: string, schema: z.ZodType<Config> = configSchema): Promise<LoadedConfig> {
   path = resolve(path);
   const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
-  rejectRetiredShapes(raw, path);
-  const config = configSchema.parse(raw);
+  const config = schema.parse(raw);
   const base = dirname(path);
   absolutizePaths(config, base);
   const sources: KnowledgeSource[] = [

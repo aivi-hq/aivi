@@ -5,8 +5,10 @@
 aivi reads one directory, the **home**: `~/.aivi` by default, or `AIVI_HOME`
 (leading over the `home` field in the client config; `AIVI_CONFIG` moves that
 file itself, which is how the development home stays separate). It holds
-`config.json`, `.env`, and `state/` (SQLite, the search index, dreaming
-transcripts). The live `config.json` is the
+`config.json`, `.env`, `app/package.json` (the installed server and the
+`aivi-plugins` list), and `state/` (SQLite, the search index, the editor
+schema cache, dreaming transcripts). The live
+`config.json` is the
 file
 you and aivi edit, so it never goes under version control; a home that lives
 in a git repository starts empty (`{ version: 1 }`) and grows only what you
@@ -24,9 +26,12 @@ back to another project or resource pool.
 Two more directories live in the home, owned by the CLI rather than aivi:
 
 - `app/` — the installed packages: one `package.json` and lockfile whose
-  dependencies are the server (`@aivi/host`) and the enabled channel plugins.
-  `config.json` records what is *desired*; `app/package.json` records what is
-  *installed*.
+  dependencies are the server (`@aivi/host`) and the installed plugins. Its
+  `aivi-plugins` array is the enablement fact: package names, a
+  `[name, false]` tuple for a plugin that stands down. `aivi add` and
+  `aivi remove` write it, and the server composes `config.json`'s closed
+  schema from exactly those packages. `config.json` records what each plugin
+  is *configured as*; `app/package.json` records which plugins *exist and run*.
 - `runtime/` — a managed Node installation, only when the machine's Node does
   not satisfy the server's requirement.
 
@@ -70,9 +75,7 @@ containing facts is the wrong file growing.
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
 | `projectDefaults.linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
 | `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a project that is neither checked out nor remembered fails. `<home>/projects/<id>/memory` is each project's `memory` source |
-| `modules.discord` | Presence enables the Discord module; the block is its whole setup, `false` is an explicit off ([discord](discord.md)) |
-| `modules.slack` | Presence enables the Slack module; the block is its whole setup, `false` is an explicit off ([slack](slack.md)) |
-| `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
+| `plugins` | One block per plugin, keyed by the plugin's own module id: `plugins.discord`, `plugins.slack`, `plugins.linear`, `plugins.browser`. The block is the plugin's whole setup and is validated by the plugin's own schema; what *enables* a module is the `aivi-plugins` list in `app/package.json`, not the block — a listed plugin with no block takes its defaults or its own clear complaint, and a block for a plugin nobody listed fails validation. Each plugin's doc owns its block: [discord](discord.md), [slack](slack.md), [linear](linear.md), [browser](browser.md) |
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked runs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
@@ -224,20 +227,24 @@ list` shows them beside the configured ones.
 
 ## Linear
 
-Presence of `linear` enables the module ([linear](linear.md)).
+The `plugins.linear` block is the Linear module's whole setup; the module runs
+when `@aivi/tracker-linear` stands in the `aivi-plugins` list
+([linear](linear.md)).
 
 ```json
 {
-  "linear": {
-    "agent": "aivi",
-    "primary": "aivi",
-    "apps": { "aivi": {}, "reviewer": {} },
-    "logMisroutes": true,
-    "listener": false,
-    "humanLabel": "needs-human",
-    "resource": "local-model",
-    "progress": "tools",
-    "turnTimeoutMs": 7200000
+  "plugins": {
+    "linear": {
+      "agent": "aivi",
+      "primary": "aivi",
+      "apps": { "aivi": {}, "reviewer": {} },
+      "logMisroutes": true,
+      "listener": false,
+      "humanLabel": "needs-human",
+      "resource": "local-model",
+      "progress": "tools",
+      "turnTimeoutMs": 7200000
+    }
   }
 }
 ```
@@ -351,13 +358,15 @@ environment minus the fixed names above and minus every key defined in
 `<home>/.env`. Everything else (PATH, HOME, the operator's shell variables)
 passes through, and a task's own `env` map is merged on top.
 
-One JSON schema covers the whole file; it is generated into
-`schemas/aivi.schema.json` by `npm run schema`, and `npm run check` fails when
-it is stale. Point your editor at it for autocompletion and field
-descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
-config file) in `config.json`. Runtime validation additionally checks cron
+One JSON schema covers the whole file, composed at runtime: core's fields
+plus the block of every plugin in the home's `aivi-plugins` list. The CLI
+writes it to `<state>/cache/schema.json` and points config.json's
+`"$schema"` at it after `setup`, `add`, `remove` and `update` — the events
+that change what is valid — so your editor has autocompletion and field descriptions with
+nothing to generate by hand. The cache is disposable; the list and the plugin
+packages are the truth. Runtime validation additionally checks cron
 expressions, timezones, uniqueness, that every project override has a
-checkout, that every enabled module and system job names an existing resource
+checkout, that every plugin block and system job names an existing resource
 pool, and Linear app references.
 
 `aivi serve` is the single application command. See [operations](operations.md)

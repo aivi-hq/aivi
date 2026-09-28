@@ -24,6 +24,11 @@ import { collect, configPath, context, print } from '../context.ts';
 type Linear = typeof import('@aivi/tracker-linear');
 type Teams = Awaited<ReturnType<Awaited<ReturnType<Linear['clientFor']>>['listTeams']>>;
 
+/** The Linear block is the plugin's own — the composed schema already validated
+ *  it; this only types it for the interactive setup. */
+const linearBlock = (loaded: LoadedConfig) =>
+  loaded.config.plugins.linear as import('@aivi/tracker-linear/config').LinearConfig | undefined;
+
 interface CreateFlags {
   id?: string | undefined;
   linear?: string | undefined;
@@ -201,16 +206,16 @@ async function cloneAndWrite(url: string, id: string, teamIds: string[], lanes: 
 
 async function projectsCreate(argument: string | undefined, flags: CreateFlags): Promise<void> {
   const { loaded, log } = await context();
-  if (!loaded.config.linear) {
+  const linearConfig = linearBlock(loaded);
+  if (!linearConfig) {
     throw new Error(
-      'The Linear module is not configured in config.json (no `linear` block), so there is nothing to set up',
+      'The Linear module is not configured in config.json (no plugins.linear block), so there is nothing to set up',
     );
   }
   if (!process.stdin.isTTY)
     throw new Error(
       'projects create needs an interactive terminal; in a script use: aivi projects add <git-url> --linear <key-or-id> [--lane "Dev:dev"] [--unlane "Backlog"]',
     );
-  const linearConfig = loaded.config.linear;
   p.intro('aivi projects create');
   const repo = await askRepository(argument, flags);
   if (!repo) return;
@@ -245,13 +250,14 @@ async function resolveAddTeams(
   log: Awaited<ReturnType<typeof context>>['log'],
 ): Promise<string[]> {
   if (!tokens.length) return [];
-  if (!loaded.config.linear) {
+  const linearConfig = linearBlock(loaded);
+  if (!linearConfig) {
     throw new Error(
-      'The Linear module is not configured in config.json (no `linear` block), so there is no app to ask for teams',
+      'The Linear module is not configured in config.json (no plugins.linear block), so there is no app to ask for teams',
     );
   }
   const linear: Linear = await import('@aivi/tracker-linear');
-  const client = await linear.clientFor(loaded.config.linear, app, log);
+  const client = await linear.clientFor(linearConfig, app, log);
   return linear.resolveTeams(await client.listTeams(), tokens);
 }
 

@@ -1,5 +1,5 @@
 /**
- * The setup `aivi install linear` runs: everything Linear-specific lives in
+ * The setup `aivi add linear` runs: everything Linear-specific lives in
  * this file. It starts only when a live aivi answers its health endpoint —
  * the test observes what that host's request diary records, so no host, no
  * install. It asks for the app's credentials and proves them at Linear,
@@ -18,7 +18,7 @@
  * as it happens.
  */
 import { createServer } from 'node:http';
-import { configSchema, errorMessage, hostUrl, linearPrimarySecretNames, PROJECT_ID } from '@aivi/core';
+import { configSchema, errorMessage, hostUrl, PROJECT_ID } from '@aivi/core';
 import {
   type PluginSetup,
   PluginSetupCancelled,
@@ -27,6 +27,8 @@ import {
   type Store,
 } from '@aivi/plugin';
 import { LinearClient, type LinearTeam } from './client.ts';
+import type { LinearConfig } from './config.ts';
+import { linearPrimarySecretNames } from './config.ts';
 import { appWebhookPath } from './routes.ts';
 import { isAgentSessionEvent, isIssueEvent, type LinearWebhook, verifyWebhook } from './webhook.ts';
 
@@ -162,7 +164,8 @@ const POLL_MS = 2_000;
 const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupResult> => {
   const windowMs = probeWindowMs();
   const config = configSchema.parse(ctx.config);
-  const configured = Object.keys(config.linear?.apps ?? {});
+  const existingBlock = (ctx.config.plugins as Record<string, unknown> | undefined)?.linear as LinearConfig | undefined;
+  const configured = Object.keys(existingBlock?.apps ?? {});
   if (configured.length > 1)
     throw new Error(
       `this aivi already has ${configured.length} Linear apps; the installer configures the one app — edit config.json and .env by hand (docs/linear.md).`,
@@ -179,7 +182,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     .catch(() => false);
   if (!hostIsUp)
     throw new Error(
-      'aivi must be running while the installer tests the webhook: start it (`aivi serve`, or `aivi service restart`) and run `aivi install linear` again.',
+      'aivi must be running while the installer tests the webhook: start it (`aivi serve`, or `aivi service restart`) and run `aivi add linear` again.',
     );
 
   // 1. The name aivi calls this app, and the URL Linear can reach it at.
@@ -337,8 +340,8 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
       const cursor = latestId(store);
       const issue = await client.createIssue({
         teamId,
-        title: 'aivi install test — safe to delete',
-        description: `Created by \`aivi install linear\` to test the webhook at ${webhookUrl}. The installer archives it when the test ends.`,
+        title: 'aivi add test — safe to delete',
+        description: `Created by \`aivi add linear\` to test the webhook at ${webhookUrl}. The installer archives it when the test ends.`,
       });
       await ctx.prompts.log.message(`Created ${issue.identifier}.`);
       // One live line, opened with what it waits for: clack animates one
@@ -450,10 +453,9 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   await ctx.writeSecret(linearPrimarySecretNames.clientId, clientId);
   await ctx.writeSecret(linearPrimarySecretNames.clientSecret, clientSecret);
   await ctx.writeSecret(linearPrimarySecretNames.webhookSecret, webhookSecret);
-  const existing = (ctx.config.linear ?? {}) as Record<string, unknown>;
-  await ctx.writeConfigBlock(['linear'], {
-    ...existing,
-    apps: { ...((existing.apps ?? {}) as Record<string, unknown>), [id]: {} },
+  await ctx.writeConfigBlock(['plugins', 'linear'], {
+    ...existingBlock,
+    apps: { ...(existingBlock?.apps ?? {}), [id]: {} },
   });
 
   const failed = checks.filter(c => !c.pass);

@@ -33,7 +33,7 @@ export function registerGettingStarted(program: Command): void {
   const plugin = program.command('plugin').description('plugin install-time plumbing').helpGroup('Getting started');
   plugin
     .command('setup [spec]')
-    .description("The install step behind aivi install: run the plugin's own ./setup")
+    .description("The setup step behind aivi add: run the plugin's own ./setup")
     .action(async spec => {
       if (!spec) throw new Error('plugin setup needs the installed package.');
       const { loaded } = await context();

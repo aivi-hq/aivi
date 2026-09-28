@@ -54,6 +54,7 @@ function fakeIo(over: Partial<UpdateIo>): UpdateIo {
   return {
     npmView: async (_spec, field) => (field === 'engines.node' ? '>=26 <27' : '0.2.0'),
     install: () => ({ status: 0, stderr: '' }),
+    rebuildSchema: async () => {},
     log: () => {},
     healthProbe: async () => true,
     service: { installed: () => false, stop: () => {}, start: () => {} },

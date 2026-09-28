@@ -1,36 +1,26 @@
 /** The server itself: foreground serve, queue status, configuration and
  *  OpenCode checks. */
 
-import type { BrowserConfig, LoadedConfig, Logger } from '@aivi/core';
+import type { LoadedConfig, Logger } from '@aivi/core';
 import { isTty } from '@aivi/core';
 import type { AiviModule, HostResources } from '@aivi/host';
 import { connectOpenCode, runHost, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
 import type { Command } from 'commander';
-import { context, print, withStore } from '../context.ts';
+import { context, home, print, withStore } from '../context.ts';
+import { buildModules } from '../registry.ts';
 
 export function registerServer(program: Command): void {
   program
     .command('serve')
-    .description('Start the host: API, scheduler, knowledge, configured modules')
+    .description('Start the host: API, scheduler, knowledge, listed plugins')
     .helpGroup('Server')
     .action(async () => {
-      const { loaded, protectedEnv, log } = await context();
-      // A modules block that is present and not false enables its module; the schema checked its
-      // pool. The packages themselves load lazily, so an installation without a channel package
-      // runs every other command untouched.
-      const modules: AiviModule[] = [];
-      if (typeof loaded.config.modules.discord === 'object')
-        modules.push((await import('@aivi/channel-discord')).createDiscordModule(loaded.config.modules.discord));
-      if (typeof loaded.config.modules.slack === 'object')
-        modules.push((await import('@aivi/channel-slack')).createSlackModule(loaded.config.modules.slack));
-      if (loaded.config.linear)
-        modules.push((await import('@aivi/tracker-linear')).createLinearModule(loaded.config.linear));
-      // The browser is a composed module like the channels, not a host resource:
-      // its block's presence enables it, and it claims its own `aivi_browser`
-      // tool at start. The package loads lazily, so an install without it runs
-      // every other command untouched.
-      if (typeof loaded.config.browser === 'object') modules.push(await importBrowser(loaded.config.browser));
+      const { loaded, registry, protectedEnv, log } = await context();
+      // The `aivi-plugins` list in app/package.json says which modules run; the
+      // config block is configuration only. Packages were read at context load
+      // (their ./config declarations); the module code itself loads here.
+      const modules: AiviModule[] = await buildModules(registry, loaded, home);
       const abort = new AbortController();
       const stop = () => abort.abort();
       process.once('SIGINT', stop);
@@ -104,20 +94,4 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
   // any host exists, and keeps this logger whatever job triggers an index.
   const knowledge = await createKnowledgeService(loaded, undefined, log.getChild('knowledge'));
   return { knowledge };
-}
-
-/** The browser block says the operator wants a browser; a missing package is
- *  then a missing install, not a disabled feature: name the command that fixes
- *  it. The module claims its own `aivi_browser` tool at start and closes Chrome
- *  at stop, so the host holds no browser field. */
-async function importBrowser(config: BrowserConfig): Promise<AiviModule> {
-  try {
-    return (await import('@aivi/browser')).createBrowserModule(config);
-  } catch (error) {
-    if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND')
-      throw new Error(
-        'The browser is configured but @aivi/browser is not installed here. Install it with `aivi install browser`.',
-      );
-    throw error;
-  }
 }

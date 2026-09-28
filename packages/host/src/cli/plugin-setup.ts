@@ -8,18 +8,19 @@ import * as p from '@clack/prompts';
 import { context, withStore } from './context.ts';
 
 /**
- * The plumbing step behind `aivi install`: run the plugin's own setup entry.
+ * The plumbing step behind `aivi add`: run the plugin's own setup entry.
  * A package's `./setup` subpath is the whole contract — a package without one
- * has nothing to say at install time, and the command says so. Everything
+ * has nothing to say at add time, and the command says so. Everything
  * platform-specific lives in the plugin; this only wires the context: clack
  * prompts, the config and .env writers with their write-validate-restore
  * guarantee, and the verified last line. A cancelled prompt stops the flow;
- * nothing after it is written.
+ * nothing after it is written. Answers the module id the setup enabled — the
+ * id `aivi add` watches in `/status` — or undefined when the flow stopped.
  */
 export async function pluginSetup(
   spec: string,
   options: { home: string; configPath: string; identityName: string },
-): Promise<void> {
+): Promise<string | undefined> {
   let entry: unknown;
   try {
     entry = ((await import(import.meta.resolve(`${spec}/setup`))) as { default?: unknown }).default;
@@ -30,7 +31,7 @@ export async function pluginSetup(
         `${spec} has no setup command (no ./setup export); its package says how to configure it by hand.`,
       );
     if (code === 'ERR_MODULE_NOT_FOUND')
-      throw new Error(`${spec} is not installed in this installation. \`aivi install ${spec}\` installs it first.`);
+      throw new Error(`${spec} is not installed in this installation. \`aivi add ${spec}\` adds it first.`);
     throw error;
   }
   if (typeof entry !== 'function') throw new Error(`${spec}/setup exports no function.`);
@@ -38,7 +39,7 @@ export async function pluginSetup(
     throw new Error(
       `plugin setup needs an interactive terminal; to configure ${spec} without one, edit config.json and .env by hand (docs/getting-started.md).`,
     );
-  p.intro(`aivi install — ${spec}`);
+  p.intro(`aivi add — ${spec}`);
   const ctx: PluginSetupContext = {
     home: options.home,
     configPath: options.configPath,
@@ -63,9 +64,11 @@ export async function pluginSetup(
     // is true now, never what may happen. The CLI adds nothing — when a
     // service is installed it restarts and reports that as it happens.
     p.outro(result.summary);
+    return result.module;
   } catch (error) {
     if (error instanceof PluginSetupCancelled) p.cancel('Setup stopped. Nothing further was written.');
     else p.cancel(`Setup stopped: ${errorMessage(error)}. Nothing further was written.`);
     process.exitCode = 1;
+    return undefined;
   }
 }

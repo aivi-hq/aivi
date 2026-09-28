@@ -103,10 +103,10 @@ the host's. This page has what is Discord's.
 
 ## Setup
 
-The short way: `aivi install discord`. It prints the application steps below,
+The short way: `aivi add discord`. It prints the application steps below,
 verifies the token against Discord, derives the application id from the bot,
-writes the `modules.discord` block and `DISCORD_BOT_TOKEN`, and restarts aivi
-([operations](operations.md#plugins-aivi-install)). The manual path:
+writes the `plugins.discord` block and `DISCORD_BOT_TOKEN`, and restarts aivi
+([operations](operations.md#plugins-aivi-add-and-aivi-remove)). The manual path:
 
 Create a Discord application
 and bot, then invite it to your server with `bot` and `applications.commands`.
@@ -114,15 +114,16 @@ Give it access to the selected channels and permission to send messages, add
 reactions, create public threads, and send messages in threads. Private threads also require bot
 membership/access.
 
-The short way is `aivi install discord`, which runs the package's own setup
-and writes the block for you. By hand, enable Discord with a
-`modules.discord` block in `<home>/config.json`, filled
-with your ids. The block is the whole module setup, and its presence enables
-the module (`false` is an explicit off):
+The short way is `aivi add discord`, which runs the package's own setup
+and writes the block for you. By hand, put a `plugins.discord` block in
+`<home>/config.json`, filled
+with your ids, and put `@aivi/channel-discord` in the `aivi-plugins` list in
+`app/package.json` — the list is what enables the module, the block is its
+whole setup:
 
 ```json
 {
-  "modules": {
+  "plugins": {
     "discord": {
       "applicationId": "10000000000000001",
       "agent": "assistant",

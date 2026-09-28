@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Person, Run } from '@aivi/core';
-import { configSchema, getLogger, slackConfigSchema } from '@aivi/core';
+import { configSchema, getLogger } from '@aivi/core';
 import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import {
   CHAT_COMMANDS,
@@ -17,6 +17,7 @@ import {
   usageHint,
 } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
+import { slackConfigSchema } from '../src/config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import type { Routed, UnlinkedSender } from '../src/module.ts';
 import {

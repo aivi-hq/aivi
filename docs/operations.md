@@ -168,11 +168,14 @@ no sign-in it asks what the machine should be:
 
 People, tokens and the client config are owned by [people](people.md).
 
-## Plugins: `aivi install`
+## Plugins: `aivi add` and `aivi remove`
 
-`aivi install browser` (or `discord`, `slack`, or any npm package name) adds a
+`aivi add browser` (or `discord`, `slack`, or any npm package name) adds a
 plugin to
-the server home and lets the plugin configure itself. Three steps, in order:
+the server home and lets the plugin configure itself. The command writes
+three facts — the npm dependency, the `plugins.<module_id>` block, and the
+`aivi-plugins` list entry in `app/package.json` that is what actually enables
+the module — in this order:
 
 1. The package is npm-installed into `<home>/app` with `--save-exact`, so
    `aivi update` carries it along; an already-installed package is not
@@ -180,34 +183,52 @@ the server home and lets the plugin configure itself. Three steps, in order:
 2. The plugin's own `./setup` entry runs. Everything platform-specific lives
    in the plugin: it prints how to create the platform app, asks for the
    secrets (hidden), verifies each against the platform before anything is
-   written, and writes its `modules.*` block into `config.json` and its
-   tokens into `<home>/.env` (0600, never echoed). A write that leaves
+   written, and writes its `plugins.<module_id>` block into `config.json` and
+   its tokens into `<home>/.env` (0600, never echoed). A write that leaves
    `config.json` unloadable is restored to the old bytes; an already
    configured module is never clobbered. Behind the command sits
    `aivi plugin setup SPEC`, not a person-facing command, and it needs an
    interactive terminal.
-3. Aivi is restarted (when it runs as a service) and the command ends only
-   in a verified truth: the module's own state — "Discord is running." A
-   degraded module fails the command with the retry going on; without the
-   service the command says how aivi comes back, and never restarts a
-   foreground server itself.
+3. Only after the setup has spoken does the package name join the
+   `aivi-plugins` list, and the editor schema
+   (`<state>/cache/schema.json`, config.json's `$schema`) is rebuilt from
+   the composed shape. A stopped flow — a cancelled prompt, a failed
+   verification — leaves the package installed but inert: no list entry, so
+   the server never imports it.
+4. Aivi is restarted (when it runs as a service) and the command ends only
+   in a verified truth: the module's own state — "Discord is running." The
+   module id is the one the plugin's `./config` declaration carries, which
+   is also its `plugins.<id>` config key; the list entry is the npm package
+   name. A degraded module fails the command with the retry going on;
+   without the service the command says how aivi comes back, and never
+   restarts a foreground server itself.
 
-The contract is one subpath: a package that exports `./setup` with a
-default function is installable this way, whatever its publisher. A package
-without one is still installed, and the command says it has no setup.
+The contract is three subpaths: a package that exports `./config` (the module
+id, the block's schema, the lazy module) with a `./setup` default function
+is addable this way, whatever its publisher. A package without a setup is
+still listed, and the command says it has none.
 `browser` is the no-platform case of the same flow: its setup asks no secret,
-verifies no platform call, and writes only the `browser` block in
-`config.json` that composes the module; the install then ends in the same
-verified truth as any other — "Browser is running."
+verifies no platform call, and writes only the `plugins.browser` block in
+`config.json`; the add then ends in the same verified truth as any other —
+"Browser is running."
+
+`aivi remove <plugin>` takes the same facts back out, in the safe order: the
+module id is asked from the package's `./config` while it is still
+installed, its `plugins.<id>` block is dropped, the list entry leaves, npm
+uninstalls the package, the editor schema is rebuilt, and aivi comes back
+without the module. A failing npm leaves the package on disk but inert.
+This is the plugin's own leaving; `aivi uninstall` is the one that takes
+aivi off the machine.
 
 A package can also add operator commands to this CLI: a `./cli` subpath that
 default-exports a command factory `(ctx) => Command` (the `PluginCliContext`
 comes from `@aivi/plugin`; the package declares `commander` itself —
 [architecture](architecture.md#one-application-contained-modules))
-is mounted into the CLI whenever the package is installed — `aivi discord`,
-`aivi slack` and `aivi linear` are exactly that, from their own packages. A
-package without one adds nothing; the built-in commands keep their names, so
-a plugin can never shadow `jobs` or `serve`.
+is mounted into the CLI whenever the package stands in the plugin list —
+`aivi discord`, `aivi slack` and `aivi linear` are exactly that, from their
+own packages. A package without one adds nothing, and a disabled entry still
+mounts its commands: standing down is `serve`'s business. The built-in
+commands keep their names, so a plugin can never shadow `jobs` or `serve`.
 
 ## Jobs and runs from the command line
 
@@ -287,7 +308,9 @@ done. npm is the compatibility resolver: a plugin whose `@aivi/host` peer range
 excludes the new host fails the install, is pinned at its current version —
 logged as **disabled: no compatible release** — and is re-checked on every
 future update. There is no rollback; sessions resume because state is SQLite
-and OpenCode's own. `aivi upgrade` updates the CLI itself through its install
+and OpenCode's own. The `aivi-plugins` list survives the update untouched —
+npm rewrites dependencies only — and the editor schema is rebuilt from the
+new code. `aivi upgrade` updates the CLI itself through its install
 method (npm today) — the same install-method table `aivi uninstall` reads, so
 the two can never disagree about what is installed.
 

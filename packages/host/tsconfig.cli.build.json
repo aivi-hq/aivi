@@ -5,14 +5,11 @@
     "rootDir": "src",
     "tsBuildInfoFile": "./tsconfig.cli.build.tsbuildinfo"
   },
-  "//": "The command surface (@aivi/host/cli): serve's if-chain dynamically imports the plugin packages, so this project references them; the engine project excludes these files. Phase 3's plugin list removes the plugin references again.",
+  "//": "The command surface (@aivi/host/cli): the plugin list imports listed packages dynamically by name, so no references are needed for them; the one static plugin import is tracker-linear, which projects.ts uses for its interactive Linear setup.",
   "include": ["src/cli.ts", "src/cli"],
   "references": [
     { "path": "./tsconfig.build.json" },
     { "path": "../knowledge/tsconfig.build.json" },
-    { "path": "../browser/tsconfig.build.json" },
-    { "path": "../channel-discord/tsconfig.build.json" },
-    { "path": "../channel-slack/tsconfig.build.json" },
     { "path": "../tracker-linear/tsconfig.build.json" }
   ]
 }

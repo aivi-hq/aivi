@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { loadClientConfig, saveClientConfig } from './client-config.ts';
+import { addPluginName, listNewDependencies } from './manifest.ts';
 import { importApp } from './mount.ts';
 import { serviceInstall } from './service.ts';
 import { aiviVersion } from './version.ts';
@@ -84,6 +85,9 @@ export interface WhoamiResult {
 
 export interface SetupIo {
   install(specs: string[], appDir: string): void;
+  /** Rebuild `<state>/cache/schema.json` and config.json's `$schema` line, in
+   *  the installed app's code; called after the plugin list is written. */
+  rebuildSchema(home: string, appDir: string): Promise<void>;
   npmView(spec: string, field: string): Promise<string>;
   /** The identity step, called in-process in the installed app's code: the
    *  person and token are minted in its store, the answer is the object, no
@@ -309,6 +313,21 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   io.install([flags.appSpec ?? '@aivi/host', ...flags.plugins], appDir);
   saveClientConfig({ home, appDir, nodePath, installMethod: 'npm' });
 
+  // The plugin list: every package npm installed into the app except the
+  // server itself joins `aivi-plugins` in app/package.json — plain JSON, the
+  // one enablement fact the server reads. Then the editor schema is rebuilt
+  // from the installed app's code, so the `$schema` hint and the composed
+  // shape land together; a cache that cannot rebuild is a warning, the truth
+  // of the home is config.json and the list.
+  for (const name of listNewDependencies(appDir)) addPluginName(appDir, name);
+  try {
+    await io.rebuildSchema(home, appDir);
+  } catch (error) {
+    io.warn(
+      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); \`aivi add\` or \`aivi update\` rebuilds it once config.json loads again.`,
+    );
+  }
+
   // The OpenCode shape of the home, before identity: the service finds its
   // agents and the plugin here whatever the sign-in path.
   const version = await io.npmView('@aivi/opencode', 'version').catch(() => undefined);
@@ -435,6 +454,14 @@ const defaultIo: SetupIo = {
     });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`npm install failed (exit ${result.status ?? 'signal'})`);
+  },
+  async rebuildSchema(home, appDir) {
+    const { writeEditorSchema } = await importApp<{ writeEditorSchema: (home: string) => Promise<string> }>(
+      appDir,
+      home,
+      'dist/cli/schema-cache.js',
+    );
+    await writeEditorSchema(home);
   },
   async npmView(spec, field) {
     const result = spawnSync('npm', ['view', spec, field, '--json'], { encoding: 'utf8' });

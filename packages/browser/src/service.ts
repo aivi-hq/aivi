@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { BrowserConfig, BrowserRequest, BrowserResult, BrowserService, BrowserTab } from '@aivi/core';
-import { browserEnvelopeSchema } from '@aivi/core';
+import type { BrowserConfig, BrowserRequest, BrowserResult, BrowserService, BrowserTab } from './config.ts';
+import { browserEnvelopeSchema } from './config.ts';
 import type { BrowserTransport, McpReply } from './transport.ts';
 import { createChromeTransport } from './transport.ts';
 

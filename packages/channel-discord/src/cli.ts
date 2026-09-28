@@ -6,11 +6,12 @@
 import type { PluginCliContext } from '@aivi/plugin';
 import { resolveBlocked } from '@aivi/plugin';
 import { Command } from 'commander';
+import type { DiscordConfig } from './config.ts';
 
-const enabled = async (ctx: PluginCliContext) => {
+const enabled = async (ctx: PluginCliContext): Promise<DiscordConfig> => {
   const loaded = await ctx.loaded();
-  const config = typeof loaded.config.modules.discord === 'object' ? loaded.config.modules.discord : undefined;
-  if (!config) throw new Error('Discord is not enabled in config.json (no modules.discord block)');
+  const config = loaded.config.plugins.discord as DiscordConfig | undefined;
+  if (!config) throw new Error('Discord is not configured in config.json (no plugins.discord block)');
   return config;
 };
 

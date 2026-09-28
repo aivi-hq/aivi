@@ -114,7 +114,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Two browsers, on purpose.** OpenCode's `browser.*` drives the desktop
   app's browser; aivi's `aivi_browser` drives one persistent Chrome for
   unattended sessions and shared logins, and is an opt-in plugin
-  (`aivi install browser`) rather than core. The seeded agents deny the
+  (`aivi add browser`) rather than core. The seeded agents deny the
   former so Discord and jobs are never offered a browser that cannot
   connect.
 - **A second chat platform is glue.** The host owns the inbox, the
@@ -163,9 +163,16 @@ runs in one process; adapters are optional modules with a start/stop contract.
   failed `start` is retried with backoff for as long as the host runs and shows
   as `degraded` in status; only a `ConfigurationError` (something the operator
   must change) is fatal ([operations](docs/operations.md#startup)).
-- **One config file, and it is yours.** Presence of a validated block enables
-  its module (`modules.discord`, `modules.slack`, `linear`; `false` is an
-  explicit off) — no module points at a separate config file. aivi and the
+- **One config file, and it is yours.** One `plugins` object holds one block
+  per plugin, keyed by the plugin's own **module id** (`plugins.discord`,
+  `plugins.linear`); what enables a module is the **`aivi-plugins` list** in
+  `app/package.json`, which holds npm **package names** — the install fact
+  (`aivi add @someone/aivi-cool-plugin`) — while the module id is the config
+  key, the logger category and the `/status` id, declared by the package's
+  own `./config` entry. The server composes the closed schema from the listed
+  plugins, so a block for an unlisted plugin fails and an editor says so; a
+  listed plugin with no block takes its own defaults or its own complaint.
+  No module points at a separate config file. aivi and the
   operator edit the live `config.json` itself, so it never goes under version
   control; a home in a git repository tracks only a template, which the first
   run copies ([configuration](docs/configuration.md#home)).
@@ -269,16 +276,19 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 ## Where things are
 
-`packages/{core,host,knowledge,browser,channel-discord,channel-slack,linear,opencode,cli}` with tests in
+`packages/{core,host,knowledge,plugin,browser,channel-discord,channel-slack,tracker-linear,opencode,cli}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `dist/` is built by `npm run build`
 (TypeScript 7, incremental); tests need no build — they run from sources
 under Node's type stripping, resolving workspace packages through the
 `development` exports condition.
-`scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
+`scripts/` holds the smoke and live checks; the editor schema is generated at
+runtime into `<state>/cache/schema.json`, composed from the plugin list. aivi reads one **home** (`~/.aivi`, or
 `AIVI_HOME`): `config.json` (the live config, never version-controlled), `.env`,
-`projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
-`state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
+`app/package.json` (the installed server, and the `aivi-plugins` list that
+enables plugins), `projects/<id>/{source,memory,worktrees}` per project,
+`memory/` (org), and `state/` with `aivi.sqlite`, the QMD index, the editor
+schema cache, and dreaming transcripts.
 `dev/` is a real development home, produced by `npm run aivi:cli setup` against
 the local build (only its README is tracked; everything else, including the
 app manifest setup writes, is generated or git-ignored). `npm run aivi`

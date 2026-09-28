@@ -1,12 +1,5 @@
-import type { LaneBinding, LinearConfig, Logger, Project } from '@aivi/core';
-import {
-  assistantAgent,
-  errorMessage,
-  gitIdentity,
-  linearPrimarySecretNames,
-  linearSecretNames,
-  primaryLinearApp,
-} from '@aivi/core';
+import type { LaneBinding, Logger, Project } from '@aivi/core';
+import { errorMessage, gitIdentity } from '@aivi/core';
 import {
   ChannelEngine,
   ConfigurationError,
@@ -17,6 +10,8 @@ import {
 import type { AiviModule, AiviServices, Store } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import { LinearApiError, LinearClient } from './client.ts';
+import type { LinearConfig } from './config.ts';
+import { assistantAgent, linearPrimarySecretNames, linearSecretNames, primaryLinearApp } from './config.ts';
 import { LinearMcp } from './mcp.ts';
 import { registerWebhookRoutes } from './routes.ts';
 import {
@@ -344,7 +339,7 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
       conversation: string,
     ) => {
       store.bind(conversation, {
-        agent: assistantAgent(services.loaded.config),
+        agent: assistantAgent(services.loaded.config.plugins.linear as LinearConfig | undefined),
         directory: project ? project.directory : home,
         project: project?.id ?? null,
       });

@@ -26,7 +26,8 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.1"
+    "@aivi/core": "^0.7.1",
+    "zod": "4.1.13"
   },
   "devDependencies": {
     "commander": "15.0.0"

@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /** The thin aivi CLI. It installs and controls the server; the server does the
- *  assistant work. The CLI owns `setup` (sign in or create), `update`,
- *  `upgrade`, `uninstall` and the service commands, and mounts every other
- *  command **in-process** from the installed app (mount.ts) onto the same
+ *  assistant work. The CLI owns `setup` (sign in or create), `add`, `remove`,
+ *  `update`, `upgrade`, `uninstall` and the service commands, and mounts every
+ *  other command **in-process** from the installed app (mount.ts) onto the same
  *  commander tree — one help, one parse, no relay. The CLI itself never
  *  imports app or host code statically. */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
+import { add } from './add.ts';
 import { brandBanner } from './brand.ts';
 import { loadClientConfig } from './client-config.ts';
 import { homeForCreate, homeFromEnvOrConfig, requireHome } from './home.ts';
-import { install } from './install.ts';
 import { link } from './link.ts';
 import { appDirFor, mountAppCommands } from './mount.ts';
+import { remove } from './remove.ts';
 import {
   serviceInstall,
   serviceLogs,
@@ -63,15 +64,30 @@ export async function main(argv: string[]): Promise<void> {
     await link(args);
   });
   passThrough(
-    'install',
-    'Add a plugin to the server home: it installs, configures itself through its own setup entry, and aivi comes back with it running',
+    'add',
+    'Add a plugin to the server home: it installs, configures itself through its own setup entry, joins the plugin list, and aivi comes back with it running',
   )
     .helpGroup('Plugins')
     .action(async (...rest) => {
       const args = rest.at(-1).args as string[];
       const home = requireHome();
       const config = loadClientConfig();
-      await install(args, {
+      await add(args, {
+        home,
+        appDir: appDirFor(home),
+        nodePath: config?.nodePath ?? process.execPath,
+      });
+    });
+  passThrough(
+    'remove',
+    'Remove a plugin from the server home: out of the plugin list, its config block dropped, the package uninstalled, and aivi comes back without it',
+  )
+    .helpGroup('Plugins')
+    .action(async (...rest) => {
+      const args = rest.at(-1).args as string[];
+      const home = requireHome();
+      const config = loadClientConfig();
+      await remove(args, {
         home,
         appDir: appDirFor(home),
         nodePath: config?.nodePath ?? process.execPath,
@@ -100,7 +116,9 @@ export async function main(argv: string[]): Promise<void> {
 
   program
     .command('uninstall')
-    .description('Delete the aivi home and the client config, then this CLI. Lists what would go until --confirm')
+    .description(
+      'Take aivi off this machine entirely: the home, the client config, the service and this CLI. Lists what would go until --confirm',
+    )
     .option('--confirm', 'delete what is listed')
     .option('--with-attribution', "also remove the opencode-attribution plugin, which is not aivi's")
     .helpGroup('Updates')

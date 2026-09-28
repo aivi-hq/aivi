@@ -14,11 +14,17 @@ import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, ToolRegis
 import type { AiviServices } from '@aivi/plugin';
 import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
 import { LinearClient } from '../src/client.ts';
+import type { LinearConfig } from '../src/config.ts';
+import { linearSchema } from '../src/config.ts';
 import { conversationFor, createLinearModule, openLinearStore } from '../src/module.ts';
 import { appWebhookPath } from '../src/routes.ts';
 import { signWebhook } from '../src/webhook.ts';
 
 const run = promisify(execFile);
+
+/** The typed block out of the open core parse: the plugin's own schema fills defaults. */
+const linearBlock = (config: { plugins: Record<string, unknown> }): LinearConfig =>
+  linearSchema.parse(config.plugins.linear);
 const git = (cwd: string, ...args: string[]) =>
   run('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
 
@@ -173,7 +179,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
-    linear: { agent: 'assistant', primary: 'dev', apps: { dev: {}, face: {} }, mcp: false },
+    plugins: { linear: { agent: 'assistant', primary: 'dev', apps: { dev: {}, face: {} }, mcp: false } },
     projects: { website: { linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'developer' } } } },
   });
   const opencode = await fakeOpenCode(t, 'Done: fixed the header.');
@@ -238,7 +244,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     fail: error => assert.fail(String(error)),
   };
   const running = await createLinearModule(
-    config.linear!,
+    linearBlock(config),
     new Map([
       ['dev', linear],
       ['face', linear],
@@ -441,7 +447,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
-    linear: { apps: { dev: {} }, mcp: false },
+    plugins: { linear: { apps: { dev: {} }, mcp: false } },
     projects: {
       site: {
         linear: { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
@@ -496,7 +502,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(config.linear!, new Map([['dev', linear]])).start(services);
+  const running = await createLinearModule(linearBlock(config), new Map([['dev', linear]])).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
@@ -557,7 +563,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   const config = configSchema.parse({
     version: 1,
     opencode: { url: opencode.url },
-    linear: { apps: { dev: {} }, mcp: false, listener: true },
+    plugins: { linear: { apps: { dev: {} }, mcp: false, listener: true } },
     projects: { api: { linear: { teams: ['t'], lanes: { 'In Progress': 'developer', Review: 'developer' } } } },
   });
   const loaded = {
@@ -614,7 +620,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(config.linear!, new Map([['dev', linear]])).start(services);
+  const running = await createLinearModule(linearBlock(config), new Map([['dev', linear]])).start(services);
   t.after(async () => {
     release();
     await running.stop();

@@ -139,7 +139,7 @@ with no refresh token; Linear's documented pattern). Writes attribute to the
 app, never a human; personal API keys would never expire but attribute to a
 human: disqualified. OpenCode connects as a remote MCP
 (`type: "remote"`, `url: http://127.0.0.1:4101/mcp` —
-what a home's `opencode.jsonc` gains when the `linear` block names `mcp`; see
+what a home's `opencode.jsonc` gains when the `plugins.linear` block names `mcp`; see
 the comment setup seeds). The MCP lives and dies with `serve`, like the
 webhooks and the workers it serves.
 
@@ -151,7 +151,7 @@ front and stops with a clear message if it is not answering `GET /health`,
 because the throwaway-ticket test can only observe webhooks a live host is
 recording.
 
-1. **One app.** `aivi install linear` walks you through creating, installing
+1. **One app.** `aivi add linear` walks you through creating, installing
    and proving the app and writes the secrets and config itself, testing the
    webhook with a throwaway ticket first. The Linear-side part it guides: open
    `https://linear.app/settings/api/applications/new`; name the app

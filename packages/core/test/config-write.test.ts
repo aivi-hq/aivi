@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { envFileKeys, upsertEnvFile, writeConfigBlock } from '../src/config-write.ts';
+import { deleteConfigBlock, envFileKeys, upsertEnvFile, writeConfigBlock } from '../src/config-write.ts';
 
 let directory: string;
 
@@ -21,46 +21,87 @@ const configPath = () => join(directory, 'config.json');
 function seedConfig(): void {
   writeFileSync(
     configPath(),
-    `${JSON.stringify({ version: 1, identity: { name: 'Clawd' }, modules: { discord: false } }, null, 2)}\n`,
+    `${JSON.stringify({ version: 1, identity: { name: 'Clawd' }, plugins: { discord: { agent: 'old' } } }, null, 2)}\n`,
   );
 }
 
 test('writeConfigBlock writes one nested block and keeps the rest of the file', async () => {
   seedConfig();
-  await writeConfigBlock(configPath(), ['modules', 'discord'], {
+  await writeConfigBlock(configPath(), ['plugins', 'discord'], {
     applicationId: '10000000000000001',
     access: { channels: [] },
   });
   const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as {
     identity: { name: string };
-    modules: { discord: { applicationId: string } };
+    plugins: { discord: { applicationId: string } };
   };
   assert.equal(raw.identity.name, 'Clawd', 'untouched blocks keep their bytes');
-  assert.equal(raw.modules.discord.applicationId, '10000000000000001', 'the explicit false is replaced by the block');
+  assert.equal(raw.plugins.discord.applicationId, '10000000000000001', 'the old block is replaced whole');
 });
 
 test('writeConfigBlock creates intermediate objects in a bare config', async () => {
   writeFileSync(configPath(), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
-  await writeConfigBlock(configPath(), ['modules', 'slack'], { access: { channels: [] } });
-  const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as { modules: { slack: unknown } };
-  assert.ok(raw.modules.slack);
+  await writeConfigBlock(configPath(), ['plugins', 'slack'], { access: { channels: [] } });
+  const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as { plugins: { slack: unknown } };
+  assert.ok(raw.plugins.slack);
 });
 
 test('writeConfigBlock restores the old bytes when the result does not load', async () => {
   seedConfig();
   const before = readFileSync(configPath(), 'utf8');
   await assert.rejects(
-    // `agent: 5` is not a string: loadConfig must refuse, so the write is undone.
-    writeConfigBlock(configPath(), ['modules', 'discord'], { applicationId: '10000000000000001', agent: 5 }),
-    /agent/,
+    // `port: 'x'` is not a number: loadConfig must refuse, so the write is undone.
+    // A plugin block's own contents are not core's to refuse — the composed
+    // schema is the plugin's business; core's fields keep the guarantee.
+    writeConfigBlock(configPath(), ['host', 'port'], 'x'),
+    /port/,
   );
   assert.equal(readFileSync(configPath(), 'utf8'), before, 'the previous bytes are back');
+  await assert.rejects(
+    // a block key that is not a module id fails even the open schema.
+    writeConfigBlock(configPath(), ['plugins', 'Bad Id'], {}),
+    /plugins/,
+  );
+  assert.equal(readFileSync(configPath(), 'utf8'), before, 'a rejected block key is undone too');
 });
 
 test('writeConfigBlock refuses an empty or malformed path', async () => {
   seedConfig();
   await assert.rejects(writeConfigBlock(configPath(), [], {}), /path/);
-  await assert.rejects(writeConfigBlock(configPath(), ['modules', ''], {}), /path/);
+  await assert.rejects(writeConfigBlock(configPath(), ['plugins', ''], {}), /path/);
+});
+
+test('deleteConfigBlock drops one block and keeps the rest', async () => {
+  seedConfig();
+  assert.equal(await deleteConfigBlock(configPath(), ['plugins', 'discord']), true);
+  const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as {
+    version: number;
+    identity: { name: string };
+    plugins: Record<string, unknown>;
+  };
+  assert.equal('discord' in raw.plugins, false, 'the block is gone');
+  assert.equal(raw.identity.name, 'Clawd', 'everything else keeps its bytes');
+});
+
+test('deleteConfigBlock answers false for an absent path and writes nothing', async () => {
+  seedConfig();
+  const before = readFileSync(configPath(), 'utf8');
+  assert.equal(await deleteConfigBlock(configPath(), ['plugins', 'slack']), false, 'no such block');
+  assert.equal(await deleteConfigBlock(configPath(), ['nowhere', 'slack']), false, 'no such parent');
+  assert.equal(readFileSync(configPath(), 'utf8'), before, 'an absent path is not a write');
+});
+
+test('deleteConfigBlock restores the old bytes when the result does not load', async () => {
+  seedConfig();
+  const before = readFileSync(configPath(), 'utf8');
+  await assert.rejects(deleteConfigBlock(configPath(), ['version']), /version/);
+  assert.equal(readFileSync(configPath(), 'utf8'), before, 'a required field cannot be deleted away');
+});
+
+test('deleteConfigBlock refuses an empty or malformed path', async () => {
+  seedConfig();
+  await assert.rejects(deleteConfigBlock(configPath(), []), /path/);
+  await assert.rejects(deleteConfigBlock(configPath(), ['plugins', '']), /path/);
 });
 
 test('upsertEnvFile replaces a key in place and appends a missing one', () => {

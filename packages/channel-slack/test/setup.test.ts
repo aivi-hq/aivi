@@ -40,7 +40,7 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
     home: '/home',
     configPath: '/home/config.json',
     identityName: 'Clawd',
-    config: { version: 1, modules: {} },
+    config: { version: 1, plugins: {} },
     print: value => printed.push(value),
     withStore: async () => {
       throw new Error('the setup flow reads no store');
@@ -108,7 +108,7 @@ test('slack setup prints the manifest, verifies both tokens and writes both file
     ['C0000000001'],
   );
   assert.deepEqual(block.reportChannels, ['C0000000002']);
-  assert.deepEqual(h.blocks[0]!.path, ['modules', 'slack']);
+  assert.deepEqual(h.blocks[0]!.path, ['plugins', 'slack']);
   const note = h.notes.join('\n');
   assert.match(note, /manifest printed above/, 'the note points at the stdout manifest');
   const printed = h.printed as { features: { slash_commands: { command: string }[] } }[];
@@ -148,7 +148,7 @@ test('slack setup never writes when the app token cannot open Socket Mode', asyn
 
 test('slack setup refuses an already configured module', async () => {
   const h = harness([], [AUTH_OK]);
-  h.ctx.config = { version: 1, modules: { slack: { commandPrefix: 'aivi', access: { channels: [] } } } };
+  h.ctx.config = { version: 1, plugins: { slack: { commandPrefix: 'aivi', access: { channels: [] } } } };
   await assert.rejects(setup(h.ctx), /already configured/);
   assert.equal(h.blocks.length, 0);
 });

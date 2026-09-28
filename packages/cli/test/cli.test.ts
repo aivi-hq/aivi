@@ -59,6 +59,7 @@ function fakeIo(overrides: Partial<SetupIo> = {}): {
   };
   const io: SetupIo = {
     install: specs => calls.installs.push(specs),
+    rebuildSchema: async () => {},
     npmView: async () => '9.9.9',
     createIdentity: async (step, home) => {
       calls.identity.push([step]);

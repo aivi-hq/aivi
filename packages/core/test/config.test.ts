@@ -3,14 +3,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { z } from 'zod';
 import { nextOccurrence } from '../src/clock.ts';
 import {
-  assistantAgent,
+  composeConfigSchema,
   configSchema,
   gitIdentity,
   hostUrl,
   jobSchema,
-  linearSecretNames,
   loadConfig,
   printedBaseUrl,
   projectsSyncJob,
@@ -22,32 +22,11 @@ import {
   userTaskSchema,
 } from '../src/config.ts';
 
-test('linear settings: defaults, secret names, reserved pool', () => {
-  const linear = configSchema.parse({ version: 1, linear: { apps: { dev: {} } } }).linear!;
-  assert.deepEqual(
-    [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs, linear.logMisroutes],
-    [false, 'needs-human', 'local-model', 'tools', 7_200_000, true],
-  );
-  assert.deepEqual(linear.mcp, { port: 4101 }, 'the Linear MCP is on by default on its loopback port');
-  assert.deepEqual(configSchema.parse({ version: 1, linear: { apps: { dev: {} }, mcp: false } }).linear!.mcp, false);
-  assert.deepEqual(linearSecretNames('dev-app'), {
-    clientId: 'LINEAR_DEV_APP_CLIENT_ID',
-    clientSecret: 'LINEAR_DEV_APP_CLIENT_SECRET',
-    webhookSecret: 'LINEAR_DEV_APP_WEBHOOK_SECRET',
-  });
-  assert.ok(
-    configSchema.safeParse({ version: 1, linear: { apps: { data: {} } } }).success,
-    'no app id is reserved: the bare LINEAR_* names mean the primary',
-  );
-  assert.match(
-    JSON.stringify(configSchema.safeParse({ version: 1, linear: { apps: {}, resource: 'gpu' } }).error?.issues),
-    /Unknown resource pool/,
-  );
+test('a Linear team belongs to exactly one project', () => {
   assert.match(
     JSON.stringify(
       configSchema.safeParse({
         version: 1,
-        linear: { apps: { dev: {} } },
         projects: {
           website: { linear: { teams: ['lt-1'], lanes: {} } },
           api: { linear: { teams: ['lt-1', 'lt-2'], lanes: {} } },
@@ -58,75 +37,37 @@ test('linear settings: defaults, secret names, reserved pool', () => {
   );
 });
 
-test('channel modules are blocks in the one file: presence enables with defaults, false is off, the pool must exist', () => {
-  const on = configSchema.parse({
-    version: 1,
-    modules: {
-      discord: { applicationId: '10000000000000001', access: {} },
-      slack: { access: {} },
-    },
+test('plugins is an open record in the core schema: blocks pass through as written', () => {
+  const block = { connection: { mode: 'launch', userDataDir: 'state/chrome' } };
+  const parsed = configSchema.parse({ version: 1, plugins: { browser: block, 'cool-thing': { any: true } } });
+  assert.deepEqual(parsed.plugins.browser, block, 'the block is kept as written: its plugin validates it');
+  assert.equal(
+    configSchema.safeParse({ version: 1, plugins: { 'Bad Id': {} } }).success,
+    false,
+    'block keys are module ids',
+  );
+});
+
+test('composeConfigSchema closes the plugins record to the registered plugins', () => {
+  const composed = composeConfigSchema({
+    alpha: z.strictObject({ resource: z.string().default('local-model'), name: z.string().default('a') }),
   });
-  if (typeof on.modules.discord !== 'object' || typeof on.modules.slack !== 'object')
-    throw new Error('present blocks parse to settings, not false');
-  assert.equal(on.modules.discord.agent, 'assistant');
-  assert.equal(on.modules.slack.commandPrefix, 'aivi');
-  assert.deepEqual(configSchema.parse({ version: 1, modules: { discord: false } }).modules, { discord: false });
+  assert.equal(composed.safeParse({ version: 1 }).success, true);
+  const parsed = composed.parse({ version: 1, plugins: { alpha: {} } });
+  assert.deepEqual(parsed.plugins.alpha, { resource: 'local-model', name: 'a' }, 'the plugin schema fills defaults');
+  assert.equal(
+    composed.safeParse({ version: 1, plugins: { beta: {} } }).success,
+    false,
+    'a block for an unregistered plugin fails: configured, not registered',
+  );
+  assert.equal(composed.safeParse({ version: 1, unexpected: true }).success, false, 'core fields stay strict');
   assert.match(
-    JSON.stringify(
-      configSchema.safeParse({
-        version: 1,
-        modules: { discord: { applicationId: '10000000000000001', access: {}, resource: 'nope' } },
-      }).error?.issues,
-    ),
-    /Unknown resource pool; name one of scheduler\.resources or set modules\.discord to false/,
+    JSON.stringify(composed.safeParse({ version: 1, plugins: { alpha: { resource: 'nope' } } }).error?.issues),
+    /Unknown resource pool; name one of scheduler\.resources or remove the plugins\.alpha block/,
   );
 });
 
-test('browser is opt-in: absent builds nothing, false is off, a block builds the service', () => {
-  assert.equal('browser' in configSchema.parse({ version: 1 }), false, 'no prefault: a fresh home has no browser');
-  assert.equal(configSchema.parse({ version: 1, browser: false }).browser, false);
-  const built = configSchema.parse({
-    version: 1,
-    browser: { connection: { mode: 'launch', userDataDir: 'state/chrome' } },
-  }).browser;
-  if (typeof built !== 'object') throw new Error('a present block parses to settings, not false');
-  assert.deepEqual(built.connection, { mode: 'launch', userDataDir: 'state/chrome', headless: false });
-});
-
-test('a modules.*.config pointer is the old shape and says where the settings went', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-inline-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(
-    join(root, 'config.json'),
-    JSON.stringify({ version: 1, modules: { discord: { config: 'discord.json' } } }),
-  );
-  await assert.rejects(loadConfig(join(root, 'config.json')), /the discord settings live inline/);
-});
-
-test('config rejects ambiguous Linear primary settings and invalid job resources', () => {
-  // Several apps without a primary: which one carries the data feed is ambiguous.
-  assert.equal(
-    configSchema.safeParse({
-      version: 1,
-      linear: { apps: { developer: {}, reviewer: {} } },
-    }).success,
-    false,
-  );
-  // A primary that is not a configured app is a typo.
-  assert.equal(
-    configSchema.safeParse({
-      version: 1,
-      linear: { primary: 'ghost', apps: { developer: {}, reviewer: {} } },
-    }).success,
-    false,
-  );
-  assert.equal(
-    configSchema.safeParse({
-      version: 1,
-      linear: { primary: 'developer', apps: { developer: {}, reviewer: {} } },
-    }).success,
-    true,
-  );
+test('config rejects invalid job resources and timezones and unknown fields', () => {
   assert.equal(
     configSchema.safeParse({
       version: 1,
@@ -155,7 +96,10 @@ test('config rejects ambiguous Linear primary settings and invalid job resources
     }).success,
     false,
   );
-  assert.equal(configSchema.safeParse({ version: 1, unexpected: true }).success, false);
+  // The open core schema passes unknown fields through untouched: plugins are
+  // unknown to core by design, and the composed schema is the gate that
+  // refuses them (asserted above, where a registered plugin stands).
+  assert.equal(configSchema.safeParse({ version: 1, unexpected: true }).success, true);
 });
 
 test('a job is recurring (cron) or one-off (at), never both or neither; misfire is one grace knob', () => {
@@ -472,11 +416,10 @@ test('scheduler.timezone is the host-wide default; a per-job timezone wins over 
 test('identity is the persona, and who a worker commits as comes from the file, the machine, then the app', async () => {
   const bare = configSchema.parse({ version: 1 });
   assert.equal(bare.identity.name, 'aivi', 'the persona has a default');
-  assert.equal(assistantAgent(bare), 'assistant', 'the one assistant is the fallback name');
   assert.equal(
-    assistantAgent(configSchema.parse({ version: 1, identity: { name: 'Clawd The' } })),
-    'assistant',
-    'the persona name is never slugged into an agent name; the display name stays free-form',
+    configSchema.parse({ version: 1, identity: { name: 'Clawd The' } }).identity.name,
+    'Clawd The',
+    'the display name stays free-form; the assistant agent name is the Linear plugin’s own',
   );
   const app = { name: 'aivi-agent[bot]', email: '331678708+aivi-agent[bot]@users.noreply.github.com' };
   const machine = async (key: string) => (key === 'opencode.coauthor' ? 'Jane Doe <jane@example.com>' : '');
@@ -512,13 +455,6 @@ test('identity is the persona, and who a worker commits as comes from the file, 
     /Name the pair/,
     'a name without an email would mix a bot author with a human address',
   );
-});
-
-test('a top-level name is the old shape and says where the persona went', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-identity-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, name: 'aivi' }));
-  await assert.rejects(loadConfig(join(root, 'config.json')), /identity\.name/);
 });
 
 test('host.public: the reach address, validated and preferred when printed', () => {

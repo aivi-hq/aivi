@@ -46,7 +46,9 @@ aivi reads one **home** directory: `config.json`, `.env`, `projects/`,
 `npm run aivi` points `AIVI_HOME` at `dev/`. The live `dev/config.json` is
 yours and aivi's to edit, and stays out of version control. Start from `{ version: 1 }`
 and add what you need, or configure a channel with
-`npm run aivi:cli -- install discord` (or `install slack`).
+`npm run aivi:cli -- add discord` (or `add slack`) — it also lists the
+package in `dev/app/package.json` under `aivi-plugins`, which is what enables
+the module.
 
 Start the host. No token is needed: commands are open, and a bearer only
 identifies the caller (see [secrets](configuration.md#secrets)):
@@ -96,17 +98,21 @@ described: [projects](projects.md).
 
 ## A chat channel
 
-The short way: `npm run aivi:cli -- install discord` (or `install slack`). The
+The short way: `npm run aivi:cli -- add discord` (or `add slack`). The
 plugin prints how to create the platform app, asks for the tokens, verifies
-each, writes `dev/config.json` and `dev/.env` itself, and aivi comes back with
-the module running ([operations](operations.md#plugins-aivi-install)).
+each, writes `dev/config.json` and `dev/.env` itself, joins the `aivi-plugins`
+list, and aivi comes back with
+the module running ([operations](operations.md#plugins-aivi-add-and-aivi-remove)).
 
-By hand: put your application and channel IDs in the `modules.discord` block
-of `dev/config.json`, put `DISCORD_BOT_TOKEN` in `dev/.env`, and run `serve`
+By hand: put your application and channel IDs in the `plugins.discord` block
+of `dev/config.json`, put `DISCORD_BOT_TOKEN` in `dev/.env`, add
+`@aivi/channel-discord` to the `aivi-plugins` list in `dev/app/package.json`,
+and run `serve`
 as above (slash commands are registered at start)
 ([Discord setup](discord.md#setup)). For Slack, create the app from the
 manifest in [Slack setup](slack.md#setup) (`npm run aivi -- slack manifest`),
-fill in the `modules.slack` block, and put `SLACK_BOT_TOKEN` and
+fill in the `plugins.slack` block, list `@aivi/channel-slack`, and put
+`SLACK_BOT_TOKEN` and
 `SLACK_APP_TOKEN` in `dev/.env`.
 
 ## Then

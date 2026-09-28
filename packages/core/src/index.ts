@@ -1,5 +1,5 @@
 export * from './brand.ts';
-export * from './browser.ts';
+
 export * from './clock.ts';
 export * from './config.ts';
 export * from './config-write.ts';

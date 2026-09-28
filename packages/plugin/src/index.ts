@@ -11,4 +11,5 @@
 
 export type { AiviModule, AiviServices, PublicRequest, PublicRoutes, RunningModule, Store } from '@aivi/host';
 export * from './cli.ts';
+export * from './plugin.ts';
 export * from './setup.ts';

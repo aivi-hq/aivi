@@ -208,4 +208,4 @@ The `browser` module claims the descriptor for `aivi_browser` (permission
 action `aivi_browser`) and the host serves that claim only while the module is
 composed; a host without it serves no such tool and no agent sees it.
 Ownership comes from the native tool context, not tool arguments. Install and
-configure it with `aivi install browser`; see [browser setup](browser.md).
+configure it with `aivi add browser`; see [browser setup](browser.md).

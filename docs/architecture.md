@@ -72,17 +72,20 @@ channels' search commands and scheduled indexing jobs; `aivi_jobs` reaches the
 same store the CLI edits.
 
 A package can also extend the operator CLI: where `./setup`
-([operations](operations.md#plugins)) is the install-time subpath, `./cli` is
+([operations](operations.md#plugins-aivi-add-and-aivi-remove)) is the add-time
+subpath, `./cli` is
 the runtime one. A package that default-exports a factory `(ctx) => Command`
-has its command subtree mounted into the server CLI under Channels
-whenever the package is installed — the factory builds real commander (the
+has its command subtree mounted into the server CLI
+whenever the package stands in the `aivi-plugins` list (a disabled entry
+mounts too: standing down is `serve`'s business) — the factory builds real
+commander (the
 package declares `commander` itself; parsing, help and variadics are
 commander's own), and `ctx` is a `PluginCliContext` from `@aivi/plugin`
 (the loaded config, the store bracket, the shared JSON stdout, the host
 poke, the runner's own clack), so a plugin never imports host code. Discovery is
-bounded and config-driven: the app knows the fixed module→package mapping
-and asks only the enabled ones; nothing scans `node_modules`, and a package
-without a `./cli` export is simply absent from the help.
+bounded and list-driven: the `aivi-plugins` array in `app/package.json` is
+the whole mapping — no fixed table, nothing scans `node_modules` — and a
+package without a `./cli` export is simply absent from the help.
 
 What happens at startup, on each wake, and at shutdown, and how runs end, is
 described for operators in [operations](operations.md).

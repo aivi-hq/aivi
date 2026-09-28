@@ -8,6 +8,15 @@ export type {
   LinearTeam,
 } from './client.ts';
 export { LinearApiError, LinearClient, resolveTeams } from './client.ts';
+export type { LinearConfig } from './config.ts';
+export {
+  assistantAgent,
+  linearPrimarySecretNames,
+  linearSchema,
+  linearSecretNames,
+  plugin,
+  primaryLinearApp,
+} from './config.ts';
 export type { LinearMcpOptions } from './mcp.ts';
 export { LinearMcp } from './mcp.ts';
 export type { LinearAppRuntime } from './module.ts';

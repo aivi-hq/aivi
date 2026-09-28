@@ -75,10 +75,10 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 
 ## Setup
 
-The short way: `aivi install slack`. It prints the app manifest itself, asks
-for the two tokens, verifies each against Slack, writes the `modules.slack`
+The short way: `aivi add slack`. It prints the app manifest itself, asks
+for the two tokens, verifies each against Slack, writes the `plugins.slack`
 block and both secrets, and restarts aivi
-([operations](operations.md#plugins-aivi-install)). The manual path:
+([operations](operations.md#plugins-aivi-add-and-aivi-remove)). The manual path:
 
 The fastest path: `aivi slack manifest [--prefix PREFIX]` prints the whole
 app manifest as JSON, generated from the shared command table (the prefix
@@ -165,18 +165,19 @@ should listen in. Collect the channel ids (channel details → bottom of the
 About tab). DM channel ids are not configured; a linked person may DM from
 anywhere ([people](people.md#link-codes-discord-slack)).
 
-The short way is `aivi install slack` ([operations](operations.md#plugins-aivi-install)):
+The short way is `aivi add slack` ([operations](operations.md#plugins-aivi-add-and-aivi-remove)):
 it runs this package's own setup, which prints the manifest to paste into
 Slack's app setup, asks for the two tokens, verifies each against Slack, and
-writes the `modules.slack` block into `<home>/config.json` and the tokens
-into `.env` itself. By hand, enable Slack with a `modules.slack` block in
+writes the `plugins.slack` block into `<home>/config.json` and the tokens
+into `.env` itself. By hand, put a `plugins.slack` block in
 `<home>/config.json`, filled with
-your ids. The block is the whole module setup, and its presence enables the
-module (`false` is an explicit off):
+your ids, and put `@aivi/channel-slack` in the `aivi-plugins` list in
+`app/package.json` — the list is what enables the module, the block is its
+whole setup:
 
 ```json
 {
-  "modules": {
+  "plugins": {
     "slack": {
       "agent": "assistant",
       "commandPrefix": "aivi",

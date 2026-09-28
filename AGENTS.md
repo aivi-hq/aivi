@@ -65,8 +65,7 @@ affect. Live OpenCode, Discord and macOS Chrome verification are
 separate gates; mock tests do not establish those.
 
 Commits follow Conventional Commits (`type(scope): subject`; lefthook enforces
-it). Run `npm run agentic:verify` before committing; run `npm run schema` after
-changing a zod config schema or the check fails. A commit that changes a
+it). Run `npm run agentic:verify` before committing. A commit that changes a
 publishable package under `packages/` carries a changeset (`npx changeset`, or
 a hand-written `.changeset/*.md`); without one the release leaves that
 package's version untouched. Docs-only commits need none.
