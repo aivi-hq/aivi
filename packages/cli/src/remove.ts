@@ -3,7 +3,7 @@
  *  wrote is dropped, npm uninstalls the package, and the editor schema is
  *  rebuilt before aivi comes back without the module. The module id is asked
  *  from the package's own `./config` declaration while the package is still
- *  installed; the thin CLI itself edits only the plain-JSON list. This removes
+ *  installed; the CLI itself edits only the plain-JSON list. This removes
  *  a plugin — `aivi uninstall` is the one that takes aivi off the machine. */
 import { spawnSync } from 'node:child_process';
 import { PLUGIN_ALIASES } from './add.ts';

@@ -164,7 +164,7 @@ The server renders for a remote operator: the full tree minus the
 refuse-relay set, hidden through commander's own `helpVisibility` applied
 at render time — `serve`/`uninstall` stay *registered* (they are real on
 the server) and answer their refusal if invoked anyway. The client-side
-commands show naturally: they are built into the thin CLI on every machine
+commands show naturally: they are built into the CLI on every machine
 and visible in the server's own local state, so no "add them even if
 hidden" logic is needed — and they can never travel, because the
 client-side set refuses `--remote` itself. Two states, two small sets, one
@@ -177,7 +177,7 @@ The streamed page carries a marker, so it is unmistakable that the process
 answering is on the server: `(remote)` after the version in the title
 line, and the AIVI lettermark in a different color from the theme's blue.
 The hex and the drawing belong to the brand module in `@aivi/core`; the
-thin CLI's stand-alone copy
+CLI's stand-alone copy
 ([brand.ts](../../../packages/cli/src/brand.ts) — "keep the two in sync")
 gains the same. A stream without color drops the mark as decoration, as
 it already does.

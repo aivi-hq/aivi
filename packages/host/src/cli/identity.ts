@@ -165,7 +165,7 @@ export function readClientConfigToken(): string | undefined {
 }
 
 /** The one client config file: `~/.config/aivi.json`, `$XDG_CONFIG_HOME/aivi.json`,
- *  or the file `AIVI_CONFIG` names — the same resolution the thin CLI uses. */
+ *  or the file `AIVI_CONFIG` names — the same resolution the CLI uses. */
 function clientConfigPath(): string {
   if (process.env.AIVI_CONFIG) return resolve(process.env.AIVI_CONFIG);
   return resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');

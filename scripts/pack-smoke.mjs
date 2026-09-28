@@ -1,4 +1,4 @@
-/** The release gate for the thin CLI: the published artifact is installed
+/** The release gate for the CLI: the published artifact is installed
  *  alone and made to run. Inside the workspace every import resolves through
  *  the root node_modules hoist, so `npm test` cannot see what a person's
  *  `npm i -g @aivi/cli` sees — `aivi help` died in the wild that way (the

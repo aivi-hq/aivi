@@ -16,7 +16,7 @@ package's light `./config` subpath → compose the closed config schema
 (`buildModules`); the CLI mounts every listed package's `./cli` regardless of
 enabled; the editor schema is
 [`schema-cache.ts`](../../../packages/host/src/cli/schema-cache.ts), called by
-the thin CLI after the events that change what is valid. The three config
+the CLI after the events that change what is valid. The three config
 schemas live in their plugins; core knows no module names. The checked-in
 schema, `scripts/schema.mjs` and the `schema:check` step are deleted; the
 editor shape is `<state>/cache/schema.json`, and `config.json`'s `$schema`
@@ -56,7 +56,7 @@ points at it.
   `linearSchema`'s own `superRefine`. No "enabled but unconfigured" check
   stands in core: the plugin's own schema demands what no default answers,
   and `buildModules` wraps that complaint naming the package.
-- **The thin CLI edits the list as plain JSON** (`manifest.ts`): it carries
+- **The CLI edits the list as plain JSON** (`manifest.ts`): it carries
   no zod and no core; the host validates. `MODULE_BY_SPEC` is gone — the
   module id comes back from the setup flow (`PluginSetupResult.module`).
 - **Cache events are `setup`, `add`, `remove`, `update`** — not `upgrade`,

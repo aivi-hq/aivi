@@ -36,7 +36,7 @@ artifacts — the same files npm publishes, so local and installed behavior are
 identical. `npm run typecheck` (`tsc --noEmit`) checks the sources against the
 built declarations.
 
-Setup is the real thin CLI pointed at `dev/`: `AIVI_HOME=dev` makes the home,
+Setup is the real CLI pointed at `dev/`: `AIVI_HOME=dev` makes the home,
 `AIVI_CONFIG=dev/.config/aivi.json` keeps the client record (where the host
 answers, which person signs in) inside the dev home, and the `file:` specs
 install your workspace packages instead of the registry — same code path a

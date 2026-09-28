@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** The thin aivi CLI. It installs and controls the server; the server does the
+/** The aivi CLI. It installs and controls the server; the server does the
  *  assistant work. The CLI owns `setup` (sign in or create), `add`, `remove`,
  *  `update`, `upgrade`, `uninstall` and the service commands, and mounts every
  *  other command **in-process** from the installed app (mount.ts) onto the same

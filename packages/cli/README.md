@@ -1,6 +1,6 @@
 # @aivi/cli
 
-The thin aivi CLI. One `setup` signs a machine in or creates the server;
+The aivi CLI. One `setup` signs a machine in or creates the server;
 `service` runs it in the background; `update`/`upgrade` keep it current;
 `uninstall` removes everything. It never imports host code statically —
 every operator command is mounted in-process from the installed server

@@ -207,7 +207,7 @@ sends `x-aivi-client` naming the version it speaks, read at runtime from its
 own `package.json` — the server's is `@aivi/host`'s, and `createHostClient`
 (in `@aivi/plugin/api`) names `@aivi/plugin`'s own. `@aivi/cli`,
 `@aivi/host` and `@aivi/plugin` are a changesets `fixed` group: releases
-keep the three packages at one version, so the thin CLI's and the kit's
+keep the three packages at one version, so the CLI's and the kit's
 numbers are comparable without any synced file. The major is
 the contract, the minor is features: a client at or behind the host is
 served (a newer server's minors are features the client never touches),

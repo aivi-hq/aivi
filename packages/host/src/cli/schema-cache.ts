@@ -1,7 +1,7 @@
 /** The editor schema: the composed config schema — core's fields plus the block
  *  of every plugin in the home's list — rendered to JSON Schema and written to
  *  `<state>/cache/schema.json`, with config.json's `$schema` pointing at it.
- *  The thin CLI cannot do this itself (it carries no zod and no core); it calls
+ *  The CLI cannot do this itself (it carries no zod and no core); it calls
  *  this after setup, add and remove, the events that change what is valid.
  *  The cache is disposable: it is rebuilt from the list, never hand-edited. */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';

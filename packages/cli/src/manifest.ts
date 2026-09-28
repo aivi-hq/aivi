@@ -1,5 +1,5 @@
 /** The `aivi-plugins` list in `<home>/app/package.json`: the one plugin fact
- *  the thin CLI keeps, edited as plain JSON because the CLI carries no zod and
+ *  the CLI keeps, edited as plain JSON because the CLI carries no zod and
  *  no core. Entries are npm **package names** — what `aivi add` installs and
  *  what npm looks up — with a `[name, false]` tuple meaning a plugin that
  *  exists but stands down. The module id, the `plugins.<id>` config key, is

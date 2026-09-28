@@ -1,4 +1,4 @@
-/** The one edge where the thin CLI reaches into the installed server: a
+/** The one edge where the CLI reaches into the installed server: a
  *  dynamic import of a module under `<appDir>/node_modules/@aivi/host/dist`,
  *  never a static one. Machine commands import nothing from here unless the
  *  operator command they are about to run is the server's, so a half-installed

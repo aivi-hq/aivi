@@ -23,8 +23,9 @@ let closeLogging: () => Promise<void> = async () => {};
 
 /** Hang the operator commands on a commander tree and keep their logging.
  *  The options are declared on the tree's root, but the hooks are hung on
- *  each command this register adds — never on the root — so a host tree (the
- *  thin CLI's machine commands) is untouched by them. The hooks inherit down
+ *  each command this register adds — never on the root — so the collecting
+ *  tree's own machine commands (`setup`, `service`, …) are untouched by them.
+ *  The hooks inherit down
  *  to subcommands; the root's option values are read from the root. */
 export async function registerCommands(program: Command): Promise<void> {
   program

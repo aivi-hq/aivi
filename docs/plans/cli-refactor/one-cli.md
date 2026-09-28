@@ -123,7 +123,7 @@ node_modules asks those questions (grepped: no OSC/DA/CPR querier in
 `@logtape/*`, `@clack/*`, or any dependency; the OpenCode service child runs
 `stdio: ["ignore","ignore","pipe"]`) — probably the shell or terminal stack.
 Whatever it is, ctrl+c on the relay hits a three-process foreground group
-where the thin CLI dies instantly while the app's graceful shutdown
+where the CLI dies instantly while the app's graceful shutdown
 (`server.ts:35`) keeps the group alive, and the answers orphan. This phase
 deletes the relay, so the class has no habitat. The mystery querier is **not**
 claimed as ours and is not this phase's job.

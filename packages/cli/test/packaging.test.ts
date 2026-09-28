@@ -14,7 +14,7 @@ const bareImports = (file: string): string[] =>
     .map(match => match[1]!)
     .filter(spec => !spec.startsWith('node:'));
 
-test('the thin CLI stands alone: every import is a declared dependency', () => {
+test('the CLI stands alone: every import is a declared dependency', () => {
   // The published package has no workspace hoisting to lean on — `aivi help`
   // died in the wild when the banner reached for @aivi/core, which resolves
   // in the repo and nowhere else. This test is that release gate. App and

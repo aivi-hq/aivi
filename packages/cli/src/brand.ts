@@ -1,12 +1,12 @@
 /**
- * The banner the thin CLI opens its help with. This is a copy of the brand
+ * The banner the CLI opens its help with. This is a copy of the brand
  * module in `@aivi/core` (the original keeps the wordmark and the hexes) —
- * the thin CLI ships without workspace dependencies, so it may not import
+ * the CLI ships without workspace dependencies, so it may not import
  * `@aivi/core`; it stands alone. Keep the two in sync.
  */
 import { styleText } from 'node:util';
 
-/** The brand blue and the one muted gray — the only colors the thin CLI uses. */
+/** The brand blue and the one muted gray — the only colors the CLI uses. */
 const BLUE = '#3B82FF';
 const MUTED = '#767676';
 
