@@ -144,14 +144,18 @@ degrades.)
 
 ## Live gates (mock tests do not establish these)
 
-- Fresh laptop: `aivi setup --connect --url --token`, then `aivi jobs list`.
+- Fresh laptop: `aivi setup --connect --url --token`, then
+  `aivi -r jobs list` (and plain `aivi jobs list` answers the
+  `no home on this machine` teaching error, decision A).
 - A clack prompt over the relay (`people create` mint confirm); masked
   password echo; resize mid-prompt.
 - ctrl+c mid-command: child SIGINT'd correctly, client terminal restored.
-- `aivi service restart` remote: prints `server restarting…` **before** the
+- `aivi -r service restart`: prints `server restarting…` **before** the
   drop; the next command reaches the new host.
-- `aivi status | jq` from the laptop still gets JSON (pipe mode).
-- Refused: `serve`, `uninstall`, and machine commands from a remote state.
+- `aivi -r status | jq` from the laptop still gets JSON (pipe mode).
+- Refused: `serve` and `uninstall` answer their refusals over the channel;
+  `aivi -r setup` (and `-r upgrade`, `-r configure`) answer the
+  client-side guard message.
 - A wrong pairing (`person.id` not the token's owner) is a 401, logged.
 
 ## Checklist
