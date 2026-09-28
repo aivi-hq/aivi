@@ -129,3 +129,15 @@ test('remote exec does not chain a second hop', async t => {
     message: 'remote exec does not chain: this session is already driven remotely',
   });
 });
+
+test('a driven session help page says whose tree it is', async t => {
+  await machine(t, { configVersion: 1, home: '/no/such/home' }, { remote: true });
+  const { out } = await run(['--help']);
+  assert.match(out, /aivi v\d+\.\d+\.\d+ \(remote\) —/, 'the title carries (remote)');
+});
+
+test('a local page carries no marker', async t => {
+  await machine(t, { configVersion: 1, home: '/no/such/home' });
+  const { out } = await run(['--help']);
+  assert.doesNotMatch(out, /\(remote\)/, 'the word is only for driven sessions');
+});

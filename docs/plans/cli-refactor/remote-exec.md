@@ -218,9 +218,15 @@ it already does.
   █▀█ █ ▀▄▀ █
 ````
 
-Recorded 2026-09-28 for the comparison when the time comes: brand purple
-`#7C3AED` versus amber `#F59E0B`, each against the same blue. Neither is
-in the brand module yet; the banner build is where the two get weighed.
+Decided at landing (2026-09-28): **amber `#F59E0B`**, not brand purple
+`#7C3AED`. The marker's job is caution — "this answer comes from another
+machine" — and purple reads as another brand accent (and sits near
+discord's violet), while amber is the universal caution color and
+contrasts with the blue it replaces. It entered `BRAND` as `remote` in
+`@aivi/core`, and the CLI's stand-alone copy carries the same hex. The
+`(remote)` word in the title is plain text from the caller, so a pipe or a
+NO_COLOR terminal still reads the word when the color goes; the lettermark
+color is the decoration that drops, as it already does.
 
 ## Restart — a log line, not a mechanism (decision D13)
 
@@ -379,10 +385,12 @@ flag and what it teaches around it, then the strings and docs.
       channel-side blocklist. `MachineStatus` grew a third fact,
       `clientConfig` — the record's path — which decides `configure`'s
       membership the day it lands.
-- [ ] `--remote --help` streams the server's own page as-is (no render-time
+- [x] `--remote --help` streams the server's own page as-is (no render-time
       visibility pass — the guard lines answer at invocation) with the
-      `(remote)` banner in both brand modules (`#7C3AED` vs `#F59E0B`
-      weighed here).
+      `(remote)` banner in both brand modules. Landed 2026-09-28: amber
+      `#F59E0B` won the weighing (caution, not brand), entered `BRAND` as
+      `remote`; the driven child's machine fact decides the marker, and the
+      title's `(remote)` word is plain text that survives colorless streams.
 - [ ] Announce-before-disconnect in `service restart`, `service stop`, and
       `update` (the notice is printed before the self-stop; no mechanism
       beyond that sentence). No top-level `restart` command: restart is

@@ -252,11 +252,18 @@ export async function main(argv: string[]): Promise<void> {
     'before',
     `${brandBanner(
       [
-        { text: `aivi v${version} — the always-on teammate around OpenCode` },
+        {
+          text: `aivi v${version}${machine.remote === true ? ' (remote)' : ''} — the always-on teammate around OpenCode`,
+        },
         { text: 'The server does the work; this CLI installs and controls it.', muted: true },
         { text: `home: ${machine.home ?? 'none'}`, muted: true },
       ],
       process.stdout,
+      // The wordmark goes amber when this process answers a driven session:
+      // the machine fact owns the marker, so `aivi -r --help` streams a page
+      // that cannot be mistaken for the laptop's own. The `(remote)` word is
+      // plain text — pipes and NO_COLOR terminals still read it.
+      { remote: machine.remote === true },
     )}\n`,
   );
   const footer = `
