@@ -15,7 +15,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { loadClientConfig, saveClientConfig } from './client-config.ts';
-import { addPluginName, listNewDependencies } from './manifest.ts';
 import { importApp } from './mount.ts';
 import { serviceInstall } from './service.ts';
 import { aiviVersion } from './version.ts';
@@ -115,7 +114,6 @@ export interface SetupOptions {
 }
 
 export interface SetupFlags {
-  plugins: string[];
   hostPackage: string | undefined;
   use: string | undefined;
   connect: boolean;
@@ -128,7 +126,6 @@ export interface SetupFlags {
 /** The valued flags, each with its setter. `--plugin` collects; the rest take
  *  one value, as `--flag value` or `--flag=value` — the same two shapes for all. */
 const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = {
-  '--plugin': (flags, value) => flags.plugins.push(value),
   '--host-package': (flags, value) => {
     flags.hostPackage = value;
   },
@@ -151,7 +148,6 @@ const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = 
 
 export function extractSetupFlags(args: string[]): SetupFlags {
   const flags: SetupFlags = {
-    plugins: [],
     hostPackage: undefined,
     use: undefined,
     connect: false,
@@ -307,16 +303,15 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   const appDir = writeHomeSkeleton(home);
 
   io.log(`Installing the aivi server into ${appDir}`);
-  io.install([flags.hostPackage ?? '@aivi/host', ...flags.plugins], appDir);
+  io.install([flags.hostPackage ?? '@aivi/host'], appDir);
   saveClientConfig({ home, appDir, nodePath, installMethod: 'npm' });
 
-  // The plugin list: every package npm installed into the app except the
-  // server itself joins `aivi-plugins` in app/package.json — plain JSON, the
-  // one enablement fact the server reads. Then the editor schema is rebuilt
-  // from the installed app's code, so the `$schema` hint and the composed
-  // shape land together; a cache that cannot rebuild is a warning, the truth
-  // of the home is config.json and the list.
-  for (const name of listNewDependencies(appDir)) addPluginName(appDir, name);
+  // Setup installs the server alone: plugins join afterwards with `aivi add`,
+  // which runs each plugin's own setup before it enters `aivi-plugins` — a
+  // package listed without its block would make `aivi serve` complain. The
+  // editor schema is rebuilt from the installed app's code, so the `$schema`
+  // hint and the composed shape land together; a cache that cannot rebuild is
+  // a warning, the truth of the home is config.json and the list.
   try {
     await io.rebuildSchema(home, appDir);
   } catch (error) {

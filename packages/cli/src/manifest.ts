@@ -64,11 +64,3 @@ export const serverPackage = '@aivi/host';
 export function pluginDependencies(appDir: string): string[] {
   return dependencyNames(appDir).filter(name => name !== serverPackage);
 }
-
-/** Everything npm installed that the list does not hold yet — the install
- *  step of `aivi setup` hands these to the list, `aivi add` uses the same
- *  rule for the one package it brought. A missing package.json is no list. */
-export function listNewDependencies(appDir: string): string[] {
-  if (!existsSync(join(appDir, 'package.json'))) return [];
-  return pluginDependencies(appDir).filter(name => !pluginNames(appDir).includes(name));
-}

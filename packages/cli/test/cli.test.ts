@@ -125,17 +125,7 @@ test('unknown fields survive a save', () => {
 });
 
 test('setup flags are pulled out; unknown flags are refused', () => {
-  const flags = extractSetupFlags([
-    '--plugin',
-    '@aivi/channel-discord',
-    '--host-package',
-    '@aivi/host@0.2.0',
-    '--use',
-    'this-machine',
-    '--name',
-    'Ada',
-  ]);
-  assert.deepEqual(flags.plugins, ['@aivi/channel-discord']);
+  const flags = extractSetupFlags(['--host-package', '@aivi/host@0.2.0', '--use', 'this-machine', '--name', 'Ada']);
   assert.equal(flags.hostPackage, '@aivi/host@0.2.0');
   assert.equal(flags.use, 'this-machine');
   assert.equal(flags.name, 'Ada');

@@ -10,14 +10,20 @@ Use Node 26 and npm. From the repository root:
 ```sh
 npm ci
 npm run check
-npm run aivi:cli -- setup --use this-machine \
-  --host-package "file:../../packages/host" \
-  --plugin "file:../../packages/channel-discord" \
-  --plugin "file:../../packages/channel-slack" \
-  --plugin "file:../../packages/tracker-linear"
+npm run aivi:cli -- setup --use this-machine --host-package "file:../../packages/host"
 ```
 
-Run without the flags and setup is a conversation: your name, and one
+Setup installs the server alone; plugins join afterwards, one command each,
+run while `npm run aivi:cli -- serve` is up in another terminal (the plugins'
+own setup verifies its secrets against the running server before writing):
+
+```sh
+npm run aivi:cli -- add "file:../../packages/channel-discord"
+npm run aivi:cli -- add "file:../../packages/channel-slack"
+npm run aivi:cli -- add "file:../../packages/tracker-linear"
+```
+
+Run setup without the flags and it is a conversation: your name, and one
 question about reach — only this machine; your network, where aivi listens
 on a LAN or tailnet address you pick; or a URL in front of it, which a
 tunnel or proxy carries to loopback. The URL answer is stored as

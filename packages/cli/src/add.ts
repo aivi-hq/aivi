@@ -5,12 +5,14 @@
  *  in app/package.json, the editor schema is rebuilt, and aivi is restarted
  *  only when the module itself reports running. The CLI knows four aliases and
  *  nothing else platform-specific — anything else adds by its npm package name
- *  and speaks through its own setup entry. The list holds package names; the
- *  module id is the plugin's own declaration, which is what `./setup` answers
- *  with and what `/status` is watched for. */
+ *  or by a directory spec (`file:../../packages/browser`, the way a development
+ *  home installs its workspace builds: the package's own package.json says its
+ *  name), and speaks through its own setup entry. The list holds package
+ *  names; the module id is the plugin's own declaration, which is what
+ *  `./setup` answers with and what `/status` is watched for. */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { addPluginName, dependencyNames, pluginDependencies, serverPackage } from './manifest.ts';
 import { importApp } from './mount.ts';
 import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
@@ -113,8 +115,28 @@ const defaultIo: AddIo = {
   warn: message => console.log(message),
 };
 
-function packageDir(appDir: string, spec: string): string {
-  return join(appDir, 'node_modules', ...spec.split('/'));
+function packageDir(appDir: string, pkg: string): string {
+  return join(appDir, 'node_modules', ...pkg.split('/'));
+}
+
+/** A spec may name a directory instead of a registry package —
+ *  `file:../../packages/browser`, `./local-plugin`, an absolute path — the way
+ *  a development home installs its workspace builds. The directory's own
+ *  package.json says the name npm installs it under; any other spec is
+ *  already that name (a trailing `@version` is npm's, not the name's). */
+export function packageOfSpec(appDir: string, spec: string): string {
+  const bare = spec.startsWith('file:') ? spec.slice('file:'.length) : spec;
+  if (!(bare.startsWith('.') || bare.startsWith('/')))
+    return spec.lastIndexOf('@') > 0 ? spec.slice(0, spec.lastIndexOf('@')) : spec;
+  const dir = resolve(appDir, bare);
+  let name: unknown;
+  try {
+    name = (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: unknown }).name;
+  } catch {
+    throw new Error(`${spec} names no readable package: ${dir}/package.json does not answer.`);
+  }
+  if (typeof name !== 'string' || name === '') throw new Error(`${dir}/package.json declares no name.`);
+  return name;
 }
 
 function installedVersion(dir: string): string {
@@ -127,10 +149,10 @@ function installedVersion(dir: string): string {
 
 /** Install the package into the home. npm owns what is installed; --save-exact
  *  keeps the plugin in app/package.json, where `aivi update` carries it along from. */
-function installPackage(io: AddIo, spec: string, appDir: string): void {
-  const dest = packageDir(appDir, spec);
+function installPackage(io: AddIo, spec: string, pkg: string, appDir: string): void {
+  const dest = packageDir(appDir, pkg);
   if (existsSync(dest)) {
-    io.log(`${spec} ${installedVersion(dest)} is already installed; nothing to install.`);
+    io.log(`${pkg} ${installedVersion(dest)} is already installed; nothing to install.`);
     return;
   }
   io.log(`Installing ${spec} into ${appDir}`);
@@ -179,14 +201,18 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
   const name = args[0];
   if (!name) throw new Error('Add what? aivi add browser|discord|slack|linear|NPM-PACKAGE');
   const spec = PLUGIN_ALIASES[name] ?? name;
-  if (spec === '@aivi/host' || spec === '@aivi/cli')
+  const pkg = packageOfSpec(options.appDir, spec);
+  if (pkg === '@aivi/host' || pkg === '@aivi/cli')
     throw new Error('The server and this CLI come from `aivi setup` and npm, not from add.');
   if (!existsSync(packageDir(options.appDir, serverPackage)))
     throw new Error(`No aivi server installed at ${options.appDir}. Run \`aivi setup\` first.`);
 
   const before = dependencyNames(options.appDir);
-  installPackage(io, spec, options.appDir);
-  const pkg = dependencyFor(options.appDir, spec, before);
+  installPackage(io, spec, pkg, options.appDir);
+  // The list holds package names: the resolved one speaks for a path spec
+  // (`file:../../packages/browser` is what npm was handed, `@aivi/browser` is
+  // the fact), and npm's own diff still gets the last word when it surprises.
+  const listed = dependencyNames(options.appDir).includes(pkg) ? pkg : dependencyFor(options.appDir, spec, before);
 
   // The plugin configures itself: instructions, prompts, verification and
   // writes all live in its ./setup entry, run in-process; the flow's ending
@@ -195,7 +221,7 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
   // the server never imports it, and the block was never written.
   let moduleId: string | undefined;
   try {
-    moduleId = await io.setupPlugin(spec, options);
+    moduleId = await io.setupPlugin(listed, options);
   } catch (error) {
     io.log(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -207,7 +233,7 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
 
   // The three facts land together: npm's dependency (above), the list entry,
   // and the block the plugin wrote. Then the editor sees the new shape.
-  addPluginName(options.appDir, pkg);
+  addPluginName(options.appDir, listed);
   try {
     await io.rebuildSchema(options.home, options.appDir);
   } catch (error) {
@@ -221,6 +247,6 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
   // just said so in its own last line.
   if (!io.service.installed()) return;
   const url = await io.healthUrl(options.home);
-  const label = moduleId ? `${moduleId[0]!.toUpperCase()}${moduleId.slice(1)}` : pkg;
+  const label = moduleId ? `${moduleId[0]!.toUpperCase()}${moduleId.slice(1)}` : listed;
   await restartAndReport(io, url, label, moduleId);
 }

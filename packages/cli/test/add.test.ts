@@ -69,6 +69,41 @@ function harness(states: ModuleState[] = [], moduleId: string | undefined = 'dis
 const options = () => ({ home: directory, appDir, nodePath: 'node' });
 const RUNNING: ModuleState[] = [{ id: 'discord', state: 'running', lastError: null }];
 
+test('add takes a file: spec by the name its own package.json declares', async () => {
+  const src = join(directory, 'packages', 'fake-plugin');
+  mkdirSync(src, { recursive: true });
+  writeFileSync(join(src, 'package.json'), JSON.stringify({ name: '@aivi/fake-plugin', version: '0.1.0' }));
+  const { io, calls } = harness([], 'fake');
+  // npm writes the directory and the dependency together, the dependency
+  // named by the package itself: that is what the fake install mirrors.
+  io.install = spec => {
+    calls.installs.push(spec);
+    mkdirSync(join(appDir, 'node_modules', '@aivi', 'fake-plugin'), { recursive: true });
+    const manifest = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>;
+    };
+    manifest.dependencies['@aivi/fake-plugin'] = spec;
+    writeFileSync(join(appDir, 'package.json'), JSON.stringify(manifest));
+  };
+  const spec = 'file:../packages/fake-plugin'; // relative to appDir, as npm runs there
+  await add([spec], options(), io);
+  assert.deepEqual(calls.installs, [spec], 'npm was handed the spec verbatim');
+  assert.deepEqual(calls.setups, ['@aivi/fake-plugin'], 'the setup entry is reached by package name');
+  assert.deepEqual(pluginNames(appDir), ['@aivi/fake-plugin'], 'the list holds the name, not the spec');
+  await add([spec], options(), io);
+  assert.deepEqual(calls.installs, [spec], 'the second add sees the installed directory');
+  assert.ok(
+    calls.logs.some(line => /already installed/.test(line)),
+    'and says so',
+  );
+  assert.deepEqual(pluginNames(appDir), ['@aivi/fake-plugin'], 'and the entry is not doubled');
+});
+
+test('add refuses a path spec that holds no readable package', async () => {
+  const { io } = harness();
+  await assert.rejects(() => add(['file:../nowhere'], options(), io), /names no readable package/);
+});
+
 test('add resolves aliases and runs npm, then the plugin setup, then the list and the cache', async () => {
   const { io, calls } = harness(RUNNING);
   await add(['discord'], options(), io);
