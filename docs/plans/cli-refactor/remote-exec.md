@@ -102,6 +102,16 @@ Everything else — `status`, `jobs`, `runs`, `projects`, `people`,
 (including its `restart`) — is untagged: in-process in `local`, relayed
 with `--remote`.
 
+Landed 2026-09-28: the sets are the *commands'* decision, carried by the
+machine fact (`MachineStatus.remote`, born as `AIVI_EXEC_SESSION` in the
+door's closed env), not by a channel-side blocklist. The client-side set
+answers `this acts on the machine you type on` at the top of its own action;
+`uninstall` and `serve` answer their refuse-relay lines; `-r` itself refuses
+to chain a second hop. `serve` additionally answers `server already running`
+when a host already answers its configured endpoint (one probe at invocation,
+never a help-time check). Help shows the truth either way — a refused command
+is not hidden, it is refused when run.
+
 ## Transport
 
 **The wire carries terminal bytes; commands are not remapped to JSON
@@ -158,10 +168,13 @@ Messages (client → server first):
 Server side: `node-pty` spawns
 `aivi ...argv` — the CLI binary on PATH, the same tree the operator typed
 into (the host parses no argv of its own since the purity pass) — with a
-**closed** `env`: `{ PATH, HOME, AIVI_HOME, TERM, AIVI_OPERATOR_BEARER }`
+**closed** `env`: `{ PATH, HOME, AIVI_HOME, TERM, AIVI_OPERATOR_BEARER, AIVI_EXEC_SESSION }`
 plus `COLORTERM`/`LANG` when the host has them. PATH and HOME are what
 `add`/`update` need to exec npm and git; nothing else from the host's
-environment travels. Child close ⇒
+environment travels. `AIVI_EXEC_SESSION=1` is the machine fact the child runs
+under — it is the far end of a channel — so the command sets answer their
+guard lines themselves (see [the sets](#the-sets)); no argv inspection
+decides it. Child close ⇒
 `{t:"exit"}` then socket close; socket close ⇒ kill the child. Client side:
 `process.stdin.setRawMode(true)`, forward bytes, `SIGWINCH` ⇒ `resize`,
 `{t:"exit"}` ⇒ restore + `process.exitCode = code` — restore on **every** exit
@@ -178,16 +191,16 @@ untouched); stderr rides base64 inside `{t:"err"}` so the two never merge.
 
 ## What `--remote --help` renders
 
-The server renders for a remote operator: the full tree minus the
-refuse-relay set, hidden through commander's own `helpVisibility` applied
-at render time — `serve`/`uninstall` stay *registered* (they are real on
-the server) and answer their refusal if invoked anyway. The client-side
-commands show naturally: they are built into the CLI on every machine
-and visible in the server's own local state, so no "add them even if
-hidden" logic is needed — and they can never travel, because the
-client-side set refuses `--remote` itself. Two states, two small sets, one
-render flag — that is the whole implementation; there is no per-command
-visibility matrix.
+Amended 2026-09-28, before landing: there is no render-time visibility
+pass. The server streams its own `--help` page as-is — the same tree it
+runs — and the two sets answer at *invocation*, from the machine fact the
+door stamps into the child's env (`AIVI_EXEC_SESSION`): the client-side
+set answers `this acts on the machine you type on`, the refuse-relay set
+answers its own refusal. `serve` and `uninstall` are real on the server;
+hiding them from the page would decorate the truth for a decision nobody
+makes at help time. The page carries the `(remote)` marker so nobody
+mistakes whose tree they are reading. That is the whole implementation:
+one page, two guard lines, no visibility machinery.
 
 ## The remote banner
 
@@ -302,9 +315,15 @@ can become is *disabled*, which is a server-side people decision owned by
 [people.md](../../people.md), not a feature of `configure`. The typed flag
 is what makes it safe: a laptop that has a server `url` configured still
 configures its own config, because nothing infers "you are remote" from a
-file anymore. It joins the `fresh` allow-list the day it exists, and it
-shows on the streamed page because the remote person runs it on the
-laptop, never through the channel.
+file anymore. Its membership rides the machine fact `MachineStatus.clientConfig`
+(the client record's path, or none): `configure` edits that file, so it is
+registered only where the file exists — a machine with no record gets `setup`
+instead, which creates the first one. Existence, not parseability: a broken
+record is exactly what `configure` is for. It is a client-side command, so it
+refuses `--remote` like `setup` and `upgrade`, and it shows on the streamed
+page because the remote person runs it on the laptop, never through the
+channel. (This replaces the earlier "joins the `fresh` allow-list" line: the
+allow-list became membership-by-not-registering on 2026-09-28.)
 
 ## Live gates (mock tests do not establish these)
 
@@ -353,10 +372,15 @@ flag and what it teaches around it, then the strings and docs.
       commander's own `unknown command`. The logging flags moved off the
       root onto `serve`, the command that logs, so a provider pollutes no
       commands that are not its own.
-- [ ] `client-side` guard messages against `--remote`; `refuse-relay`
-      refusals; `serve`'s `server already running` answer.
-- [ ] `--remote --help`: server renders the remote operator's view
-      (`helpVisibility` at render time, refuse-relay hidden) with the
+- [x] `client-side` guard messages against `--remote`; `refuse-relay`
+      refusals; `serve`'s `server already running` answer. Landed 2026-09-28:
+      the sets are carried by the machine fact (`MachineStatus.remote` from
+      `AIVI_EXEC_SESSION`), answered by the commands' own actions, not a
+      channel-side blocklist. `MachineStatus` grew a third fact,
+      `clientConfig` — the record's path — which decides `configure`'s
+      membership the day it lands.
+- [ ] `--remote --help` streams the server's own page as-is (no render-time
+      visibility pass — the guard lines answer at invocation) with the
       `(remote)` banner in both brand modules (`#7C3AED` vs `#F59E0B`
       weighed here).
 - [ ] Announce-before-disconnect in `service restart`, `service stop`, and

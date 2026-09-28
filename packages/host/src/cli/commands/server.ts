@@ -2,16 +2,37 @@
  *  OpenCode checks. */
 
 import { connectOpenCode, status } from '@aivi/host';
+import type { MachineStatus } from '@aivi/plugin';
 import type { Command } from 'commander';
 import { startServer } from '../../server.ts';
-import { context, print, withStore } from '../context.ts';
+import { context, hostUrl, print, withStore } from '../context.ts';
 
-export function registerServer(program: Command): void {
+export function registerServer(program: Command, machine: MachineStatus): void {
   program
     .command('serve')
     .description('Start the host: API, scheduler, knowledge, listed plugins')
     .helpGroup('Server')
     .action(async () => {
+      // Refuse-relay (the plan's sets): over an exec session, the server is
+      // the thing being driven — a second serve would fight the session
+      // itself. The provider answers the guard from the machine fact, never
+      // `unknown command`, whatever the help showed. launchd boots
+      // `dist/server.js` directly and never passes through this tree.
+      if (machine.remote === true)
+        throw new Error('the server is the thing being driven; serve is not a command over the channel');
+      // The plan's other serve answer: while a host already answers on the
+      // configured endpoint, the wanted state exists. Say whose it is and
+      // exit; never boot a second host beside it. One probe at invocation —
+      // not a help-time check, not a poll.
+      const { loaded } = await context();
+      const url = hostUrl(loaded);
+      const answered = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) })
+        .then(response => response.ok)
+        .catch(() => false);
+      if (answered) {
+        print({ alreadyRunning: true, url }, `server already running at ${url}`);
+        return;
+      }
       // The boot itself is the host's own (`@aivi/host/server`), called
       // in-process: this command adds a place in the tree and the logging
       // hook, nothing else. launchd runs that boot file directly.

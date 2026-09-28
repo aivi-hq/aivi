@@ -124,6 +124,10 @@ export function attachExec(server: Server, deps: ExecDeps): void {
     AIVI_HOME: home,
     TERM: term,
     AIVI_OPERATOR_BEARER: bearer,
+    // The machine fact this child runs under: it is the far end of an exec
+    // session, so its own command declarations answer the guard lines (the
+    // plan's sets) instead of acting on or fighting the machine.
+    AIVI_EXEC_SESSION: '1',
   });
 
   const open = (ws: WebSocket, req: IncomingMessage, person: { id: string; name: string }, bearer: string): void => {

@@ -6,11 +6,13 @@
  *  commander tree — one help, one parse, no relay. The CLI itself never
  *  imports app or host code statically.
  *
- *  Commands that cannot run on this machine are never registered: the one
- *  machine fact — a home here, or none — is decided once per run, shown in
- *  the help header (`home: ~/.aivi` / `home: none`), and handed to every
- *  command provider. A machine without a home sees only what it can do
- *  there; a typed command it does not have is honestly an unknown command. */
+ *  Commands that cannot run on this machine are never registered, and
+ *  commands the channel must not run answer their own guard line: the
+ *  machine facts — a home here or none, driven remotely or not — are decided
+ *  once per run, the home is shown in the help header (`home: ~/.aivi` /
+ *  `home: none`), and both are handed to every command provider. A machine
+ *  without a home sees only what it can do there; a typed command it does not
+ *  have is honestly an unknown command. */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
@@ -41,18 +43,34 @@ const version = (
 ).version;
 
 export async function main(argv: string[]): Promise<void> {
+  // The machine's facts, decided once per run from the environment and no
+  // probe: a home here or none, and whether this process is itself driven
+  // remotely. The header shows the home; providers receive both.
+  const machine = machineStatus();
+
   // Driving another machine is intent, typed as `--remote`/`-r`: the flag
   // comes out, everything else travels verbatim, and local execution never
   // happens (decision D23 — there is no fallback to a different machine's
-  // answer, and plain commands never touch the network).
+  // answer, and plain commands never touch the network). A driven session is
+  // already the far end of a channel: `-r` does not chain a second hop.
   const remoteAt = argv.findIndex(argument => argument === '--remote' || argument === '-r');
-  if (remoteAt !== -1) return execRemote(argv.toSpliced(remoteAt, 1));
+  if (remoteAt !== -1) {
+    if (machine.remote === true) throw new Error('remote exec does not chain: this session is already driven remotely');
+    return execRemote(argv.toSpliced(remoteAt, 1));
+  }
 
   const [command, subcommand] = argv;
 
-  // The machine's one fact, decided once per run from two sources and no
-  // probe: a home here, or none. The header shows it; providers receive it.
-  const machine = machineStatus();
+  // The client-side set (decision D23): commands that act on the machine you
+  // type on, refused over the channel by *them* — this file declares them, so
+  // this file is the provider that decides. When the machine fact says the
+  // process is driven remotely, their own actions answer the guard line,
+  // never `unknown command`, whatever the help showed. `configure` joins the
+  // set the day it exists; `add` and `update` are deliberately not here —
+  // they act on the server machine and therefore relay.
+  const actsHere = (): void => {
+    if (machine.remote === true) throw new Error('this acts on the machine you type on');
+  };
 
   // `server create` moved behind `aivi setup`; say so rather than forwarding
   // into the app, whose copy would do the identity step twice.
@@ -80,6 +98,7 @@ export async function main(argv: string[]): Promise<void> {
     program.command(`${name} [args...]`).description(description).allowUnknownOption(true);
 
   passThrough('setup', 'Sign in to an existing host, or create the server here').action(async (...rest) => {
+    actsHere();
     const args = rest.at(-1).args as string[];
     await setup(args, { home: homeForCreate() });
   });
@@ -144,7 +163,10 @@ export async function main(argv: string[]): Promise<void> {
     .command('upgrade')
     .description('Update this CLI through its install method (npm today)')
     .helpGroup('Updates')
-    .action(() => upgradeCli());
+    .action(() => {
+      actsHere();
+      return upgradeCli();
+    });
 
   program
     .command('uninstall')
@@ -155,6 +177,11 @@ export async function main(argv: string[]): Promise<void> {
     .option('--with-attribution', "also remove the opencode-attribution plugin, which is not aivi's")
     .helpGroup('Updates')
     .action(async values => {
+      // Refuse-relay (decision D14): over the channel this deletes the home
+      // the session itself runs on and kills the host driving it. The command
+      // answers its own guard, never `unknown command`.
+      if (machine.remote === true)
+        throw new Error('uninstall deletes the home this session drives; run it on the machine itself');
       // Not interactive: the listing is the confirmation, --confirm is the answer.
       const done = await uninstall({
         home: homeFromEnvOrConfig(),

@@ -22,6 +22,18 @@ import type * as prompts from '@clack/prompts';
  *  provider at mount time, never by hiding a command after the fact. */
 export interface MachineStatus {
   home?: string | undefined;
+  /** The client record's path when this machine has one — the file `configure`
+   *  edits (where the host is, who signs in). The command exists only where
+   *  the file exists; `setup` creates the first one. Existence, not
+   *  parseability: a broken record is exactly what `configure` is for. */
+  clientConfig?: string | undefined;
+  /** True when this process is the far end of an exec session: the host
+   *  spawned it (`AIVI_EXEC_SESSION`) to run commands someone typed on
+   *  another machine. Providers decide from it — the plan's sets are carried
+   *  by the commands' own declarations, not by the channel: commands that
+   *  act on the machine you type on answer their guard line here, and
+   *  commands that would fight the session itself refuse theirs. */
+  remote?: boolean | undefined;
 }
 
 /** What the CLI hands a plugin's command factory: the same home the built-ins

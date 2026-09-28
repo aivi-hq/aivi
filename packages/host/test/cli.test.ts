@@ -167,6 +167,40 @@ test('people commands talk HTTP to the running host', async t => {
   assert.match(missing.stderr, /HTTP 404/);
 });
 
+// The refuse-relay set answers at invocation, from the machine fact the exec
+// door stamps into the child (AIVI_EXEC_SESSION), never by hiding.
+test('serve over an exec session answers the guard and never boots a second host', async t => {
+  const { env, cleanup } = await scratch();
+  t.after(cleanup);
+  const done = await run(['serve'], { ...env, AIVI_EXEC_SESSION: '1' });
+  assert.equal(done.status, 1);
+  assert.match(done.stderr, /serve is not a command over the channel/);
+});
+
+test('serve says so when a host already answers the configured endpoint', async t => {
+  const store = new Store(':memory:');
+  const { home, env, cleanup } = await scratch();
+  const server = serveApp(
+    createApp({
+      store,
+      loaded: { path: '/config.json', config: configSchema.parse({ version: 1 }), sources: [], projects: [] },
+    }),
+  );
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+    await cleanup();
+  });
+  const port = (server.address() as { port: number }).port;
+  await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1, host: { port } }));
+  // One probe at invocation finds the answering host and stops; had serve
+  // booted instead, this child would never return.
+  const done = await run(['serve'], env);
+  assert.equal(done.status, 0, done.stderr);
+  assert.deepEqual(JSON.parse(done.stdout), { alreadyRunning: true, url: `http://127.0.0.1:${port}` });
+});
+
 test('plugin setup needs a terminal; scripts are told what to do instead', async t => {
   const { home, env, cleanup } = await scratch();
   t.after(cleanup);

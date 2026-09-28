@@ -6,19 +6,28 @@ import { type TestContext, test } from 'node:test';
 import { machineStatus } from '../src/home.ts';
 import { main } from '../src/main.ts';
 
-/** Point the client record at a scratch file (or nowhere) for one test. */
-const machine = async (t: TestContext, config: Record<string, unknown> | undefined) => {
+/** Point the client record at a scratch file (or nowhere) for one test, and
+ *  say whether this process is the far end of an exec session. */
+const machine = async (
+  t: TestContext,
+  config: Record<string, unknown> | undefined,
+  options: { remote?: boolean } = {},
+) => {
   const directory = await mkdtemp(join(tmpdir(), 'aivi-state-'));
   const file = join(directory, 'aivi.json');
   if (config !== undefined) await writeFile(file, JSON.stringify(config));
-  const env = { config: process.env.AIVI_CONFIG, home: process.env.AIVI_HOME };
+  const env = { config: process.env.AIVI_CONFIG, home: process.env.AIVI_HOME, session: process.env.AIVI_EXEC_SESSION };
   const exitCode = process.exitCode;
   process.env.AIVI_CONFIG = file;
   delete process.env.AIVI_HOME;
+  if (options.remote === true) process.env.AIVI_EXEC_SESSION = '1';
+  else delete process.env.AIVI_EXEC_SESSION;
   t.after(() => {
     if (env.config === undefined) delete process.env.AIVI_CONFIG;
     else process.env.AIVI_CONFIG = env.config;
     if (env.home !== undefined) process.env.AIVI_HOME = env.home;
+    if (env.session !== undefined) process.env.AIVI_EXEC_SESSION = env.session;
+    else delete process.env.AIVI_EXEC_SESSION;
     process.exitCode = exitCode;
     return rm(directory, { recursive: true, force: true });
   });
@@ -47,15 +56,25 @@ const run = async (argv: string[]): Promise<{ out: string; err: string }> => {
   return { out: out.join(''), err: err.join('') };
 };
 
-test('the machine fact is the two sources: AIVI_HOME leads, the record follows, nothing else', async t => {
-  await machine(t, undefined); // no client record at all
+test('the machine facts: home, the client record, and the driven session', async t => {
+  await machine(t, undefined); // no client record at all: nothing to configure
   assert.deepEqual(machineStatus(), {});
-  await machine(t, { configVersion: 1 }); // a record that names no home
-  assert.deepEqual(machineStatus(), {});
+
+  const directory = await machine(t, { configVersion: 1 }); // a record that names no home
+  assert.deepEqual(machineStatus(), { clientConfig: join(directory, 'aivi.json') });
+
   await machine(t, { configVersion: 1, home: '/somewhere' });
-  assert.deepEqual(machineStatus(), { home: '/somewhere' });
+  assert.equal(machineStatus().home, '/somewhere');
+
   process.env.AIVI_HOME = '/scratch'; // the dev override leads, as it always has
-  assert.deepEqual(machineStatus(), { home: '/scratch' });
+  assert.equal(machineStatus().home, '/scratch');
+  delete process.env.AIVI_HOME;
+
+  const driven = await machine(t, { configVersion: 1 }, { remote: true }); // the exec door's child
+  assert.deepEqual(machineStatus(), {
+    clientConfig: join(driven, 'aivi.json'),
+    remote: true,
+  });
 });
 
 test('a machine without a home is shown what it can do there', async t => {
@@ -86,4 +105,27 @@ test('a machine with a home sees the whole tree and its home in the header', asy
   assert.match(out, /service \[verb\]/, 'and the service commands');
   assert.match(out, /uninstall \[options\]/, 'and the exit ramp');
   assert.match(out, /App commands unavailable: No aivi server installed at/, 'the footer names the real gap');
+});
+
+// The client-side set answers the channel itself (decision D23): a driven
+// session runs these same commands and must refuse, never act on the server.
+test('a driven session refuses the commands that act on the machine you type on', async t => {
+  await machine(t, { configVersion: 1, home: '/no/such/home' }, { remote: true });
+  for (const argv of [['setup'], ['upgrade']]) {
+    await assert.rejects(() => run(argv), { message: 'this acts on the machine you type on' }, `${argv} answered`);
+  }
+});
+
+test('a driven session refuses to uninstall the home it is driving', async t => {
+  await machine(t, { configVersion: 1, home: '/no/such/home' }, { remote: true });
+  await assert.rejects(() => run(['uninstall']), {
+    message: 'uninstall deletes the home this session drives; run it on the machine itself',
+  });
+});
+
+test('remote exec does not chain a second hop', async t => {
+  await machine(t, { configVersion: 1 }, { remote: true });
+  await assert.rejects(() => run(['-r', 'status']), {
+    message: 'remote exec does not chain: this session is already driven remotely',
+  });
 });

@@ -32,7 +32,7 @@ let closeLogging: () => Promise<void> = async () => {};
  *  never pollutes commands that are not its own. */
 export async function registerCommands(program: Command, machine: MachineStatus): Promise<void> {
   registerGettingStarted(program);
-  registerServer(program);
+  registerServer(program, machine);
   registerHost(program);
   registerPeople(program);
   registerProjects(program);
