@@ -1,0 +1,7 @@
+---
+'@aivi/cli': minor
+'@aivi/host': minor
+'@aivi/plugin': minor
+---
+
+One `aivi` binary. The `aivi forward` relay — the second bin, the second help tree, and the argv byte-contract that trapped command bodies behind it — is gone: the thin CLI now mounts the installed server's operator commands **in-process**, a dynamic import of the home install's `./cli` onto its own commander tree, so `aivi --help` shows machine and operator commands together, ctrl+c hits one process instead of a three-process group, and the identity and plugin-setup steps are direct calls into the installed code. Machine commands still never load server code: a half-installed or broken app install shows the machine help with a one-line notice. `@aivi/app` retires into `@aivi/host`, which exports `./cli` — the command surface `serve` composes and the CLI mounts — and is published no more; `aivi serve` finally gets the `state/logs/aivi.log` file its documentation always promised. Setup's server-package flag is `--host-package` (it was `--app-spec` in 0.8.1). The `aivi-plugins` array in `<home>/app/package.json` is the one place that says which plugins exist: `aivi add` and `aivi remove` write and erase all three facts — the npm package, the list entry, and the `plugins.<id>` block in config.json — and rebuild the editor schema into `<home>/state/cache/schema.json`, which config.json's `$schema` hint points at.
