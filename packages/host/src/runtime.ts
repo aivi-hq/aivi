@@ -34,6 +34,11 @@ export const SECRET_ENV = [
   'SLACK_APP_TOKEN',
   'OPENCODE_USERNAME',
   'OPENCODE_PASSWORD',
+  // The bearer a driven exec session's human presented (D15): the door
+  // stamps it into that session's closed env, and it is scrubbed here so an
+  // operator's credential never reaches a task script, however it entered
+  // the environment.
+  'AIVI_OPERATOR_BEARER',
 ];
 
 /**

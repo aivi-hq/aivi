@@ -326,9 +326,9 @@ authorised with the primary's app-actor token
 `update.channel` picks what `aivi update` resolves. `stable` (the npm `latest`
 dist-tag) is the only channel: a nightly would mean releasing from main, which
 is not wanted. The enum exists so a future channel is a schema change, not a
-redesign. There is no rollback: `aivi update` stops the server, installs,
-restarts and probes `/health`; sessions resume because state is SQLite and
-OpenCode's own.
+redesign. There is no rollback: `aivi update` installs while the server
+answers, then makes one announced restart and probes `/health`; sessions
+resume because state is SQLite and OpenCode's own.
 
 ## Secrets
 
@@ -339,7 +339,11 @@ set: `<home>/.env`. `fnox exec` works the same way. Variables: `DISCORD_BOT_TOKE
 `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), and for
 Linear the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
 `LINEAR_WEBHOOK_SECRET` (the primary app) plus `LINEAR_<APP>_…` per extra app
-([Linear](#linear)).
+([Linear](#linear)). `AIVI_OPERATOR_BEARER` is the one name in that list no
+one sets: the exec door stamps it with the bearer this connection presented
+into a driven session's closed child environment, so commands typed
+remotely attribute to the human who typed them, not to the server's own
+token.
 
 The host API itself takes no token: auth is `none`, commands are open. A bearer
 token only *identifies* the caller (whose job, whose link, whose memory — a
@@ -355,7 +359,9 @@ basic-auth password never appear in aivi configuration.
 
 Shell tasks never inherit these secrets: the child process gets the host
 environment minus the fixed names above and minus every key defined in
-`<home>/.env`. Everything else (PATH, HOME, the operator's shell variables)
+`<home>/.env` — `AIVI_OPERATOR_BEARER` among the fixed names, so a driven
+operator's credential cannot leak into a task script however it entered the
+environment. Everything else (PATH, HOME, the operator's shell variables)
 passes through, and a task's own `env` map is merged on top.
 
 One JSON schema covers the whole file, composed at runtime: core's fields

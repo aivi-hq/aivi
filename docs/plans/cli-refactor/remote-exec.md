@@ -409,7 +409,14 @@ flag and what it teaches around it, then the strings and docs.
       before launchctl is touched, and `update`/`add`/`remove` restarted
       through that one atomic call. No top-level `restart` command: restart
       is `aivi service restart`, relayed like the rest of `service`.
-- [ ] `AIVI_OPERATOR_BEARER` env + scrub list update in configuration docs.
+- [x] `AIVI_OPERATOR_BEARER` env + scrub list update in configuration docs.
+      Landed 2026-09-28: the name joined `SECRET_ENV` in
+      `packages/host/src/runtime.ts` (D15 — an operator's credential never
+      reaches a task script, however it entered the environment), the scrub
+      test proves it at the executor boundary, and configuration.md names it
+      in the Secrets and shell-task paragraphs. The name is stamped by the
+      door today but not yet consumed by the CLI — attribution of remote
+      commands is the credentials pass's opening.
 - [ ] Tests: help output per state (fixture configs); `--remote setup`
       gives the guard, hidden commands invoked anyway give guard messages,
       never `unknown command`; the remote render shows and hides the
