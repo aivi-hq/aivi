@@ -254,7 +254,7 @@ built until someone asks twice:
   reading a re-entered result *is* the silence mechanism).
 - Natural-language time parsing in aivi (the model translates; the tool
   echoes the next occurrences).
-- Structured confirmation widgets in Discord ([discord-widgets](backlog/discord-widgets.md)).
+- Structured confirmation widgets in Discord ([discord-polish](backlog/discord-polish.md)).
 - Per-user ownership of agent-created jobs: today every agent-created job is
   visible to and mutable by every caller the access policy admits; the owner
   accepted "jobs are the admin's responsibility" for now.

@@ -26,7 +26,7 @@ permissions:
     effect: deny
   # No channel client answers the `question` tool yet — a question asked from
   # Discord hangs the turn. Ask in plain text instead. Remove this rule when
-  # channels grow the widget (docs/backlog/discord-widgets.md).
+  # channels grow the widget (docs/backlog/discord-polish.md).
   - action: question
     resource: "*"
     effect: deny

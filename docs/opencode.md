@@ -156,7 +156,7 @@ npm run aivi -- runs list
 `dreamer.md`) from `packages/cli/templates/agents/`. Both seeded agents deny
 the `question` tool: no channel client can answer one yet, so a question asked
 in an unattended turn would only hang waiting for an answer
-([discord-widgets](backlog/discord-widgets.md) is the way it lands).
+([discord-polish](backlog/discord-polish.md) is the way it lands).
 
 The running host dispatches queued runs through the session driver
 (`packages/host/src/session.ts`): create the session with a client-chosen id,
