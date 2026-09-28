@@ -118,7 +118,8 @@ version gate; no host keys, no password daemon, no second listener.
 Endpoint: `GET /v1/exec` as an upgrade on the host's HTTP server (existing
 chain: request diary → headers → version gate → bearer → person). Opening it
 requires the **`operator` role** (decision D16 — the roles store of 2026-09-21
-gets its first real customer) and [person id + token pairing](#person-id--token-pairing).
+gets its first real customer). The bearer stays a plain token in this phase;
+[person id + token pairing](#person-id--token-pairing) is deferred.
 A per-source throttle rides along **only if it is minimal plumbing** — the
 upgrade request is a plain HTTP request, so
 [hono-rate-limiter](https://honohub.dev/docs/rate-limiter) as middleware in
@@ -223,14 +224,19 @@ human. The name joins the fixed token names scrubbed from task scripts' env
 
 ## Person id + token pairing
 
-The client config carries `person.id` next to `person.token` (the field
-exists; make it required on a connected client — `whoami` already returns the
-id), and the host **validates the pair**: the token's owner must be the
-presented person id, else 401. Guessing one high-entropy value is a search;
-guessing a matching *person + token* pair is a product of searches — brute
-force gets multiplicatively harder for the exec door and every bearer call,
-at the cost of one comparison. Anonymous calls stay anonymous (auth is
-`none`); the exec channel never sees them (D16). The client-config
+**Deferred 2026-09-28**, before this phase was built: the current token-only
+mechanism is fine, and the new architecture — every API call already behind
+hono middleware, one bearer-resolution seam — makes this a drop-in whenever
+it returns. It returns as part of a future **credentials** pass, which will
+rethink what the client presents at all; validating a half-measure now
+would be plumbing the replacement deletes.
+
+What was decided (D21, kept for the credentials pass): the client config
+carries `person.id` next to `person.token`, and the host **validates the
+pair** — the token's owner must be the presented person id, else 401.
+Guessing one high-entropy value is a search; guessing a matching *person +
+token* pair is a product of searches. Anonymous calls stay anonymous (auth
+is `none`); the exec channel never sees them (D16). The client-config
 semantics stay owned by [people.md](../../people.md).
 
 ## Security
@@ -240,8 +246,9 @@ semantics stay owned by [people.md](../../people.md).
 - Tokens already travel plain HTTP today; this adds no new exposure class —
   the stated risk stays the non-loopback bind warning
   ([people.md](../../people.md)). TLS is out of scope.
-- Brute force: the person id + token pairing multiplies the search space;
-  the optional throttle is manners, not the wall.
+- Brute force: the bearer stays a plain token this phase; the deferred
+  pairing (D21) would multiply the search space whenever credentials land.
+  The optional throttle is manners, not the wall.
 - **Audit**: every exec session writes one diary line — person **id and
   name**, argv, source address, exit code. When something breaks, we can see
   who did it.
@@ -283,16 +290,12 @@ laptop, never through the channel.
 - Refused: `serve` and `uninstall` answer their refusals over the channel;
   `aivi -r setup` (and `-r upgrade`, `-r configure`) answer the
   client-side guard message.
-- A wrong pairing (`person.id` not the token's owner) is a 401, logged.
 
 ## Checklist
 
-Ordered as built: the pairing and channel first (testable in-process), the
-flag and what it teaches around them, then the strings and docs.
+Ordered as built: the channel first (testable in-process), the
+flag and what it teaches around it, then the strings and docs.
 
-- [ ] Person id + token pairing: required `person.id` in the client config
-      (setup writes it from `whoami`), host validates the pair on bearer
-      resolution; tests for mismatch → 401.
 - [ ] `/v1/exec` upgrade route: chain order, operator gate, optional
       hono-rate-limiter middleware, audit line (person **id + name**, argv,
       source address, exit code).
