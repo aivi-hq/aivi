@@ -65,8 +65,6 @@ export interface Identity {
   next?: string;
   /** Caveat on the printed url (a loopback or LAN guess the operator should know about), if any. */
   urlNote?: string;
-  /** What the soft reachability probe saw, when a public base was given. */
-  probeNote?: string;
 }
 
 /** What the identity step is asked for: where the server will run, the
@@ -118,7 +116,7 @@ export interface SetupOptions {
 
 export interface SetupFlags {
   plugins: string[];
-  appSpec: string | undefined;
+  hostPackage: string | undefined;
   use: string | undefined;
   connect: boolean;
   url: string | undefined;
@@ -131,8 +129,8 @@ export interface SetupFlags {
  *  one value, as `--flag value` or `--flag=value` — the same two shapes for all. */
 const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = {
   '--plugin': (flags, value) => flags.plugins.push(value),
-  '--app-spec': (flags, value) => {
-    flags.appSpec = value;
+  '--host-package': (flags, value) => {
+    flags.hostPackage = value;
   },
   '--use': (flags, value) => {
     flags.use = value;
@@ -154,7 +152,7 @@ const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = 
 export function extractSetupFlags(args: string[]): SetupFlags {
   const flags: SetupFlags = {
     plugins: [],
-    appSpec: undefined,
+    hostPackage: undefined,
     use: undefined,
     connect: false,
     url: undefined,
@@ -280,7 +278,6 @@ function reachStep(reach: Reach): Pick<IdentityStep, 'public' | 'lanBind'> {
  *  handoff for the other machine when that is where the person will sign in. */
 function printIdentity(identity: Identity, use: string, home: string, io: SetupIo): void {
   if (identity.urlNote) io.warn(identity.urlNote);
-  if (identity.probeNote) io.log(identity.probeNote);
   if (use !== 'another') return;
   io.log(`The server home is ready at ${home}. Take these to the other machine — the token is shown once:`);
   io.log(`  url:   ${identity.url}`);
@@ -310,7 +307,7 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   const appDir = writeHomeSkeleton(home);
 
   io.log(`Installing the aivi server into ${appDir}`);
-  io.install([flags.appSpec ?? '@aivi/host', ...flags.plugins], appDir);
+  io.install([flags.hostPackage ?? '@aivi/host', ...flags.plugins], appDir);
   saveClientConfig({ home, appDir, nodePath, installMethod: 'npm' });
 
   // The plugin list: every package npm installed into the app except the
@@ -400,7 +397,7 @@ function opencodeJsonc(pluginSpec: string): string {
 }
 
 function serverInstalled(home: string): boolean {
-  return existsSync(join(home, 'app', 'node_modules', '@aivi', 'app'));
+  return existsSync(join(home, 'app', 'node_modules', '@aivi', 'host'));
 }
 
 /** The host url of the server in this home, read as a plain file (the CLI

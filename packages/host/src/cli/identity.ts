@@ -42,7 +42,7 @@ export async function serverCreate(options: {
   if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
   // The reach address lands before anything reads the config: an invalid
   // value fails here, with nothing minted yet.
-  const reachable = await storeReach(configPath, options);
+  await storeReach(configPath, options);
   const loaded = await loadConfig(configPath);
   const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
   try {
@@ -69,8 +69,6 @@ export async function serverCreate(options: {
       url: printed.url,
       declared: printed.declared,
       bind: loaded.config.host.bind,
-      reachable,
-      publicBase: options.public,
     });
   } finally {
     store.close();
@@ -90,8 +88,6 @@ function identityResult(a: {
   url: string;
   declared: boolean;
   bind: string;
-  reachable: boolean | undefined;
-  publicBase: string | undefined;
 }): Record<string, unknown> {
   const note = a.where === 'another' && !a.declared ? urlNote(a.url, a.bind, a.configPath) : undefined;
   return {
@@ -102,7 +98,6 @@ function identityResult(a: {
     token: a.secret,
     ...(a.clientConfig ? { clientConfig: a.clientConfig } : {}),
     ...(note ? { urlNote: note } : {}),
-    ...(a.reachable === undefined ? {} : { probeNote: probeNote(a.reachable, a.publicBase!) }),
     next:
       a.where === 'this-machine'
         ? 'Identity ready. `aivi setup` installs the OpenCode plugins and verifies the sign-in.'
@@ -110,15 +105,14 @@ function identityResult(a: {
   };
 }
 
-/** Store the reach address, then soft-probe a declared base — inform, never
- *  block: a tunnel that is correct but not running yet must stay storable. */
+/** Store the reach address. No probe here: during setup nothing runs yet,
+ *  and a base that is correct but not up is as storable as one that answers. */
 async function storeReach(
   configPath: string,
   options: { public?: string | undefined; lanBind?: string | undefined },
-): Promise<boolean | undefined> {
+): Promise<void> {
   if (options.lanBind) await writeConfigBlock(configPath, ['host', 'bind'], options.lanBind);
   if (options.public) await writeConfigBlock(configPath, ['host', 'public'], options.public);
-  return options.public ? await probePublic(options.public) : undefined;
 }
 
 /** A caveat on the printed url when it is a guess the receiver should know about. */
@@ -126,12 +120,6 @@ function urlNote(url: string, bind: string, configPath: string): string {
   return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(bind)
     ? `${url} answers on this machine only. Once a funnel or tunnel exists, store its URL as host.public in ${configPath} — webhook platforms need it.`
     : `${url} answers inside your network only. Once a funnel or tunnel exists, store its URL as host.public in ${configPath}.`;
-}
-
-function probeNote(reachable: boolean, base: string): string {
-  return reachable
-    ? `Reachability: ${base} answers.`
-    : `Reachability: ${base}/health did not answer yet — fine if the tunnel is not up; installs that need deliveries test it hard before trusting it.`;
 }
 
 /** The cancel screen; returns undefined so a step can hand "the speaker stopped" back. */
@@ -196,21 +184,4 @@ function writeClientConfig(url: string, home: string, token: string): string {
   writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
   return path;
-}
-
-/**
- * Bounded, informative, never blocking: a few tries against `<base>/health`,
- * which is open and exempt from the version gate. A tunnel that is correct
- * but not running yet must stay storable, so a miss is a note, not an error.
- */
-async function probePublic(base: string): Promise<boolean> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      if ((await fetch(`${base}/health`, { signal: AbortSignal.timeout(4000) })).ok) return true;
-    } catch {
-      // retry; the last miss is what the caller reports
-    }
-    if (attempt < 2) await new Promise(done => setTimeout(done, 2000));
-  }
-  return false;
 }

@@ -128,7 +128,7 @@ test('setup flags are pulled out; unknown flags are refused', () => {
   const flags = extractSetupFlags([
     '--plugin',
     '@aivi/channel-discord',
-    '--app-spec',
+    '--host-package',
     '@aivi/host@0.2.0',
     '--use',
     'this-machine',
@@ -136,7 +136,7 @@ test('setup flags are pulled out; unknown flags are refused', () => {
     'Ada',
   ]);
   assert.deepEqual(flags.plugins, ['@aivi/channel-discord']);
-  assert.equal(flags.appSpec, '@aivi/host@0.2.0');
+  assert.equal(flags.hostPackage, '@aivi/host@0.2.0');
   assert.equal(flags.use, 'this-machine');
   assert.equal(flags.name, 'Ada');
   assert.equal(flags.connect, false);

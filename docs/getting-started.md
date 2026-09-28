@@ -11,7 +11,7 @@ Use Node 26 and npm. From the repository root:
 npm ci
 npm run check
 npm run aivi:cli -- setup --use this-machine \
-  --app-spec "file:../../packages/host" \
+  --host-package "file:../../packages/host" \
   --plugin "file:../../packages/channel-discord" \
   --plugin "file:../../packages/channel-slack" \
   --plugin "file:../../packages/tracker-linear"
