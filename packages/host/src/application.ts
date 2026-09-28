@@ -54,7 +54,7 @@ class Wake {
   }
 }
 
-export interface HostServices {
+export interface AiviServices {
   loaded: LoadedConfig;
   store: Store;
   knowledge: KnowledgeService;
@@ -83,13 +83,15 @@ export interface HostResources {
   knowledge: KnowledgeService;
 }
 export type { RunningModule } from './modules.ts';
-export type HostModule = ModuleContract<HostServices>;
+/** The module contract: what the host composes. Declared here, the implementer;
+ *  exported under these names to plugin authors by `@aivi/plugin`. */
+export type AiviModule = ModuleContract<AiviServices>;
 
 export interface RunHostOptions {
   loaded: LoadedConfig;
   store: Store;
   resources: () => Promise<HostResources>;
-  modules?: HostModule[];
+  modules?: AiviModule[];
   signal: AbortSignal;
   /** Environment variable names shell tasks must not inherit (the keys of `<home>/.env`); aivi's fixed secrets are always hidden. */
   protectedEnv?: Iterable<string>;
@@ -118,7 +120,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   let knowledge: KnowledgeService | undefined;
   let scheduler: Scheduler | undefined;
   let server: ReturnType<typeof serveApp> | undefined;
-  let supervisor: ModuleSupervisor<HostServices> | undefined;
+  let supervisor: ModuleSupervisor<AiviServices> | undefined;
   const owner = randomUUID();
   let acquired = false;
 
@@ -179,7 +181,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         hint: 'Anyone who can reach this address can search knowledge, use the browser and run jobs.',
       });
 
-    const services: HostServices = {
+    const services: AiviServices = {
       loaded,
       store,
       knowledge,

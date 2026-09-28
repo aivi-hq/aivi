@@ -2,7 +2,7 @@
 
 import type { LoadedConfig } from '@aivi/core';
 import { printedBaseUrl } from '@aivi/core';
-import { createHostClient } from '@aivi/host';
+import { createHostClient } from '@aivi/plugin/api';
 import * as p from '@clack/prompts';
 import type { Command } from 'commander';
 import { context, hostUrl, print } from '../context.ts';

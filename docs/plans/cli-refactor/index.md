@@ -3,7 +3,10 @@
 Status: in progress (designed 2026-09-27, one long session). Phase 1 landed in
 two shippable halves on `refactor/single-cli-command`: half 1 — `forward.ts`
 deleted, the CLI mounts the installed server's command tree in-process — and
-half 2 — the `@aivi/app` move into `@aivi/host` and burial. Two items wait at
+half 2 — the `@aivi/app` move into `@aivi/host` and burial. Phase 2 landed on
+the same branch: the `@aivi/plugin` kit, plugins as `(ctx) => Command`
+factories, the `ask` wrappers dead, and `@aivi/linear` renamed to
+`@aivi/tracker-linear`. Two items wait at
 the program's live gate, not in the code: the D22 dev-home nuke (an
 interactive `aivi setup` in a real terminal) and the changesets, which the
 operator parked until the end of the refactor.
@@ -62,7 +65,7 @@ One user-facing binary. One command mechanism for host and plugins alike.
 | # | Document | Lands | Depends on |
 | --- | --- | --- | --- |
 | 1 | [one-cli.md](one-cli.md) | one bin; `forward.ts`, `forwardIdentity`, and `@aivi/app` deleted; host gains `./cli` — both halves landed; D22 nuke + changesets open | — |
-| 2 | [plugin-contract.md](plugin-contract.md) | `@aivi/plugin` kit; plugins export `(ctx) => Command`; `ask` wrappers die; `@aivi/tracker-linear` rename | 1 |
+| 2 | [plugin-contract.md](plugin-contract.md) | `@aivi/plugin` kit; plugins export `(ctx) => Command`; `ask` wrappers die; `@aivi/tracker-linear` rename — landed (changesets still parked) | 1 |
 | 3 | [plugin-registry.md](plugin-registry.md) | `aivi-plugins` list in `<home>/app/package.json`; per-plugin zod schemas; `state/cache/schema.json`; the hardcoded `serve` if-chain dies | 2 |
 | 4 | [remote-exec.md](remote-exec.md) | `/v1/exec` websocket relay + server-side PTY; operator gate; person id + token pairing; announce-before-disconnect | 1 (2 makes it smaller) |
 | 5 | [visibility.md](visibility.md) | three process states × two small command sets, commander-native | starts with 1 (fresh/local help), completes with 4 |

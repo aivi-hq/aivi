@@ -2,9 +2,10 @@
  *  line, handed to whatever package aivi installs. */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { PluginSetup, PluginSetupContext } from '@aivi/core';
-import { errorMessage, PluginSetupCancelled, print, upsertEnvFile, writeConfigBlock } from '@aivi/core';
+import { errorMessage, print, upsertEnvFile, writeConfigBlock } from '@aivi/core';
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext } from '@aivi/plugin';
 import * as p from '@clack/prompts';
+import { context, withStore } from './context.ts';
 
 /**
  * The plumbing step behind `aivi install`: run the plugin's own setup entry.
@@ -46,6 +47,9 @@ export async function pluginSetup(
     print: (value, output) => print(value, output),
     prompts: p,
     fetch: (url, init) => fetch(url, init),
+    async withStore(fn) {
+      return withStore((await context()).loaded, fn);
+    },
     async writeConfigBlock(path, value) {
       await writeConfigBlock(options.configPath, path, value);
     },

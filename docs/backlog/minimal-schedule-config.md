@@ -8,7 +8,7 @@ per-job `timezone`/`resource` escape hatches survived; seeded definitions and
 ids were left alone (the task registry, built 2026-09-18; the task kinds are
 owned by [configuration](../configuration.md#tasks)). What is left:
 
-- Operator tuning of *module*-seeded schedules: `HostModule.jobs` still
+- Operator tuning of *module*-seeded schedules: `AiviModule.jobs` still
   returns full `Job` definitions and no `scheduler.<name>` surface exists.
   Shape it with `linear.sweep` as the first real consumer
   ([linear-worktree-lifecycle](linear-worktree-lifecycle.md)).

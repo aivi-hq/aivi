@@ -31,7 +31,7 @@ Recon (2026-09-27, verified against the tree):
 
 - **No dependency cycle**: `@aivi/knowledge` depends only on `@aivi/core` +
   qmd and never imports `@aivi/host`, so host can gain the command surface
-  (which imports knowledge) cleanly. Channel packages and `@aivi/linear`
+  (which imports knowledge) cleanly. Channel packages and `@aivi/tracker-linear`
   arrive only through dynamic `import()` and resolve from `<home>/app`'s
   `node_modules` whatever package hosts the call site.
 - **`@aivi/app` consumers to rewire in Half 2** (line anchors predate
@@ -238,7 +238,7 @@ from the plan while landing:
 
 - **The tsconfig references were a cycle, so the host's build is split.**
   Half 2 gives host dynamic `import()`s of `@aivi/browser`,
-  `@aivi/channel-discord`, `@aivi/channel-slack` and `@aivi/linear` (the
+  `@aivi/channel-discord`, `@aivi/channel-slack` and `@aivi/tracker-linear` (the
   `serve` if-chain and `projects add --linear`), and all of those packages
   import `@aivi/host` — so host cannot reference them in *one* project
   (`error TS6202`). The split is build-plumbing only: `tsconfig.build.json`

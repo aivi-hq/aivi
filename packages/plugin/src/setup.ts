@@ -6,8 +6,9 @@
  * instructions and is testable without a terminal or a platform account.
  */
 
+import type { OutputBlock } from '@aivi/core';
+import type { Store } from '@aivi/host';
 import type * as prompts from '@clack/prompts';
-import type { OutputBlock } from './output.ts';
 
 /** A prompt the person cancelled; the runner says it stopped and writes nothing further. */
 export class PluginSetupCancelled extends Error {}
@@ -35,6 +36,11 @@ export interface PluginSetupContext {
   prompts: typeof prompts;
   /** Platform calls the flow verifies with; the runner supplies the real fetch. */
   fetch(url: string, init?: RequestInit): Promise<Response>;
+  /** The home's SQLite store, open for the callback and closed after, whatever
+   *  the callback does. A flow reads what the server has recorded (a webhook's
+   *  diary) without importing the server: `Store` is named here as a type, the
+   *  runner opens the database. */
+  withStore<T>(fn: (store: Store) => T | Promise<T>): Promise<T>;
   /** Write this plugin's block into `config.json`; the file must load again or the old bytes return. */
   writeConfigBlock(path: string[], value: unknown): Promise<void>;
   /** Replace-or-append one key in `<home>/.env`, kept 0600; the value is never echoed. */

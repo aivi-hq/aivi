@@ -18,7 +18,7 @@ export const PLUGIN_ALIASES: Record<string, string> = {
   discord: '@aivi/channel-discord',
   slack: '@aivi/channel-slack',
   browser: '@aivi/browser',
-  linear: '@aivi/linear',
+  linear: '@aivi/tracker-linear',
 };
 
 /** The module each first-party plugin enables — the id `/status` reports. */
@@ -26,7 +26,7 @@ const MODULE_BY_SPEC: Record<string, string> = {
   '@aivi/channel-discord': 'discord',
   '@aivi/channel-slack': 'slack',
   '@aivi/browser': 'browser',
-  '@aivi/linear': 'linear',
+  '@aivi/tracker-linear': 'linear',
 };
 
 export interface InstallOptions {

@@ -4,10 +4,11 @@ import { respond } from './http.ts';
 
 /**
  * The header a client identifies itself with. Every first-party client sends
- * it — the host's own `createHostClient`, and `@aivi/cli`, whose version is
- * kept equal to the host's by the changesets `fixed` group. A silent caller
- * is never a pass: only our clients speak this API, and one of them forgot
- * to update.
+ * it — `createHostClient` from `@aivi/plugin/api`, and `@aivi/cli`, whose
+ * version is kept equal to the host's by the changesets `fixed` group (the
+ * kit moves in the same group, so the OpenCode plugin carries a comparable
+ * number). A silent caller is never a pass: only our clients speak this API,
+ * and one of them forgot to update.
  */
 const CLIENT_HEADER = 'x-aivi-client';
 

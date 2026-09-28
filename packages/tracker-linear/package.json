@@ -1,6 +1,6 @@
 {
-  "name": "@aivi/channel-slack",
-  "version": "0.7.2",
+  "name": "@aivi/tracker-linear",
+  "version": "0.4.1",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
@@ -17,7 +17,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aivi-hq/aivi.git",
-    "directory": "packages/channel-slack"
+    "directory": "packages/tracker-linear"
   },
   "publishConfig": {
     "access": "public"
@@ -28,15 +28,12 @@
   "dependencies": {
     "@aivi/core": "^0.7.1",
     "@aivi/plugin": "^0.1.0",
-    "@slack/socket-mode": "3.0.1",
-    "@slack/web-api": "8.1.1",
     "commander": "15.0.0"
   },
   "peerDependencies": {
     "@aivi/host": "^0.8.1"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.1",
-    "@clack/prompts": "1.8.1"
+    "@aivi/host": "^0.8.1"
   }
 }

@@ -12,7 +12,7 @@ npm run aivi:cli -- setup --use this-machine \
   --app-spec "file:../../packages/host" \
   --plugin "file:../../packages/channel-discord" \
   --plugin "file:../../packages/channel-slack" \
-  --plugin "file:../../packages/linear"
+  --plugin "file:../../packages/tracker-linear"
 ```
 
 That is the ordinary thin CLI (`packages/cli`), pointed at this directory by

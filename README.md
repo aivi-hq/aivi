@@ -65,7 +65,8 @@ so local and installed behavior are identical.
 | `@aivi/browser`         | Chrome DevTools MCP, persistent profile, session-owned tabs                                                                                                                                        |
 | `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads                                                                                                        |
 | `@aivi/channel-slack`   | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads                                                                                             |
-| `@aivi/linear`          | Linear module: one app receiving every webhook, the assistant for people, workers in git worktrees, the Linear MCP proxy ([linear](docs/linear.md))                                                |
+| `@aivi/plugin`          | The plugin kit: the setup and CLI command contracts, `resolveBlocked`, the module contract under its authoring names — and `./api`, the fetch-only host client. The package you import to write an aivi plugin; never depends on the host at runtime ([plugin](packages/plugin/README.md)) |
+| `@aivi/tracker-linear`  | Linear module: one app receiving every webhook, the assistant for people, workers in git worktrees, the Linear MCP proxy ([linear](docs/linear.md))                                                |
 | `@aivi/opencode`        | OpenCode plugin: `knowledge_search`, `knowledge_projects`, `aivi_sources`, `aivi_status`, `aivi_context`, `aivi_jobs`, `aivi_browser`                                                              |
 
 Modules and jobs call shared services in-process. The plugin reaches the same

@@ -5,13 +5,8 @@
  * a block that exists. Until this block exists the aivi browser is off: the
  * plugin never sees an `aivi_browser` tool.
  */
-import {
-  browserConfigSchema,
-  type PluginSetup,
-  PluginSetupCancelled,
-  type PluginSetupContext,
-  type PluginSetupResult,
-} from '@aivi/core';
+import { browserConfigSchema } from '@aivi/core';
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
 
 /** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
  *  nothing — neither is an answer. The flow stops with

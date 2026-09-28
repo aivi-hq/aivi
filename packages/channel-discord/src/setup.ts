@@ -9,7 +9,7 @@
  * every id matches the platform's shape, and a config.json that no longer
  * loads is restored to its old bytes.
  */
-import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/core';
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
 
 /** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
  *  nothing — neither is an answer. The flow stops with

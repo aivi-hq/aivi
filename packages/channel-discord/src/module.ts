@@ -1,16 +1,6 @@
 import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
 import { accessEntry, errorMessage } from '@aivi/core';
-import type {
-  ChannelPlatform,
-  ChatCommand,
-  ChatCommandName,
-  DeliveryContext,
-  HostModule,
-  HostServices,
-  Store,
-  Turn,
-} from '@aivi/host';
 import {
   announce,
   CHAT_COMMANDS,
@@ -36,6 +26,8 @@ import {
   stopTurn,
   switchModel,
 } from '@aivi/host';
+import type { AiviModule, AiviServices, Store } from '@aivi/plugin';
+import type { ChannelPlatform, ChatCommand, ChatCommandName, DeliveryContext, Turn } from '@aivi/plugin/channel';
 import {
   type AutocompleteInteraction,
   ChannelType,
@@ -106,7 +98,7 @@ export async function registerDiscordCommands(config: DiscordConfig): Promise<vo
   });
 }
 
-export function createDiscordModule(config: DiscordConfig): HostModule {
+export function createDiscordModule(config: DiscordConfig): AiviModule {
   return { id: 'discord', start: services => startDiscord(config, services) };
 }
 
@@ -123,7 +115,7 @@ function requireToken(): string {
   return token;
 }
 
-async function startDiscord(config: DiscordConfig, services: HostServices) {
+async function startDiscord(config: DiscordConfig, services: AiviServices) {
   const log = services.log.getChild('discord');
   const token = requireToken();
   const store = openDiscordStore(services.store, config);

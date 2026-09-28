@@ -1,3 +1,10 @@
+/**
+ * The HTTP client for the aivi server, for whoever talks to it from outside:
+ * the OpenCode-side plugin (a guest in someone else's process) and a plugin's
+ * own tool surface. It ships in the kit, not in the host, so reaching the
+ * server never pulls SQLite, QMD or other host-side weight into the caller.
+ */
+import { createRequire } from 'node:module';
 import type {
   HostClient,
   JobResponse,
@@ -11,7 +18,16 @@ import type {
   Status,
   Whoami,
 } from '@aivi/core';
-import { hostVersion } from './version.ts';
+
+/**
+ * The version of this `@aivi/plugin` installation — read from its own
+ * `package.json` at runtime, so the number can never drift from the package
+ * that carries it. It travels as `x-aivi-client`; the host serves a client at
+ * or behind its own version, and `@aivi/cli`, `@aivi/host` and `@aivi/plugin`
+ * move in lockstep through the changesets `fixed` group, so the two sides of
+ * the wire agree. The gate's rules are in the host's `api/gate.ts`.
+ */
+const clientVersion: string = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
 
 export interface HostClientOptions {
   /** Bearer token identifying the caller (a person token). Omit to stay anonymous. */
@@ -33,7 +49,7 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
     // error below carries that answer. Read from this package's own
     // package.json: this module must stay free of SQLite, QMD, and other
     // host-side weight.
-    'x-aivi-client': hostVersion,
+    'x-aivi-client': clientVersion,
     ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
   };
 

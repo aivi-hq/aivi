@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Person, Run } from '@aivi/core';
 import { configSchema, getLogger, slackConfigSchema } from '@aivi/core';
-import type { HostServices, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
+import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import {
   CHAT_COMMANDS,
   Channels,
@@ -16,6 +16,7 @@ import {
   ToolRegistry,
   usageHint,
 } from '@aivi/host';
+import type { AiviServices } from '@aivi/plugin';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import type { Routed, UnlinkedSender } from '../src/module.ts';
 import {
@@ -305,7 +306,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   const channels = new Channels();
   const abort = new AbortController();
   const slack = fakeConnection();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge,
@@ -503,7 +504,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/config.json', projects: [], sources: [] };
   const slack = fakeConnection();
   const abort = new AbortController();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge: { search: async () => [], index: async () => ({}), close: async () => {} },
@@ -577,7 +578,7 @@ test('progress: the placeholder goes into the thread, stays quiet inside its win
   };
   const slack = fakeConnection();
   const abort = new AbortController();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge: { search: async () => [], index: async () => ({}), close: async () => {} },
@@ -624,7 +625,7 @@ test('progress when the turn cannot run: the notice edits the placeholder instea
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/config.json', projects: [], sources: [] };
   const slack = fakeConnection();
   const abort = new AbortController();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge: { search: async () => [], index: async () => ({}), close: async () => {} },
@@ -710,7 +711,7 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
   };
   const slack = fakeConnection();
   const abort = new AbortController();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge: { search: async () => [], index: async () => ({}), close: async () => {} },

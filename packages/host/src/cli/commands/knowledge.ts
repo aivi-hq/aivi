@@ -1,7 +1,7 @@
 /** Knowledge: search over the running host and queued reindexing. */
 import { randomUUID } from 'node:crypto';
 import { selectSources } from '@aivi/core';
-import { createHostClient } from '@aivi/host';
+import { createHostClient } from '@aivi/plugin/api';
 import type { Command } from 'commander';
 import { collect, context, hostUrl, print, withStore } from '../context.ts';
 

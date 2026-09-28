@@ -1,11 +1,11 @@
 {
-  "name": "@aivi/linear",
-  "version": "0.4.1",
+  "name": "@aivi/plugin",
+  "version": "0.1.0",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
-    "./setup": { "development": "./src/setup.ts", "default": "./dist/setup.js" },
-    "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" }
+    "./api": { "development": "./src/api.ts", "default": "./dist/api.js" },
+    "./channel": { "development": "./src/channel.ts", "default": "./dist/channel.js" }
   },
   "files": [
     "dist"
@@ -17,7 +17,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aivi-hq/aivi.git",
-    "directory": "packages/linear"
+    "directory": "packages/plugin"
   },
   "publishConfig": {
     "access": "public"
@@ -28,10 +28,7 @@
   "dependencies": {
     "@aivi/core": "^0.7.1"
   },
-  "peerDependencies": {
-    "@aivi/host": "^0.8.1"
-  },
   "devDependencies": {
-    "@aivi/host": "^0.8.1"
+    "commander": "15.0.0"
   }
 }

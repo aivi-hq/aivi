@@ -10,7 +10,9 @@ identifiers and the `report` shape.
 
 ## The contract
 
-A module is a `HostModule` (`id`, `start(services)` → `stop()`) whose `start`
+A module is an `AiviModule` (`id`, `start(services)` → `stop()`; the name a
+plugin author imports from `@aivi/plugin` for the contract the host itself
+declares) whose `start`
 registers one `ChannelModule` with `services.channels.register(module)`:
 
 | Member | Meaning |
@@ -24,7 +26,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 | `linkHint?` | How a person spends a link code on this platform ("DM the bot: /link <code>."), shown by `aivi link` and aggregated by the router for `POST /links`; redemption itself is the shared `redeemLink` helper |
 
 Registering is the whole integration with reports: `Channels` (the router on
-`HostServices.channels`) sends `{ to: "channel", module }` reports to the
+`AiviServices.channels`) sends `{ to: "channel", module }` reports to the
 module with that id and `{ to: "session" }` reports to the module that owns
 the session, falling back to a native `session.prompt` into the OpenCode
 session when nobody owns it. `channels.ownerOf(sessionId)` is how the
@@ -35,7 +37,9 @@ report. `register` returns the unregister function; call it in `stop`.
 
 Everything below is in `@aivi/host` (`packages/host/src/channel/`) and is
 parameterized by a `ChannelPlatform`: `{ id, label, replyLimit,
-describeSpeaker? }`.
+describeSpeaker? }`. The contract types — `ChannelModule` and the
+conversation-binding names — travel to plugin authors as
+`@aivi/plugin/channel`; the machinery below stays the host's.
 
 - **`ConversationStore`**: the durable inbox and conversation↔session
   bindings in the host database, tables `<id>_turns`, `<id>_sessions`,
@@ -98,7 +102,7 @@ The typing indicator and the 👀 reaction say "alive"; the placeholder says
 with the answer only.
 
 - **Source.** The host opens OpenCode's `client.event.subscribe()` once
-  (`HostServices.events`, `packages/host/src/events.ts`): a live-only stream
+  (`AiviServices.events`, `packages/host/src/events.ts`): a live-only stream
   with no replay and no reconnect of its own, so the host rediscovers the
   client and reopens it with backoff (1 s doubling to 30 s) whenever it ends
   or errors, until the host stops. The first `events.watch(sessionID,
@@ -234,7 +238,7 @@ redemption is its own proof.
 | `new` | `ConversationStore.reset` |
 | `status` | `ConversationStore.list` + `status()` |
 | `context` | `describeConversation` |
-| `search QUERY [project]` | `HostServices.knowledge.search` |
+| `search QUERY [project]` | `AiviServices.knowledge.search` |
 | `model [model]` | `describeModel` / `switchModel`: shows the conversation's pin, what its session last answered with and the agent's own model; with an argument pins the conversation to a catalogue model (`model.list` for the directory, enabled ones, spelled `provider/model` or `provider/model@variant`, `provider/model (variant)` accepted; a model id or display name that names exactly one entry works too; otherwise the closest matches are offered). The pin is `setModel` on the session row: `Turn.model` → `TurnInput.model`, applied by `session.switchModel` before each prompt, until `/new`; `default` unpins. Refused while a turn runs in that conversation. Discord autocompletes the argument from the catalogue (≤ 25 choices by prefix); Slack validates free text |
 | `stop` | `stopTurn`: `ChannelEngine.stopTurn` (the turn is discarded as stopped, the conversation hears "Stopped at your request.") then `session.interrupt` so the agent stops spending; queued messages stay queued and follow. Nothing running → says so |
 | `steer TEXT` | `steerTurn`: `session.prompt` with `delivery: "steer"` into the running turn's session, the speaker line as for a message (a linked account speaks as its person and stamps `metadata.aivi.person` like its turns), and `metadata.aivi.steer = <that turn's message id>` so `finalAnswer` counts it as part of the turn; nothing is queued when no turn runs |

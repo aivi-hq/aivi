@@ -28,7 +28,7 @@ of them.
   per-plugin chapters of `configuration.md` move with the schemas that own
   them (cli-refactor D7); `configuration.md` itself ships with `@aivi/host`.
 - Sources carry **tags with the package name**, so a search narrows to
-  `manual` + `@aivi/linear` and never drags in company docs, project docs,
+  `manual` + `@aivi/tracker-linear` and never drags in company docs, project docs,
   dreaming memory, or transcripts. The same kind filter that already keeps
   `conversation` out of the way does the excluding; knowledge about the
   company stays unpolluted by knowledge about the install.

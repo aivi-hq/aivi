@@ -4,8 +4,7 @@
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
-    "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" },
-    "./client": { "development": "./src/client.ts", "default": "./dist/client.js" }
+    "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" }
   },
   "files": [
     "dist"
@@ -28,6 +27,7 @@
   "dependencies": {
     "@aivi/core": "^0.7.1",
     "@aivi/knowledge": "^0.1.7",
+    "@aivi/plugin": "^0.1.0",
     "@clack/prompts": "1.8.1",
     "@hono/node-server": "2.1.1",
     "@hono/zod-validator": "0.9.1",

@@ -29,7 +29,7 @@ the sweep.)
   `linear.worktreeRetentionDays` (default 7) the sweep force-removes and
   notes it. Stop / HITL / lane-change keep everything: stop ≠ done.
 - The sweep is its own operation `linear.sweep`, claimed by the linear
-  module and seeded as a **daily system job** through `HostModule.jobs`.
+  module and seeded as a **daily system job** through `AiviModule.jobs`.
   (Plan v3 had it ride the hourly `projects.sync`; the owner chose its own
   invocation so its frequency is configurable like any system job and it
   shows up uniformly in the future desktop job list. No new timers either

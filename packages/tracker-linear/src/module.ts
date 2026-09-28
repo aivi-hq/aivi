@@ -7,7 +7,6 @@ import {
   linearSecretNames,
   primaryLinearApp,
 } from '@aivi/core';
-import type { ChannelDelivery, ChannelPlatform, HostModule, HostServices, Store, Turn } from '@aivi/host';
 import {
   ChannelEngine,
   ConfigurationError,
@@ -15,6 +14,8 @@ import {
   createTurnRunner,
   stopTurn as stopRunningTurn,
 } from '@aivi/host';
+import type { AiviModule, AiviServices, Store } from '@aivi/plugin';
+import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import { LinearApiError, LinearClient } from './client.ts';
 import { LinearMcp } from './mcp.ts';
 import { registerWebhookRoutes } from './routes.ts';
@@ -109,7 +110,7 @@ export function requireLinearSecrets(config: LinearConfig, env: NodeJS.ProcessEn
 }
 
 /** `clients` is a test seam keyed by endpoint id (an app id or `data`); real clients come from the environment. */
-export function createLinearModule(config: LinearConfig, clients?: Map<string, LinearClient>): HostModule {
+export function createLinearModule(config: LinearConfig, clients?: Map<string, LinearClient>): AiviModule {
   return { id: LINEAR.id, start: services => startLinear(config, services, clients) };
 }
 
@@ -133,7 +134,7 @@ export function projectForIssue(
   );
 }
 
-async function startLinear(config: LinearConfig, services: HostServices, givenClients?: Map<string, LinearClient>) {
+async function startLinear(config: LinearConfig, services: AiviServices, givenClients?: Map<string, LinearClient>) {
   const log = services.log.getChild('linear');
   const store = openLinearStore(services.store);
   const interrupted = store.recover();

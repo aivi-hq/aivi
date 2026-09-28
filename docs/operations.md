@@ -15,7 +15,7 @@ shared services, reconciles the job definitions it owns (`jobs[]` from
 `host.bind:host.port`, then starts modules in order and announces readiness
 once each has had its first attempt. From then on the loop sleeps until the
 next due instant and wakes early when something changes the queue
-(`HostServices.wake`, `POST /wake` from the CLI, a run or turn releasing
+(`AiviServices.wake`, `POST /wake` from the CLI, a run or turn releasing
 capacity). Nothing periodic exists; the serving host is the only executor of
 work.
 
@@ -201,7 +201,9 @@ verifies no platform call, and writes only the `browser` block in
 verified truth as any other — "Browser is running."
 
 A package can also add operator commands to this CLI: a `./cli` subpath that
-default-exports a `PluginCliCommand` ([architecture](architecture.md#one-application-contained-modules))
+default-exports a command factory `(ctx) => Command` (the `PluginCliContext`
+comes from `@aivi/plugin`; the package declares `commander` itself —
+[architecture](architecture.md#one-application-contained-modules))
 is mounted into the CLI whenever the package is installed — `aivi discord`,
 `aivi slack` and `aivi linear` are exactly that, from their own packages. A
 package without one adds nothing; the built-in commands keep their names, so
@@ -294,9 +296,9 @@ A client that is ahead of its host never mis-talks silently: the API answers
 client expects features this host cannot give. A client behind the host's
 major answers 403 `client_version_unsupported` — run `aivi upgrade`; a
 client behind within the same major is served, using fewer features than
-the host has. `@aivi/cli` and `@aivi/host` share one version through a
-changesets `fixed` group, so the CLI's own number is the API version it
-speaks. The negotiation binds the core API surface only: an unknown path
+the host has. `@aivi/cli`, `@aivi/host` and `@aivi/plugin` share one version
+through a changesets `fixed` group, so the CLI's own number is the API version
+it speaks. The negotiation binds the core API surface only: an unknown path
 answers 404 (or 405) whoever asks, so a browser or a mispointed webhook
 sees a missing path, not a version refusal. The negotiation itself is an
 [architecture decision](architecture.md); `GET /version` answers what a

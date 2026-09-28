@@ -18,19 +18,14 @@
  * as it happens.
  */
 import { createServer } from 'node:http';
-import { join, resolve } from 'node:path';
+import { configSchema, errorMessage, hostUrl, linearPrimarySecretNames, PROJECT_ID } from '@aivi/core';
 import {
-  configSchema,
-  errorMessage,
-  hostUrl,
-  linearPrimarySecretNames,
   type PluginSetup,
   PluginSetupCancelled,
   type PluginSetupContext,
   type PluginSetupResult,
-  PROJECT_ID,
-} from '@aivi/core';
-import { Store } from '@aivi/host';
+  type Store,
+} from '@aivi/plugin';
 import { LinearClient, type LinearTeam } from './client.ts';
 import { appWebhookPath } from './routes.ts';
 import { isAgentSessionEvent, isIssueEvent, type LinearWebhook, verifyWebhook } from './webhook.ts';
@@ -334,9 +329,9 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
         options: teams.map(t => ({ value: t.id, label: `${t.key} — ${t.name}` })),
       }),
     );
-    const stateDir = resolve(ctx.home, config.stateDirectory);
-    const store = new Store(join(stateDir, 'aivi.sqlite'));
-    try {
+    // The store door the runner supplies: the home database is open for this
+    // block and closed after it, whatever the two waits do.
+    await ctx.withStore(async store => {
       // Whatever the diary holds before the test ticket exists is nobody's
       // business; the cursor starts at its newest row.
       const cursor = latestId(store);
@@ -445,9 +440,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
           `Could not archive ${issue.identifier} — delete it by hand (${errorMessage(error)}).`,
         );
       }
-    } finally {
-      store.close();
-    }
+    });
   }
 
   // 4. Only now is anything written: the secrets under the bare primary

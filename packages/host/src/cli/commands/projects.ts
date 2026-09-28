@@ -21,7 +21,7 @@ import { collect, configPath, context, print } from '../context.ts';
 // flag is asked here, and a flag that is given skips its prompt. The core
 // calls — resolve teams, clone, write the config — are the same ones.
 
-type Linear = typeof import('@aivi/linear');
+type Linear = typeof import('@aivi/tracker-linear');
 type Teams = Awaited<ReturnType<Awaited<ReturnType<Linear['clientFor']>>['listTeams']>>;
 
 interface CreateFlags {
@@ -224,7 +224,7 @@ async function projectsCreate(argument: string | undefined, flags: CreateFlags):
     if (p.isCancel(picked)) return stop('no app chosen');
     app = picked;
   }
-  const linear: Linear = await import('@aivi/linear');
+  const linear: Linear = await import('@aivi/tracker-linear');
   const client = await linear.clientFor(linearConfig, app, log);
   const teams = await fetchTeams(client);
   if (!teams) return;
@@ -250,7 +250,7 @@ async function resolveAddTeams(
       'The Linear module is not configured in config.json (no `linear` block), so there is no app to ask for teams',
     );
   }
-  const linear: Linear = await import('@aivi/linear');
+  const linear: Linear = await import('@aivi/tracker-linear');
   const client = await linear.clientFor(loaded.config.linear, app, log);
   return linear.resolveTeams(await client.listTeams(), tokens);
 }

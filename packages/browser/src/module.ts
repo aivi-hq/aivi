@@ -9,8 +9,8 @@
  */
 import type { BrowserConfig, ToolDescriptor } from '@aivi/core';
 import { browserRequestSchema } from '@aivi/core';
-import type { HostModule } from '@aivi/host';
 import { ToolError } from '@aivi/host';
+import type { AiviModule } from '@aivi/plugin';
 import { createBrowserService } from './service.ts';
 import type { BrowserTransport } from './transport.ts';
 
@@ -45,7 +45,7 @@ const descriptor: ToolDescriptor = {
   timeoutMs: 300_000,
 };
 
-export function createBrowserModule(config: BrowserConfig, transport?: BrowserTransport): HostModule {
+export function createBrowserModule(config: BrowserConfig, transport?: BrowserTransport): AiviModule {
   return {
     id: 'browser',
     async start(services) {

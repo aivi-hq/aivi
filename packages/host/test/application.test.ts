@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema, jobSchema } from '@aivi/core';
-import type { HostModule, HostResources } from '../src/application.ts';
+import type { AiviModule, HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
 import { ConfigurationError } from '../src/modules.ts';
 import { createExecutor } from '../src/runtime.ts';
@@ -41,7 +41,7 @@ test('one host starts modules with shared services and stops them in reverse ord
       events.push('knowledge.stop');
     },
   };
-  const modules: HostModule[] = ['discord', 'future-module'].map(id => ({
+  const modules: AiviModule[] = ['discord', 'future-module'].map(id => ({
     id,
     async start(services) {
       assert.equal(services.store, store);
@@ -98,7 +98,7 @@ test('a configuration error at module start unwinds earlier modules and releases
       },
     },
   });
-  const modules: HostModule[] = [
+  const modules: AiviModule[] = [
     {
       id: 'first',
       async start() {
@@ -144,7 +144,7 @@ test('a composed module seeds its system jobs and claims operations under its ow
       async close() {},
     },
   });
-  const modules: HostModule[] = [
+  const modules: AiviModule[] = [
     {
       id: 'linear',
       jobs: () => [sweepJob()],
@@ -185,7 +185,7 @@ test('two system job definitions sharing an id is fatal, not a silent overwrite'
       async close() {},
     },
   });
-  const modules: HostModule[] = ['first', 'second'].map(id => ({
+  const modules: AiviModule[] = ['first', 'second'].map(id => ({
     id,
     jobs: () => [sweepJob()],
     async start() {
@@ -212,7 +212,7 @@ test('two modules claiming one operation name take the host down with the clash 
       async close() {},
     },
   });
-  const modules: HostModule[] = ['first', 'second'].map(id => ({
+  const modules: AiviModule[] = ['first', 'second'].map(id => ({
     id,
     async start(services) {
       services.tasks.claim('shared.thing', async () => ({ state: 'succeeded', result: null }));
@@ -241,7 +241,7 @@ test('the failure that ended the host survives a failing cleanup step', async t 
       },
     },
   });
-  const modules: HostModule[] = [
+  const modules: AiviModule[] = [
     {
       id: 'broken',
       async start() {
@@ -322,7 +322,7 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
   const ran: number[] = [];
   const abort = new AbortController();
   let woke: (() => void) | undefined;
-  const module: HostModule = {
+  const module: AiviModule = {
     id: 'probe',
     async start(services) {
       woke = services.wake;
@@ -367,7 +367,7 @@ test('a module whose start fails is retried with backoff while the host serves; 
     async close() {},
   };
   let attempts = 0;
-  const flaky: HostModule = {
+  const flaky: AiviModule = {
     id: 'flaky',
     async start() {
       attempts++;
@@ -375,7 +375,7 @@ test('a module whose start fails is retried with backoff while the host serves; 
       return { async stop() {} };
     },
   };
-  const steady: HostModule = {
+  const steady: AiviModule = {
     id: 'steady',
     async start() {
       return { async stop() {} };

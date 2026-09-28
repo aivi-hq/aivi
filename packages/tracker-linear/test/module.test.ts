@@ -9,8 +9,9 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 import type { KnowledgeService } from '@aivi/core';
 import { configSchema, getLogger } from '@aivi/core';
-import type { HostServices, SessionEvents } from '@aivi/host';
+import type { SessionEvents } from '@aivi/host';
 import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, ToolRegistry } from '@aivi/host';
+import type { AiviServices } from '@aivi/plugin';
 import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
 import { LinearClient } from '../src/client.ts';
 import { conversationFor, createLinearModule, openLinearStore } from '../src/module.ts';
@@ -220,7 +221,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   const store = new Store(':memory:');
   const routes = new PublicRoutes();
   const abort = new AbortController();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge,
@@ -479,7 +480,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
   });
   const store = new Store(':memory:');
   const routes = new PublicRoutes();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge,
@@ -597,7 +598,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   const store = new Store(':memory:');
   const routes = new PublicRoutes();
   const abort = new AbortController();
-  const services: HostServices = {
+  const services: AiviServices = {
     loaded,
     store,
     knowledge,

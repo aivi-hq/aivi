@@ -7,7 +7,8 @@ import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import type { LoadedConfig, Logger, OutputBlock } from '@aivi/core';
 import { hostUrl as coreHostUrl, print as corePrint, errorMessage, getLogger, loadConfig } from '@aivi/core';
-import { createHostClient, Store } from '@aivi/host';
+import { Store } from '@aivi/host';
+import { createHostClient } from '@aivi/plugin/api';
 
 /** One home holds everything: config.json, .env, state/. Paths in the config resolve against it. */
 export const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));

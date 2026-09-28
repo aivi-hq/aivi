@@ -13,6 +13,6 @@
     { "path": "../browser/tsconfig.build.json" },
     { "path": "../channel-discord/tsconfig.build.json" },
     { "path": "../channel-slack/tsconfig.build.json" },
-    { "path": "../linear/tsconfig.build.json" }
+    { "path": "../tracker-linear/tsconfig.build.json" }
   ]
 }

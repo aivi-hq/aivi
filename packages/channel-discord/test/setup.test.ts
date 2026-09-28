@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PluginSetupContext } from '@aivi/core';
-import { PluginSetupCancelled } from '@aivi/core';
+import { PluginSetupCancelled, type PluginSetupContext } from '@aivi/plugin';
 import * as prompts from '@clack/prompts';
 import setup from '../src/setup.ts';
 
@@ -41,6 +40,9 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
     identityName: 'Clawd',
     config: { version: 1, modules: {} },
     print: () => {},
+    withStore: async () => {
+      throw new Error('the setup flow reads no store');
+    },
     prompts: {
       ...prompts,
       note: (lines = '', title = '') => {

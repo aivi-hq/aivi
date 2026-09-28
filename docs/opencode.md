@@ -130,7 +130,7 @@ Walkthrough in [getting started](getting-started.md#the-assistant-in-opencode).
 The home is the OpenCode location, so knowledge, memory and
 project directories inside it need no `external_directory` rules; sources elsewhere get
 those rules from aivi per session. The OpenCode service caches
-`@aivi/host/client`, so restart it after every change to the plugin or client
+`@aivi/plugin/api`, so restart it after every change to the plugin or client
 (`opencode.lifecycle: "own"` does this at `aivi serve` startup).
 
 ## Host submission

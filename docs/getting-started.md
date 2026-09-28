@@ -14,7 +14,7 @@ npm run aivi:cli -- setup --use this-machine \
   --app-spec "file:../../packages/host" \
   --plugin "file:../../packages/channel-discord" \
   --plugin "file:../../packages/channel-slack" \
-  --plugin "file:../../packages/linear"
+  --plugin "file:../../packages/tracker-linear"
 ```
 
 Run without the flags and setup is a conversation: your name, and one
@@ -69,7 +69,7 @@ npm run aivi:cli -- link discord   # mint a link code for your Discord account
 1. With `opencode.lifecycle: "own"` (the default) `aivi serve` restarts the
    service for you after a plugin change.
    Whatever started the service, restart it after every change to the plugin
-   or the host client: the long-running service keeps `@aivi/host/client` in
+   or the host client: the long-running service keeps `@aivi/plugin/api` in
    its module cache, so a plugin that registers a new tool can still call a
    client without that method ("client.jobs is not a function", seen
    2026-09-15).

@@ -4,7 +4,7 @@ export { bearerPerson } from './api/person.ts';
 export type { PublicRequest, PublicRouteHandler } from './api/public.ts';
 export { PublicRoutes } from './api/public.ts';
 export { status } from './api/status.ts';
-export type { HostModule, HostResources, HostServices, RunHostOptions, RunningModule } from './application.ts';
+export type { AiviModule, AiviServices, HostResources, RunHostOptions, RunningModule } from './application.ts';
 export { runHost } from './application.ts';
 export type { ChatCommand, ChatCommandArgument, ChatCommandName } from './channel/commands.ts';
 export {
@@ -19,7 +19,14 @@ export {
   usageHint,
 } from './channel/commands.ts';
 export { describeConversation, describeSession } from './channel/context.ts';
-export type { ChannelDelivery, ChannelModule, ChannelPlatform, DeliveryContext } from './channel/contract.ts';
+export type {
+  ChannelDelivery,
+  ChannelModule,
+  ChannelPlatform,
+  DeliveryContext,
+  EngineNotices,
+  ReentryContext,
+} from './channel/contract.ts';
 export type { Ask, EngineLimits, EngineOptions, Send } from './channel/engine.ts';
 export {
   ChannelEngine,
@@ -47,8 +54,6 @@ export { Channels } from './channel/router.ts';
 export type { ModelRef, Turn, TurnKind, TurnState } from './channel/store.ts';
 export { ConversationStore } from './channel/store.ts';
 export { createTurnRunner, messageIdFor } from './channel/turns.ts';
-export type { HostClientOptions } from './client.ts';
-export { createHostClient } from './client.ts';
 export type { DreamingResult } from './dreaming.ts';
 export { collectSessions, dream, readCursor, renderTranscript, writeCursor } from './dreaming.ts';
 export type { SessionEvent, SessionEventListener, SessionEvents } from './events.ts';
@@ -59,13 +64,6 @@ export type { RetryPolicy } from './modules.ts';
 export { ConfigurationError, DEFAULT_RETRY, ModuleSupervisor } from './modules.ts';
 export type { DiscoveredEndpoint, OpenCodeClient } from './opencode.ts';
 export { connectOpenCode, discoverTolerant } from './opencode.ts';
-export type {
-  PluginCliCommand,
-  PluginCliContext,
-  PluginCliOption,
-  PluginCliSubcommand,
-} from './plugin-cli.ts';
-export { resolveBlocked } from './plugin-cli.ts';
 export { describeOutcome, reentryPrompt, reportTarget, SESSION_DESTINATION, shouldReport } from './reports.ts';
 export type { ExecutorDeps } from './runtime.ts';
 export { createExecutor, SECRET_ENV, shellEnvironment } from './runtime.ts';

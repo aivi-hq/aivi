@@ -1,0 +1,38 @@
+/** The Linear module's operator commands, mounted into the server CLI through
+ *  the `./cli` subpath contract (@aivi/plugin's `(ctx) => Command`): status and
+ *  resolve, over the same conversation store the module runs on. */
+import type { PluginCliContext } from '@aivi/plugin';
+import { resolveBlocked } from '@aivi/plugin';
+import { Command } from 'commander';
+
+const enabled = async (ctx: PluginCliContext) => {
+  const loaded = await ctx.loaded();
+  if (!loaded.config.linear) throw new Error('Linear is not configured in config.json');
+  return loaded.config.linear;
+};
+
+export default (ctx: PluginCliContext): Command => {
+  const linear = new Command('linear').description('the Linear module');
+  linear
+    .command('status')
+    .description('Inspect Linear conversations (workers and the assistant) and leases')
+    .action(async () => {
+      await enabled(ctx);
+      const { describeWorkers, openLinearStore } = await import('./index.ts');
+      await ctx.withStore(store => {
+        const inbox = openLinearStore(store);
+        ctx.print({ conversations: describeWorkers(inbox), leases: store.leases() });
+      });
+    });
+  linear
+    .command('resolve <id>')
+    .description('Release a blocked worker')
+    .requiredOption('--reason <text>', 'what was found and done')
+    .requiredOption('--confirm-stopped', 'the external side has stopped')
+    .action(async (id: string, options: { reason: string }) => {
+      await enabled(ctx);
+      const { openLinearStore } = await import('./index.ts');
+      await resolveBlocked(ctx, id, options.reason, store => openLinearStore(store));
+    });
+  return linear;
+};

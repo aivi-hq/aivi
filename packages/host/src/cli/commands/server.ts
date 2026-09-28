@@ -3,7 +3,7 @@
 
 import type { BrowserConfig, LoadedConfig, Logger } from '@aivi/core';
 import { isTty } from '@aivi/core';
-import type { HostModule, HostResources } from '@aivi/host';
+import type { AiviModule, HostResources } from '@aivi/host';
 import { connectOpenCode, runHost, status } from '@aivi/host';
 import { createKnowledgeService } from '@aivi/knowledge';
 import type { Command } from 'commander';
@@ -19,12 +19,13 @@ export function registerServer(program: Command): void {
       // A modules block that is present and not false enables its module; the schema checked its
       // pool. The packages themselves load lazily, so an installation without a channel package
       // runs every other command untouched.
-      const modules: HostModule[] = [];
+      const modules: AiviModule[] = [];
       if (typeof loaded.config.modules.discord === 'object')
         modules.push((await import('@aivi/channel-discord')).createDiscordModule(loaded.config.modules.discord));
       if (typeof loaded.config.modules.slack === 'object')
         modules.push((await import('@aivi/channel-slack')).createSlackModule(loaded.config.modules.slack));
-      if (loaded.config.linear) modules.push((await import('@aivi/linear')).createLinearModule(loaded.config.linear));
+      if (loaded.config.linear)
+        modules.push((await import('@aivi/tracker-linear')).createLinearModule(loaded.config.linear));
       // The browser is a composed module like the channels, not a host resource:
       // its block's presence enables it, and it claims its own `aivi_browser`
       // tool at start. The package loads lazily, so an install without it runs
@@ -109,7 +110,7 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
  *  then a missing install, not a disabled feature: name the command that fixes
  *  it. The module claims its own `aivi_browser` tool at start and closes Chrome
  *  at stop, so the host holds no browser field. */
-async function importBrowser(config: BrowserConfig): Promise<HostModule> {
+async function importBrowser(config: BrowserConfig): Promise<AiviModule> {
   try {
     return (await import('@aivi/browser')).createBrowserModule(config);
   } catch (error) {

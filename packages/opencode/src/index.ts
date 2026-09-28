@@ -2,7 +2,7 @@ import { existsSync, type FSWatcher, readFileSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { ServedTool } from '@aivi/core';
-import { createHostClient } from '@aivi/host/client';
+import { createHostClient } from '@aivi/plugin/api';
 import { Plugin } from '@opencode/plugin';
 
 const DEFAULT_HOST_URL = 'http://127.0.0.1:4100';

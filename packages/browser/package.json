@@ -30,10 +30,12 @@
     "chrome-devtools-mcp": "1.9.0"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^0.8.1",
+    "@aivi/plugin": "^0.1.0"
   },
   "devDependencies": {
     "@aivi/host": "^0.8.1",
+    "@aivi/plugin": "^0.1.0",
     "@clack/prompts": "1.8.1"
   }
 }

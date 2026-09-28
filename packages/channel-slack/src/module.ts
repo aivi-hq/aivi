@@ -1,14 +1,5 @@
 import type { AccessRoute } from '@aivi/core';
 import { accessEntry } from '@aivi/core';
-import type {
-  ChannelDelivery,
-  ChannelPlatform,
-  ChatCommandName,
-  HostModule,
-  HostServices,
-  Store,
-  Turn,
-} from '@aivi/host';
 import {
   announce,
   CHAT_COMMANDS,
@@ -30,6 +21,8 @@ import {
   switchModel,
   usageHint,
 } from '@aivi/host';
+import type { AiviModule, AiviServices, Store } from '@aivi/plugin';
+import type { ChannelDelivery, ChannelPlatform, ChatCommandName, Turn } from '@aivi/plugin/channel';
 import type { SlackConfig } from './config.ts';
 import { authorized, isDMChannelId, reaches } from './config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent } from './connection.ts';
@@ -205,11 +198,11 @@ export function routeMessage(
   return { route, conversation: opensThread ? `${event.channel}:${event.ts}` : conversation, text };
 }
 
-export function createSlackModule(config: SlackConfig, connection?: SlackConnection): HostModule {
+export function createSlackModule(config: SlackConfig, connection?: SlackConnection): AiviModule {
   return { id: SLACK.id, start: services => startSlack(config, services, connection) };
 }
 
-async function startSlack(config: SlackConfig, services: HostServices, given?: SlackConnection) {
+async function startSlack(config: SlackConfig, services: AiviServices, given?: SlackConnection) {
   const log = services.log.getChild('slack');
   const slack = given ?? createSocketModeConnection(requireSlackTokens(), log);
   const store = openSlackStore(services.store, config);
