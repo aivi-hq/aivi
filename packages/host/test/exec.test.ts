@@ -1,0 +1,301 @@
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { type TestContext, test } from 'node:test';
+import { configSchema, getLogger } from '@aivi/core';
+import { createApp, Store, serveApp } from '@aivi/host';
+import { WebSocket } from 'ws';
+import { attachExec } from '../src/api/exec.ts';
+import { hostVersion } from '../src/version.ts';
+
+const log = getLogger(['aivi', 'test']);
+
+/** Async poll until true; these tests watch children, they never assume timing. */
+const until = async (probe: () => boolean | Promise<boolean>, ms = 5000): Promise<void> => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await probe()) return;
+    if (Date.now() > deadline) throw new Error('timed out waiting for the exec session');
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+};
+
+/** A host with the exec door, a fixture `aivi` on PATH, and one operator. */
+const harness = async (
+  t: TestContext,
+  script: (home: string) => string,
+  options: { importPty?: () => Promise<typeof import('node-pty')> } = {},
+) => {
+  const home = await mkdtemp(join(tmpdir(), 'aivi-exec-'));
+  const bin = join(home, 'bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'aivi'), script(home), { mode: 0o755 });
+  const store = new Store(':memory:');
+  const loaded = {
+    path: join(home, 'config.json'),
+    config: configSchema.parse({ version: 1 }),
+    sources: [],
+    projects: [],
+  };
+  const http = serveApp(createApp({ store, loaded, log }));
+  await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+  const port = (http.address() as { port: number }).port;
+  const abort = new AbortController();
+  attachExec(http, { store, loaded, log, signal: abort.signal, ...options });
+  const operator = store.createPerson({ name: 'Ada', roles: ['operator'] });
+  const { secret } = store.mintToken(operator.id, 'laptop');
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(async () => {
+    abort.abort();
+    await new Promise<void>(resolve => http.close(() => resolve()));
+    store.close();
+    process.env.PATH = path;
+    await rm(home, { recursive: true, force: true });
+  });
+  return { store, home, port, secret };
+};
+
+const headers = (bearer?: string) => ({
+  'x-aivi-client': hostVersion,
+  ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+});
+
+/** An upgrade the door must refuse: the HTTP answer it wrote, nothing else. */
+const refused = async (port: number, requestHeaders: Record<string, string>, path = '/exec') => {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, { headers: requestHeaders });
+  ws.on('error', () => {}); // the aborted socket is news to nobody after the refusal
+  return await new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
+    ws.on('unexpected-response', (_request, response) => {
+      let text = '';
+      response.on('data', (chunk: Buffer) => (text += chunk));
+      response.on('end', () =>
+        resolve({ status: response.statusCode ?? 0, body: JSON.parse(text) as Record<string, unknown> }),
+      );
+    });
+    ws.on('open', () => reject(new Error('connected; the door was expected to refuse')));
+  });
+};
+
+/** One exec session: send `start` (plus bytes), collect frames until `exit`. */
+const session = async (
+  port: number,
+  bearer: string,
+  start: Record<string, unknown>,
+  bytes: Buffer[] = [],
+): Promise<{ stdout: string; events: Record<string, unknown>[]; exit: Record<string, unknown> | null }> => {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(bearer) });
+  const events: Record<string, unknown>[] = [];
+  let stdout = '';
+  ws.on('message', (data: Buffer, isBinary: boolean) => {
+    if (isBinary) stdout += data.toString('utf8');
+    else events.push(JSON.parse(data.toString('utf8')) as Record<string, unknown>);
+  });
+  const opened = new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  ws.on('error', () => {}); // after the open, a dropped socket is the child's answer
+  await opened;
+  ws.send(JSON.stringify(start));
+  for (const chunk of bytes) ws.send(chunk);
+  await until(() => events.some(event => event.t === 'exit') || ws.readyState === ws.CLOSED, 15000);
+  const exit = events.find(event => event.t === 'exit') ?? null;
+  ws.terminate();
+  return { stdout, events, exit };
+};
+
+const auditRows = (store: Store) => store.requests({ method: 'EXEC' });
+
+test('the anonymous upgrade is refused 401 and the refusal is audited', async t => {
+  const { store, port } = await harness(t, () => '#!/bin/sh\nexit 0\n');
+  const answer = await refused(port, headers());
+  assert.equal(answer.status, 401);
+  assert.match(String(answer.body.error), /names who you are/);
+  const [row] = auditRows(store);
+  assert.equal(row!.status, 401);
+  assert.equal(row!.path, '/exec');
+  assert.ok(JSON.parse(row!.body!).address, 'the source address is on the line');
+});
+
+test('a stranger path gets 404 even for an operator', async t => {
+  const { store, port, secret } = await harness(t, () => '#!/bin/sh\nexit 0\n');
+  const answer = await refused(port, headers(secret), '/nope');
+  assert.equal(answer.status, 404);
+  assert.equal(auditRows(store)[0]!.status, 404);
+});
+
+test('the version gate answers before the bearer is ever asked', async t => {
+  const { port } = await harness(t, () => '#!/bin/sh\nexit 0\n');
+  // A client *behind* the host is served by contract; only an ahead one is
+  // refused — and refused here with no bearer in sight: the gate is first.
+  const answer = await refused(port, { 'x-aivi-client': '99.0.0' });
+  assert.equal(answer.status, 403);
+  assert.equal(answer.body.code, 'server_version_too_low');
+});
+
+test('a person who is not an operator is refused and named in the answer', async t => {
+  const { store, port } = await harness(t, () => '#!/bin/sh\nexit 0\n');
+  const stranger = store.createPerson({ name: 'Eve', roles: [] });
+  const { secret } = store.mintToken(stranger.id, 'laptop');
+  const answer = await refused(port, headers(secret));
+  assert.equal(answer.status, 403);
+  assert.match(String(answer.body.error), /operator/);
+  assert.equal((answer.body.person as { name: string }).name, 'Eve');
+});
+
+test('a piped session runs aivi with the bearer in its closed env and keeps stderr apart', async t => {
+  process.env.DISCORD_BOT_TOKEN = 'must-never-travel';
+  t.after(() => {
+    delete process.env.DISCORD_BOT_TOKEN;
+  });
+  const { store, home, port, secret } = await harness(
+    t,
+    () =>
+      '#!/bin/sh\n' +
+      'echo "argv:$*"\n' +
+      'echo "bearer:$AIVI_OPERATOR_BEARER"\n' +
+      'echo "home:$AIVI_HOME"\n' +
+      'echo "term:$TERM"\n' +
+      'echo "token:$DISCORD_BOT_TOKEN"\n' +
+      'echo ooh >&2\n' +
+      'exit 3\n',
+  );
+  const done = await session(port, secret, { t: 'start', argv: ['status'], pty: false });
+  assert.ok(
+    done.events.some(event => event.t === 'ready' && typeof event.pid === 'number'),
+    'ready names the pid',
+  );
+  assert.match(done.stdout, /argv:status/);
+  assert.match(done.stdout, new RegExp(`bearer:${secret}`), 'the child re-speaks the bearer of this connection (D15)');
+  assert.match(done.stdout, new RegExp(`home:${home}`));
+  assert.match(done.stdout, /term:xterm-256color/);
+  assert.match(done.stdout, /token:\n/, 'the host secrets stayed out of the child env');
+  const err = done.events.find(event => event.t === 'err');
+  assert.equal(Buffer.from(String(err!.b64), 'base64').toString('utf8'), 'ooh\n', 'stderr kept its own channel');
+  assert.equal(done.exit!.code, 3);
+  const [row] = auditRows(store);
+  assert.equal(row!.status, 101);
+  const audited = JSON.parse(row!.body!) as Record<string, unknown>;
+  assert.deepEqual(audited.argv, ['status']);
+  assert.equal(audited.exitCode, 3);
+  assert.equal((audited.person as { name: string }).name, 'Ada');
+});
+
+test('stdin bytes reach the child and rejoin when a character splits across frames', async t => {
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nIFS= read -r line\necho "got:$line"\n');
+  const done = await session(port, secret, { t: 'start', argv: ['echo'], pty: false }, [
+    Buffer.from('h\xc3', 'binary'),
+    Buffer.from('\xa9llo\n', 'binary'),
+  ]);
+  assert.match(done.stdout, /got:héllo/, 'a utf8 character split mid-frame still reaches the child');
+});
+
+test('a PTY session runs the CLI on a terminal and reports its exit code', async t => {
+  const { port, secret } = await harness(t, () => '#!/bin/sh\necho "argv:$*"\nexit 3\n');
+  const done = await session(port, secret, { t: 'start', argv: ['jobs', 'list'] });
+  assert.ok(
+    done.events.some(event => event.t === 'ready'),
+    'the PTY child announced itself',
+  );
+  assert.match(done.stdout, /argv:jobs list/);
+  assert.equal(done.exit!.code, 3);
+});
+
+test('the start message sizes the terminal', async t => {
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.4\nstty size\n');
+  const done = await session(port, secret, { t: 'start', argv: ['winsize'], cols: 90, rows: 30 });
+  assert.match(done.stdout, /30 90/, 'stty sees the window the client asked for');
+});
+
+test('a resize mid-session moves the PTY window', async t => {
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.6\nstty size\n');
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
+  const events: Record<string, unknown>[] = [];
+  let stdout = '';
+  ws.on('message', (data: Buffer, isBinary: boolean) => {
+    if (isBinary) stdout += data.toString('utf8');
+    else events.push(JSON.parse(data.toString('utf8')) as Record<string, unknown>);
+  });
+  const opened = new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  ws.on('error', () => {});
+  await opened;
+  ws.send(JSON.stringify({ t: 'start', argv: ['winsize'] }));
+  await until(() => events.some(event => event.t === 'ready'));
+  ws.send(JSON.stringify({ t: 'resize', cols: 100, rows: 40 }));
+  await until(() => events.some(event => event.t === 'exit') || ws.readyState === ws.CLOSED, 15000);
+  ws.terminate();
+  assert.match(stdout, /40 100/, 'the window followed the resize');
+});
+
+test('a disconnect kills the child with the session', async t => {
+  const { home, port, secret } = await harness(t, h => `#!/bin/sh\necho $$ > ${join(h, 'pid')}\nsleep 30\n`);
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
+  ws.on('error', () => {});
+  const opened = new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  await opened;
+  ws.send(JSON.stringify({ t: 'start', argv: ['linger'] }));
+  await until(async () => {
+    const { existsSync } = await import('node:fs');
+    return existsSync(join(home, 'pid'));
+  });
+  const pid = Number(await readFile(join(home, 'pid'), 'utf8'));
+  ws.close(); // the client hangs up; the child must not outlive the session
+  await until(() => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+});
+
+test('a host whose node-pty cannot load answers exec attempts plainly', async t => {
+  const { store, port, secret } = await harness(t, () => '#!/bin/sh\nexit 0\n', {
+    importPty: () => Promise.reject(new Error('no prebuilt binary on this machine')),
+  });
+  const done = await session(port, secret, { t: 'start', argv: ['status'] });
+  assert.match(done.stdout, /remote exec unavailable on this host/);
+  assert.equal(done.exit!.code, 1);
+  const [row] = auditRows(store);
+  assert.equal(JSON.parse(row!.body!).reason, 'pty unavailable');
+});
+
+test('a missing aivi on PATH degrades the same honest way', async t => {
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nexit 0\n');
+  const path = process.env.PATH;
+  process.env.PATH = '/nonexistent';
+  const done = await session(port, secret, { t: 'start', argv: ['status'], pty: false });
+  process.env.PATH = path;
+  assert.match(done.stdout, /remote exec unavailable on this host/);
+  assert.equal(done.exit!.code, 1);
+});
+
+test('a second start on one connection answers an error, not a second child', async t => {
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.3\necho done\n');
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
+  const events: Record<string, unknown>[] = [];
+  ws.on('message', (data: Buffer, isBinary: boolean) => {
+    if (!isBinary) events.push(JSON.parse(data.toString('utf8')) as Record<string, unknown>);
+  });
+  const opened = new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  ws.on('error', () => {});
+  await opened;
+  ws.send(JSON.stringify({ t: 'start', argv: ['first'], pty: false }));
+  ws.send(JSON.stringify({ t: 'start', argv: ['second'], pty: false }));
+  await until(() => events.some(event => event.t === 'exit') || ws.readyState === ws.CLOSED, 15000);
+  ws.terminate();
+  assert.ok(events.some(event => event.t === 'error' && event.message === 'start sent twice'));
+  assert.equal(events.filter(event => event.t === 'ready').length, 1, 'exactly one child ran');
+});

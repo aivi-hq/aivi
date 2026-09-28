@@ -3,6 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { getLogger, systemJobs } from '@aivi/core';
 import { createApp, serveApp } from './api/app.ts';
+import { attachExec } from './api/exec.ts';
 import { PublicRoutes } from './api/public.ts';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
@@ -168,6 +169,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       }),
     );
     server = http;
+    // The exec door rides the same listener: an upgrade on `/exec`, gated by
+    // hand (hono never sees upgrades), and audited into the same diary.
+    attachExec(http, { store, loaded, log, signal: abort.signal });
     const { bind, port } = loaded.config.host;
     await new Promise<void>((yes, no) => {
       http.once('error', no);

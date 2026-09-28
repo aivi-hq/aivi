@@ -3,9 +3,18 @@
   "version": "0.8.1",
   "type": "module",
   "exports": {
-    ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
-    "./cli": { "development": "./src/cli.ts", "default": "./dist/cli.js" },
-    "./server": { "development": "./src/server.ts", "default": "./dist/server.js" }
+    ".": {
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./cli": {
+      "development": "./src/cli.ts",
+      "default": "./dist/cli.js"
+    },
+    "./server": {
+      "development": "./src/server.ts",
+      "default": "./dist/server.js"
+    }
   },
   "files": [
     "dist"
@@ -35,6 +44,8 @@
     "@opencode/client": "2.0.18",
     "commander": "15.0.0",
     "hono": "4.13.9",
+    "node-pty": "1.1.0",
+    "ws": "8.22.0",
     "zod": "4.1.13"
   }
 }

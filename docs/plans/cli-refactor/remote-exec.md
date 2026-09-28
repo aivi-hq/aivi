@@ -115,15 +115,19 @@ version gate; no host keys, no password daemon, no second listener.
 
 ## Protocol
 
-Endpoint: `GET /v1/exec` as an upgrade on the host's HTTP server (existing
-chain: request diary → headers → version gate → bearer → person). Opening it
+Endpoint: `/exec` as an upgrade on the host's HTTP server — not `/v1/exec`:
+the API version lives in a header, not in paths (the same rule as `POST /wake`).
+The upgrade never crosses hono — node hands it to the door directly — so the
+door runs the existing chain by hand, in the same order the API runs it:
+version gate → bearer → person → operator. Opening it
 requires the **`operator` role** (decision D16 — the roles store of 2026-09-21
 gets its first real customer). The bearer stays a plain token in this phase;
 [person id + token pairing](#person-id--token-pairing) is deferred.
-A per-source throttle rides along **only if it is minimal plumbing** — the
-upgrade request is a plain HTTP request, so
+A per-source throttle: **decided at landing (2026-09-28) to ship the door
+without one** — the upgrade bypasses hono, so
 [hono-rate-limiter](https://honohub.dev/docs/rate-limiter) as middleware in
-front of the route fits or the door ships without it. General HTTP-API
+front of the route does not fit, and hand-rolling a limiter is the plumbing
+this clause refused to grow. General HTTP-API
 rate-limiting stays the separate idea in
 [request-rate-limiting](../../backlog/request-rate-limiting.md).
 
@@ -131,6 +135,7 @@ Messages (client → server first):
 
 ```json
 { "t": "start", "argv": ["jobs", "add", "…"], "term": "xterm-256color", "cols": 120, "rows": 30 }
+{ "t": "start", "argv": ["status"], "pty": false }   // the piped session (D12)
 { "t": "resize", "cols": 100, "rows": 40 }
 <binary frames>                      // stdin bytes
 ```
@@ -138,13 +143,18 @@ Messages (client → server first):
 ```json
 { "t": "ready", "pid": 4711 }
 <binary frames>                      // stdout+stderr merged, as one PTY sees them
+{ "t": "err", "b64": "…" }           // pipe mode only: stderr kept apart
 { "t": "exit", "code": 0 }
+{ "t": "error", "message": "…" }     // the protocol's own refusal (start twice, bad start)
 ```
 
 Server side: `node-pty` spawns
 `aivi ...argv` — the CLI binary on PATH, the same tree the operator typed
-into (the host parses no argv of its own since the purity pass) — with `env` =
-`{ AIVI_HOME, TERM, COLORTERM, AIVI_OPERATOR_BEARER }`. Child close ⇒
+into (the host parses no argv of its own since the purity pass) — with a
+**closed** `env`: `{ PATH, HOME, AIVI_HOME, TERM, AIVI_OPERATOR_BEARER }`
+plus `COLORTERM`/`LANG` when the host has them. PATH and HOME are what
+`add`/`update` need to exec npm and git; nothing else from the host's
+environment travels. Child close ⇒
 `{t:"exit"}` then socket close; socket close ⇒ kill the child. Client side:
 `process.stdin.setRawMode(true)`, forward bytes, `SIGWINCH` ⇒ `resize`,
 `{t:"exit"}` ⇒ restore + `process.exitCode = code` — restore on **every** exit
@@ -156,7 +166,8 @@ ttyd/code-server pattern, production-proven.
 (`aivi status | jq` from a laptop), the client requests a non-PTY session —
 two pipes, stdout and stderr kept separate, JSON mode intact because the
 child's `isTTY` is honestly false. `ssh` vs `ssh -t` semantics; one branch,
-no loss.
+no loss. Landed shape: stdout keeps the binary frames (a pipe gets JSON
+untouched); stderr rides base64 inside `{t:"err"}` so the two never merge.
 
 ## What `--remote --help` renders
 
@@ -252,7 +263,9 @@ semantics stay owned by [people.md](../../people.md).
   The optional throttle is manners, not the wall.
 - **Audit**: every exec session writes one diary line — person **id and
   name**, argv, source address, exit code. When something breaks, we can see
-  who did it.
+  who did it. Refusals get their own line (reason, address, and the named
+  person when a bearer was presented): the door journals every arrival, which
+  is exactly what the HTTP diary middleware cannot do for upgrades.
 
 ## Packaging
 
@@ -262,7 +275,11 @@ a prebuilt binary per platform (darwin/linux exist). If a machine has none
 and the build fails too, that must not take the host down at import time —
 the host starts fine and answers exec attempts with `remote exec unavailable
 on this host`. (Local commands never touch node-pty, so only remote exec
-degrades.)
+degrades.) Landed fact (2026-09-28): the macOS prebuilds in the npm tarball
+ship `spawn-helper` **without the execute bit** and node-pty's own scripts
+never fix the `prebuilds/` copy; the host repairs it once per process before
+the first PTY (like VS Code's build step), and a repair that cannot happen
+lands in the degradation above, never in a hung host.
 
 ## The `configure` command (later, client-side)
 
@@ -297,11 +314,13 @@ laptop, never through the channel.
 Ordered as built: the channel first (testable in-process), the
 flag and what it teaches around it, then the strings and docs.
 
-- [ ] `/v1/exec` upgrade route: chain order, operator gate, optional
-      hono-rate-limiter middleware, audit line (person **id + name**, argv,
-      source address, exit code).
-- [ ] Server: node-pty spawn, env contract, `exit`/close semantics, kill on
-      disconnect, missing-prebuild degradation.
+- [x] `/exec` upgrade route: chain order (gate → bearer → operator, run by
+      hand — hono never sees an upgrade), audit line per arrival (person **id
+      + name**, argv, source address, exit code; refusals carry their reason).
+      The throttle ships out (see Protocol). Landed 2026-09-28.
+- [x] Server: node-pty spawn, env contract, `exit`/close semantics, kill on
+      disconnect, missing-prebuild degradation — and the spawn-helper repair
+      the broken tarball needs. Landed 2026-09-28.
 - [ ] Client relay: raw mode, SIGWINCH, byte forwarding, exit propagation,
       restore-every-path; pipe-mode session branch.
 - [ ] State resolution once per run (client config → `fresh`/`local`); no
