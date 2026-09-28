@@ -133,7 +133,9 @@ Landed as described, with four deviations:
   plugin authors; plugins' type imports come only from the kit, so the
   authoring face is exactly what this document describes.
   `ConfigurationError` stays in the host: module entries import it at runtime
-  from the process that hosts them.
+  from the process that hosts them. The type-only reference the kit keeps to
+  the host is what forces this; deleting it is scheduled as
+  [store-package](../../backlog/store-package.md) right after the refactor.
 - **`PluginSetupContext` gained a `withStore` door.** The deletion ledger wants
   no plugin→host runtime imports, and `linear/src/setup.ts` built
   `new Store(...)` from `@aivi/host` to read the request diary during the

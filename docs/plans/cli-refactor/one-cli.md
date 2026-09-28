@@ -229,9 +229,10 @@ Half 2 — the move and burial:
       by the operator** (see what differed) — `@aivi/app` major (removed),
       `@aivi/host` minor, fixed group come back at the end of the refactor.
 - [ ] No migration (D22): `rm -rf dev` after the phase lands, `aivi setup`
-      again — the dev home exists to be nuked. **Deferred by the operator:**
-      a fresh `setup` wants an interactive terminal; it happens in a real
-      terminal when the program is ready for the live pass, not before.
+      again — the dev home exists to be nuked. **Parked by the operator to
+      the end of the refactor** (with the changesets): a fresh `setup` wants
+      an interactive terminal, and one nuke at the end covers every
+      shape-changing phase instead of one per phase.
 
 Half 2 landed 2026-09-27 on `refactor/single-cli-command`. What differed
 from the plan while landing:
@@ -272,7 +273,8 @@ from the plan while landing:
   deleted package and `@aivi/host` is not in `dev/app/node_modules`, so
   operator commands with `AIVI_HOME=dev` answer `No aivi server installed
   at dev/app` while machine commands still work. Recreate it in a real
-  terminal at the program's live gate — `npm run aivi:cli -- setup --use
-  this-machine --app-spec "file:../../packages/host" --plugin "file:..."`
-  — which then proves the fresh record, the identity step through
-  `dist/cli/identity.js`, and the sign-in end to end.
+  terminal at the end of the refactor — the command the dev home's own
+  README carries (`npm run aivi:cli -- setup --use this-machine` with the
+  local `file:` app and plugin specs) — which then proves the fresh record,
+  the identity step through `dist/cli/identity.js`, and the sign-in end to
+  end.

@@ -6,10 +6,12 @@ deleted, the CLI mounts the installed server's command tree in-process — and
 half 2 — the `@aivi/app` move into `@aivi/host` and burial. Phase 2 landed on
 the same branch: the `@aivi/plugin` kit, plugins as `(ctx) => Command`
 factories, the `ask` wrappers dead, and `@aivi/linear` renamed to
-`@aivi/tracker-linear`. Two items wait at
-the program's live gate, not in the code: the D22 dev-home nuke (an
-interactive `aivi setup` in a real terminal) and the changesets, which the
-operator parked until the end of the refactor.
+`@aivi/tracker-linear`. Two items wait at the end of the refactor, not in the
+code: the D22 dev-home nuke (an interactive `aivi setup` in a real terminal)
+and the changesets, both parked by the operator until the refactor is done.
+Splitting the database file — which deletes the kit's last reference to the
+host — is scheduled right after the refactor
+([store-package](../../backlog/store-package.md)).
 Goal: one `aivi` binary, one command source, plugins as plain commander
 subtrees with a registered list, and remote operator access over the existing
 aivi port — with the two-binary `forward` deleted, not relocated.
