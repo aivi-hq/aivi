@@ -47,6 +47,27 @@ test('the list imports each package’s declaration and composes its schema', as
   assert.deepEqual(loaded.config.plugins.slack, undefined, 'an absent block stays absent: defaults are serve’s step');
 });
 
+test('a registry read after the list changed sees the change: add’s own sequence', async () => {
+  // The sequence `aivi add` runs in one process: the plugin's setup loads the
+  // config, the wizard writes the block, the entry joins the list, and the
+  // editor-schema rebuild must see both. A memoized registry composed the old
+  // schema here and refused the config the wizard had just written.
+  const root = await home();
+  await loadComposedConfig(root, join(root, 'config.json'));
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { slack: slackBlock } }));
+  await writeFile(
+    join(root, 'app', 'package.json'),
+    JSON.stringify({
+      name: 'aivi-server',
+      private: true,
+      dependencies: { '@aivi/channel-slack': '*' },
+      ['aivi-plugins']: ['@aivi/channel-slack'],
+    }),
+  );
+  const loaded = await loadComposedConfig(root, join(root, 'config.json'));
+  assert.equal(asSlack(loaded.config.plugins.slack).commandPrefix, 'aivi', 'the fresh entry validates its block');
+});
+
 test('the composed schema fills the plugin’s defaults and refuses an unlisted block', async () => {
   const root = await home('@aivi/channel-slack');
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { slack: slackBlock } }));

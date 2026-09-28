@@ -74,23 +74,21 @@ async function declarationOf(name: string): Promise<AiviPlugin> {
   return declaration as AiviPlugin;
 }
 
-const byHome = new Map<string, Promise<PluginRegistry>>();
-
-/** The home's registry, loaded once per process: the manifest read plus one
- *  light `./config` import per listed package — no platform SDK, no commander. */
-export function pluginRegistry(home: string): Promise<PluginRegistry> {
-  const known = byHome.get(home);
-  if (known) return known;
-  const pending = (async () => {
-    const entries: PluginEntry[] = [];
-    for (const [name, enabled] of readList(resolve(home, 'app', 'package.json')))
-      entries.push({ name, enabled, plugin: await declarationOf(name) });
-    const schemas: Record<string, z.ZodType> = {};
-    for (const entry of entries) schemas[entry.plugin.id] = entry.plugin.configSchema;
-    return { entries, configSchema: composeConfigSchema(schemas) };
-  })();
-  byHome.set(home, pending);
-  return pending;
+/** The home's registry, read fresh per call: the manifest plus one light
+ *  `./config` import per listed package — no platform SDK, no commander. The
+ *  import itself is already cached by the ESM loader, so there is nothing to
+ *  memoize — and memoizing would poison the one process that changes the
+ *  list mid-run: `aivi add` runs a plugin's setup, lists it, then rebuilds
+ *  the editor schema, which must see the entry the same command just wrote
+ *  (measured 2026-09-28: a cached registry composed without the new block
+ *  and refused the config the wizard had just written). */
+export async function pluginRegistry(home: string): Promise<PluginRegistry> {
+  const entries: PluginEntry[] = [];
+  for (const [name, enabled] of readList(resolve(home, 'app', 'package.json')))
+    entries.push({ name, enabled, plugin: await declarationOf(name) });
+  const schemas: Record<string, z.ZodType> = {};
+  for (const entry of entries) schemas[entry.plugin.id] = entry.plugin.configSchema;
+  return { entries, configSchema: composeConfigSchema(schemas) };
 }
 
 /** The home's config, validated against the composed schema: a block for an
