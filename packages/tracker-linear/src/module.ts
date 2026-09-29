@@ -1,4 +1,15 @@
-import type { Logger, Project } from '@aivi/core';
+/**
+ * The Linear module: the platform's conversations on top of Linear's tracker
+ * adapter. Everything Linear-shaped — webhooks, GraphQL, activity types, the
+ * apps and their credentials — lives behind `./tracker.ts`; what happens
+ * here is aivi's own machinery speaking the `Tracker` contract: routing a
+ * session to a worker or the assistant, the delegate guards, the listener's
+ * pickup, and the worktree a lane's agent works in. That machinery is the
+ * orchestrator waiting to be extracted ([orchestrator.md](../../../docs/plans/templates/orchestrator.md));
+ * the worktree code in `./worktree.ts` is its machinery too, and moves with
+ * that extraction.
+ */
+import type { Project } from '@aivi/core';
 import { errorMessage, gitIdentity } from '@aivi/core';
 import {
   ChannelEngine,
@@ -9,20 +20,13 @@ import {
 } from '@aivi/host';
 import type { AiviModule, AiviServices, Store } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
-import { LinearApiError, LinearClient } from './client.ts';
+import type { Tracker, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
 import type { LinearConfig } from './config.ts';
-import { assistantAgent, linearPrimarySecretNames, linearSecretNames, primaryLinearApp } from './config.ts';
+import { assistantAgent } from './config.ts';
 import { LinearMcp } from './mcp.ts';
 import type { LaneBinding } from './projects.ts';
 import { linearTeamCollisions, projectForIssue } from './projects.ts';
-import { registerWebhookRoutes } from './routes.ts';
-import {
-  type AgentSessionEventPayload,
-  type IssueEventPayload,
-  isAgentSessionEvent,
-  isIssueEvent,
-  type LinearWebhook,
-} from './webhook.ts';
+import { createLinearTracker, LinearTracker } from './tracker.ts';
 import { ensureWorktree, globalGitConfig, worktreePathFor } from './worktree.ts';
 
 /**
@@ -50,79 +54,43 @@ export const LINEAR: ChannelPlatform = {
   },
 };
 
-export const conversationFor = (app: string, agentSession: string) => `${app}:${agentSession}`;
-export const conversationParts = (conversation: string): { app: string; agentSession: string } => {
-  const at = conversation.indexOf(':');
-  return { app: conversation.slice(0, at), agentSession: conversation.slice(at + 1) };
-};
-
 export function openLinearStore(store: Store): ConversationStore {
   // Every conversation is bound individually; the module binding never changes.
   return new ConversationStore(store, LINEAR, 'linear');
 }
 
-export interface LinearAppRuntime {
-  id: string;
-  client: LinearClient;
-  webhookSecret: string;
-  /** The app user's id in the workspace; what `Issue.delegate` points at when it is us. */
-  userId: string;
-}
-
-/**
- * Credentials for every configured app, from the environment; a missing one is
- * the operator's to fix. The primary app (the one app, or `linear.primary`)
- * keeps the bare `LINEAR_*` names; every other app — a face — uses
- * `LINEAR_<APP>_*`.
- */
-/** The client to ask for teams: the one configured app, or the one `--app` names.
- * requireLinearSecrets names the missing LINEAR_* variables when secrets are absent. */
-export function clientFor(config: LinearConfig, app: string | undefined, log: Logger): LinearClient {
-  const ids = Object.keys(config.apps);
-  if (!ids.length) throw new Error('linear.apps is empty: configure a Linear app before pointing projects at teams');
-  if (ids.length > 1 && !app) throw new Error(`Several Linear apps are configured (${ids.join(', ')}): pass --app`);
-  const id = app ?? ids[0]!;
-  if (!config.apps[id]) throw new Error(`Unknown Linear app ${id}. Configured: ${ids.join(', ')}`);
-  const creds = requireLinearSecrets(config).find(cred => cred.id === id);
-  return new LinearClient(creds!, { log });
-}
-
-export function requireLinearSecrets(config: LinearConfig, env: NodeJS.ProcessEnv = process.env) {
-  const primary = primaryLinearApp(config);
-  if (!primary)
-    throw new ConfigurationError('Linear: with several apps one must carry the data feed — set `linear.primary`');
-  const out: { id: string; clientId: string; clientSecret: string; webhookSecret: string }[] = [];
-  for (const id of Object.keys(config.apps)) {
-    const names = id === primary ? linearPrimarySecretNames : linearSecretNames(id);
-    const missing = Object.values(names).filter(name => !env[name]);
-    if (missing.length) throw new ConfigurationError(`Linear app ${id}: set ${missing.join(', ')} in <home>/.env`);
-    out.push({
-      id,
-      clientId: env[names.clientId]!,
-      clientSecret: env[names.clientSecret]!,
-      webhookSecret: env[names.webhookSecret]!,
-    });
-  }
-  return out;
-}
-
-/** `clients` is a test seam keyed by endpoint id (an app id or `data`); real clients come from the environment. */
-export function createLinearModule(config: LinearConfig, clients?: Map<string, LinearClient>): AiviModule {
-  return { id: LINEAR.id, start: services => startLinear(config, services, clients) };
-}
-
-/** One issue, as the API answers it: the only routing input, always re-read, never trusted from a payload. */
-type LinearIssue = Awaited<ReturnType<LinearClient['issue']>>;
-
-/** The `<issue>` block that accompanies every enqueue when the webhook brought no context of its own. */
-const issueDossier = (issue: LinearIssue) =>
+/** The `<issue>` block that accompanies every enqueue when the event brought
+ *  no context of its own. */
+const issueDossier = (issue: TrackerIssue) =>
   `<issue identifier="${issue.identifier}"><title>${issue.title}</title><description>${issue.description ?? ''}</description></issue>`;
 
-/** Which aivi project an issue belongs to moved to `./projects.ts` with the
- *  project's `linear` section: core hands the section through unread and the
- *  plugin merges it here. */
+// Which aivi project an issue belongs to lives in `./projects.ts` with the
+// project's `linear` section: core hands the section through unread and the
+// plugin merges it here.
 
-async function startLinear(config: LinearConfig, services: AiviServices, givenClients?: Map<string, LinearClient>) {
+/** Where the module's tracker comes from: Linear's adapter by default, a
+ *  fake tracker in a test of the decisions below. */
+type MakeTracker = (services: AiviServices) => Promise<Tracker>;
+
+/**
+ * The module, built on a tracker. What lives here is aivi's machinery —
+ * routing, guards, the listener's pickup, the worktree — speaking only the
+ * `Tracker` contract; everything Linear-shaped is the adapter's, in
+ * `./tracker.ts`.
+ */
+export function createLinearModule(config: LinearConfig, makeTracker?: MakeTracker): AiviModule {
+  return {
+    id: LINEAR.id,
+    start: services =>
+      startLinear(
+        config,
+        services,
+        makeTracker ?? (({ routes, log }) => createLinearTracker(config, routes, undefined, log.getChild('linear'))),
+      ),
+  };
+}
+
+async function startLinear(config: LinearConfig, services: AiviServices, makeTracker: MakeTracker) {
   const log = services.log.getChild('linear');
   const collisions = linearTeamCollisions(services.loaded);
   if (collisions.length) throw new Error(`Linear config: ${collisions.join('; ')}`);
@@ -130,26 +98,14 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
   const interrupted = store.recover();
   if (interrupted.length) log.warn('turns.interrupted', { blocked: interrupted.length });
 
+  // The adapter takes the whole platform in: apps, credentials, endpoints.
+  const tracker = await makeTracker(services);
+
   // Who a worker commits as, resolved once for the run: aivi launched that work,
   // so the bot authors it and no co-author trailer follows. Logged because it is
   // the first thing to look at when a commit carries the wrong name.
   const workerIdentity = await gitIdentity(services.loaded.config.identity, globalGitConfig);
   log.info('worker.identity', { name: workerIdentity.name, email: workerIdentity.email });
-
-  const apps = new Map<string, LinearAppRuntime>();
-  const primaryId = primaryLinearApp(config);
-  for (const secret of requireLinearSecrets(config)) {
-    const client = givenClients?.get(secret.id) ?? new LinearClient(secret, { log });
-    let userId: string;
-    try {
-      userId = await client.viewerId();
-    } catch (error) {
-      if (error instanceof LinearApiError && (error.status === 400 || error.status === 401))
-        throw new ConfigurationError(`Linear app ${secret.id}: credentials rejected (${error.message})`);
-      throw error;
-    }
-    apps.set(secret.id, { id: secret.id, client, webhookSecret: secret.webhookSecret, userId });
-  }
 
   const abort = new AbortController();
   let engine: ChannelEngine | undefined;
@@ -169,33 +125,8 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
     }
   };
 
-  const clientFor = (conversation: string) => {
-    const { app } = conversationParts(conversation);
-    const runtime = apps.get(app);
-    if (!runtime) throw new Error(`Linear app ${app} is not configured`);
-    return runtime;
-  };
-  const activity = (
-    conversation: string,
-    content: Parameters<LinearClient['createActivity']>[0]['content'],
-    ephemeral = false,
-  ) =>
-    clientFor(conversation).client.createActivity({
-      agentSessionId: conversationParts(conversation).agentSession,
-      content,
-      ...(ephemeral ? { ephemeral: true } : {}),
-    });
-  const delivery: ChannelDelivery = {
-    send: async (conversation, text) => activity(conversation, { type: 'response', body: text }),
-    placeholder: (conversation, text) => activity(conversation, { type: 'thought', body: text }, true),
-    edit: async (conversation, _id, text) => {
-      await activity(conversation, { type: 'thought', body: text }, true);
-    },
-    delete: async () => {}, // the response that follows replaces the ephemeral thought
-    notice: async (conversation, text) => {
-      await activity(conversation, { type: 'error', body: text });
-    },
-  };
+  const say = (conversation: string, text: string, kind: TrackerCommentKind) =>
+    tracker.comment(conversation, text, kind).catch(error => log.warn('notify.failed', { error }));
 
   try {
     const home = services.loaded.path.replace(/\/[^/]*$/, '');
@@ -208,6 +139,19 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
       services.store,
       services.log,
     );
+    // The adapter's agent-session activities are Linear's way to deliver:
+    // answers and outcomes visible, progress the ephemeral thought.
+    const delivery: ChannelDelivery = {
+      send: async (conversation, text) => tracker.comment(conversation, text, 'answer'),
+      placeholder: async (conversation, text) => tracker.comment(conversation, text, 'progress'),
+      edit: async (conversation, _id, text) => {
+        await tracker.comment(conversation, text, 'progress');
+      },
+      delete: async () => {}, // the response that follows replaces the ephemeral thought
+      notice: async (conversation, text) => {
+        await tracker.comment(conversation, text, 'outcome');
+      },
+    };
     engine = new ChannelEngine(
       store,
       { resource: config.resource, maxConcurrent: 8, turnTimeoutMs: config.turnTimeoutMs },
@@ -224,27 +168,30 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
 
     const refuse = async (conversation: string, why: string) => {
       log.info('session.refused', { conversation, why });
-      await activity(conversation, { type: 'error', body: why }).catch(error => log.warn('notify.failed', { error }));
+      await say(conversation, why, 'outcome');
     };
 
     /** A delegation no lane can run gets one plain, fixed answer: the
      *  assistant holds conversations people bring it, it does not improvise
      *  over a job the config never claimed. The delegate is un-taken first —
      *  the app must not sit on the ticket as a worker it cannot be. */
-    const unclaimed = async (app: LinearAppRuntime, issue: LinearIssue, conversation: string, why: string) => {
+    const unclaimed = async (issue: TrackerIssue, conversation: string, why: string) => {
       log.info('session.unclaimed', { conversation, issue: issue.identifier, why });
-      await app.client.setDelegate(issue.id, null).catch(error => log.warn('delegate.undone', { error }));
-      await activity(conversation, {
-        type: 'response',
-        body: `I looked into ${issue.identifier}, and there is nothing I can do at this time: ${why} I have removed myself as delegate — @mention me if you want to talk about it.`,
-      }).catch(error => log.warn('notify.failed', { error }));
+      await tracker.unassign(conversation, issue.id).catch(error => log.warn('delegate.undone', { error }));
+      await say(
+        conversation,
+        `I looked into ${issue.identifier}, and there is nothing I can do at this time: ${why} I have removed myself as delegate — @mention me if you want to talk about it.`,
+        'answer',
+      );
     };
 
-    // The Linear MCP: the module's own loopback forwarder, authorised with the
-    // primary's app-actor token. Agents act in Linear; writes attribute to the app.
-    if (config.mcp) {
-      const primary = apps.get(primaryId!);
-      mcp = new LinearMcp(primary!.client, { port: config.mcp.port, log });
+    /** The Linear MCP: the module's own loopback forwarder, authorised with the
+     *  primary's app-actor token. Agents act in Linear; writes attribute to the
+     *  app. It is Linear's own machinery rather than part of the neutral seam,
+     *  so it comes with Linear's adapter and with nothing else. */
+    if (config.mcp && tracker instanceof LinearTracker) {
+      const primary = tracker.primary.client;
+      mcp = new LinearMcp(primary, { port: config.mcp.port, log });
       try {
         const port = await mcp.start();
         log.info('linear.mcp.ready', { url: `http://127.0.0.1:${port}/mcp` });
@@ -254,13 +201,13 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
       }
     }
 
-    /** End the worker in `conversation` because Linear says it must not continue; the worktree stays. */
+    /** End the worker in `conversation` because the tracker says it must not continue; the worktree stays. */
     const stopWorker = async (conversation: string, why: string) => {
       const result = await stopRunningTurn(engine!, services.opencode, conversation);
       if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
       // The engine's stopped notice follows for a running turn; queued-only conversations hear this one.
-      if (!result.stopped) await activity(conversation, { type: 'error', body: why }).catch(() => {});
-      else await activity(conversation, { type: 'thought', body: why }).catch(() => {});
+      if (!result.stopped) await say(conversation, why, 'outcome');
+      else await say(conversation, why, 'note');
       log.info('worker.stopped', { conversation, why });
     };
 
@@ -271,14 +218,14 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
      * tick then, exactly as the early return used to.
      */
     const startWorker = async (
-      app: LinearAppRuntime,
-      payload: AgentSessionEventPayload,
-      issue: LinearIssue,
+      issue: TrackerIssue,
       project: Project,
       lane: LaneBinding,
       conversation: string,
+      promptContext?: string,
     ): Promise<boolean> => {
-      const path = worktreePathFor(project.directory, payload.agentSession.id);
+      const { app, session: sessionId } = tracker.parts(conversation);
+      const path = worktreePathFor(project.directory, sessionId);
       let made: Awaited<ReturnType<typeof ensureWorktree>> | null = null;
       if (lane.worktree) {
         try {
@@ -297,26 +244,29 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
       const directory = made ? made.path : project.directory;
       store.bind(conversation, { agent: lane.agent, directory, project: project.id, issue: issue.id });
       const waiting = store.waitingOn(conversation);
-      await activity(
+      await say(
         conversation,
-        {
-          type: 'thought',
-          body: waiting
-            ? `Queued: another worker is busy on ${issue.identifier}; I start when it finishes.`
-            : `Starting as \`${lane.agent}\` in project ${project.id}${made ? ` on branch \`${issue.branchName}\`` : ', working in the project checkout'}.`,
-        },
-        true,
-      ).catch(error => log.warn('notify.failed', { error }));
+        waiting
+          ? `Queued: another worker is busy on ${issue.identifier}; I start when it finishes.`
+          : `Starting as \`${lane.agent}\` in project ${project.id}${made ? ` on branch \`${issue.branchName}\`` : ', working in the project checkout'}.`,
+        'progress',
+      );
       if (made && made.path !== path) store.rebind(conversation, { directory: made.path });
       const place = made
         ? `You work in the git worktree ${made.path} on branch ${issue.branchName} (from ${made.base}).`
         : `You work in the project's clean checkout ${project.directory} on its current branch; leave it as you found it — the checkout is the source of truth. The agent file says what you may change.`;
       const text = [
-        `[Linear delegated ${issue.identifier} "${issue.title}" to you (app ${app.id}) in project ${project.id}, lane "${issue.state.name}". ${place} Your final answer is posted to the issue as your response; questions you ask are posted too and answered as follow-ups.]`,
-        payload.promptContext ?? issueDossier(issue),
+        `[Linear delegated ${issue.identifier} "${issue.title}" to you (app ${app}) in project ${project.id}, lane "${issue.state.name}". ${place} Your final answer is posted to the issue as your response; questions you ask are posted too and answered as follow-ups.]`,
+        promptContext ?? issueDossier(issue),
       ].join('\n\n');
       store.enqueue(
-        { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },
+        {
+          id: `created:${sessionId}`,
+          channel: conversation,
+          user: tracker.ownerOf(conversation),
+          name: 'Linear',
+          text,
+        },
         100,
       );
       return true;
@@ -327,134 +277,129 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
      * is un-taken here; the assistant's response is the trail.
      */
     const startAssistant = async (
-      app: LinearAppRuntime,
-      payload: AgentSessionEventPayload,
-      issue: LinearIssue,
+      issue: TrackerIssue,
       project: Project | undefined,
       conversation: string,
+      promptContext?: string,
     ) => {
       store.bind(conversation, {
         agent: assistantAgent(services.loaded.config.plugins.linear as LinearConfig | undefined),
         directory: project ? project.directory : home,
         project: project?.id ?? null,
       });
-      await activity(conversation, { type: 'thought', body: `One moment — reading ${issue.identifier}.` }, true).catch(
-        error => log.warn('notify.failed', { error }),
-      );
+      await say(conversation, `One moment — reading ${issue.identifier}.`, 'progress');
       // Facts only: who is talking and what was brought. How the assistant
       // behaves with them is the agent file's, the whole boundary. A
       // delegation never arrives here: what no lane can run is answered
       // plainly before any agent is bound.
       const situation = `[platform: linear; issue: ${issue.identifier} "${issue.title}"; project: ${project?.id ?? 'none'}; came by: a person brought you the issue]`;
-      const text = [situation, payload.promptContext ?? issueDossier(issue)].join('\n\n');
+      const text = [situation, promptContext ?? issueDossier(issue)].join('\n\n');
+      const { session: sessionId } = tracker.parts(conversation);
       store.enqueue(
-        { id: `created:${payload.agentSession.id}`, channel: conversation, user: app.userId, name: 'Linear', text },
+        {
+          id: `created:${sessionId}`,
+          channel: conversation,
+          user: tracker.ownerOf(conversation),
+          name: 'Linear',
+          text,
+        },
         100,
       );
     };
 
     /**
      * A session started. Routing is deterministic, from the issue re-read:
-     * an archived ticket gets nothing at all — it is deleted as far as work
-     * is concerned; the HITL label refuses for any agent; a delegation whose
-     * lane maps an agent is a worker (the lane decides worktree or checkout);
-     * a delegation no lane can run gets its delegate un-taken and one plain
-     * fixed answer saying why — nobody improvises over work the config never
-     * claimed; and what a person brings us any other way — a comment mention
-     * above all — lands on the assistant, in the checkout or the home. The
-     * face is never a routing input: a delegation into a mapped lane runs the
-     * lane's agent whatever app the session lives on.
+     * a deleted ticket gets nothing at all; the HITL label refuses for any
+     * agent; a delegation whose lane maps an agent is a worker (the lane
+     * decides worktree or checkout); a delegation no lane can run gets its
+     * delegate un-taken and one plain fixed answer saying why — nobody
+     * improvises over work the config never claimed; and what a person
+     * brings us any other way — a comment mention above all — lands on the
+     * assistant, in the checkout or the home. The face is never a routing
+     * input: a delegation into a mapped lane runs the lane's agent whatever
+     * app the session lives on.
      */
-    const onCreated = async (app: LinearAppRuntime, payload: AgentSessionEventPayload) => {
-      const conversation = conversationFor(app.id, payload.agentSession.id);
+    const onStarted = async (conversation: string, issueId: string, promptContext?: string) => {
       if (store.has(conversation)) return; // a redelivery
-      const issueId = payload.agentSession.issue?.id;
       if (!issueId) return refuse(conversation, 'I only work on issues; this session has none.');
-      const issue = await app.client.issue(issueId);
-      if (issue.archivedAt) return log.debug('session.archived', { issue: issue.identifier });
+      const issue = await tracker.issue(conversation, issueId);
+      if (issue.archived) return log.debug('session.archived', { issue: issue.identifier });
       if (issue.labels.some(l => l.name === config.humanLabel))
         return refuse(
           conversation,
           `${issue.identifier} carries the \`${config.humanLabel}\` label, so a person handles it. Remove the label to let me work on it.`,
         );
       const routed = projectForIssue(services.loaded, {
-        teamId: issue.team.id,
-        organizationId: payload.organizationId,
+        teamId: issue.teamId,
+        // The org the app's own credentials belong to: the issue was read
+        // with that token, so it is the trustworthy workspace, not the words
+        // of whichever delivery mentioned one.
+        organizationId: await tracker.orgOf(conversation),
       });
       const lane = routed?.linear.lanes[issue.state.name];
-      if (issue.delegate?.id === app.userId) {
+      if (issue.delegateId === tracker.ownerOf(conversation)) {
         // The app was named to work: a lane that claims it runs the worker;
         // a delegation nothing can run is answered plainly, and no agent is
         // left behind to improvise.
         if (routed && lane) {
-          if (!(await startWorker(app, payload, issue, routed.project, lane, conversation))) return;
+          if (!(await startWorker(issue, routed.project, lane, conversation, promptContext))) return;
           engine?.tick();
         } else if (!routed) {
-          await unclaimed(app, issue, conversation, 'its team is not connected to an aivi project.');
+          await unclaimed(issue, conversation, 'its team is not connected to an aivi project.');
         } else if (lane === null) {
-          await unclaimed(app, issue, conversation, `the "${issue.state.name}" lane is marked as human's work.`);
+          await unclaimed(issue, conversation, `the "${issue.state.name}" lane is marked as human's work.`);
         } else {
-          await unclaimed(app, issue, conversation, `the "${issue.state.name}" lane has no agent mapping.`);
+          await unclaimed(issue, conversation, `the "${issue.state.name}" lane has no agent mapping.`);
         }
         return;
       }
       // A person addressing us is a conversation the assistant holds,
       // mapped lanes or not.
-      await startAssistant(app, payload, issue, routed?.project, conversation);
+      await startAssistant(issue, routed?.project, conversation, promptContext);
       engine?.tick();
     };
 
-    const onPrompted = async (app: LinearAppRuntime, payload: AgentSessionEventPayload) => {
-      const conversation = conversationFor(app.id, payload.agentSession.id);
-      const prompt = payload.agentActivity;
-      if (!prompt) return;
+    const onPrompted = async (event: Extract<TrackerEvent, { kind: 'prompted' }>) => {
+      const conversation = event.conversation;
       if (!store.has(conversation))
         return refuse(
           conversation,
           'I do not know this session (it started before aivi did, or its state is gone). Delegate the issue to me again.',
         );
-      if (prompt.signal === 'stop') {
+      if (event.signal === 'stop') {
         const result = await stopRunningTurn(engine!, services.opencode, conversation);
         if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-        if (!result.stopped) await activity(conversation, { type: 'response', body: 'Nothing is running right now.' });
+        if (!result.stopped) await say(conversation, 'Nothing is running right now.', 'answer');
         return;
       }
-      const text = prompt.content?.body?.trim();
+      const text = event.body?.trim();
       if (!text) return;
-      store.enqueue({ id: prompt.id, channel: conversation, user: 'linear', name: 'a person in Linear', text }, 100);
+      store.enqueue({ id: event.id, channel: conversation, user: 'linear', name: 'a person in Linear', text }, 100);
       engine?.tick();
     };
 
-    /**
-     * An issue changed. Three things matter, all read from the API rather than the payload so
-     * label names, state names and the delegate are current: the HITL label appearing, the
-     * lane leaving its mapping or naming another agent, or the delegate being taken away
-     * while a worker is pending (stop it); and, with the listener on, an issue entering a
-     * mapped lane with nobody on it (delegate the primary and start its session).
-     */
     /** Workers the update orphaned: the HITL label, a lane move or a delegate
      *  change each stops only its own kind of change. */
     const stopOrphans = async (
       pending: string[],
-      issue: LinearIssue,
+      issue: TrackerIssue,
       lane: LaneBinding | undefined,
       human: boolean,
-      changed: string[],
+      changed: TrackerChange[],
     ) => {
       for (const conversation of pending) {
-        const { app: workerApp } = conversationParts(conversation);
         const workerAgent = store.sessionOf(conversation)?.agent;
-        if (human && changed.includes('labelIds'))
+        if (human && changed.includes('labels'))
           await stopWorker(
             conversation,
             `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
           );
-        else if (changed.includes('stateId') && lane?.agent !== workerAgent)
+        else if (changed.includes('state') && lane?.agent !== workerAgent)
           await stopWorker(
             conversation,
             `Stopped: ${issue.identifier} moved to "${issue.state.name}", which is not my lane.`,
           );
-        else if (changed.includes('delegateId') && issue.delegate?.id !== apps.get(workerApp)?.userId)
+        else if (changed.includes('delegate') && issue.delegateId !== tracker.ownerOf(conversation))
           await stopWorker(conversation, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
       }
     };
@@ -464,26 +409,20 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
      *  makes Linear create the agent session itself and hand it back in the
      *  mutation's own answer (live, 2026-09-26) — nothing opens a session by
      *  hand, and the `created` webhook that follows is a redelivery. */
-    const listenerPickup = async (
-      primary: LinearAppRuntime,
-      payload: IssueEventPayload,
-      issue: LinearIssue,
-      lane: LaneBinding,
-    ) => {
-      if (issue.delegate) return;
+    const listenerPickup = async (issue: TrackerIssue, lane: LaneBinding, conversation: string) => {
+      if (issue.delegateId) return;
       // Linear's native blocking: an issue blocked by unfinished issues is not picked up.
-      if (issue.blockedBy.some(b => b.state.type !== 'completed' && b.state.type !== 'canceled')) {
-        log.info('listener.blocked', { issue: issue.identifier, by: issue.blockedBy.map(b => b.id) });
+      if (issue.blockedByStates.some(t => t !== 'completed' && t !== 'canceled')) {
+        log.info('listener.blocked', { issue: issue.identifier });
         return;
       }
-      const answer = await primary.client.setDelegate(issue.id, primary.userId);
-      const made = answer.issue?.agentSessions.nodes.find(s => s.status === 'pending');
-      if (!made) {
+      const sessionId = await tracker.startSession(conversation, issue.id);
+      if (!sessionId) {
         // Linear made no session, so there is nothing to start. The route
         // acknowledged the delivery already — nothing will retry this — so
         // the failure is loud, and the delegation is undone: the issue must
         // not sit in the lane wearing the app as if a worker were coming.
-        await primary.client.setDelegate(issue.id, null).catch(error => log.warn('delegate.undone', { error }));
+        await tracker.unassign(conversation, issue.id).catch(error => log.warn('delegate.undone', { error }));
         log.error('listener.no-session', { issue: issue.identifier, lane: issue.state.name });
         return;
       }
@@ -491,82 +430,52 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
         issue: issue.identifier,
         lane: issue.state.name,
         agent: lane.agent,
-        agentSession: made.id,
+        agentSession: sessionId,
       });
       // The `created` webhook for this session may still arrive; one worker
       // per issue (docs/linear.md) folds it into this one as a redelivery.
-      await onCreated(primary, {
-        type: 'AgentSessionEvent',
-        action: 'created',
-        organizationId: payload.organizationId,
-        webhookTimestamp: Date.now(),
-        agentSession: { id: made.id, issue: { id: issue.id, identifier: issue.identifier } },
-      });
+      await onStarted(tracker.idFor(sessionId), issue.id);
     };
 
-    const onIssue = async (primary: LinearAppRuntime, payload: IssueEventPayload) => {
-      if (payload.action !== 'update') return;
-      const changed = Object.keys(payload.updatedFrom ?? {});
-      if (!changed.some(k => ['stateId', 'labelIds', 'delegateId'].includes(k))) return;
-      const issue = await primary.client.issue(payload.data.id);
+    const onIssue = async (event: Extract<TrackerEvent, { kind: 'updated' }>) => {
+      if (!event.changed.length) return;
+      const issue = await tracker.issue(event.conversation, event.issueId);
       const routed = projectForIssue(services.loaded, {
-        teamId: issue.team.id,
-        organizationId: payload.organizationId,
+        teamId: issue.teamId,
+        organizationId: await tracker.orgOf(event.conversation),
       });
       if (!routed) return;
       // Lane names are per Linear team; two mapped teams sharing a state name share the lane's agent.
       const lane = routed.linear.lanes[issue.state.name];
       const human = issue.labels.some(l => l.name === config.humanLabel);
       const pending = store.pendingForIssue(issue.id);
-      await stopOrphans(pending, issue, lane, human, changed);
-      if (!config.listener || !changed.includes('stateId') || !lane || human || pending.length) return;
-      await listenerPickup(primary, payload, issue, lane);
+      await stopOrphans(pending, issue, lane, human, event.changed);
+      if (!config.listener || !event.changed.includes('state') || !lane || human || pending.length) return;
+      await listenerPickup(issue, lane, event.conversation);
     };
 
-    /**
-     * A delivery at the wrong endpoint is a checkbox in Linear disagreeing
-     * with the config: acknowledged so Linear does not retry a working
-     * endpoint, and dropped; `logMisroutes` decides whether the drop is
-     * audible. An unknown payload type is not a misroute, only unheard.
-     */
-    const misrouted = (endpoint: string, payload: LinearWebhook) => {
-      const fields = { endpoint, type: payload.type, action: payload.action };
-      if (config.logMisroutes) log.warn('webhook.misrouted', fields);
-      else log.debug('webhook.misrouted', fields);
-    };
-
-    /**
-     * One route shape: `POST /linear/webhooks/app/<id>`, verified by that
-     * app's secret. The primary's route carries both families — its own
-     * agent-session events and the workspace's Issues data changes. A data
-     * change on a face's route is a misroute: acknowledged, dropped, audible
-     * per `linear.logMisroutes`.
-     */
-    const dispatch = async (appId: string, payload: LinearWebhook) => {
-      if (abort.signal.aborted) return;
-      const app = apps.get(appId);
-      if (!app) return log.warn('webhook.unknown-app', { app: appId, type: payload.type, action: payload.action });
-      if (isAgentSessionEvent(payload)) {
-        if (payload.action === 'created') await onCreated(app, payload);
-        else await onPrompted(app, payload);
-        return;
+    /** Everything downstream keys off the adapter's normalized events — the
+     *  endpoints, the signatures and the acknowledgements are the adapter's.
+     *  A handler that throws is logged and dropped: the delivery was
+     *  acknowledged already, so a retry would only replay what failed. */
+    const unsubscribeEvents = tracker.events(async event => {
+      try {
+        if (abort.signal.aborted) return;
+        if (event.kind === 'started') await onStarted(event.conversation, event.issueId, event.promptContext);
+        else if (event.kind === 'prompted') await onPrompted(event);
+        else await onIssue(event);
+      } catch (error) {
+        log.warn('event.failed', { error });
       }
-      if (isIssueEvent(payload)) {
-        if (appId !== primaryId) return misrouted(appId, payload);
-        return onIssue(app, payload);
-      }
-      log.debug('webhook.ignored', { app: appId, type: payload.type, action: payload.action });
-    };
-
-    const unroute = registerWebhookRoutes(services.routes, [...apps.values()], dispatch, log);
+    });
 
     // A worker interrupted by a restart is blocked (nobody knows whether the agent stopped); say so in its session.
-    for (const turn of interrupted) {
-      void activity(turn.channel, {
-        type: 'error',
-        body: 'aivi was restarted while I was working. The worktree and the OpenCode session are left as they are; an operator must inspect and resolve this before the project is worked on again.',
-      }).catch(error => log.warn('notify.failed', { error }));
-    }
+    for (const turn of interrupted)
+      await say(
+        turn.channel,
+        'aivi was restarted while I was working. The worktree and the OpenCode session are left as they are; an operator must inspect and resolve this before the project is worked on again.',
+        'outcome',
+      );
 
     const unregister = services.channels.register({
       id: LINEAR.id,
@@ -585,11 +494,11 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
       engine!.tick();
     });
     engine.tick();
-    log.info('ready', { apps: [...apps.keys()], listener: config.listener });
+    log.info('ready', { apps: Object.keys(config.apps), listener: config.listener });
 
     return {
       async stop() {
-        unroute();
+        unsubscribeEvents();
         unregister();
         unsubscribeWake();
         await teardown();
@@ -602,7 +511,7 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
 }
 
 /** For `aivi linear status`: what each conversation is doing — a worker on an
- * issue, or an assistant session bound to no issue. */
+ *  issue, or an assistant session bound to no issue. */
 export function describeWorkers(
   store: ConversationStore,
 ): { conversation: string; agent: string | null; issue: string | null; turn: Turn }[] {

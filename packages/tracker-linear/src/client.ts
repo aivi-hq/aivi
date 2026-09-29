@@ -199,10 +199,18 @@ export class LinearClient {
     return parsed.data;
   }
 
+  /** The app user's own id and its workspace in one round; also proves the
+   *  credentials work. The tracker adapter learns `userId`/`orgId` here. */
+  async viewer(): Promise<{ id: string; organizationId: string }> {
+    const data = await this.graphql<{ viewer: { id: string; organizationId: string } }>(
+      'query { viewer { id organizationId } }',
+    );
+    return { id: data.viewer.id, organizationId: data.viewer.organizationId };
+  }
+
   /** The app user's own id in this workspace; also proves the credentials work. */
   async viewerId(): Promise<string> {
-    const data = await this.graphql<{ viewer: { id: string } }>('query { viewer { id } }');
-    return data.viewer.id;
+    return (await this.viewer()).id;
   }
 
   /** The teams this app can see with their workflow states, archived excluded:

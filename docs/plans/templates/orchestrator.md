@@ -46,6 +46,17 @@ An adapter is a translator in both directions and nothing else:
 - `events` — normalized signals: issue entered lane, label changed, delegate
   changed. Everything downstream keys off these, never off raw webhooks.
 
+**Built 2026-09-29** as the `@aivi/plugin/tracker` subpath, seeded from what
+the running Linear module actually asks: `issue`, `laneStates`, `assign`,
+`unassign`, `startSession` (Linear's delegate mutation is what creates its
+agent session — the adapter hides that, and reports the session it made),
+`comment` in four neutral kinds (`answer`/`progress`/`note`/`outcome`, which
+Linear renders as its activity types), `idFor`/`parts` (a conversation is the
+adapter's own string; the machinery never parses it), and `events` carrying
+`started`/`prompted`/`updated`. `createStates`, `candidates` and `apply` are
+declared optional and unimplemented: they come with the dispatch work below,
+when the machinery starts asking pull-shaped questions.
+
 Deliberately **not** on the adapter: weights, ordering, capacity, worktrees,
 the exit contract. GitHub-as-ticket-system is its own adapter plugin;
 GitHub-as-repo-host (branches, PRs, review feedback) is separate plumbing —

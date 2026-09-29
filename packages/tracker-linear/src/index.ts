@@ -30,17 +30,7 @@ export {
 } from './config.ts';
 export type { LinearMcpOptions } from './mcp.ts';
 export { LinearMcp } from './mcp.ts';
-export type { LinearAppRuntime } from './module.ts';
-export {
-  clientFor,
-  conversationFor,
-  conversationParts,
-  createLinearModule,
-  describeWorkers,
-  LINEAR,
-  openLinearStore,
-  requireLinearSecrets,
-} from './module.ts';
+export { createLinearModule, describeWorkers, LINEAR, openLinearStore } from './module.ts';
 export type { RoutedProject } from './projects.ts';
 export {
   linearTeamCollisions,
@@ -51,6 +41,8 @@ export {
 } from './projects.ts';
 export type { WebhookApp } from './routes.ts';
 export { appWebhookPath, registerWebhookRoutes } from './routes.ts';
+export type { LinearAppRuntime } from './tracker.ts';
+export { clientFor, createLinearTracker, LinearTracker, neutralIssue, requireLinearSecrets } from './tracker.ts';
 export type {
   AgentSessionEventPayload,
   IssueEventPayload,

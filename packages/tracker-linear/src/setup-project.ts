@@ -7,7 +7,7 @@ import { getLogger } from '@aivi/core';
 import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
 import { type LinearTeam, resolveTeams } from './client.ts';
 import type { LaneValue, LinearConfig } from './config.ts';
-import { clientFor } from './module.ts';
+import { clientFor } from './tracker.ts';
 
 const log = getLogger(['aivi', 'projects']);
 

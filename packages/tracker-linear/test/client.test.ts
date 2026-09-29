@@ -50,7 +50,7 @@ test('the token comes from client credentials once, is shared by concurrent call
       rejectFirstBearer = false;
       return { status: 401, body: { error: 'expired' } };
     }
-    return { status: 200, body: { data: { viewer: { id: 'app-user' } } } };
+    return { status: 200, body: { data: { viewer: { id: 'app-user', organizationId: 'org-1' } } } };
   });
   const baseUrl = await linear.start();
   t.after(linear.stop);

@@ -12,13 +12,11 @@ import { configSchema, getLogger } from '@aivi/core';
 import type { SessionEvents } from '@aivi/host';
 import { Channels, connectOpenCode, PublicRoutes, Store, TaskRegistry, ToolRegistry } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
-import type { AgentActivityInput, LinearIssue } from '../src/client.ts';
-import { LinearClient } from '../src/client.ts';
+import type { ChannelDelivery } from '@aivi/plugin/channel';
+import type { Tracker, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
 import type { LinearConfig } from '../src/config.ts';
 import { linearSchema } from '../src/config.ts';
-import { conversationFor, createLinearModule, openLinearStore } from '../src/module.ts';
-import { appWebhookPath } from '../src/routes.ts';
-import { signWebhook } from '../src/webhook.ts';
+import { createLinearModule, openLinearStore } from '../src/module.ts';
 
 const run = promisify(execFile);
 
@@ -27,14 +25,6 @@ const linearBlock = (config: { plugins: Record<string, unknown> }): LinearConfig
   linearSchema.parse(config.plugins.linear);
 const git = (cwd: string, ...args: string[]) =>
   run('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
-
-/** The fake's stateless answers, keyed by nothing but the url; undefined means "ask the state". */
-function canned(url: string, method: string): string | undefined {
-  if (url.startsWith('/api/agent')) return '{"data":[{"id":"developer","name":"developer"}]}';
-  if (url.endsWith('/message')) return '{"data":[],"cursor":{"next":null}}';
-  if (url.endsWith('/permission') && method === 'GET') return '{"data":[]}';
-  return undefined;
-}
 
 /** A tiny OpenCode: any session exists, every prompt gets the same answer. */
 async function fakeOpenCode(
@@ -73,8 +63,9 @@ async function fakeOpenCode(
     const url = new URL(req.url!, 'http://x').pathname;
     res.setHeader('content-type', 'application/json');
     if (url.endsWith('/wait')) await gate();
-    const known = canned(url, req.method!);
-    if (known !== undefined) return void res.end(known);
+    if (url.startsWith('/api/agent')) return void res.end('{"data":[{"id":"developer","name":"developer"}]}');
+    if (url.endsWith('/message')) return void res.end('{"data":[],"cursor":{"next":null}}');
+    if (url.endsWith('/permission') && req.method === 'GET') return void res.end('{"data":[]}');
     if (url.endsWith('/interrupt')) {
       interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
       return void res.end('{"interrupted":true}');
@@ -101,52 +92,126 @@ async function fakeOpenCode(
   return { url: `http://127.0.0.1:${address.port}`, prompts, sessions, interrupted };
 }
 
-/** A Linear that records activities and serves one issue. */
-class FakeLinear extends LinearClient {
-  activities: AgentActivityInput[] = [];
-  issues = new Map<string, LinearIssue>();
+/**
+ * A tracker that records what the module asks of it and serves neutral
+ * issues — the seam the module decisions are tested through. The Linear
+ * translation behind the real adapter (webhooks, GraphQL, activity types)
+ * is `test/tracker.test.ts`'s subject, not this file's.
+ */
+class FakeTracker implements Tracker {
+  readonly id = 'linear';
+  comments: { conversation: string; text: string; kind: TrackerCommentKind }[] = [];
+  /** The app ids the module was configured with; conversations carry them. */
+  readonly apps: string[];
+  /** Which app a conversation belongs to, as the module names it. */
+  app: Record<string, string> = {};
+  issues = new Map<string, TrackerIssue>();
   delegated: [string, string | null][] = [];
   sessionsCreated: string[] = [];
-  sessions = new Map<string, string[]>();
-  constructor() {
-    super({ clientId: 'x', clientSecret: 'y' }, { baseUrl: 'http://127.0.0.1:1' });
+  private sessionsByIssue = new Map<string, string[]>();
+  private sink: ((event: TrackerEvent) => Promise<void>) | undefined;
+
+  constructor(config: LinearConfig) {
+    this.apps = Object.keys(config.apps);
   }
-  override async viewerId() {
-    return 'app-user-dev';
+
+  private conversation(conversation: string): string {
+    this.app[conversation] ??= this.parts(conversation).app;
+    return this.app[conversation]!;
   }
-  override async createActivity(input: AgentActivityInput) {
-    this.activities.push(input);
-    return `act-${this.activities.length}`;
+
+  async laneStates() {
+    return [];
   }
-  override async issue(id: string) {
-    const issue = this.issues.get(id);
-    if (!issue) throw new Error(`no issue ${id}`);
+  async issue(_conversation: string, issueId: string): Promise<TrackerIssue> {
+    const issue = this.issues.get(issueId);
+    if (!issue) throw new Error(`no issue ${issueId}`);
     return issue;
   }
-  override async setDelegate(issueId: string, delegateId: string | null) {
-    this.delegated.push([issueId, delegateId]);
+  async assign(_conversation: string, issueId: string, userId: string): Promise<void> {
+    this.delegated.push([issueId, userId]);
     const issue = this.issues.get(issueId);
-    if (issue) issue.delegate = delegateId ? { id: delegateId } : null;
-    // Linear's live behavior (2026-09-26): making an app the delegate
-    // creates the agent session, and the answer names it.
-    const nodes = (this.sessions.get(issueId) ?? []).map(id => ({
-      id,
-      status: 'pending',
-      startedAt: null,
-      url: null,
-    }));
-    if (delegateId) {
-      const made = `as-auto-${this.sessionsCreated.length + 1}`;
-      this.sessionsCreated.push(issueId);
-      this.sessions.set(issueId, [...(this.sessions.get(issueId) ?? []), made]);
-      nodes.push({ id: made, status: 'pending', startedAt: null, url: null });
-    }
-    return {
-      success: true,
-      issue: { identifier: issue?.identifier ?? issueId, agentSessions: { nodes } },
+    if (issue) issue.delegateId = userId;
+  }
+  async unassign(_conversation: string, issueId: string): Promise<void> {
+    this.delegated.push([issueId, null]);
+    const issue = this.issues.get(issueId);
+    if (issue) issue.delegateId = null;
+  }
+  async startSession(conversation: string, issueId: string): Promise<string | null> {
+    await this.assign(conversation, issueId, this.ownerOf(conversation));
+    const made = `as-auto-${this.sessionsCreated.length + 1}`;
+    this.sessionsCreated.push(issueId);
+    this.sessionsByIssue.set(issueId, [...(this.sessionsByIssue.get(issueId) ?? []), made]);
+    return made;
+  }
+  idFor(sessionId: string): string {
+    return `${this.apps[0]}:${sessionId}`;
+  }
+  parts(conversation: string): { app: string; session: string } {
+    const at = conversation.indexOf(':');
+    return at < 0
+      ? { app: conversation, session: '' }
+      : { app: conversation.slice(0, at), session: conversation.slice(at + 1) };
+  }
+  async orgOf(): Promise<string> {
+    return 'org';
+  }
+  ownerOf(conversation: string): string {
+    return `app-user-${this.conversation(conversation)}`;
+  }
+  async comment(conversation: string, text: string, kind: TrackerCommentKind): Promise<string | undefined> {
+    this.comments.push({ conversation, text, kind });
+    return undefined;
+  }
+  events(sink: (event: TrackerEvent) => Promise<void>): () => void {
+    this.sink = sink;
+    return () => {
+      this.sink = undefined;
     };
   }
+  /** What a delivered webhook would hand the module. */
+  async drive(event: TrackerEvent): Promise<void> {
+    if (!this.sink) throw new Error('the module never subscribed to events');
+    await this.sink(event);
+  }
+  /** The module's own delivery surface, as the adapter's rendering would be. */
+  delivery(): ChannelDelivery {
+    return {
+      send: (c, t) => this.comment(c, t, 'answer'),
+      placeholder: (c, t) => this.comment(c, t, 'progress'),
+      edit: async () => undefined,
+      delete: async () => {},
+      notice: async (c, t) => {
+        this.comments.push({ conversation: c, text: t, kind: 'outcome' });
+      },
+    };
+  }
+  ofKind(kind: TrackerCommentKind) {
+    return this.comments.filter(c => c.kind === kind);
+  }
+  answerWith(fragment: string): string {
+    return this.ofKind('answer').find(c => c.text.includes(fragment))?.text ?? '';
+  }
 }
+
+/** The tracker's issue facts, in the neutral shape the module reads. */
+const issue = (id: string, extra: Partial<TrackerIssue> = {}): TrackerIssue => ({
+  id,
+  identifier: id.toUpperCase(),
+  title: 'Fix header',
+  description: 'It overlaps',
+  branchName: `me/${id}-fix-header`,
+  url: `https://linear.app/x/issue/${id.toUpperCase()}`,
+  state: { id: 's1', name: 'In Progress', type: 'started' },
+  teamId: 't',
+  labels: [],
+  delegateId: 'app-user-dev',
+  assignee: { id: 'u', name: 'Me' },
+  archived: false,
+  blockedByStates: [],
+  ...extra,
+});
 
 const noEvents: SessionEvents = { watch: () => () => {} };
 const until = async (check: () => boolean, what: string) => {
@@ -170,12 +235,6 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   const home = join(root, 'home');
 
   // The one app keeps the bare names; the face uses its own; the primary carries the data feed.
-  process.env.LINEAR_CLIENT_ID = 'cid';
-  process.env.LINEAR_CLIENT_SECRET = 'sec';
-  process.env.LINEAR_WEBHOOK_SECRET = 'whsec';
-  process.env.LINEAR_FACE_CLIENT_ID = 'face-cid';
-  process.env.LINEAR_FACE_CLIENT_SECRET = 'face-sec';
-  process.env.LINEAR_FACE_WEBHOOK_SECRET = 'face-whsec';
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
@@ -196,36 +255,25 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     ],
     sources: [],
   };
-  const linear = new FakeLinear();
-  const issue = (id: string, extra: Partial<LinearIssue> = {}): LinearIssue => ({
-    id,
-    identifier: id.toUpperCase(),
-    title: 'Fix header',
-    description: 'It overlaps',
-    branchName: `me/${id}-fix-header`,
-    url: 'https://linear.app/x/issue/ENG-1',
-    state: { id: 's1', name: 'In Progress', type: 'started' },
-    team: { id: 't', key: 'ENG' },
-    labels: [],
-    delegate: { id: 'app-user-dev' },
-    assignee: { id: 'u', name: 'Me' },
-    blockedBy: [],
-    archivedAt: null,
-    ...extra,
-  });
-  linear.issues.set('eng-1', issue('eng-1'));
-  linear.issues.set('eng-2', issue('eng-2', { labels: [{ id: 'l', name: 'needs-human' }] }));
+  const tracker = new FakeTracker(linearBlock(config));
   // A team no project maps: a delegation there gets the fixed answer; a
   // mention still reaches the assistant, whose ground is the home.
-  linear.issues.set('eng-3', issue('eng-3', { team: { id: 't9', key: 'OTH' } }));
   // A delegation into a lane nobody mapped: the fixed answer names the lane
-  // and the delegate is un-taken.
-  linear.issues.set('eng-5', issue('eng-5', { state: { id: 's9', name: 'Deploy', type: 'started' } }));
-  // A mention (no delegate) on the face, in a mapped team.
-  linear.issues.set('eng-6', issue('eng-6', { delegate: null }));
+  // and the delegate is un-taken. A mention (no delegate) on the face, in a
+  // mapped team.
+  for (const seeded of [
+    issue('eng-1'),
+    issue('eng-2', { labels: [{ id: 'l', name: 'needs-human' }] }),
+    issue('eng-3', { teamId: 't9' }),
+    issue('eng-5', { state: { id: 's9', name: 'Deploy', type: 'started' } }),
+    issue('eng-6', { delegateId: null }),
+    issue('eng-7', { archived: true }),
+    issue('eng-8', { teamId: 't9', delegateId: null }),
+    issue('eng-4', { teamId: 'tx' }),
+  ])
+    tracker.issues.set(seeded.id, seeded);
 
   const store = new Store(':memory:');
-  const routes = new PublicRoutes();
   const abort = new AbortController();
   const services: AiviServices = {
     loaded,
@@ -236,56 +284,40 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     signal: abort.signal,
     log: getLogger(['aivi']),
     channels: new Channels(),
-    routes,
+    routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(
-    linearBlock(config),
-    new Map([
-      ['dev', linear],
-      ['face', linear],
-    ]),
-  ).start(services);
+  const running = await createLinearModule(linearBlock(config), async () => tracker).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
   });
 
-  const deliver = async (app: string, secret: string, payload: Record<string, unknown>) => {
-    const body = Buffer.from(JSON.stringify({ organizationId: 'org', webhookTimestamp: Date.now(), ...payload }));
-    return routes.get(appWebhookPath(app))!({
-      method: 'POST',
-      headers: { 'linear-signature': signWebhook(body, secret), 'linear-delivery': 'd' },
-      body,
-    });
-  };
-  const created = (agentSession: string, issueId: string) =>
-    deliver('dev', 'whsec', {
-      type: 'AgentSessionEvent',
-      action: 'created',
-      agentSession: { id: agentSession, issue: { id: issueId } },
+  const started = (conversation: string, issueId: string) =>
+    tracker.drive({
+      kind: 'started',
+      conversation,
+      issueId,
       promptContext: `<issue identifier="${issueId.toUpperCase()}"><title>Fix header</title></issue>`,
     });
-  /** The plain fixed answers the module posts itself, found by issue. */
-  const answerFor = (issue: string) =>
-    linear.activities
-      .filter(a => a.content.type === 'response')
-      .map(a => (a.content as { body: string }).body)
-      .find(body => body.includes(issue)) ?? '';
 
-  assert.equal((await created('as-1', 'eng-1')).status, 200);
-  await until(() => linear.activities.some(a => a.content.type === 'response'), 'the worker answered');
-  const kinds = linear.activities.map(a => `${a.content.type}${a.ephemeral ? '~' : ''}`);
-  assert.equal(kinds[0], 'thought~', 'acknowledged first');
+  await started('dev:as-1', 'eng-1');
+  await until(() => tracker.comments.some(c => c.kind === 'answer'), 'the worker answered');
+  const kinds = tracker.comments.map(c => c.kind);
+  assert.equal(kinds[0], 'progress', 'acknowledged first');
   assert.match(
-    (linear.activities[0]!.content as { body: string }).body,
+    tracker.comments[0]!.text,
     /Starting as `developer` in project website on branch `me\/eng-1-fix-header`/,
   );
-  assert.deepEqual(linear.activities.at(-1)!.content, { type: 'response', body: 'Done: fixed the header.' });
+  assert.deepEqual(tracker.comments.at(-1), {
+    conversation: 'dev:as-1',
+    text: 'Done: fixed the header.',
+    kind: 'answer',
+  });
   const worktree = join(root, 'home/projects/website/worktrees/as-1');
   assert.ok(await stat(join(worktree, '.git')), 'the worktree exists');
   assert.equal((await git(worktree, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim(), 'me/eng-1-fix-header');
@@ -298,93 +330,71 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   assert.match(opencode.prompts[0]!.text, /<issue identifier="ENG-1">/);
   const inbox = openLinearStore(store);
   assert.equal(inbox.list()[0]!.state, 'sent');
-  const workerConversation = conversationFor('dev', 'as-1');
-  assert.deepEqual(
-    [inbox.sessionOf(workerConversation)!.project, inbox.sessionOf(workerConversation)!.issue],
-    ['website', 'eng-1'],
-  );
-  assert.equal(inbox.sessionOf(workerConversation)!.agent, 'developer');
-  assert.equal((await created('as-1', 'eng-1')).status, 200, 'a redelivery is a no-op');
-  assert.equal(inbox.list().length, 1);
+  assert.deepEqual([inbox.sessionOf('dev:as-1')!.project, inbox.sessionOf('dev:as-1')!.issue], ['website', 'eng-1']);
+  assert.equal(inbox.sessionOf('dev:as-1')!.agent, 'developer');
+  await started('dev:as-1', 'eng-1');
+  assert.equal(inbox.list().length, 1, 'a redelivery is a no-op');
 
   // A follow-up prompt is a new turn in the same session; a stop with nothing running says so.
-  await deliver('dev', 'whsec', {
-    type: 'AgentSessionEvent',
-    action: 'prompted',
-    agentSession: { id: 'as-1', issue: { id: 'eng-1' } },
-    agentActivity: { id: 'act-p1', content: { type: 'prompt', body: 'Also fix the footer' } },
-  });
+  await tracker.drive({ kind: 'prompted', id: 'act-p1', conversation: 'dev:as-1', body: 'Also fix the footer' });
   await until(() => opencode.prompts.length === 2, 'the follow-up reached the same session');
   assert.equal(opencode.prompts[1]!.text, '[Linear follow-up from a person in Linear]\nAlso fix the footer');
   await until(() => inbox.list().every(t => t.state === 'sent'), 'answered');
-  await deliver('dev', 'whsec', {
-    type: 'AgentSessionEvent',
-    action: 'prompted',
-    agentSession: { id: 'as-1' },
-    agentActivity: { id: 'act-s', content: { type: 'prompt', body: '' }, signal: 'stop' },
-  });
+  await tracker.drive({ kind: 'prompted', id: 'act-s', conversation: 'dev:as-1', signal: 'stop' });
   await until(
-    () =>
-      linear.activities.some(a => a.content.type === 'response' && a.content.body === 'Nothing is running right now.'),
+    () => tracker.ofKind('answer').some(c => c.text === 'Nothing is running right now.'),
     'stop with nothing running',
   );
 
   // The HITL label refuses any agent.
-  await created('as-2', 'eng-2');
-  await until(
-    () => linear.activities.some(a => a.content.type === 'error' && /needs-human/.test(a.content.body)),
-    'HITL refused',
-  );
+  await started('dev:as-2', 'eng-2');
+  await until(() => tracker.ofKind('outcome').some(c => /needs-human/.test(c.text)), 'HITL refused');
 
-  // An archived ticket is deleted as far as work is concerned: a session
-  // created on it gets no worker, no assistant — not even a refusal. The
-  // route awaits the dispatch, so a settled delivery with quiet counts is
-  // the proof, no timer needed.
-  linear.issues.set('eng-7', issue('eng-7', { archivedAt: '2026-09-26T10:00:00.000Z' }));
-  const quietActivities = linear.activities.length;
+  // A deleted ticket is gone as far as work is concerned: a session created
+  // on it gets no worker, no assistant — not even a refusal.
+  const quietComments = tracker.comments.length;
   const quietPrompts = opencode.prompts.length;
-  assert.equal((await created('as-7', 'eng-7')).status, 200);
-  assert.equal(linear.activities.length, quietActivities, 'the archived ticket gets no activity');
+  await started('dev:as-7', 'eng-7');
+  assert.equal(tracker.comments.length, quietComments, 'the archived ticket gets no comment');
   assert.equal(opencode.prompts.length, quietPrompts, 'the archived ticket starts no agent');
 
   // A delegation a config cannot run — the team maps no project — gets one
   // plain fixed answer and the delegate un-taken. No agent improvises over
   // a job nobody claimed: the OpenCode sessions stay at the worker's alone.
-  await created('as-3', 'eng-3');
-  await until(() => answerFor('ENG-3') !== '', 'the unclaimed delegation was answered');
-  assert.match(answerFor('ENG-3'), /its team is not connected to an aivi project/);
-  assert.match(answerFor('ENG-3'), /removed myself as delegate/);
-  assert.deepEqual(linear.delegated.at(-1), ['eng-3', null], 'the delegation was un-taken');
+  await started('dev:as-3', 'eng-3');
+  await until(() => tracker.answerWith('ENG-3') !== '', 'the unclaimed delegation was answered');
+  assert.match(tracker.answerWith('ENG-3'), /its team is not connected to an aivi project/);
+  assert.match(tracker.answerWith('ENG-3'), /removed myself as delegate/);
+  assert.deepEqual(tracker.delegated.at(-1), ['eng-3', null], 'the delegation was un-taken');
   assert.equal(opencode.sessions.size, 1, 'no agent was started for it');
 
   // A delegation into an unmapped lane of a mapped team: the same fixed
   // answer, naming the lane.
-  await created('as-5', 'eng-5');
-  await until(() => answerFor('ENG-5') !== '', 'the unmapped-lane delegation was answered');
-  assert.match(answerFor('ENG-5'), /the "Deploy" lane has no agent mapping/);
-  assert.deepEqual(linear.delegated.at(-1), ['eng-5', null], 'un-taken as well');
+  await started('dev:as-5', 'eng-5');
+  await until(() => tracker.answerWith('ENG-5') !== '', 'the unmapped-lane delegation was answered');
+  assert.match(tracker.answerWith('ENG-5'), /the "Deploy" lane has no agent mapping/);
+  assert.deepEqual(tracker.delegated.at(-1), ['eng-5', null], 'un-taken as well');
   assert.equal(opencode.sessions.size, 1, 'and still no agent was started');
 
   // A mention (not a delegation) on a team no project maps still reaches
   // the assistant, and the assistant works from the home then.
-  linear.issues.set('eng-8', issue('eng-8', { team: { id: 't9', key: 'OTH' }, delegate: null }));
-  await created('as-8', 'eng-8');
+  await started('dev:as-8', 'eng-8');
   await until(() => inbox.list().length === 3, 'the mention on the unmapped team became a turn');
   const homeAssistant = () => [...opencode.sessions.values()].find(s => s.agent === 'assistant');
   await until(() => homeAssistant() !== undefined, 'the assistant session opened');
   assert.equal(homeAssistant()!.directory, home, 'no project: the assistant runs in the home');
 
   // A mention on the face reaches the same assistant; the conversation lives on the face.
-  await deliver('face', 'face-whsec', {
-    type: 'AgentSessionEvent',
-    action: 'created',
-    agentSession: { id: 'as-6', issue: { id: 'eng-6' } },
+  await tracker.drive({
+    kind: 'started',
+    conversation: 'face:as-6',
+    issueId: 'eng-6',
     promptContext: '<issue identifier="ENG-6">…</issue>',
   });
   await until(() => inbox.list().length === 4, 'the face mention became a turn');
-  assert.equal(inbox.sessionOf(conversationFor('face', 'as-6'))!.agent, 'assistant');
+  assert.equal(inbox.sessionOf('face:as-6')!.agent, 'assistant');
   assert.deepEqual(
-    linear.delegated.filter(d => d[0] === 'eng-6'),
+    tracker.delegated.filter(d => d[0] === 'eng-6'),
     [],
     'a mention is not un-delegated',
   );
@@ -394,36 +404,8 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
     'the assistant runs in the project checkout when the team maps one',
   );
 
-  // A data change on a face's route is a misroute: acknowledged, dropped.
-  const activitiesBefore = linear.activities.length;
-  const strayIssue = Buffer.from(
-    JSON.stringify({
-      type: 'Issue',
-      action: 'update',
-      organizationId: 'org',
-      webhookTimestamp: Date.now(),
-      data: { id: 'eng-1', identifier: 'ENG-1', stateId: 'rev' },
-      updatedFrom: { stateId: 'todo' },
-    }),
-  );
-  assert.equal(
-    (
-      await routes.get(appWebhookPath('face'))!({
-        method: 'POST',
-        headers: { 'linear-signature': signWebhook(strayIssue, 'face-whsec') },
-        body: strayIssue,
-      })
-    ).status,
-    200,
-    'a misrouted delivery is still acknowledged, so Linear does not retry',
-  );
-  await new Promise(r => setTimeout(r, 50));
-  assert.equal(linear.activities.length, activitiesBefore, 'the stray delivery posted nothing');
-  assert.equal(store.leases().length, 0, 'no capacity held');
-
   // A second mapped team routes to the same checkout: teams is a list on purpose.
-  linear.issues.set('eng-4', issue('eng-4', { team: { id: 'tx', key: 'OPS' } }));
-  await created('as-4', 'eng-4');
+  await started('dev:as-4', 'eng-4');
   await until(() => opencode.prompts.some(p => p.text.includes('ENG-4')), 'the other mapped team routes');
   await until(() => inbox.list().every(t => t.state === 'sent'), 'and answered');
   assert.ok(await stat(join(root, 'home/projects/website/worktrees/as-4')), 'a worktree of the same checkout');
@@ -441,9 +423,6 @@ test('a read-only lane runs its agent in the project checkout without a worktree
   const source = join(root, 'home/projects/site/source');
   await mkdir(join(root, 'home/projects/site'), { recursive: true });
   await run('git', ['clone', '-q', upstream, source]);
-  process.env.LINEAR_CLIENT_ID = 'cid';
-  process.env.LINEAR_CLIENT_SECRET = 'sec';
-  process.env.LINEAR_WEBHOOK_SECRET = 'whsec';
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
@@ -468,8 +447,8 @@ test('a read-only lane runs its agent in the project checkout without a worktree
     ],
     sources: [],
   };
-  const linear = new FakeLinear();
-  linear.issues.set('site-1', {
+  const tracker = new FakeTracker(linearBlock(config));
+  tracker.issues.set('site-1', {
     id: 'site-1',
     identifier: 'SITE-1',
     title: 'What ships next',
@@ -477,15 +456,14 @@ test('a read-only lane runs its agent in the project checkout without a worktree
     branchName: 'me/site-1',
     url: 'https://linear.app/x/issue/SITE-1',
     state: { id: 's', name: 'Research', type: 'started' },
-    team: { id: 't', key: 'SITE' },
+    teamId: 't',
     labels: [],
-    delegate: { id: 'app-user-dev' },
+    delegateId: 'app-user-dev',
     assignee: { id: 'u', name: 'Me' },
-    blockedBy: [],
-    archivedAt: null,
+    archived: false,
+    blockedByStates: [],
   });
   const store = new Store(':memory:');
-  const routes = new PublicRoutes();
   const services: AiviServices = {
     loaded,
     store,
@@ -495,32 +473,23 @@ test('a read-only lane runs its agent in the project checkout without a worktree
     signal: new AbortController().signal,
     log: getLogger(['aivi']),
     channels: new Channels(),
-    routes,
+    routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(linearBlock(config), new Map([['dev', linear]])).start(services);
+  const running = await createLinearModule(linearBlock(config), async () => tracker).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
   });
-  const body = Buffer.from(
-    JSON.stringify({
-      type: 'AgentSessionEvent',
-      action: 'created',
-      organizationId: 'org',
-      webhookTimestamp: Date.now(),
-      agentSession: { id: 'as-r1', issue: { id: 'site-1' } },
-      promptContext: '<issue identifier="SITE-1"></issue>',
-    }),
-  );
-  await routes.get(appWebhookPath('dev'))!({
-    method: 'POST',
-    headers: { 'linear-signature': signWebhook(body, 'whsec'), 'linear-delivery': 'd' },
-    body,
+  await tracker.drive({
+    kind: 'started',
+    conversation: 'dev:as-r1',
+    issueId: 'site-1',
+    promptContext: '<issue identifier="SITE-1"></issue>',
   });
   const inbox = openLinearStore(store);
   await until(() => inbox.list().some(t => t.state === 'sent'), 'answered from the checkout');
@@ -528,7 +497,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
   assert.deepEqual(session, { agent: 'researcher', directory: source }, 'no worktree: the checkout is the directory');
   assert.match(opencode.prompts[0]!.text, /clean checkout/, 'the prompt says where the agent works');
   assert.ok(
-    linear.activities.some(a => a.content.type === 'thought' && /working in the project checkout/.test(a.content.body)),
+    tracker.ofKind('progress').some(c => /working in the project checkout/.test(c.text)),
     'the acknowledgement says so too',
   );
   assert.equal(
@@ -552,9 +521,6 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   const source = join(root, 'home/projects/api/source');
   await mkdir(join(root, 'home/projects/api'), { recursive: true });
   await run('git', ['clone', '-q', upstream, source]);
-  process.env.LINEAR_CLIENT_ID = 'cid';
-  process.env.LINEAR_CLIENT_SECRET = 'sec';
-  process.env.LINEAR_WEBHOOK_SECRET = 'whsec';
 
   let release: () => void = () => {};
   let gated = false;
@@ -584,8 +550,8 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     ],
     sources: [],
   };
-  const linear = new FakeLinear();
-  const issue: LinearIssue = {
+  const tracker = new FakeTracker(linearBlock(config));
+  const api: TrackerIssue = {
     id: 'api-7',
     identifier: 'API-7',
     title: 'Add rate limits',
@@ -593,16 +559,15 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     branchName: 'me/api-7-rate-limits',
     url: 'https://linear.app/x/issue/API-7',
     state: { id: 'todo', name: 'Todo', type: 'unstarted' },
-    team: { id: 't', key: 'API' },
+    teamId: 't',
     labels: [],
-    delegate: null,
+    delegateId: null,
     assignee: { id: 'u', name: 'Me' },
-    blockedBy: [],
-    archivedAt: null,
+    archived: false,
+    blockedByStates: [],
   };
-  linear.issues.set('api-7', issue);
+  tracker.issues.set('api-7', api);
   const store = new Store(':memory:');
-  const routes = new PublicRoutes();
   const abort = new AbortController();
   const services: AiviServices = {
     loaded,
@@ -613,95 +578,67 @@ test('the listener delegates an issue entering a mapped lane and starts the work
     signal: abort.signal,
     log: getLogger(['aivi']),
     channels: new Channels(),
-    routes,
+    routes: new PublicRoutes(),
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     wake: () => {},
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
-  const running = await createLinearModule(linearBlock(config), new Map([['dev', linear]])).start(services);
+  const running = await createLinearModule(linearBlock(config), async () => tracker).start(services);
   t.after(async () => {
     release();
     await running.stop();
     store.close();
   });
-  const issueUpdate = async (updatedFrom: Record<string, unknown>) => {
-    const body = Buffer.from(
-      JSON.stringify({
-        type: 'Issue',
-        action: 'update',
-        organizationId: 'org',
-        webhookTimestamp: Date.now(),
-        data: { id: issue.id, identifier: issue.identifier, stateId: issue.state.id },
-        updatedFrom,
-      }),
-    );
-    return routes.get(appWebhookPath('dev'))!({
-      method: 'POST',
-      headers: { 'linear-signature': signWebhook(body, 'whsec') },
-      body,
-    });
+  const updated = async (changed: TrackerChange[]) => {
+    await tracker.drive({ kind: 'updated', conversation: 'dev', issueId: 'api-7', changed });
   };
 
   // A title edit is not a routing change: nothing happens.
-  await issueUpdate({ title: 'old' });
+  await updated([]);
   await new Promise(r => setTimeout(r, 50));
-  assert.deepEqual(linear.sessionsCreated, []);
+  assert.deepEqual(tracker.sessionsCreated, []);
 
-  // Linear's native blocking: a blocker not in a finished state holds the listener back.
-  issue.blockedBy = [{ id: 'api-6', state: { id: 's', name: 'In Progress', type: 'started' } }];
-  issue.state = { id: 'prog', name: 'In Progress', type: 'started' };
-  await issueUpdate({ stateId: 'todo' });
+  // The platform's own blocking: a blocker not in a finished state holds the listener back.
+  api.blockedByStates = ['started'];
+  api.state = { id: 'prog', name: 'In Progress', type: 'started' };
+  await updated(['state']);
   await new Promise(r => setTimeout(r, 50));
-  assert.deepEqual(linear.sessionsCreated, [], 'a blocked issue is not delegated');
-  issue.blockedBy = [{ id: 'api-6', state: { id: 's2', name: 'Done', type: 'completed' } }];
-  await issueUpdate({ stateId: 'todo' });
-  await until(() => linear.activities.some(a => a.content.type === 'response'), 'the worker answered');
-  assert.deepEqual(linear.sessionsCreated, ['api-7']);
-  assert.deepEqual(linear.delegated, [['api-7', 'app-user-dev']]);
+  assert.deepEqual(tracker.sessionsCreated, [], 'a blocked issue is not delegated');
+  api.blockedByStates = ['completed'];
+  await updated(['state']);
+  await until(() => tracker.comments.some(c => c.kind === 'answer'), 'the worker answered');
+  assert.deepEqual(tracker.sessionsCreated, ['api-7']);
+  assert.deepEqual(tracker.delegated, [['api-7', 'app-user-dev']]);
   assert.equal(opencode.sessions.size, 1);
   const inbox = openLinearStore(store);
-  assert.equal(inbox.list()[0]!.channel, conversationFor('dev', 'as-auto-1'));
+  assert.equal(inbox.list()[0]!.channel, 'dev:as-auto-1');
   // The same change delivered again (or the created webhook for a session we opened): already delegated, nothing new.
-  await issueUpdate({ stateId: 'todo' });
+  await updated(['state']);
   await new Promise(r => setTimeout(r, 50));
-  assert.equal(linear.sessionsCreated.length, 1);
+  assert.equal(tracker.sessionsCreated.length, 1);
 
   // In Progress → Review keeps the same agent: a running worker is left alone. A move out of the mapping stops it.
   gated = true;
-  const body = Buffer.from(
-    JSON.stringify({
-      type: 'AgentSessionEvent',
-      action: 'prompted',
-      organizationId: 'org',
-      webhookTimestamp: Date.now(),
-      agentSession: { id: 'as-auto-1', issue: { id: 'api-7' } },
-      agentActivity: { id: 'act-2', content: { type: 'prompt', body: 'Now the docs' } },
-    }),
-  );
-  await routes.get(appWebhookPath('dev'))!({
-    method: 'POST',
-    headers: { 'linear-signature': signWebhook(body, 'whsec') },
-    body,
-  });
+  await tracker.drive({ kind: 'prompted', id: 'act-2', conversation: 'dev:as-auto-1', body: 'Now the docs' });
   await until(() => inbox.list().some(t => t.state === 'running'), 'a worker is running');
-  issue.state = { id: 'rev', name: 'Review', type: 'started' };
-  await issueUpdate({ stateId: 'prog' });
+  api.state = { id: 'rev', name: 'Review', type: 'started' };
+  await updated(['state']);
   await new Promise(r => setTimeout(r, 50));
   assert.equal(inbox.list().filter(t => t.state === 'running').length, 1, 'same agent, still running');
-  issue.labels = [{ id: 'l', name: 'needs-human' }];
-  await issueUpdate({ labelIds: [] });
+  api.labels = [{ id: 'l', name: 'needs-human' }];
+  await updated(['labels']);
   await until(() => inbox.list().every(t => t.state !== 'running'), 'the worker was stopped');
   assert.deepEqual(opencode.interrupted, [inbox.list()[0]!.session], 'the OpenCode session was interrupted');
   assert.equal(inbox.list().at(-1)!.state, 'discarded');
   assert.match(inbox.list().at(-1)!.error!, /Stopped at the person/);
   assert.ok(
-    linear.activities.some(a => a.content.type === 'error' && /Stopped at your request/.test(a.content.body)),
+    tracker.ofKind('outcome').some(c => /Stopped at your request/.test(c.text)),
     'Linear was told',
   );
   assert.ok(
-    linear.activities.some(a => a.content.type === 'thought' && /needs-human.*was added/.test(a.content.body)),
+    tracker.ofKind('note').some(c => /needs-human.*was added/.test(c.text)),
     'and why',
   );
   assert.equal(store.leases().length, 0, 'the lease is released');

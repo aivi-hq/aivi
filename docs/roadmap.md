@@ -58,7 +58,11 @@ only when idle stays an idea
    a project can be configured with a forge type, a lane can be
    configured to use the forge, which is what makes the worktree stuff
    happen) → **tracker extraction** (Linear speaks through the adapter
-   seam) → **orchestrator extraction** (the machinery moves out of the
+   seam — **built 2026-09-29**: `@aivi/plugin/tracker` is the contract,
+   `tracker-linear/src/tracker.ts` is Linear's translator, and the
+   module's decision code knows only the neutral vocabulary; the
+   machinery itself moves to the host with the next step) →
+   **orchestrator extraction** (the machinery moves out of the
    tracker into the host, built and proven on the **base flow**:
    ticket → conversational agent → tracker update, no worktree, no
    forge) → **forge-github** (added on top of the proven orchestrator,
