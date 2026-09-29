@@ -50,19 +50,29 @@ pool as the capacity — there is no per-project lock; running maintenance
 only when idle stays an idea
 ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 
-1. **The v1 rc line** (ruled 2026-09-29): the CLI refactor (built,
-   unmerged) → **forge-github** (GitHub as repo host — branches, PRs,
-   review feedback — in front, because the orchestrator gathers review
-   facts from the forge; [plan](plans/forge-github.md)) →
-   **compose-projects fix** (plugins contribute project-section schemas;
-   `linear.lanes` leaves core's `projectSchema`; ruled 2026-09-29 to sit
-   after the forge, which needs no per-project config and is unblocked
-   regardless) → **tracker extraction** (Linear speaks through
-   the adapter seam) → **orchestrator extraction** (the machinery moves
-   out of the tracker into the host) → **knowledge as a plugin** → **a
-   last look at jobs** → tag v1 rc. The [templates
-   program](plans/templates/index.md) owns the design; the sequence lives
-   there too.
+1. **The v1 rc line** (ruled 2026-09-29, reordered the same day): the CLI
+   refactor (built, unmerged) → **compose-projects fix** (config first:
+   plugins contribute project-section schemas; `linear.lanes` leaves
+   core's `projectSchema`; direction: **project config is a core
+   concept** — projects are core like the host and the orchestrator —
+   a project can be configured with a forge type, a lane can be
+   configured to use the forge, which is what makes the worktree stuff
+   happen) → **tracker extraction** (Linear speaks through the adapter
+   seam) → **orchestrator extraction** (the machinery moves out of the
+   tracker into the host, built and proven on the **base flow**:
+   ticket → conversational agent → tracker update, no worktree, no
+   forge) → **forge-github** (added on top of the proven orchestrator,
+   as the configurable path it is; [plan](plans/forge-github.md)) →
+   **knowledge as a plugin** → **a last look at jobs** → tag v1 rc. The
+   reversal: forge had been moved in front so review facts would exist
+   for the orchestrator; the operator ruled it the other way —
+   pre-designing the forge-carved system is harder than building,
+   failing and solving as we go, and the forge path cannot be tested
+   before the no-forge base flow exists. Most assistant work in tickets
+   is skills, tools and MCPs on an agent (email included — not a new
+   capability); the forge is the exception that earns core ceremony.
+   The [templates program](plans/templates/index.md) owns the design;
+   the sequence lives there too.
 2. Installation and updates for other machines; the home layout it must
    produce is now fixed.
 

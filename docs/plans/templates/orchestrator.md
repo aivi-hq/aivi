@@ -22,7 +22,13 @@ tracker, forge, channels, and mail. A ticket need not touch a repository
 at all — "research X, make a PDF, email it" — so the forge steps are a
 **configurable path**, entered only when the ticket's project has a
 forge, never a hardcoded route every worker walks
-([forge-github.md](../forge-github.md)).
+([forge-github.md](../forge-github.md)). The extraction is **seeded on
+the base flow** (ruled 2026-09-29): tracker → conversational agent →
+tracker update, which `worktree: false` lanes already are — forge steps
+come on top, later. Most assistant work in tickets is skills, tools and
+MCPs on an agent (email included, ruled not a new capability); the
+forge is the exception that earns core ceremony because of the worktree
+apparatus it carries.
 
 ## The adapter seam
 

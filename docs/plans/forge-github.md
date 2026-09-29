@@ -1,12 +1,13 @@
 # Forge: GitHub as the repo host
 
 Status: **plan of record** (all open questions resolved 2026-09-29; the
-wake flow detail awaits worked examples). First
-build of the [v1 rc line](../roadmap.md#next-in-order-of-intent) after the
-CLI refactor; predecessor of the [templates program](templates/index.md)
-extractions, which consume this. The contract is **provisional** in the
-same way the tracker seam is: the orchestrator extraction is what proves
-it, and more forges will move the details.
+wake flow detail awaits worked examples). Built **after** the
+orchestrator extraction in the [v1 rc line](../roadmap.md#next-in-order-of-intent)
+(reordering ruled 2026-09-29: the orchestrator is proven first on the
+no-forge base flow, the forge joins on top as the configurable path it
+is). The contract is **provisional** in the same way the tracker seam
+is: wiring it into the orchestrator is what proves it, and more forges
+will move the details.
 
 ## What a forge is
 
@@ -260,11 +261,12 @@ instruction), now caught by validation instead of hope.
   The orchestrator asks the registry *who owns this project's remote*;
   each registered forge answers from its own parse (`github.com/owner/repo`
   → GitHub's; anything else → silent).
-- **Inert until wired, honestly:** this build lands before the
-  orchestrator exists. Its proof at landing is its own `./setup` (app
-  configured, installation found, PR facts read from a real repo) and
-  contract tests against a scripted forge; the orchestrator extraction
-  wires it and grows the contract where it falls short.
+- **Wired as it lands** (reordering ruled 2026-09-29): the orchestrator
+  exists before this build. Its proof at landing is its own `./setup`
+  (app configured, installation found, PR facts read from a real repo),
+  contract tests against a scripted forge, **and** the forge path
+  driving a real worker wake — the worked examples the reorder was made
+  to write while building, not inventing.
 
 ## What moves, what stays
 
@@ -308,15 +310,20 @@ instruction), now caught by validation instead of hope.
    never holds forge credentials for review traffic and stays
    platform-blind; the wake hands it all facts, so it needs no forge
    tools to know its own history.
-3. **Per-project config for plugins.** (ruled 2026-09-29: after the forge,
-   before v1 rc) Today `projectSchema` in `@aivi/core` **hardcodes
-   `linear.lanes`** — core names a plugin, a leftover from before the
-   registry; "plugins cannot configure projects" is only true because core
-   hardcodes them. The fix: the compose step (manifest → compose → parse)
-   lets a plugin contribute a *project-section* schema, and `linear`
-   leaves core. The per-project app override and the aliased-profiles
-   discussion wait for it; the forge ships v1 needing **zero**
-   per-project config, so it is unblocked either way.
+3. **Per-project config for plugins.** (ruled 2026-09-29: **first in the
+   line**, before the extractions) Today `projectSchema` in `@aivi/core`
+   **hardcodes `linear.lanes`** — core names a plugin, a leftover from
+   before the registry; "plugins cannot configure projects" is only true
+   because core hardcodes them. The fix: the compose step (manifest →
+   compose → parse) lets a plugin contribute a *project-section* schema,
+   and `linear` leaves core. Direction ruled the same day: **project
+   config is a core concept** — projects are core features like the
+   host and the orchestrator — so a project can be configured with a
+   **forge type** and a lane with **using the forge** (that is what
+   makes the worktree stuff happen): core vocabulary whose values
+   plugins fill, not plugin-shaped holes. The per-project app override
+   and the aliased-profiles discussion walk through next; the forge
+   ships needing **zero** per-project forge-specific config.
 4. **One app, one installation.** Resolved 2026-09-29 — see Auth.
 5. **PR conversations in the knowledge index.** Resolved 2026-09-29: not
    v1; it is traceable already — open the PR and read the threads.
@@ -348,8 +355,7 @@ flow detail stays proposed until worked examples are walked.
 - [ ] Q1 built: the client exposes the minted installation token for
       git-command injection (`http.extraheader`); the worker's
       `git push` deny and the orchestrator-side push + PR creation are
-      wired when the orchestrator extraction exists — recorded here so
-      the shape is settled, not built today.
+      built with the forge path, the orchestrator already proven by then.
 - [ ] Signed comments end to end: `resolveThread` stamps `aivi · <role>`
       visibly, `reviewFeedback` parses it back into the author fact.
 - [ ] Contract tests against a scripted forge; live gate: one real PR

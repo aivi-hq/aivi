@@ -69,32 +69,44 @@ one. A **plugin** is an installed capability with a runtime, listed in
 list entry. The docs keep the two words apart the same way every day:
 *install a plugin, apply a template.*
 
-## Sequence — the v1 rc line (ruled 2026-09-29)
+## Sequence — the v1 rc line (ruled 2026-09-29, reordered the same day)
 
 cli-refactor phases 1–3 are the floor and they are **built** (unmerged
 branch `refactor/single-cli-command`); D22 (no migration, `dev/` gets
-nuked) removes every compat burden from the rebuilds. Forge-github moved
-**in front** of the tracker work at the operator's ruling: the
-orchestrator gathers review feedback from the forge when it collects a
-wake, so the forge plumbing must exist before the orchestrator does. The
-Linear rebuild splits in two steps — the tracker first, then the
-orchestrator:
+nuked) removes every compat burden from the rebuilds. Forge-github was
+moved **in front** of the tracker work so review facts would exist for
+the orchestrator; the operator reversed that the same day — building
+the orchestrator on the **base flow** (ticket → conversational agent →
+tracker update) and adding the forge afterwards is build-test-solve
+instead of pre-design, and the forge path cannot be tested before the
+no-forge flow exists. The Linear rebuild still splits in two steps —
+the tracker first, then the orchestrator:
 
-1. **Forge-github**: GitHub as repo host (branches, PRs, review feedback)
-   becomes its own plumbing; the contract lands in `@aivi/plugin/forge`.
-   GitHub-as-ticket-system stays a possible future tracker, separate.
+1. **Compose-projects fix**: plugins contribute project-section
+   schemas; `linear.lanes` leaves core's `projectSchema`. Direction
+   ruled: project config is a **core concept** (projects are core like
+   the host and the orchestrator); a project can be configured with a
+   **forge type**, a lane can be configured to **use the forge** —
+   which is what makes the worktree stuff happen.
 2. **Tracker extraction**: Linear speaks through the adapter seam
    (`@aivi/plugin/tracker`); the orchestrator vocabulary is defined by
    what Linear's extraction needs, honoring reported capabilities and
    falling back where a tracker lacks one.
 3. **Orchestrator extraction**: the machinery — lanes, guards, dispatch,
    capacity, worktrees, the exit contract, the label — moves out of the
-   tracker into the host, inert until a tracker registers. The live gates
-   in [plans/linear.md](../linear.md) are dropped as history; the module
+   tracker into the host, inert until a tracker registers, **proven on
+   the base flow** first: tracker → agent → tracker with a conversational
+   worker, no worktree, no forge. The live gates in
+   [plans/linear.md](../linear.md) are dropped as history; the module
    is rebuilt to this design, not verified against the old one.
-4. **Knowledge as a plugin** (cli-refactor's standing follow-up).
-5. **A last look at jobs.**
-6. **Tag v1 rc** — with everything above landed; changesets and the
+4. **Forge-github**: the forge joins the proven orchestrator as the
+   configurable path it is — worked wake examples written while
+   building, not invented before it. The contract lands in
+   `@aivi/plugin/forge`. GitHub-as-ticket-system stays a possible
+   future tracker, separate.
+5. **Knowledge as a plugin** (cli-refactor's standing follow-up).
+6. **A last look at jobs.**
+7. **Tag v1 rc** — with everything above landed; changesets and the
    bump calls are made once, at the end (operator's ruling: the whole v1
    rc is one release, no RC dist-tags before users exist).
 
