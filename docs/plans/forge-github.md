@@ -1,6 +1,7 @@
 # Forge: GitHub as the repo host
 
-Status: foundation (2026-09-29), for discussion with the operator. First
+Status: **plan of record** (all open questions resolved 2026-09-29; the
+wake flow detail awaits worked examples). First
 build of the [v1 rc line](../roadmap.md#next-in-order-of-intent) after the
 CLI refactor; predecessor of the [templates program](templates/index.md)
 extractions, which consume this. The contract is **provisional** in the
@@ -45,6 +46,16 @@ So "the orchestrator brings a restored worktree up to date with the
 forge" is `git fetch` plus a fast-forward — no GitHub API call. The forge
 answers *facts about* the branch.
 
+**The forge is a configurable path, not the spine** (ruled 2026-09-29).
+Forge workflows are not all workflows: a ticket can be "research X, make
+a PDF or a presentation, email it to so-and-so" — no forge in sight. The
+orchestrator is the glue between *all* systems — tracker, forge,
+channels, mail (its name may still change) — and the forge steps (push,
+PR, review wakes) are a path taken only when the ticket's project has a
+forge at all. No forge is not a failure: such a ticket completes without
+aivi ever asking GitHub. Nothing in this contract may assume every
+worker touches a repository's remote.
+
 ## The contract (draft)
 
 Capabilities and commands only; delivery details are the forge's own,
@@ -65,7 +76,8 @@ interface Forge {
    *  state, approvals, the comment bodies. *Open threads only*: no
    *  `since` cursor (ruled 2026-09-29) — threads close immediately, a
    *  wake takes what is open and the worker must bring all of it to zero,
-   *  by agree (commit + push + resolve) or decline (comment + resolve).
+   *  by agree (commit, and the orchestrator pushes at turn end) or
+   *  decline (comment + resolve).
    *  Every comment carries its author: a human, or aivi *with the worker
    *  role that posted it* (below) — without the role, a reviewer sees a
    *  GitHub app talking to itself. */
@@ -86,11 +98,19 @@ interface Forge {
 ```
 
 **Signed comments** (ruled 2026-09-29). Every aivi-posted comment names
-the worker that wrote it — `aivi · dev`, `aivi · review` — so a wake that
-hands a reviewer "all the facts" can tell its own past comments from the
-dev's replies and from human comments. The signature is a prefix in the
-comment body (a human reads it; no hidden markup as the only carrier),
-and the forge parses it back into the author fact.
+the worker that wrote it, so a wake that hands a reviewer "all the facts"
+can tell its own past comments from the dev's replies and from human
+comments. The default shape — the exact look gets tested at the live
+gate — is a divider and an italic label closing the comment:
+
+```md
+---
+
+_worker: aivi · review_
+```
+
+The label is the carrier a human reads *and* the forge parses back into
+the author fact; no hidden markup as the only carrier.
 
 **The review resolution** (ruled 2026-09-29). A review wake hands the
 worker the open threads; each carries the forge's own id. The worker's
@@ -124,6 +144,22 @@ and can push back, stand down, or stay silent without re-commenting
 - The orchestrator validates, retries **3 times**, then errors out: HITL
   label + comment + session id. The exit contract's fallback, verbatim.
 
+**The wake flow — proposed, not settled** (2026-09-29). The operator
+wants concrete worked examples before this is fixed in detail; at first
+glance the shape is:
+
+1. Wake: `git fetch` + fast-forward the restored worktree; gather the
+   ticket facts and the open review threads (signed comments) — one
+   gather for dev and reviewer alike.
+2. Worker turn in the recovered worktree; commits stay local.
+3. Closing report validated — in a review wake that is the resolution
+   turn — then the orchestrator pushes (only if the worker committed),
+   posts the signed replies, and resolves the threads.
+
+Every forge step here is a *path*, entered only when the ticket's
+project has a forge — the configurable-path ruling above; a
+research-a-PDF-and-email ticket never enters it.
+
 Three reads, not a surface — plus the one write (`resolveThread`). Each
 earns its place before v1 ships; the list grows the way the tracker
 capabilities list does — with fallback chains owned by the orchestrator
@@ -131,9 +167,24 @@ capabilities list does — with fallback chains owned by the orchestrator
 
 **The write side is in** (ruled 2026-09-29): the orchestrator posts the
 worker's replies with `resolveThread`, from the validated JSON of a
-dedicated turn. How a worker *creates* a PR stays off the contract —
-that is the worker's push, and PR creation is the first turn's work, not
-the orchestrator's.
+dedicated turn. **Push and PR creation are the orchestrator's too**
+(resolved 2026-09-29, see Q1): the worker's git is local-only — commits
+in the worktree, `git push` denied by its agent file, the attribution
+plugin's move — and the closing report carries the PR message and any
+deviations for the orchestrator to act on. All forge network I/O lives
+on one side: fetch, push, PR creation, review replies.
+
+**The closing report** (ruled 2026-09-29). The schema instruction rides
+at session start — *finish your turn by answering following this schema
+exactly, no other text* — and when the turn ends the orchestrator
+validates the closing message; a failed validation is re-asked, a few
+tries, then the exit contract's fallback. The report carries what the
+orchestrator needs to act: the outcome, the ticket comment, **the PR
+message**, and **any deviations** the worker mentions. This is the
+wrap-up ruling reconciled: the dedicated turn survives as the *retry*
+for when the closing message is not the JSON — which is exactly the
+case the earlier ruling feared (a long session forgetting the
+instruction), now caught by validation instead of hope.
 
 ## Auth: octokit, the app user
 
@@ -222,32 +273,34 @@ the orchestrator's.
 | `identity.github` (commit pair) | stays — a git fact, no auth involved |
 | `identity.github.app` ("nothing reads it yet") | orphaned: the forge's app id lives in its own block; delete the field at landing |
 | Linear's "I know a PR exists" (a tracker capability) | stays a **tracker** answer; the forge is the fallback for trackers that cannot say |
-| PRs as invisible worker magic | the worker's reach narrows to **push**: replies are posted by the orchestrator (Q2 resolved); how the push itself carries the app credential is Q1, open |
+| PRs as invisible worker magic | the worker's git is **local-only** — `git push` denied by its agent file; push, PR creation, and review replies are all the orchestrator's (Q1, Q2 resolved). The worker never holds forge credentials |
 
 ## Open questions — the discussion
 
-1. **Which credential does the worker's `git push` use?** (open; the
-   question in plain words, 2026-09-29) Yes, it is plain git and a
-   worktree pushes like any checkout — nothing about the forge moves
-   repository bytes. The only question is **authenticity**: `git push`
-   over https needs a credential, and today's answer is "whatever the
-   machine's git has" — on the operator's laptop that is the keychain,
-   i.e. the push goes out **as the human**; a headless server has nothing
-   to borrow and the push simply fails. The orchestrator-owned worker
-   should push as the app (its commits say `aivi-agent[bot]`; a push
-   refused for whoever-owns-the-machine is the bug linear.md's worktree
-   marking was built to avoid). Options: (a) the push URL carries a
-   short-lived installation token
-   (`https://x-access-token:<token>@github.com/owner/repo.git`, set on
-   the worktree's remote at creation — git-native, no daemon, token lives
-   ~1 h so long sessions re-mint via the forge); (b) `gh` CLI as a
-   credential helper; (c) irrelevant here — the hosted-MCP forwarder
-   pattern is for the **interactive** mode's subagents, not for push.
-   The operator's prefill research (2026-09-29) belongs to (c)-style
-   tooling and to any future worker tools: changing **tool visibility or
-   permissions mid-session** invalidates the prefill cache — the tool
-   call itself is fine. It does not constrain this question: push is
-   git, not a tool.
+1. **Which credential does the worker's `git push` use?** **Resolved
+   2026-09-29: the worker does not push.** Yes, it is plain git and a
+   worktree pushes like any checkout — the question was only ever
+   authenticity: the machine's git has the human's keychain locally (the
+   push goes out as the human), and nothing on a headless server (the
+   push fails). The operator's ruling: the worker's git is **local-only
+   — `git push` denied by its agent file**, the attribution plugin's
+   move — and the **orchestrator pushes at turn end**, injecting a
+   freshly minted installation token for that one command
+   (`git -c http.extraheader=…`; nothing is written into the worktree's
+   `.git/config`). PR creation rides along: a first push of a branch with
+   no PR gets one, built from the PR message in the worker's closing
+   report. Why this over the alternatives: embedding a token in the
+   remote URL (option a) made a ~1 h token an expiry problem for long
+   sessions — with an orchestrator-side push nothing sits around to
+   expire, the forge client mints fresh per use and caches; `gh` as a
+   helper (option b) is one more thing installed for no gain; the
+   hosted-MCP forwarder (option c) belongs to **interactive** tooling,
+   never to push. Attribution of the push itself does not matter ("nobody
+   sees who pushed. They only see the author"), and this is deterministic
+   code, not tokens burned — the operator's stated tiebreaker. The
+   prefill research stays relevant only for (c)-style tools: changing
+   **tool visibility or permissions mid-session** invalidates the prefill
+   cache; push is git, not a tool.
 2. **Who posts the reply the reviewer reads?** **Resolved 2026-09-29: the
    orchestrator does** — it parses the validated structured JSON requested
    from the worker in a dedicated turn (zod), and posts each `message` to
@@ -273,8 +326,8 @@ the orchestrator's.
 
 ## Checklist
 
-Shape agreed 2026-09-29 except open question 1 (the push transport), which
-the build starts by deciding.
+Shape agreed 2026-09-29; all open questions resolved that day. The wake
+flow detail stays proposed until worked examples are walked.
 
 - [ ] `@aivi/plugin/forge` subpath: `RepoRef`, `PrFacts`, `ReviewFacts`,
       the `Forge` interface (`repoFor`, `prForBranch`, `reviewFeedback`,
@@ -292,7 +345,11 @@ the build starts by deciding.
       proves the read against a real repo's PRs; `aivi add forge-github`.
 - [ ] Delete `identity.github.app` and its configuration.md line; the
       `identity.github` pair untouched.
-- [ ] Decide and build Q1 (the push credential).
+- [ ] Q1 built: the client exposes the minted installation token for
+      git-command injection (`http.extraheader`); the worker's
+      `git push` deny and the orchestrator-side push + PR creation are
+      wired when the orchestrator extraction exists — recorded here so
+      the shape is settled, not built today.
 - [ ] Signed comments end to end: `resolveThread` stamps `aivi · <role>`
       visibly, `reviewFeedback` parses it back into the author fact.
 - [ ] Contract tests against a scripted forge; live gate: one real PR

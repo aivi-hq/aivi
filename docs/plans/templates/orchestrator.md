@@ -16,6 +16,14 @@ inert until a tracker adapter registers. Linear becomes the first adapter;
 GitHub Issues and Jira are future adapters spelling the same vocabulary
 differently.
 
+**Glue, not a ticket-machine** (ruled 2026-09-29; the name is still up
+for grabs). The orchestrator orchestrates *everything*: the seam between
+tracker, forge, channels, and mail. A ticket need not touch a repository
+at all — "research X, make a PDF, email it" — so the forge steps are a
+**configurable path**, entered only when the ticket's project has a
+forge, never a hardcoded route every worker walks
+([forge-github.md](../forge-github.md)).
+
 ## The adapter seam
 
 An adapter is a translator in both directions and nothing else:
@@ -135,17 +143,21 @@ one.
 A worker does work and reports what it did; the orchestrator is the one that
 updates the ticket.
 
-- When the worker turn ends, the orchestrator runs one **wrap-up turn in the
-  same session**: report what you did, answer with exactly this JSON shape.
-  Ruled 2026-09-29: trusting the agent to remember the final-message
-  instruction across a long session — possibly through compactions — is
-  asking for trouble; a dedicated turn with a clear schema to validate
-  against is much more likely to succeed.
-- The report is **platform-neutral and says only `{outcome, comment}`**
-  (ruled 2026-09-29: the worker does not report a lane — success or failure
-  is its knowledge; the orchestrator knows the lanes to either side from
-  its own config and makes the move). The orchestrator executes through
-  the adapter: a plain write to the ticket, no re-read to "catch lying" —
+- **The schema instruction rides at session start** — *finish your turn
+  by answering following this schema exactly, no other text* — and the
+  orchestrator validates the turn's closing message (ruled 2026-09-29,
+  refining the earlier dedicated-turn ruling). A failed validation is
+  re-asked in a dedicated turn carrying the schema — the worry that a
+  long session forgets the instruction is now caught by validation
+  instead of hope.
+- The report is **platform-neutral** (ruled 2026-09-29: the worker does
+  not report a lane — success or failure is its knowledge; the
+  orchestrator knows the lanes to either side from its own config and
+  makes the move). It carries what the orchestrator needs to act:
+  `{outcome, comment}`, plus **the PR message** and **any deviations**
+  when the ticket touched a repository (the forge path is configurable,
+  not every ticket has a forge). The orchestrator executes through the
+  adapter: a plain write to the ticket, no re-read to "catch lying" —
   the orchestrator is deterministic code, and what it writes is what is
   true.
 - The report is validated by the orchestrator; a parse error is echoed and it
@@ -155,12 +167,10 @@ updates the ticket.
   operator can read what was actually said in the host.
 - The orchestrator guarantees a visible signal always: ticket moved, label
   added, or comment left. Never silence.
-- **Open question (reopened 2026-09-29):** injecting a *tool* into the
-  wrap-up turn — called with the fields we expect, the tool handling the
-  validation loop — may be nicer than the JSON-text turn. The earlier
-  rejection ("deny-able, skippable, fires mid-session") argued against a
-  session-wide tool, not a per-session injected one at the very end;
-  needs testing before it settles either way.
+- **Resolved 2026-09-29: no tool.** The operator's ruling — a tool
+  cannot link back to the orchestrator without plumbing, and a tool call
+  is itself an instruction; the schema-at-start + validated closing
+  message + re-ask above is the mechanism.
 
 ## The label
 
