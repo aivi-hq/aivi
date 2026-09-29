@@ -37,6 +37,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | forge / tracker | the two **systems** core names (in that order): a **forge** owns repositories (clones a project's checkout, branches, pull requests), a **tracker** owns tickets (lanes, delegation). Core spells the roles, never which plugin fills them; `projectRoles = ['forge', 'tracker']` |
 | project contributor | a plugin's `./setupProject` export — `{ role?, setup(ctx) }` — that sets a new project up for its role and hands back the config section core writes at `projects.<id>.<moduleId>`; core computes which are *configured* (a `plugins.<id>` block exists), offers one per role (asks if several), and runs the roleless ones after the roles; the plugin clones/asks, core writes bytes and reads none |
 | tracker adapter | the translator between aivi and one ticket system, at the `@aivi/plugin/tracker` seam: platform events in (`started`/`prompted`/`updated` on a *conversation*, the tracker's word for one working session), neutral updates out (`issue`, `assign`/`unassign`, `startSession`, `comment`, `laneStates`). A translator and nothing else — lanes, guards, capacity, worktrees and the exit contract are aivi's machinery, which spells `tracker` and never parses a conversation or reads a webhook. Linear's adapter is `tracker-linear/src/tracker.ts`; the machinery speaking it is what the orchestrator extraction lifts into the host |
+| forge adapter | the translator between aivi and one repository host, at the `@aivi/plugin/forge` seam: the facts a clone cannot see (which pull request stands for a branch, what its review said) and the operations only it may authenticate — everything that reaches `origin`: clone, the `source/` sync, push. An **installation** is the grant from an account to the app, and aivi speaks through exactly one, as its own app and never as the person at the keyboard; its posts are signed `_worker: aivi · <role>_` in the text a human reads, so a wake can tell them from replies. Local git — worktrees, commits — is not a forge's, and the line is remote, not clone. `forge-github` is the one built; the host-side registry with "who owns this project's remote?" comes with the orchestrator |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`, `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
@@ -282,7 +283,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 ## Where things are
 
-`packages/{core,host,knowledge,plugin,browser,channel-discord,channel-slack,tracker-linear,opencode,cli}` with tests in
+`packages/{core,host,knowledge,plugin,browser,channel-discord,channel-slack,tracker-linear,forge-github,opencode,cli}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `dist/` is built by `npm run build`
 (TypeScript 7, incremental); tests need no build — they run from sources

@@ -135,8 +135,16 @@ export interface Forge {
    *  branch has none yet and a message came with the push. The orchestrator
    *  decides *when* (turn end); how the forge authenticates — mint once,
    *  cache to its TTL, re-mint on a 401 — is the forge's own choice and never
-   *  written into the worktree's `.git/config`. */
-  push(repo: RepoRef, worktree: string, branch: string, pr?: { title: string; body: string }): Promise<PrFacts>;
+   *  written into the worktree's `.git/config`. Answers the pull request that
+   *  stands for the branch afterwards: undefined when the branch simply moved
+   *  and no pull request was asked for. `author` names the worker role the
+   *  message came from, and the posted pull request says so — visibly. */
+  push(
+    repo: RepoRef,
+    worktree: string,
+    branch: string,
+    pr?: { author: string; title: string; body: string },
+  ): Promise<PrFacts | undefined>;
 }
 
 /** The outcome of bringing a checkout up to date, in the forge's own words:

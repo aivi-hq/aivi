@@ -9,6 +9,7 @@
     { "path": "packages/browser/tsconfig.build.json" },
     { "path": "packages/channel-discord/tsconfig.build.json" },
     { "path": "packages/channel-slack/tsconfig.build.json" },
+    { "path": "packages/forge-github/tsconfig.build.json" },
     { "path": "packages/tracker-linear/tsconfig.build.json" },
     { "path": "packages/opencode/tsconfig.build.json" },
     { "path": "packages/cli/tsconfig.build.json" }

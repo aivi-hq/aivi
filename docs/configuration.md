@@ -317,6 +317,30 @@ enabled (`linear.mcp`), is served by the module itself on loopback and
 authorised with the primary's app-actor token
 ([linear](linear.md#the-linear-mcp)).
 
+## GitHub forge
+
+`plugins.forge-github` is the GitHub forge's whole setup, and it is one number:
+the app's id — the `App ID` on the app's settings page, not its name. The
+module runs when `@aivi/forge-github` stands in the `aivi-plugins` list
+([the forge](plans/forge-github.md)).
+
+```json
+{ "plugins": { "forge-github": { "app": 12345 } } }
+```
+
+The private key is a secret and so is not here: `GITHUB_APP_PRIVATE_KEY` in
+`<home>/.env`, the PEM file GitHub handed out when the app was created. The
+app must also be **installed** — an installation is the grant from the account
+holding the repositories to the app — and aivi speaks through exactly one:
+none is an error carrying the install link, several is an error naming the
+grants and saying which to revoke.
+
+Nothing in this block names a repository. Which repository a project is comes
+from that project's own `origin`, and a checkout whose remote is not a GitHub
+repository simply has no forge: no error, and no pull-request facts. Likewise
+there is no per-project forge section — a forge is asked about a checkout it
+did not create and reads the answer off the checkout.
+
 ## Operator commands
 
 `npm run aivi -- --help` lists them; what each does and when to use it is in
@@ -337,10 +361,13 @@ Secrets never live in JSON files. They come from the process environment, and
 the CLI loads dotenv-style files without overriding variables that are already
 set: `<home>/.env`. `fnox exec` works the same way. Variables: `DISCORD_BOT_TOKEN`,
 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` (Slack's bot and app-level tokens),
-`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), and for
+`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), for
 Linear the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
 `LINEAR_WEBHOOK_SECRET` (the primary app) plus `LINEAR_<APP>_…` per extra app
-([Linear](#linear)). `AIVI_OPERATOR_BEARER` is the one name in that list no
+([Linear](#linear)), and `GITHUB_APP_PRIVATE_KEY` — the GitHub App's PEM
+private key, which is many lines, so the setup writes it as one quoted line and
+Node's loader gives it back with its newlines
+([the forge](plans/forge-github.md)). `AIVI_OPERATOR_BEARER` is the one name in that list no
 one sets: the exec door stamps it with the bearer this connection presented
 into a driven session's closed child environment, so commands typed
 remotely attribute to the human who typed them, not to the server's own

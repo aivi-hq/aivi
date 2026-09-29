@@ -55,8 +55,10 @@ export interface ProjectSetupResult {
   /** The section core writes at `projects.<id>.<moduleId>`, validated against
    *  this plugin's own `projectSchema`; absent means the role wrote nothing. */
   section?: Record<string, unknown>;
-  /** True when this contributor created the checkout (`projects/<id>/source`);
-   *  a forge clones. With no clone the setup leaves an untracked directory. */
+  /** True when this contributor leaves a git checkout at `projects/<id>/source`
+   *  — it cloned one, or the checkout was already there for the repository the
+   *  person named. A forge owns the clone because cloning reaches `origin`.
+   *  With no clone the setup leaves an untracked directory. */
   cloned?: boolean;
 }
 

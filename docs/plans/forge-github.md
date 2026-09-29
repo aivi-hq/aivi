@@ -232,7 +232,13 @@ instruction), now caught by validation instead of hope.
   plugin's default belongs under the plugin, where its schema validates
   it. `identity.github.app` ("nothing reads it yet") is orphaned and dies
   at landing. The **private key is a secret**: `GITHUB_APP_PRIVATE_KEY` in
-  `<home>/.env`, the scrub list grows with it (D15's list is the precedent).
+  `<home>/.env`. **The host's named scrub list does not grow** (corrected
+  as built, 2026-09-29): every key of `<home>/.env` is already withheld from
+  a task script's environment (`protectedEnv`, from `loadEnvFile` in
+  `host/src/cli/context.ts`), and adding a plugin's secret name to
+  `SECRET_ENV` in the host would be core naming a specific plugin — the thing
+  the systems-not-plugins rule forbids. The Discord and Slack names already
+  in that list predate the rule; they are not a precedent to follow.
 - **One installation, and only one** (ruled 2026-09-29). In GitHub's
   vocabulary an *installation* is the grant: an account (GitHub's word for
   a shared account is "org"; aivi has no orgs, only projects and their
@@ -274,9 +280,11 @@ instruction), now caught by validation instead of hope.
 
 ## Package shape
 
-- `@aivi/forge-github` — a plugin like every other: main entry
-  `{ moduleId, configSchema, createModule }`, `./config`, `./setup`,
-  docs shipped (`files: ["dist", "docs"]`). **Module id `forge-github`**,
+- `@aivi/forge-github` — a plugin like every other (built 2026-09-29): the
+  `./config` subpath holds the registry's `AiviPlugin` declaration
+  (`{ id, configSchema, createModule }`), and the package exports `.`,
+  `./config`, `./setup` and `./setupProject`, shipping `dist` as the others
+  do. **Module id `forge-github`**,
   same as the package name — ruled 2026-09-29 to prevent config
   fragmentation: list entry, `plugins.forge-github` block and `/status`
   all say the one word. (The same rule says Linear's module id should be
@@ -319,10 +327,26 @@ instruction), now caught by validation instead of hope.
    push goes out as the human), and nothing on a headless server (the
    push fails). The operator's ruling: the worker's git is **local-only
    — `git push` denied by its agent file**, the attribution plugin's
-   move — and the **forge pushes on the orchestrator's word (turn end)**, authenticating the push as its own
-   installation (`git -c http.extraheader=…`; nothing is written into the worktree's
-   `.git/config`). How it holds that token — mint once, cache to its TTL,
-   re-mint on 401 — is the forge's own choice, not this contract. PR
+   move — and the **forge pushes on the orchestrator's word (turn end)**,
+   authenticating the push as its own installation. As built (2026-09-29):
+   the forge names the repository's HTTPS URL **on the command line** — never
+   a remote's name, so a checkout's own config cannot decide where aivi's
+   credential is sent — and passes the token as per-invocation git config
+   through `GIT_CONFIG_*` **environment** variables, because `-c` would put
+   the header in a process listing for anyone who lists processes;
+   `credential.helper=` is switched off in the same breath, so the human's
+   keychain is never offered and a push never quietly attributes to them.
+   Nothing is written into the worktree's `.git/config`, and the tests read
+   that file after a real transfer to prove it. An ssh `origin` is left
+   exactly as its owner left it: aivi's transfers go over HTTPS regardless,
+   since an installation token authenticates HTTPS and nothing else. How it
+   holds that token — mint once, cache to its TTL, re-mint on 401 — is the
+   forge's own choice, not this contract, and octokit owns it as built:
+   `auth({ type: 'installation' })` hands back the cached token, mints a fresh
+   one when the cached one is due, and retries a 401 that arrives within five
+   seconds of the token's creation — GitHub's replication delay — warning as it
+   does. A 401 after that is thrown, not retried: it means the grant is gone,
+   which is a thing to fix on GitHub. PR
    creation rides along: a first push of a branch with
    no PR gets one, built from the PR message in the worker's closing
    report. Why this over the alternatives: embedding a token in the
@@ -382,31 +406,72 @@ flow detail stays proposed until worked examples are walked.
       registry (claim at module start, the `ToolRegistry` pattern; "who owns
       this project's remote?") — it arrives with the orchestrator, the first
       thing that has the question to ask.
-- [ ] `@aivi/forge-github` package: module id `forge-github`, empty
-      config block by default, `plugins.forge-github.app` for the app id,
-      `GITHUB_APP_PRIVATE_KEY` in `.env` + scrub list (D15 precedent).
-- [ ] octokit auth-app client: mint, cache, re-mint on 401; exactly-one
-      installation lookup (zero or several is a setup error with a clear
-      message).
-- [ ] `./setup`: guides every step (create app → permissions read+write
-      on code and PRs → private key → install link → pick repos), then
-      proves the read against a real repo's PRs; `aivi add forge-github`.
+- [x] `@aivi/forge-github` package (built 2026-09-29, **prepared, not wired**:
+      nothing lists it in `aivi-plugins` yet). Module id `forge-github` — the
+      package name, so the list entry, the `plugins.forge-github` block and
+      `/status` say the one word — and the block is one number, `app`. No
+      project section is contributed: which repository a project works is a
+      fact about its checkout, not about its configuration. The secret is
+      `GITHUB_APP_PRIVATE_KEY` in `<home>/.env`, written as one quoted line and
+      read back by Node's own loader — tested as a round trip through core's
+      `upsertEnvFile` — and the host's named scrub list stays as it is, for the
+      reason given under Auth.
+- [x] octokit auth-app client: the app proves itself with its own JWT, and the
+      exactly-one installation lookup turns zero into a message carrying the
+      install link and several into a message naming the grants and saying to
+      revoke what aivi does not need. The token's whole life is octokit's — the
+      cached token until it is due, a fresh one after, and a retry for a 401
+      inside the replication delay — and the tests assert one mint for two
+      uses.
+- [x] The two transfers, as `Forge` members: `syncSource` (fetch with a refspec
+      that names its own branch, then `merge --ff-only`, and every case that
+      would need a decision reported rather than forced — local changes, a
+      detached head, diverged history, not a checkout at all) and `push` (the
+      branch moves, a pull request opens on the repository's own default branch
+      when a message came with the push, and a branch that already has one is
+      never doubled). Proven against a real git remote on disk: the bytes
+      actually move, and the checkout's `.git/config` is read afterwards to show
+      aivi left nothing in it.
+- [x] `./setupProject`, the `forge`-role contributor `aivi projects add` runs:
+      asks which repository, proves the app can see it through the
+      installation, settles the project name, and clones as the app. A checkout
+      already there for the same repository is taken as it stands; one for a
+      different repository stops the flow rather than writing a stranger's
+      remote into a person's working copy. **This part works today**, with no
+      orchestrator, because it is the CLI's own flow.
+- [x] Signed comments: `resolveThread` closes its post with `_worker: aivi ·
+      <role>_` under a divider and `reviewFeedback` reads that label back into
+      the author fact — as the comment's **last line** only, so a person
+      quoting the label does not become aivi. That one carrier serves both
+      readers is what is built; the exact look is what the live gate judges.
+- [x] Contract tests against a GitHub that only says what was written: 46 in
+      the package — the credential, the installation lookup, each of the six
+      `Forge` members, the `.env` round trip, and the declaration composed into
+      `config.json`. None reaches a network, and an unscripted call fails the
+      test.
+- [ ] `./setup` (`aivi add forge-github`): the proof chain is built — the key
+      belongs to the id, exactly one installation, a real repository's pull
+      requests read through it, then the block written — but the guide is a
+      note plus errors that name the fix, not a walkthrough of the app-creation
+      screen. Whether that is enough is what a live run judges.
+- [ ] Live gate: one real pull request read, and one real thread resolved as
+      `aivi-agent[bot]`, the signed comment's look judged by eye.
 - [ ] Delete `identity.github.app` and its configuration.md line; the
-      `identity.github` pair untouched.
-- [ ] Q1 built: the client exposes its installation token for
-      git-command injection (`http.extraheader`; caching and renewal are
-      the forge's own choice, bounded only by the token's TTL); the worker's
-      `git push` deny and the forge-side push + PR creation are
-      built with the forge path, the orchestrator already proven by then.
+      `identity.github` pair untouched. **Held back on purpose**: the operator's
+      live config still holds the field, and a `strictObject` would reject his
+      running configuration.
+- [ ] Q1's other half: the worker's `git push` deny in its own agent file, and
+      the push at turn end on the orchestrator's word with the pull-request
+      message from the closing report. The transfer side is built above; the
+      word to give it is the orchestrator's.
 - [ ] Take the misplaced remote git out of its current package, do not
       carry it forward as-is: `syncProject` in `host/src/projects.ts`
-      (the `projects-sync` job's fetch/ff — delete or rewrite, the forge
-      owns syncing `source/`), and `tracker-linear/src/worktree.ts`
-      (worktree git is the orchestrator's; a tracker answers tickets).
-- [ ] Signed comments end to end: `resolveThread` stamps `aivi · <role>`
-      visibly, `reviewFeedback` parses it back into the author fact.
-- [ ] Contract tests against a scripted forge; live gate: one real PR
-      read, one real thread resolved as `aivi-agent[bot]`.
-- [ ] Docs: configuration.md (the block, the secret), operations.md (the
-      forge in the worker story), CONTEXT.md vocabulary (forge,
-      installation), the plugin's own shipped docs.
+      (the `projects-sync` job's fetch/ff — `syncSource` above is the rewrite;
+      the host keeps running generic git naming no plugin until the forge
+      registry can answer "who owns this project's remote?"), and
+      `tracker-linear/src/worktree.ts` (worktree git is the orchestrator's; a
+      tracker answers tickets).
+- [ ] Docs: configuration.md (the block, the secret) and CONTEXT.md's package
+      list and vocabulary travelled with this build; operations.md waits until
+      the forge has a part in the worker story, which it gets with the
+      orchestrator.
