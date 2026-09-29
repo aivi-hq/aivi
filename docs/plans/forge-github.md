@@ -80,7 +80,17 @@ forge at all. No forge is not a failure: such a ticket completes without
 aivi ever asking GitHub. Nothing in this contract may assume every
 worker touches a repository's remote.
 
-## The contract (draft)
+## The contract
+
+**Built 2026-09-29** as the `@aivi/plugin/forge` subpath, in the shape below —
+with two members the remote/local boundary above made necessary: `syncSource`
+(fetch and fast-forward a project's clean checkout — a fetch authenticates, so
+it was never aivi's to run) and `push` (the forge performs it on the
+orchestrator's word, and opens the PR if the branch has none and a message
+came with the push). `clone` is deliberately **not** on the interface: cloning
+is where a person is asked which repository they mean, so it lives in the
+plugin's `./setupProject` contributor, and by the time a `Forge` speaks to
+aivi the checkout exists.
 
 Capabilities and commands only; delivery details are the forge's own,
 exactly as ruled for trackers. Everything a forge answers is a **fact the
@@ -365,11 +375,13 @@ token also owns its renewal, so nothing sits around to expire; `gh` as a
 Shape agreed 2026-09-29; all open questions resolved that day. The wake
 flow detail stays proposed until worked examples are walked.
 
-- [ ] `@aivi/plugin/forge` subpath: `RepoRef`, `PrFacts`, `ReviewFacts`,
-      the `Forge` interface (`repoFor`, `prForBranch`, `reviewFeedback`,
-      `resolveThread`), and the host-side forge registry (claim at module
-      start, the `ToolRegistry` pattern; "who owns this project's
-      remote?").
+- [x] `@aivi/plugin/forge` subpath (built 2026-09-29): `RepoRef`, `PrFacts`,
+      `ReviewFacts` and the `Forge` interface (`repoFor`, `prForBranch`,
+      `reviewFeedback`, `resolveThread`), plus `syncSource` and `push` from
+      the remote/local boundary. Still open here: the host-side forge
+      registry (claim at module start, the `ToolRegistry` pattern; "who owns
+      this project's remote?") — it arrives with the orchestrator, the first
+      thing that has the question to ask.
 - [ ] `@aivi/forge-github` package: module id `forge-github`, empty
       config block by default, `plugins.forge-github.app` for the app id,
       `GITHUB_APP_PRIVATE_KEY` in `.env` + scrub list (D15 precedent).

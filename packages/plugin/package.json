@@ -6,7 +6,8 @@
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
     "./api": { "development": "./src/api.ts", "default": "./dist/api.js" },
     "./channel": { "development": "./src/channel.ts", "default": "./dist/channel.js" },
-    "./tracker": { "development": "./src/tracker.ts", "default": "./dist/tracker.js" }
+    "./tracker": { "development": "./src/tracker.ts", "default": "./dist/tracker.js" },
+    "./forge": { "development": "./src/forge.ts", "default": "./dist/forge.js" }
   },
   "files": [
     "dist"
