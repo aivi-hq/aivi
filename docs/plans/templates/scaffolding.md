@@ -50,9 +50,11 @@ The lane map itself lands in `config.json` (`projectDefaults.linear.lanes` /
 `projects.<id>.linear.lanes`), owned per platform by the operator — the
 template only proposes. Today the lane-proposing flow already exists, hidden in
 `aivi projects add --linear` / `aivi projects create`
-(`packages/app/src/commands/projects.ts`): it shows the convention and asks
+(`packages/host/src/cli/commands/projects.ts` — the path moved with the CLI
+refactor; `@aivi/app` is gone): it shows the convention and asks
 only for lanes it leaves open. The template flow is that machinery, generalized
-and better advertised.
+and better advertised — and the operator ruled (2026-09-29) that this flow
+gets **redone as a nicer, smarter command** regardless of the template work.
 
 ## Captured requirements
 

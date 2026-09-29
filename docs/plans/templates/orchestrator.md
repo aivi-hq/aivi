@@ -1,8 +1,11 @@
 # The ticket orchestrator
 
-Status: draft (2026-09-27). Part of the [templates program](index.md). Lands
-after [cli-refactor](../cli-refactor/index.md) phases 1–3; the adapter
-contract lives in `@aivi/plugin/tracker`. Parent: [index.md](index.md).
+Status: crystallizing (2026-09-29, with the operator). Part of the
+[templates program](index.md). The behavior rulings of 2026-09-29 are
+recorded here; the capabilities list and the extraction's details are
+explicitly **provisional** — more trackers will move them. Sequence:
+forge-github first, then tracker extraction, then this extraction.
+Parent: [index.md](index.md).
 
 ## What it is
 
@@ -31,15 +34,33 @@ An adapter is a translator in both directions and nothing else:
 
 Deliberately **not** on the adapter: weights, ordering, capacity, worktrees,
 the exit contract. GitHub-as-ticket-system is its own adapter plugin;
-GitHub-as-repo-host (branches, PRs) is separate plumbing, the only repo host
-today, with the choice kept reversible.
+GitHub-as-repo-host (branches, PRs, review feedback) is separate plumbing —
+the forge, `@aivi/plugin/forge` — and it lands **before** this extraction,
+because review facts are gathered from the forge at wake (below).
 
-The seam's home follows cli-refactor's rules: the contract is the content of
-the `@aivi/plugin/tracker` subpath (D6: subpath before package; the kind gets
-its first content when the extraction lands it), and the Linear package is the
-renamed `@aivi/tracker-linear` (D20). The tracker plugin is enabled the registry
+**Capabilities: what the orchestrator asks; delivery: what the tracker
+decides** (ruled 2026-09-29). The seam must not turn everything a tracker
+does into a capability. Agent-session updates are not a capability —
+updates go back platform-neutral and the tracker decides how to deliver
+them (Linear informs the agent session; another tracker posts a comment).
+`assign` is the neutral word; Linear spells it `delegate`. Capabilities
+are the **facts the orchestrator needs and cannot compute**, each with a
+fallback chain for trackers that lack it. Worked example, the branch name:
+`project.branchNameStrategy` (config) → the tracker's reported branch name
+(Linear: `Issue.branchName`) → `feat/<ticket>` with a counter on conflict.
+Candidate list, provisional and deliberately small: branch name; whether a
+PR exists and where (Linear can say; others need the forge to answer by
+branch). Everything else earns its way onto the list when a second tracker
+needs it.
+
+The seam's home: the contracts plugins code against are the content of the
+`@aivi/plugin/tracker` and `@aivi/plugin/forge` subpaths (D6: subpath
+before package; the kinds get their first content from these extractions).
+The machinery itself ships **in the host** — confirmed 2026-09-29: the host
+is the core, and no install has the host without it — in one neat
+directory; a name is open. The tracker plugin is enabled the registry
 way — listed in `aivi-plugins` (D9) — and at module start it registers with
-the host-shipped orchestrator, which itself has no list entry: there is
+the orchestrator, which itself has no list entry: there is
 nothing to disable until a tracker is installed, because an unwired
 orchestrator does nothing.
 
@@ -70,6 +91,9 @@ one.
   Todo) outranks fresh pickups; ties break on time-in-queue, stamped by the
   orchestrator when it first sees a candidate. Making the weight calculation
   the orchestrator's, behind a clear interface, was a deliberate decision.
+  Confirmed 2026-09-29: the point is a **predictable processing order** —
+  in-flight first; when one finishes or parks behind the HITL label, the
+  freed capacity takes the next in order.
 - **Capacity is the existing pool** (pool size = max concurrent workers; 1 is
   the honest local-model setting). In-flight priority is nearly free: an
   in-flight worker grabs a lease the moment its trigger event lands, so a
@@ -84,36 +108,59 @@ one.
 
 - **Always a fresh session**: "here's a summary, go do work." Never a restored
   agent session. A **restored worktree** is a different thing: worktrees are
-  keyed by branch (Linear hands us the branch name) and re-used when work
-  concerns review comments.
+  **keyed by branch** (ruled 2026-09-29, superseding today's
+  `<agent session>` directory naming), and before a worker starts on a
+  restored worktree the orchestrator brings it up to date with the forge —
+  recovery is an update, not a new checkout.
 - The orchestrator calls the worker with the ticket summary, the branch, and
   the worktree ready (or restored).
 - Guards before spawning, all of them today's listener rules: lane mapped, no
   active delegate, no needs-human label, not natively blocked.
-- Reviews go through **GitHub, not the ticket platform**: comments are left
-  and answered on the PR, so a ticket's history in Linear stays
+- **The worker never talks to a human live** (ruled 2026-09-29). When it
+  is stuck it leaves a comment on the ticket and adds the HITL label; that
+  parks the ticket. A human answers in a new comment and removes the label;
+  the label-removal webhook then starts a **fresh session** in the recovered
+  worktree, with the full ticket context — including the worker's question
+  and the human's answer, which the fresh session reads from the ticket
+  like any other fact. Resuming the *asking* session on the answer webhook
+  was rejected: the orchestrator is deterministic code and cannot know a
+  trigger is an answer, and guessing is the fragile kind of clever.
+  Revisit post-v1.
+- Reviews go through **the forge, not the ticket platform**: comments are
+  left and answered on the PR, so a ticket's history in Linear stays
   decisions-and-why.
 
 ## The exit contract
 
 A worker does work and reports what it did; the orchestrator is the one that
-updates the ticket and the agent session.
+updates the ticket.
 
 - When the worker turn ends, the orchestrator runs one **wrap-up turn in the
   same session**: report what you did, answer with exactly this JSON shape.
-  A tool was rejected as the carrier — deny-able by permissions, skippable,
-  and it fires mid-session so it cannot report the final state.
+  Ruled 2026-09-29: trusting the agent to remember the final-message
+  instruction across a long session — possibly through compactions — is
+  asking for trouble; a dedicated turn with a clear schema to validate
+  against is much more likely to succeed.
+- The report is **platform-neutral and says only `{outcome, comment}`**
+  (ruled 2026-09-29: the worker does not report a lane — success or failure
+  is its knowledge; the orchestrator knows the lanes to either side from
+  its own config and makes the move). The orchestrator executes through
+  the adapter: a plain write to the ticket, no re-read to "catch lying" —
+  the orchestrator is deterministic code, and what it writes is what is
+  true.
 - The report is validated by the orchestrator; a parse error is echoed and it
   retries, max a few tries.
 - **Fallback on failure**: needs-human label + a comment saying the worker
   finished but could not report + an error + the session named, so the
   operator can read what was actually said in the host.
-- The report is **platform-neutral** (`{outcome, lane, label, comment}`); the
-  orchestrator executes it through the adapter. The ticket is re-read after
-  acting, so a report that lies about a move is caught by reconciliation, not
-  by trust.
 - The orchestrator guarantees a visible signal always: ticket moved, label
   added, or comment left. Never silence.
+- **Open question (reopened 2026-09-29):** injecting a *tool* into the
+  wrap-up turn — called with the fields we expect, the tool handling the
+  validation loop — may be nicer than the JSON-text turn. The earlier
+  rejection ("deny-able, skippable, fires mid-session") argued against a
+  session-wide tool, not a per-session injected one at the very end;
+  needs testing before it settles either way.
 
 ## The label
 
@@ -172,8 +219,17 @@ ship as optional "adapter agent" files inside the platform plugins.
 
 ## Open questions
 
-- What wakes review when PR comments arrive after the review agent's first
-  turn (GitHub events? a human moving the ticket back?).
+- **Resolved 2026-09-29 — what wakes review when PR comments arrive:**
+  nothing does, and nothing needs to. The tracker leads and holds the
+  working state: the reviewer finishes by moving the ticket (back to Dev),
+  and the lane webhook wakes the next worker. Review feedback is not a
+  wake signal — it is a fact gathered **from the forge** as part of
+  collecting everything before a worker wakes (Linear helps: telling us a
+  PR exists is one of its reported capabilities).
+- The name of the machinery itself (host directory, vocabulary).
+- The capabilities list, by design, grows with each tracker added — every
+  entry needs its fallback chain spelled out before a second tracker
+  ships.
 - The `autonomous` label's real name, and whether the skip is lane-config or
   label-config.
 - Whether the wrap-up turn takes its lease from the worker's pool or the

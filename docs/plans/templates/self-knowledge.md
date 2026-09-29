@@ -67,9 +67,9 @@ the file:
 - It mutates the operator's live file, so it deserves its own gating, like
   `aivi_jobs` is gated. The `operator` role store is there waiting (cli-refactor
   D16 gave it its first customer); which gate is right is an open question.
-- Not to be confused with the planned `configure` command: that edits the
-  *client* config on a laptop; this edits the *home's* `config.json` on the
-  server, for the assistant's operator.
+- Not to be confused with the `configure` command (built 2026-09-29): that
+  edits the *client* config on a laptop; this edits the *home's*
+  `config.json` on the server, for the assistant's operator.
 
 ## Open questions
 

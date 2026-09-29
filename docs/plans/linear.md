@@ -47,34 +47,16 @@ Requirements this serves: [requirements.md](../requirements.md) §2, §4, §5.
       `linear-timestamp` and `linear-event` headers are what `verifyWebhook`
       already reads.
 
-## Live gates
+## Live gates — retired as history (2026-09-29)
 
-The module has never been run live end to end. The per-step gates merged
-into one list (2026-09-26); record results in [roadmap.md](../roadmap.md).
-
-- [ ] One app receiving both webhook families on one route; a misrouted
-      delivery seen and logged (`linear.logMisroutes`).
-- [ ] A mention answered by the assistant (`linear.agent`).
-- [ ] An issue delegated by hand → acknowledging `thought` → ephemeral
-      progress activities → `response`; a follow-up prompt continues the
-      worker's own session.
-- [ ] A delegation whose lane maps an agent runs it; a delegation into an
-      unmapped lane refused and un-delegated, the delegate left un-taken.
-- [ ] A stop request → `error` activity naming the worktree and the OpenCode
-      session, `stopped` turn, capacity released, worktree kept.
-- [ ] The HITL label refusing a hand delegation and stopping a pending
-      worker.
-- [ ] Two workers in one project running concurrently in separate worktrees;
-      a `worktree: false` lane running in the project checkout.
-- [ ] `blockedBy` visibly holding a delegation back.
-- [ ] The Linear MCP tools usable from a worker session, writes attributing
-      to the app.
-- [ ] An issue in a mapped team with no Linear project routes; one from a
-      second mapped team works the same checkout.
-- [ ] `projects.sync` fast-forwarding `source/` after a merge.
-- [ ] `projects add <git-url> --linear PEC` and one interactive
-      `projects create` against the real workspace (where verify 5 lands),
-      plus one `--lane`/`--unlane` write.
+The module has never run live end to end, and the operator ruled (twice:
+2026-09-27 in the [templates program](templates/index.md), confirmed
+2026-09-29) that it is **rebuilt to the orchestrator design, not verified
+against the old one** — so the per-step gates this page listed are dropped
+rather than run. What replaces them: the tracker extraction and orchestrator
+extraction each carry their own live gates, written against the new shape
+when they are planned. Record any partial findings in
+[roadmap.md](../roadmap.md).
 
 ## Open build items
 

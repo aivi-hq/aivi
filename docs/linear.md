@@ -9,7 +9,12 @@ does into the session and posting the final answer as its response. People who
 want aivi itself rather than a worker talk to the **assistant**. This page
 owns the module's behaviour and setup; the plan and what is still to come are
 in [plans/linear.md](plans/linear.md); configuration fields are in
-[configuration](configuration.md#linear).
+[configuration](configuration.md#linear). This page owns the behavior
+**as built**; the v1 rc rebuild — orchestrator machinery in the host,
+Linear becoming an adapter — is designed in
+[plans/templates/](plans/templates/index.md), and its rulings supersede
+sections of this page only as the extraction lands each piece, never
+ahead of the code.
 
 ## Words
 

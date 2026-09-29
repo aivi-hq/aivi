@@ -50,14 +50,24 @@ pool as the capacity — there is no per-project lock; running maintenance
 only when idle stays an idea
 ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 
-1. Next channels once the research lands
-   ([backlog/research-channels.md](backlog/research-channels.md)); Signal and
-   Telegram will test the "conversation without threads" case.
+1. **The v1 rc line** (ruled 2026-09-29): the CLI refactor (built,
+   unmerged) → **forge-github** (GitHub as repo host — branches, PRs,
+   review feedback — in front, because the orchestrator gathers review
+   facts from the forge) → **tracker extraction** (Linear speaks through
+   the adapter seam) → **orchestrator extraction** (the machinery moves
+   out of the tracker into the host) → **knowledge as a plugin** → **a
+   last look at jobs** → tag v1 rc. The [templates
+   program](plans/templates/index.md) owns the design; the sequence lives
+   there too.
 2. Installation and updates for other machines; the home layout it must
    produce is now fixed.
-3. Remote access hardening (per-device tokens, SSO via reverse proxy), then
-   the Linear live gate (the module is built; what to exercise is in
-   [plans/linear.md](plans/linear.md#live-gates)).
+
+Channels are decided (2026-09-29): discord and slack stay; **email** and
+**calendar** (joining Google Meet) come later; the Signal/Telegram research
+([backlog/research-channels.md](backlog/research-channels.md)) stands as
+research, not a queue. Remote-access hardening is decided as enough for
+now (2026-09-29): the bearer token is the account story; per-device tokens
+and SSO come when asked for.
 
 ## Decisions to make early, and decisions to defer
 
