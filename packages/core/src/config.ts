@@ -466,6 +466,36 @@ export async function gitIdentity(identity: Identity, read: ReadGitConfig): Prom
   if (written?.name && written.email) return { name: written.name, email: written.email };
   return { name: AIVI_AGENT_BOT.user, email: AIVI_AGENT_BOT.email };
 }
+/** The core shape of `projectDefaults`: the company-wide convention every project
+ *  inherits unless it writes its own. A registered plugin's own sections are layered
+ *  onto this by `composeConfigSchema`, keyed by module id — the same closure the
+ *  `plugins` record gets, one level down. The default is applied where the schema
+ *  is used, so the object stays extendable. */
+export const projectDefaultsSchema = z.strictObject({
+  knowledge: z
+    .array(source)
+    .default([...DEFAULT_PROJECT_KNOWLEDGE])
+    .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
+  linear: z
+    .strictObject({
+      lanes: z
+        .record(z.string().min(1), laneValueSchema)
+        .default({})
+        .describe(
+          'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
+        ),
+      workspaceId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Linear organization id every project gets unless it names its own.'),
+    })
+    .optional()
+    .describe('The lane convention for projects that do not map the lane themselves.'),
+});
+
+const projectDefaultsDefault = () => ({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] });
+
 const configShape = z.strictObject({
   $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
   version: z.literal(1),
@@ -476,30 +506,8 @@ const configShape = z.strictObject({
     .array(source)
     .default([])
     .describe('Core sources; `<home>/memory` is added as the core `memory` source automatically.'),
-  projectDefaults: z
-    .strictObject({
-      knowledge: z
-        .array(source)
-        .default([...DEFAULT_PROJECT_KNOWLEDGE])
-        .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
-      linear: z
-        .strictObject({
-          lanes: z
-            .record(z.string().min(1), laneValueSchema)
-            .default({})
-            .describe(
-              'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
-            ),
-          workspaceId: z
-            .string()
-            .min(1)
-            .optional()
-            .describe('Linear organization id every project gets unless it names its own.'),
-        })
-        .optional()
-        .describe('The lane convention for projects that do not map the lane themselves.'),
-    })
-    .default({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] })
+  projectDefaults: projectDefaultsSchema
+    .default(projectDefaultsDefault)
     .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
   projects: z
     .record(id, projectSchema)
@@ -746,22 +754,60 @@ export const configSchema = configShape.catchall(z.unknown()).superRefine((confi
 /** Plugin blocks as the registered plugins bring them: module id → the plugin's own schema. */
 export type PluginConfigSchemas = Record<string, z.ZodType>;
 
+/** A registered plugin's own project-section schemas: `project` is the shape under
+ *  `projects.<id>.<moduleId>`, `defaults` the shape under `projectDefaults.<moduleId>`.
+ *  A project key is valid because core defines it or a registered plugin brings it —
+ *  the closure rule of the `plugins` record, one level down. */
+export interface PluginProjectSections {
+  project?: z.ZodType;
+  defaults?: z.ZodType;
+}
+export type PluginProjectSectionsMap = Record<string, PluginProjectSections>;
+
 /** The closed, complete config schema: core's shape with the `plugins` record specialized
  *  to one known key per registered plugin, each block validated by the schema of the
  *  plugin that wrote it. A block for an unregistered plugin fails as an unrecognized key
  *  and an editor says so too; a registered plugin with no block gets its own defaults
  *  (or its own "enabled but unconfigured" complaint — the plugin's schema decides).
  *  Disabled plugins belong here as well: the list says which plugins exist and stay valid,
- *  only `serve` honors enabled. */
-export function composeConfigSchema(pluginSchemas: PluginConfigSchemas): z.ZodType<Config> {
+ *  only `serve` honors enabled.
+ *
+ *  `projectSections` is the same machinery one level down: each contributing plugin's
+ *  schema becomes a known optional key under every project entry and under
+ *  `projectDefaults`; a project section no plugin contributes is an unrecognized key. */
+export function composeConfigSchema(
+  pluginSchemas: PluginConfigSchemas,
+  projectSections: PluginProjectSectionsMap = {},
+): z.ZodType<Config> {
   const blocks = Object.fromEntries(
     Object.entries(pluginSchemas).map(([moduleId, schema]) => [moduleId, schema.optional()]),
   ) as z.ZodRawShape;
-  const composed = configShape.extend({ plugins: z.strictObject(blocks).default({}) });
+  const entrySections: Record<string, z.ZodType> = {};
+  const defaultsSections: Record<string, z.ZodType> = {};
+  for (const [moduleId, sections] of Object.entries(projectSections)) {
+    if (sections.project) entrySections[moduleId] = sections.project.optional();
+    if (sections.defaults) defaultsSections[moduleId] = sections.defaults.optional();
+  }
+  const composed = configShape.extend({
+    plugins: z.strictObject(blocks).default({}),
+    projects: z
+      .record(id, projectSchema.extend(entrySections as z.ZodRawShape))
+      .default({})
+      .describe(
+        'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
+      ),
+    projectDefaults: projectDefaultsSchema
+      .extend(defaultsSections as z.ZodRawShape)
+      .default(projectDefaultsDefault)
+      .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
+  });
+  // Core cannot statically type what plugins contribute: the contributed sections
+  // widen the parsed shape beyond `Config`, and plugins read them back with a cast
+  // — the `plugins.<id>` pattern, one level down. The closure is at runtime.
   return composed.superRefine((config, ctx) => {
     const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
-    crossFieldRules(config, report);
-  });
+    crossFieldRules(config as Config, report);
+  }) as unknown as z.ZodType<Config>;
 }
 
 /** Id of the job the host seeds from `scheduler.retention`. */

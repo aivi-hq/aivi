@@ -9,7 +9,14 @@
  *  parsed against that, and only `serve` honors *enabled*. */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { type Config, composeConfigSchema, type LoadedConfig, loadConfig } from '@aivi/core';
+import {
+  type Config,
+  composeConfigSchema,
+  type LoadedConfig,
+  loadConfig,
+  type PluginProjectSections,
+  type PluginProjectSectionsMap,
+} from '@aivi/core';
 import type { AiviModule, AiviPlugin } from '@aivi/plugin';
 import { z } from 'zod';
 
@@ -87,8 +94,16 @@ export async function pluginRegistry(home: string): Promise<PluginRegistry> {
   for (const [name, enabled] of readList(resolve(home, 'app', 'package.json')))
     entries.push({ name, enabled, plugin: await declarationOf(name) });
   const schemas: Record<string, z.ZodType> = {};
-  for (const entry of entries) schemas[entry.plugin.id] = entry.plugin.configSchema;
-  return { entries, configSchema: composeConfigSchema(schemas) };
+  const projectSections: PluginProjectSectionsMap = {};
+  for (const entry of entries) {
+    schemas[entry.plugin.id] = entry.plugin.configSchema;
+    const sections: PluginProjectSections = {
+      ...(entry.plugin.projectSchema ? { project: entry.plugin.projectSchema } : {}),
+      ...(entry.plugin.projectDefaultsSchema ? { defaults: entry.plugin.projectDefaultsSchema } : {}),
+    };
+    if (sections.project || sections.defaults) projectSections[entry.plugin.id] = sections;
+  }
+  return { entries, configSchema: composeConfigSchema(schemas, projectSections) };
 }
 
 /** The home's config, validated against the composed schema: a block for an

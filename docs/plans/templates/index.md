@@ -99,6 +99,10 @@ the tracker first, then the orchestrator:
    worker, no worktree, no forge. The live gates in
    [plans/linear.md](../linear.md) are dropped as history; the module
    is rebuilt to this design, not verified against the old one.
+   **Live gate (ruled 2026-09-29)**: after 1–3, a simple todo board
+   runs **research-type tickets** end to end — and the architecture is
+   the point: simple to read, open to extension (the purpose of the
+   whole refactor). Forge-github (4) starts only when that passes.
 4. **Forge-github**: the forge joins the proven orchestrator as the
    configurable path it is — worked wake examples written while
    building, not invented before it. The contract lands in

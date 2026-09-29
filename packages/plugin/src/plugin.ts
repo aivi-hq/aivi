@@ -22,6 +22,17 @@ export interface AiviPlugin<C = unknown> {
    *  here. A plugin listed with no block is parsed against `configSchema.parse({})` —
    *  defaults, or this schema's own "enabled but unconfigured" complaint. */
   configSchema: z.ZodType<C>;
+  /** The plugin's own project-section schemas: `projectSchema` is the shape of
+   *  `projects.<id>.<id>` under every project, `projectDefaultsSchema` the shape of
+   *  its section under `projectDefaults`, both keyed by module id. Core keeps the
+   *  core vocabulary of a project (`enabled`, `knowledge`) and nothing else; a
+   *  project key is valid only because core defines it or a registered plugin
+   *  declares it here — the same closure the `plugins` blocks get. They ride the
+   *  light `./config` subpath because the registry composes the schema before any
+   *  module runs. The plugin reads its sections back from the loaded config; core
+   *  never interprets them. */
+  projectSchema?: z.ZodType;
+  projectDefaultsSchema?: z.ZodType;
   /** Build the module `aivi serve` runs. `home` is the aivi home: a config path that
    *  was written relative resolves against it here — the plugin knows its own fields,
    *  core never does. */

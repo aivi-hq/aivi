@@ -67,6 +67,40 @@ test('composeConfigSchema closes the plugins record to the registered plugins', 
   );
 });
 
+test('plugins contribute project sections: projects close like the plugins record does', () => {
+  const composed = composeConfigSchema(
+    { alpha: z.strictObject({ name: z.string().default('a') }) },
+    {
+      alpha: {
+        project: z.strictObject({ widget: z.string().default('w') }),
+        defaults: z.strictObject({ gadget: z.number().default(7) }),
+      },
+    },
+  );
+  const parsed = composed.parse({ version: 1, projects: { site: { alpha: {} } }, projectDefaults: { alpha: {} } });
+  // Core cannot type what it does not know: the plugin reads its own sections
+  // back with a cast — the `plugins.<id>` pattern, one level down.
+  const site = parsed.projects.site as { enabled: boolean; alpha?: { widget: string } };
+  assert.deepEqual(
+    site,
+    { enabled: true, alpha: { widget: 'w' } },
+    'the contributed schema fills the project section defaults',
+  );
+  const defaults = parsed.projectDefaults as { alpha?: { gadget: number } };
+  assert.deepEqual(defaults.alpha, { gadget: 7 }, 'and the projectDefaults section alike');
+  assert.equal(composed.safeParse({ version: 1 }).success, true, 'sections are optional: nothing written parses');
+  assert.equal(
+    composed.safeParse({ version: 1, projects: { site: { beta: {} } } }).success,
+    false,
+    'a project section no registered plugin contributes is an unrecognized key',
+  );
+  assert.equal(
+    composed.safeParse({ version: 1, projectDefaults: { alpha: { gadget: 'seven' } } }).success,
+    false,
+    'the contributed schema validates the defaults section too',
+  );
+});
+
 test('config rejects invalid job resources and timezones and unknown fields', () => {
   assert.equal(
     configSchema.safeParse({
