@@ -65,20 +65,40 @@ interface Forge {
    *  state, approvals, the comment bodies. *Open threads only*: no
    *  `since` cursor (ruled 2026-09-29) — threads close immediately, a
    *  wake takes what is open and the worker must bring all of it to zero,
-   *  by agree (commit + push + resolve) or decline (comment + resolve). */
+   *  by agree (commit + push + resolve) or decline (comment + resolve).
+   *  Every comment carries its author: a human, or aivi *with the worker
+   *  role that posted it* (below) — without the role, a reviewer sees a
+   *  GitHub app talking to itself. */
   reviewFeedback(repo: RepoRef, pr: PrFacts): Promise<ReviewFacts>;
 
   /** The write side (ruled 2026-09-29): post the worker's reply to its
    *  thread and resolve it. The orchestrator calls this with the message
    *  from the validated resolution report; the worker never holds forge
-   *  credentials for it. */
-  resolveThread(repo: RepoRef, pr: PrFacts, threadId: string, reply: string): Promise<void>;
+   *  credentials for it. `author` names the worker role, and the posted
+   *  comment says so — visibly. */
+  resolveThread(
+    repo: RepoRef,
+    pr: PrFacts,
+    threadId: string,
+    reply: { author: string; text: string },
+  ): Promise<void>;
 }
 ```
 
+**Signed comments** (ruled 2026-09-29). Every aivi-posted comment names
+the worker that wrote it — `aivi · dev`, `aivi · review` — so a wake that
+hands a reviewer "all the facts" can tell its own past comments from the
+dev's replies and from human comments. The signature is a prefix in the
+comment body (a human reads it; no hidden markup as the only carrier),
+and the forge parses it back into the author fact.
+
 **The review resolution** (ruled 2026-09-29). A review wake hands the
 worker the open threads; each carries the forge's own id. The worker's
-answer is structured prose — the wrap-up ruling applied here: trusting a
+answer is **structured output requested in a turn — no tools** (ruled
+2026-09-29 after the operator's pushback): a tool would need plumbing to
+report back to the orchestrator anyway, and a tool call is itself an
+instruction, so the turn simply asks for the JSON and the orchestrator
+parses the answer text. It is the wrap-up ruling applied here: trusting a
 long session (possibly compacted) to remember a final-message instruction
 is asking for trouble; a dedicated turn with a clear schema to validate
 against (zod) is what succeeds. **The orchestrator posts the replies**:
@@ -86,10 +106,10 @@ it parses the validated JSON and posts each `message` to its thread
 through the forge; the worker never speaks to the forge API. The worker
 also needs no review-history tooling: the wake already gathers **all
 information** — ticket summary, comments, review comments *and their
-replies* — for dev and reviewer alike, so a reviewer sees its own past
-comments and whether they were denied, and can push back, stand down, or
-stay silent without re-commenting (ruled 2026-09-29: simple, with trust
-in the LLM).
+replies, each signed with its worker role* — for dev and reviewer alike,
+so a reviewer sees its own past comments and whether they were denied,
+and can push back, stand down, or stay silent without re-commenting
+(ruled 2026-09-29: simple, with trust in the LLM).
 
 ```json
 [{ "thread_id": "abc-123", "message": "…" }]
@@ -104,10 +124,10 @@ in the LLM).
 - The orchestrator validates, retries **3 times**, then errors out: HITL
   label + comment + session id. The exit contract's fallback, verbatim.
 
-Three answers, not a surface. Each earns its place before v1 ships; the
-list grows the way the tracker capabilities list does — with fallback
-chains owned by the orchestrator (`prForBranch`: tracker's reported PR →
-forge's answer → "no PR known").
+Three reads, not a surface — plus the one write (`resolveThread`). Each
+earns its place before v1 ships; the list grows the way the tracker
+capabilities list does — with fallback chains owned by the orchestrator
+(`prForBranch`: tracker's reported PR → forge's answer → "no PR known").
 
 **The write side is in** (ruled 2026-09-29): the orchestrator posts the
 worker's replies with `resolveThread`, from the validated JSON of a
@@ -128,16 +148,17 @@ the orchestrator's.
   it. `identity.github.app` ("nothing reads it yet") is orphaned and dies
   at landing. The **private key is a secret**: `GITHUB_APP_PRIVATE_KEY` in
   `<home>/.env`, the scrub list grows with it (D15's list is the precedent).
-- **One installation** (confirmed 2026-09-29). In GitHub's vocabulary an
-  *installation* is the grant: an account — "org" is GitHub's word for a
-  shared account; aivi has no orgs, only projects and their repositories —
-  authorizes the app for a repo set, and that grant has an installation
-  id; short-lived tokens are minted from it. aivi's world is **one app,
-  one installation**; the forge still resolves repo → installation rather
-  than assuming one, so a second grant is a config fact, not a rebuild.
-  Per-project app overrides wait for the aliased-profiles discussion and
-  the compose-projects fix (below) — the forge's shape does not change
-  when they land.
+- **One installation, and only one** (ruled 2026-09-29). In GitHub's
+  vocabulary an *installation* is the grant: an account (GitHub's word for
+  a shared account is "org"; aivi has no orgs, only projects and their
+  repositories) authorizes the app for a repo set, and the grant has an
+  installation id that tokens are minted from. aivi supports exactly one:
+  the setup lists installations and uses the one it finds — zero or
+  several is a setup error with a clear message, not a mode. Multi-app
+  support stays unbuilt **until someone asks** (the operator's words:
+  setting up one is a lot of work already); aliased config profiles may
+  grow the config later, and the lookup is the one place that would feel
+  it.
 - **Writes attribute to the app** (`aivi-agent[bot]`), never to a human —
   the same rule the Linear MCP forwarder enforces for Linear. The commit
   identity (`identity.github`, a pure git fact) is untouched by this.
@@ -154,16 +175,17 @@ the orchestrator's.
   review, resolve — the installation is the credential.
 - **One installation can cover many repos**: installed on the account with
   access to all repositories (or a chosen set), it is one installation id
-  serving every repo under it — the shape today's single-org setup has.
-  Aliased config profiles (a profile id names app/installation facts;
-  projects reference the id) are the operator's direction for the
-  compose-projects fix; the forge resolves repo → installation already,
-  so profiles later are a lookup change, not a rebuild.
-- **Installation is the human's act**, like Linear's install: aivi gives
-  the link, the human installs the app on the org or chosen repos. The
-  setup flow proves it — list installations, find the project's repo
-  there, read one PR list — no throwaway ticket needed because a read is
-  enough; writes are proven once at the live gate.
+  serving every repo under it — the shape that works today: **live since
+  2026-09-29, the `aivi-agent` app is installed on `aivi-hq` with read
+  and write access to code and pull requests** (the operator's own
+  install; `github.com/organizations/aivi-hq/settings/apps/aivi-agent/installations`).
+- **Installation is the human's act, and the setup guides every step**
+  (ruled 2026-09-29): create the app (name it after `identity.name`,
+  paste the private key, set permissions to read+write on code and pull
+  requests), open the install link, pick the repos, return — and *then*
+  aivi proves it, reading one real repo's PR list through the
+  installation. No throwaway ticket: a read is enough; writes are proven
+  once at the live gate.
 
 ## Package shape
 
@@ -177,9 +199,10 @@ the orchestrator's.
   config exists to break, and D22 nukes the dev home. Recorded for the
   tracker extraction to land, not done today.)
 - Listed in `aivi-plugins` (D9). Config minimal to the point of empty:
-  the app is `identity.github.app`, the repos come from project remotes —
-  **no per-project forge config**; a project whose remote parses to no
-  installed forge simply has no PR facts, and the orchestrator falls back.
+  the app id is `plugins.forge-github.app`, the repos come from project
+  remotes — **no per-project forge config**; a project whose remote parses
+  to no installed forge simply has no PR facts, and the orchestrator
+  falls back.
 - **Registration mirrors the established pattern**: at module start a
   forge registers with the host's forge registry, the way tools claim on
   the `ToolRegistry` and trackers will register with the orchestrator.
@@ -203,21 +226,28 @@ the orchestrator's.
 
 ## Open questions — the discussion
 
-1. **How does the worker's work reach GitHub?** (open; narrowed
-   2026-09-29) The worktree's `origin` is a plain https URL; pushing needs
-   the app's credential in the line. With the orchestrator posting the
-   replies (resolved 2 below), the worker needs only *push*, and option
-   (a) — a short-lived installation token carried in the worktree's remote
-   — may be the whole answer. Option (b): `gh` CLI, authenticated somehow.
-   Option (c): the hosted-MCP forwarder (GitHub's MCP behind a loopback
-   proxy rewriting authorization to an installation token, the Linear MCP
-   pattern) stays useful for the **interactive** mode's ticket/review
-   subagent regardless. The operator's live research note (2026-09-29):
-   changing an agent's **tool visibility or permissions mid-session**
-   invalidates the prefill cache and makes the call slow and expensive —
-   the tool call itself is fine; it is the *reconfiguration* that costs.
-   Any answer here must give the worker its capability at session start,
-   never add it midway.
+1. **Which credential does the worker's `git push` use?** (open; the
+   question in plain words, 2026-09-29) Yes, it is plain git and a
+   worktree pushes like any checkout — nothing about the forge moves
+   repository bytes. The only question is **authenticity**: `git push`
+   over https needs a credential, and today's answer is "whatever the
+   machine's git has" — on the operator's laptop that is the keychain,
+   i.e. the push goes out **as the human**; a headless server has nothing
+   to borrow and the push simply fails. The orchestrator-owned worker
+   should push as the app (its commits say `aivi-agent[bot]`; a push
+   refused for whoever-owns-the-machine is the bug linear.md's worktree
+   marking was built to avoid). Options: (a) the push URL carries a
+   short-lived installation token
+   (`https://x-access-token:<token>@github.com/owner/repo.git`, set on
+   the worktree's remote at creation — git-native, no daemon, token lives
+   ~1 h so long sessions re-mint via the forge); (b) `gh` CLI as a
+   credential helper; (c) irrelevant here — the hosted-MCP forwarder
+   pattern is for the **interactive** mode's subagents, not for push.
+   The operator's prefill research (2026-09-29) belongs to (c)-style
+   tooling and to any future worker tools: changing **tool visibility or
+   permissions mid-session** invalidates the prefill cache — the tool
+   call itself is fine. It does not constrain this question: push is
+   git, not a tool.
 2. **Who posts the reply the reviewer reads?** **Resolved 2026-09-29: the
    orchestrator does** — it parses the validated structured JSON requested
    from the worker in a dedicated turn (zod), and posts each `message` to
@@ -254,14 +284,17 @@ the build starts by deciding.
 - [ ] `@aivi/forge-github` package: module id `forge-github`, empty
       config block by default, `plugins.forge-github.app` for the app id,
       `GITHUB_APP_PRIVATE_KEY` in `.env` + scrub list (D15 precedent).
-- [ ] octokit auth-app client: mint, cache, re-mint on 401; repo →
-      installation resolution from the project's git remote.
-- [ ] `./setup`: guided app-install link (one installation), prove reads
-      against a real repo's PRs; `aivi add forge-github`.
+- [ ] octokit auth-app client: mint, cache, re-mint on 401; exactly-one
+      installation lookup (zero or several is a setup error with a clear
+      message).
+- [ ] `./setup`: guides every step (create app → permissions read+write
+      on code and PRs → private key → install link → pick repos), then
+      proves the read against a real repo's PRs; `aivi add forge-github`.
 - [ ] Delete `identity.github.app` and its configuration.md line; the
       `identity.github` pair untouched.
-- [ ] Decide and build Q1 (push transport), with the session-start rule:
-      never reconfigure tools mid-session (prefill cache).
+- [ ] Decide and build Q1 (the push credential).
+- [ ] Signed comments end to end: `resolveThread` stamps `aivi · <role>`
+      visibly, `reviewFeedback` parses it back into the author fact.
 - [ ] Contract tests against a scripted forge; live gate: one real PR
       read, one real thread resolved as `aivi-agent[bot]`.
 - [ ] Docs: configuration.md (the block, the secret), operations.md (the
