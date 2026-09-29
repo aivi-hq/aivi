@@ -53,7 +53,11 @@ only when idle stays an idea
 1. **The v1 rc line** (ruled 2026-09-29): the CLI refactor (built,
    unmerged) → **forge-github** (GitHub as repo host — branches, PRs,
    review feedback — in front, because the orchestrator gathers review
-   facts from the forge) → **tracker extraction** (Linear speaks through
+   facts from the forge; [plan](plans/forge-github.md)) →
+   **compose-projects fix** (plugins contribute project-section schemas;
+   `linear.lanes` leaves core's `projectSchema`; ruled 2026-09-29 to sit
+   after the forge, which needs no per-project config and is unblocked
+   regardless) → **tracker extraction** (Linear speaks through
    the adapter seam) → **orchestrator extraction** (the machinery moves
    out of the tracker into the host) → **knowledge as a plugin** → **a
    last look at jobs** → tag v1 rc. The [templates
