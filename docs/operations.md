@@ -325,7 +325,7 @@ invocation — never by hiding anything:
 
 | Command | Over `--remote` |
 | --- | --- |
-| `setup`, `upgrade` | refused: `this acts on the machine you type on` — they act where the CLI process sits, and the relay does not move that |
+| `setup`, `upgrade`, `configure` | refused: `this acts on the machine you type on` — they act where the CLI process sits, and the relay does not move that |
 | `serve`, `uninstall` | refused: the server is the thing being driven; `uninstall` deletes the home this session drives |
 | `-r` itself | refused: remote exec does not chain a second hop |
 | everything else — `status`, `jobs`, `runs`, `people`, `projects`, `knowledge`, `link`, `add`, `update`, `service` … | runs on the server's home |

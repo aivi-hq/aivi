@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
@@ -140,4 +140,104 @@ test('a local page carries no marker', async t => {
   await machine(t, { configVersion: 1, home: '/no/such/home' });
   const { out } = await run(['--help']);
   assert.doesNotMatch(out, /\(remote\)/, 'the word is only for driven sessions');
+});
+
+// `configure` — the second writer of the client record. Its membership is
+// the record's *existence*, not its parseability, and it is a client-side
+// command: it edits the file where it is typed, never through the channel.
+test('a machine with a record gets configure; a machine with none does not know the word', async t => {
+  await machine(t, { configVersion: 1, url: 'http://127.0.0.1:4100' });
+  const { out } = await run(['--help']);
+  assert.match(out, /configure \[options\]/, 'a laptop with a record but no home is taught configure');
+});
+
+test('a machine with no record gets setup, which creates the first one', async t => {
+  await machine(t, undefined);
+  const { out } = await run(['--help']);
+  assert.doesNotMatch(out, /configure \[options\]/, 'nothing to edit is nothing to list');
+  assert.match(out, /setup \[args\.\.\.\]/);
+  const { err } = await run(['configure', '--url', 'http://127.0.0.1:4100']);
+  assert.match(err, /unknown command 'configure'/, 'the command is not here, and the answer is honest');
+});
+
+test('configure edits the record and the signed-in person stays', async t => {
+  const directory = await machine(t, {
+    configVersion: 1,
+    url: 'http://127.0.0.1:4100',
+    person: { token: 'audit-evidence', name: 'Ada', roles: ['operator'] },
+  });
+  const { out } = await run(['configure', '--url', 'http://127.0.0.1:5111', '--home', directory]);
+  const record = JSON.parse(await readFile(process.env.AIVI_CONFIG!, 'utf8')) as Record<string, any>;
+  assert.equal(record.url, 'http://127.0.0.1:5111', 'the host moved');
+  assert.equal(record.home, directory, 'the home landed as an absolute path');
+  assert.equal(record.person.token, 'audit-evidence', 'audit history is not a laptop command to erase');
+  assert.match(out, /host: {4}http:\/\/127\.0\.0\.1:5111/);
+  assert.doesNotMatch(out, /audit-evidence/, 'the view says that someone signs in, never with what');
+  assert.match(out, /person: {2}Ada/, 'the person is shown by name');
+});
+
+test('a broken record is exactly what configure is for', async t => {
+  const directory = await machine(t, undefined);
+  await writeFile(process.env.AIVI_CONFIG!, '{ oops — not even json');
+  const { out } = await run(['configure', '--home', directory]);
+  const record = JSON.parse(await readFile(process.env.AIVI_CONFIG!, 'utf8')) as Record<string, unknown>;
+  assert.equal(record.configVersion, 1, 'the record the command writes loads again');
+  assert.equal(record.home, directory);
+  assert.match(out, /did not parse; writing it fresh/);
+});
+
+test('a person block survives the rescue only when its token survives', async t => {
+  const directory = await machine(t, undefined);
+  await writeFile(process.env.AIVI_CONFIG!, JSON.stringify({ configVersion: 1, url: 42, person: { name: 'Ada' } }));
+  await run(['configure', '--url', 'http://127.0.0.1:4100']);
+  const record = JSON.parse(await readFile(process.env.AIVI_CONFIG!, 'utf8')) as Record<string, unknown>;
+  assert.equal(record.url, 'http://127.0.0.1:4100', 'the bad typed field gave way to the edit');
+  assert.equal(record.person, undefined, 'a person without a token is nobody; the command never invents evidence');
+});
+
+test('a plain configure shows the record and writes nothing', async t => {
+  const broken = '{ oops';
+  await machine(t, undefined);
+  await writeFile(process.env.AIVI_CONFIG!, broken);
+  await assert.rejects(() => run(['configure']), {
+    message: /does not load; .* writes it fresh around whatever survives/,
+  });
+  assert.equal(await readFile(process.env.AIVI_CONFIG!, 'utf8'), broken, 'showing a record is no reason to rewrite it');
+});
+
+test('configure answers honest failures and touches nothing on a bad edit', async t => {
+  await machine(t, { configVersion: 1, url: 'http://127.0.0.1:4100' });
+  const before = await readFile(process.env.AIVI_CONFIG!, 'utf8');
+  await assert.rejects(() => run(['configure', '--url', 'not-a-url']), { message: 'not a URL: not-a-url' });
+  await assert.rejects(() => run(['configure', '--home', '/no/such/home']), {
+    message: 'no home directory at /no/such/home',
+  });
+  assert.equal(await readFile(process.env.AIVI_CONFIG!, 'utf8'), before, 'a refused edit wrote nothing');
+});
+
+test('a driven session refuses configure like the rest of the client-side set', async t => {
+  await machine(t, { configVersion: 1, url: 'http://127.0.0.1:4100' }, { remote: true });
+  await assert.rejects(() => run(['configure', '--url', 'http://127.0.0.1:9999']), {
+    message: 'this acts on the machine you type on',
+  });
+});
+
+test('the relay signs with the record, so a broken one fails it by name', async t => {
+  await machine(t, undefined);
+  await writeFile(process.env.AIVI_CONFIG!, 'not json at all');
+  await assert.rejects(() => run(['-r', 'status']), {
+    message: /the client record at .* does not load; `aivi configure` edits it, `aivi setup` signs in again/,
+  });
+});
+
+test('a broken record does not block the exit ramp', async t => {
+  const directory = await machine(t, undefined);
+  await writeFile(process.env.AIVI_CONFIG!, 'not json at all');
+  // A home uninstall will accept: refuseWrongHome wants a config.json there,
+  // which is the promise of uninstall, not an obstacle for this test.
+  await writeFile(join(directory, 'config.json'), JSON.stringify({ version: 1 }));
+  process.env.AIVI_HOME = directory;
+  const { out } = await run(['uninstall']);
+  assert.match(out, /aivi\.json/, 'the listing names the record it would delete');
+  assert.doesNotMatch(out, /not json/, 'the broken bytes are not the answer; the listing is');
 });

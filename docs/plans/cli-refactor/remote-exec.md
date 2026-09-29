@@ -57,7 +57,9 @@ help-time probe.)
   [exec channel](#protocol), and relays argv verbatim; the server's
   commander parses. The server knows its own command tree; the client
   knows nothing about it. No config `url`: `no server configured — run
-  aivi configure`. Server unreachable: `host unreachable at <url>` —
+  aivi setup` (the line names the command that creates the record;
+  `configure`, landed later, edits one that exists). Server unreachable:
+  `host unreachable at <url>` —
   there is no fallback to local; someone who asked for remote gets the
   honest failure, not a different machine's answer.
 - `aivi --remote --help` **streams the server's page**: the server renders
@@ -88,7 +90,9 @@ any other, with the operator's bearer in its env.
 
 - **client-side** — act on the machine you type on; `--remote` is
   *refused by them* with the guard message `this acts on the machine you
-  type on`: `setup`, `upgrade`, and the planned `configure`. (`upgrade`
+  type on`: `setup`, `upgrade`, and `configure` (landed 2026-09-29:
+  registered only where a client record exists — existence, not
+  parseability). (`upgrade`
   npm-updates the global CLI itself; `add`/`update` are *not* here — they
   act on the server machine and therefore relay.)
 - **refuse-relay** — server-side but rejected over the channel: `serve`
@@ -328,7 +332,7 @@ never fix the `prebuilds/` copy; the host repairs it once per process before
 the first PTY (like VS Code's build step), and a repair that cannot happen
 lands in the degradation above, never in a hung host.
 
-## The `configure` command (later, client-side)
+## The `configure` command (built 2026-09-29)
 
 Edits the client config itself: the host `url` (and the `home`/`appDir`
 paths). It **never forgets the person** — the token is audit evidence, and
@@ -337,7 +341,7 @@ can become is *disabled*, which is a server-side people decision owned by
 [people.md](../../people.md), not a feature of `configure`. The typed flag
 is what makes it safe: a laptop that has a server `url` configured still
 configures its own config, because nothing infers "you are remote" from a
-file anymore. Its membership rides the machine fact `MachineStatus.clientConfig`
+file anymore. Its membership rode the machine fact `MachineStatus.clientConfig`
 (the client record's path, or none): `configure` edits that file, so it is
 registered only where the file exists — a machine with no record gets `setup`
 instead, which creates the first one. Existence, not parseability: a broken
@@ -346,6 +350,19 @@ refuses `--remote` like `setup` and `upgrade`, and it shows on the streamed
 page because the remote person runs it on the laptop, never through the
 channel. (This replaces the earlier "joins the `fresh` allow-list" line: the
 allow-list became membership-by-not-registering on 2026-09-28.)
+
+Landed as built, one discovery at the boundary: a *broken* record had made
+the machine brick-shaped — `machineStatus` parsed the record, so every
+command died on the schema dump, `uninstall` (the exit ramp) included. The
+module now has one loader, lenient where the record is only a hint (Node,
+appDir, install method); the exec relay — the one site whose bytes are
+load-bearing, it signs with them — reads the record itself and fails by
+name. `saveClientConfig` still fails outright on a record it cannot read,
+and that stands decided (2026-09-29): `aivi setup` should not be running
+where a record exists, and clobbering audit evidence is not its
+remedy — `configure` is the command that rewrites broken bytes knowing
+which fields survived. operations.md
+owns the command; `packages/cli/src/configure.ts` is the whole thing.
 
 ## Live gates (mock tests do not establish these)
 

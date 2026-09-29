@@ -9,6 +9,9 @@ import { clientConfigPath, loadClientConfig } from './client-config.ts';
 
 export function homeFromEnvOrConfig(): string | undefined {
   if (process.env.AIVI_HOME) return resolve(process.env.AIVI_HOME);
+  // A record that does not load names no home: the machine is homeless for
+  // membership, and the record's own existence still registers `configure`
+  // — a broken record is exactly what that command is for.
   return loadClientConfig()?.home;
 }
 

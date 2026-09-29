@@ -75,7 +75,16 @@ One file, identical shape everywhere (`XDG_CONFIG_HOME` wins when set,
 - `url` — the host API. The OpenCode plugin falls back to it (and to
   `person.token`) when its options say nothing — see [opencode](opencode.md).
 - `home` — present only on a machine that hosts aivi: "this machine hosts".
-  The home lives at `~/.aivi` and never moves.
+  The home is `~/.aivi` by default and aivi never relocates the directory;
+  `aivi configure` re-points the record when the words are wrong (a home
+  moved by hand, a relocated app dir).
+
+`aivi setup` creates this file and `aivi configure` is its only other
+writer: it edits `url`, `home` and `appDir` and **never touches the
+person** — the token is audit evidence, and the most a person can become
+is *disabled*, a server-side decision of this document, never a laptop
+command's feature. A machine with no record does not have `configure`; it
+has `setup`, which creates the first one.
 
 ## Bootstrap and people commands
 

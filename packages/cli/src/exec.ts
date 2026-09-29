@@ -8,8 +8,9 @@
  *  applied on the client where it belongs. When this side's stdout is not a
  *  TTY (`aivi status | jq` from a laptop) the session asks for pipes instead
  *  of a PTY and JSON stays JSON (decision D12). */
+import { existsSync, readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
-import { loadClientConfig } from './client-config.ts';
+import { type ClientConfig, clientConfigPath, clientConfigSchema } from './client-config.ts';
 import { aiviVersion } from './version.ts';
 
 /** Injectable for tests; the relay otherwise speaks for the real terminal.
@@ -29,7 +30,21 @@ export interface ExecIo {
 export async function execRemote(argv: string[], io: ExecIo = {}): Promise<void> {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
-  const config = loadClientConfig();
+  // The relay *signs* with the record — its words are load-bearing — so it
+  // reads the bytes itself: the module's loader is lenient, and an
+  // unloadable record reading as none is right for a hint and wrong for a
+  // signature. Here a file that does not load fails by name.
+  const path = clientConfigPath();
+  let config: ClientConfig | undefined;
+  if (existsSync(path)) {
+    try {
+      config = clientConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')) as unknown);
+    } catch {
+      throw new Error(
+        `the client record at ${path} does not load; \`aivi configure\` edits it, \`aivi setup\` signs in again`,
+      );
+    }
+  }
   const url = config?.url;
   const token = config?.person?.token;
   if (!url || !token) throw new Error('no server configured — run aivi setup');

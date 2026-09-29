@@ -17,6 +17,7 @@ npm i -g @aivi/cli
 | Command | What it does |
 | --- | --- |
 | `aivi setup` | Sign in to an existing host or create the server here |
+| `aivi configure` | Edit this machine's client record: host url, home, app dir. Listed only where a record exists; the signed-in person stays |
 | `aivi link [PLATFORM]` | Mint a one-time code that links a channel account to your person |
 | `aivi add browser\|discord\|slack\|SPEC` | Add a plugin to the server home |
 | `aivi serve` | Start the server in the foreground |

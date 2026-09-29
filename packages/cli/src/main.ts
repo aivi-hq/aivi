@@ -19,6 +19,7 @@ import { Command, CommanderError } from 'commander';
 import { add } from './add.ts';
 import { brandBanner } from './brand.ts';
 import { loadClientConfig } from './client-config.ts';
+import { configure } from './configure.ts';
 import { execRemote } from './exec.ts';
 import { homeForCreate, homeFromEnvOrConfig, machineStatus, requireHome } from './home.ts';
 import { link } from './link.ts';
@@ -65,9 +66,10 @@ export async function main(argv: string[]): Promise<void> {
   // type on, refused over the channel by *them* — this file declares them, so
   // this file is the provider that decides. When the machine fact says the
   // process is driven remotely, their own actions answer the guard line,
-  // never `unknown command`, whatever the help showed. `configure` joins the
-  // set the day it exists; `add` and `update` are deliberately not here —
-  // they act on the server machine and therefore relay.
+  // never `unknown command`, whatever the help showed: `setup`, `upgrade`,
+  // and `configure` (the last registered only where a client record exists).
+  // `add` and `update` are deliberately not here — they act on the server
+  // machine and therefore relay.
   const actsHere = (): void => {
     if (machine.remote === true) throw new Error('this acts on the machine you type on');
   };
@@ -102,6 +104,28 @@ export async function main(argv: string[]): Promise<void> {
     const args = rest.at(-1).args as string[];
     await setup(args, { home: homeForCreate() });
   });
+
+  // `configure` edits the client record itself, so it is registered exactly
+  // where a record exists — existence, not parseability: a broken record is
+  // what the command is for, and a machine with no record gets `setup`,
+  // which creates the first one. Client-side like `setup` and `upgrade`:
+  // over the channel it answers the guard line, because the remote person
+  // runs it on the laptop, never through the relay.
+  if (machine.clientConfig !== undefined)
+    program
+      .command('configure')
+      .description("Edit this machine's client record: the host url, the home, the app dir. The signed-in person stays")
+      .option('--url <url>', 'where the host answers')
+      .option('--home <path>', 'the aivi home this machine works on')
+      .option('--app-dir <path>', 'the directory holding the installed server')
+      .action(values => {
+        actsHere();
+        configure({
+          url: values.url as string | undefined,
+          home: values.home as string | undefined,
+          appDir: values.appDir as string | undefined,
+        });
+      });
 
   // Everything below here acts on a home. A machine that has none — a laptop
   // that only ever drives the server with `-r` — never registers these;
