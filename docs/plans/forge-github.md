@@ -316,14 +316,14 @@ instruction), now caught by validation instead of hope.
    before the registry; "plugins cannot configure projects" is only true
    because core hardcodes them. The fix: the compose step (manifest →
    compose → parse) lets a plugin contribute a *project-section* schema,
-   and `linear` leaves core. Direction ruled the same day: **project
-   config is a core concept** — projects are core features like the
-   host and the orchestrator — so a project can be configured with a
-   **forge type** and a lane with **using the forge** (that is what
-   makes the worktree stuff happen): core vocabulary whose values
-   plugins fill, not plugin-shaped holes. The per-project app override
-   and the aliased-profiles discussion walk through next; the forge
-   ships needing **zero** per-project forge-specific config.
+   and `linear` leaves core — the project's own section shrinks to pure
+   spellings (`linear: { teams }`). The flow vocabulary it makes room
+   for — `tracker: { id, lanes }`, `forge`, `queueLane`, `lanes` with
+   `worktree`, in `projectDefaults` and per project, replace-not-merge —
+   is ruled and owned by
+   [orchestrator.md](templates/orchestrator.md#the-projects-config-ruled-2026-09-29);
+   the compose fix builds the **mechanism only**, those keys land with
+   the extraction that acts on them.
 4. **One app, one installation.** Resolved 2026-09-29 — see Auth.
 5. **PR conversations in the knowledge index.** Resolved 2026-09-29: not
    v1; it is traceable already — open the PR and read the threads.

@@ -82,29 +82,87 @@ orchestrator does nothing.
 
 - **Agent lane** (`Triage`, `Dev`, `Review`): maps to an OpenCode agent; an
   issue entering it gets worked.
-- **Queue lane** (`Todo`): no worker. Entry, or a freed lease, dispatches the
-  top candidate. Auto-dispatch is optional: an unmapped `Todo` means fully
-  human-driven delegation.
-- **Human lane** (`Backlog`, `Release`): `null`. The orchestrator is silent —
-  no comment, no move. Humans own priorities and the check that the assistant
-  understood the assignment.
+- **Queue lane** (`Todo`): no worker; `queueLane` names it. Entry, or a
+  freed lease, dispatches the top candidate. Auto-dispatch is optional:
+  with no `queueLane` configured, delegation stays fully human-driven.
+- **Human lane** (`Backlog`, `Release`): a lane with no entry in the map at
+  all. The orchestrator is silent — no comment, no move. Humans own
+  priorities and the check that the assistant understood the assignment.
 
 Per-project agent overrides (`.opencode/agents/` in the checkout) keep
 working; a project can point `triage` at a different file than the org-wide
 one.
 
+## The project's config (ruled 2026-09-29)
+
+Lanes are **core vocabulary** — the delegator does not care about the
+tracker source — so the whole flow sits in core keys, shaped by
+`projectDefaults` (which already carries a company-wide lane convention
+today) and overridable per project:
+
+```jsonc
+"projectDefaults": {
+  "tracker": { "id": "linear", "lanes": ["Triage","Backlog","Todo","Development","Review","Done"] },
+  "forge": "github",
+  "queueLane": "Todo",
+  "lanes": { "Triage": { "agent": "product" },
+             "Development": { "agent": "dev", "worktree": true },
+             "Review": { "agent": "dev", "worktree": true } }
+},
+"projects": { "aivi": { "linear": { "teams": ["ENG"] } } }
+```
+
+- `tracker.id` selects the tracker module; `tracker.lanes` is the lane
+  order — **a fallback**, the tracker is asked, and the **setup step
+  fetches the live board and writes the list into config** so the choice
+  is recorded and later changes are loud diffs. Runtime fetch only
+  validates: mismatch is a loud alarm in the channels, never a silent
+  stall.
+- `lanes` is sparse decoration over the tracker's order: only lanes with
+  automation get an entry; absence means a human lane. Lane keys are the
+  tracker's own state names verbatim — a tracker without states must
+  synthesize names, its adapter's problem.
+- `worktree: true` is what makes the worktree stuff happen — a project
+  *having* a forge does not, and `worktree: true` in a forge-less
+  project is a load-time error. `queueLane` names the capacity queue.
+- Success moves a ticket to the **next lane in the tracker's order**,
+  listed or not (Review → an unlisted Release: a human takes it there);
+  terminality comes from the tracker's own done-fact, never from
+  position.
+- **A key written on a project replaces the default entirely** — no
+  field-wise merge; a `tracker` override carries its own lane names or
+  nothing does. What remains under the project is the tracker's own
+  contributed section (`linear: { teams }` — whose issues belong here,
+  no lanes, no worktrees).
+- One project, two Linear teams whose boards differ: **hard error**.
+  Consistent flows across teams is the operator's call and job.
+- Cross-field validates at load: ids name registered plugins,
+  `queueLane` and `lanes` keys exist in `tracker.lanes`.
+
 ## Dispatch and capacity
 
-- **No stored queue.** The queue is the platform: lane membership plus the
-  platform's own order (Linear's manual rank is exactly "human prioritized
-  top to bottom"). A human reordering tickets in the UI is picked up on the
-  next sort for free.
-- The sort runs **when a lease frees, when an issue enters a queue lane, and
-  at serve start** — never on a timer.
-- The orchestrator owns the weights: in-flight (anything to the right of
-  Todo) outranks fresh pickups; ties break on time-in-queue, stamped by the
-  orchestrator when it first sees a candidate. Making the weight calculation
-  the orchestrator's, behind a clear interface, was a deliberate decision.
+- **No stored queue.** The queue is the platform: lane membership plus
+  the platform's own order (Linear's manual rank is exactly "human
+  prioritized top to bottom"). A human reordering tickets in the UI is
+  picked up for free. Whether the orchestrator reads the board fresh at
+  each decision or the adapter keeps a cache fed by its own events is
+  **the adapter's choice** (ruled 2026-09-29: Linear can).
+- Triggers, never timers: an issue enters a lane, a lease frees, serve
+  starts.
+- **Priority** (ruled 2026-09-29): **in-flight outranks the queue** —
+  in-flight is any ticket where work started and was not finished,
+  ordered **further-right lane first, top-of-lane first**. A review that
+  leaves comments is unfinished work: **the orchestrator moves the
+  ticket back one lane** and it waits there as in-flight, picked first
+  when capacity frees.
+- **In-flight ≠ running.** HITL tickets sit in-flight — technically
+  waiting, but nothing can be done to them, so they **do not count
+  against capacity**; capacity counts live workers. In-flight > capacity
+  is fine; a permanently stuck in-flight means something is broken and
+  gets fixed, like work everywhere.
+- Dev fails missing-info: back to the queue lane with the label and a
+  comment. The orchestrator always moves tickets; humans never have to
+  babysit the board for the machine.
   Confirmed 2026-09-29: the point is a **predictable processing order** —
   in-flight first; when one finishes or parks behind the HITL label, the
   freed capacity takes the next in order.
@@ -115,7 +173,7 @@ one.
 - **Across platforms there is no merged queue.** Each tracker's order stays
   its own; the pool is the shared capacity; when a lease frees, the
   orchestrator collects ready candidates from every adapter, sorts once by
-  (weight, time-in-queue), and takes the top. A second tracker never starves
+  the priority rule above, and takes the top. A second tracker never starves
   the first, and no platform's ordering leaks into another's.
 
 ## Worker lifecycle
