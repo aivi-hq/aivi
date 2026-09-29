@@ -15,6 +15,10 @@
       "development": "./src/setup.ts",
       "default": "./dist/setup.js"
     },
+    "./setupProject": {
+      "development": "./src/setup-project.ts",
+      "default": "./dist/setup-project.js"
+    },
     "./cli": {
       "development": "./src/cli.ts",
       "default": "./dist/cli.js"

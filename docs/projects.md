@@ -21,10 +21,11 @@ that project's memory in the home.
 
 Everything about a project sits in `<home>/projects/<id>`; the directory name
 is the id (`^[a-z][a-z0-9_-]*$`; anything else must be renamed). The checkout
-is its `source/`. **A clone is a registration**: aivi discovers projects as the
+is its `source/`. **A checkout is a registration**: aivi discovers projects as the
 directories of `<home>/projects` (symlinks to directories count, dotfiles and
 plain files do not) when it loads its config; `aivi projects add` is the
-convenient way to clone into the right place. A repository cloned straight
+convenient way to get one — through a forge when a forge is configured, else as
+an untracked directory. A repository cloned straight
 into `projects/<id>` (a `.git` there) fails `config check` with the `mv` to
 run, and an empty project directory is an error too. aivi writes nothing
 inside a checkout: a repository needs no aivi file and works the same outside
@@ -66,8 +67,11 @@ only overrides:
   is `decision`, the rest of `docs/` is `doc`; nothing is indexed twice or under
   two kinds. This is resolved once, when the index is configured: the outer
   collection ignores the inner one's subtree.
-- `projects.<id>.linear` (`teams`, `lanes`, optional `workspaceId`) ties
-  the project to Linear teams for the [Linear module](linear.md)
+- Beyond core's `enabled` and `knowledge`, a project carries **plugin sections**
+  keyed by module id — each contributed and validated by the plugin that owns
+  it, read by no other. `projects.<id>.linear` (`teams`, `lanes`, optional
+  `workspaceId`) is the Linear tracker's; the same place a forge or any other
+  plugin writes what a project needs
   ([configuration](configuration.md#linear)).
 
 ## Who works in a project
@@ -95,16 +99,30 @@ allows `facts.md` and `proposals/*` in each, and names them in the prompt
 with that project's scope and, like every project source, when no scope is
 given.
 
-## Adding, listing, renaming, removing
+## Adding, listing, removing
 
 ```sh
-aivi projects add https://github.com/acme/website.git   # clones into projects/website/source
-aivi projects add git@github.com:acme/api.git --id backend
+aivi projects add                 # asks the configured forge to clone, the tracker to map
+aivi projects add website         # same, offering "website" as the name
 aivi projects list
 aivi projects remove website          # source/ and worktrees/ gone, memory stays
 aivi projects purge website           # shows what would go, deletes nothing
 aivi projects purge website --confirm # deletes projects/website entirely
 ```
+
+`add` is **role-driven and names no plugin**: core walks its systems in order —
+a **forge** first (the one configured plugin that owns repositories clones the
+checkout), a **tracker** second (the one that owns tickets maps the project) —
+then any configured plugin that serves **no role** adds its own section. Each
+asks its own platform questions and hands back the config section core writes
+under the project; core writes bytes and reads none of them (the plugin's own
+schema validates its section). The project name is asked once — the first
+contributor to settle it offers the default (a forge's repo name, a tracker's
+team name). A plugin joins a role by exporting a `./setupProject` entry;
+`aivi projects add` offers whichever is configured, asks which if a role has
+several, and skips a role with none. With **no forge configured** there is
+nothing to clone: `add` leaves an untracked `source/` directory holding a note,
+and the project still has its memory and knowledge.
 
 `source/` is kept at its upstream by the system job `projects-sync` (hourly by
 default, `scheduler.projectsSync`): fetch and fast-forward only, so a merge on
@@ -112,14 +130,12 @@ GitHub reaches what is indexed within the hour and nothing is ever forced;
 local changes, a detached HEAD or a diverged branch are reported and left
 alone ([configuration](configuration.md#tasks)).
 
-`add` is `git clone` plus an id check (the id is the repository name,
-lower-cased, unless `--id` says otherwise); it prints the sources the project
-will have. The host reads the projects directory at startup, so restart
-`aivi serve` after adding or removing. To rename a project, rename its
-directory; memory and worktrees move with it. Old collections in
-the search index are dropped by QMD at the next start and never searched, since
-queries name their collections; the index is a rebuildable derivative, so
-deleting `state/knowledge` reclaims the space.
+The host reads the projects directory at startup, so restart `aivi serve`
+after adding or removing. To rename a project, rename its directory; memory
+and worktrees move with it. Old collections in the search index are dropped by
+QMD at the next start and never searched, since queries name their collections;
+the index is a rebuildable derivative, so deleting `state/knowledge` reclaims
+the space.
 
 **Removed is a state, not an absence.** A memory home with a `facts.md` and no
 checkout is a removed project: `projects list`, `/projects` and the

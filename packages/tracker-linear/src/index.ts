@@ -8,10 +8,21 @@ export type {
   LinearTeam,
 } from './client.ts';
 export { LinearApiError, LinearClient, resolveTeams } from './client.ts';
-export type { LinearConfig } from './config.ts';
+export type {
+  LaneBinding,
+  LaneValue,
+  LinearConfig,
+  LinearProjectDefaults,
+  LinearProjectEntry,
+  ProjectLinear,
+} from './config.ts';
 export {
   assistantAgent,
+  laneBinding,
+  laneValueSchema,
   linearPrimarySecretNames,
+  linearProjectDefaultsSchema,
+  linearProjectSchema,
   linearSchema,
   linearSecretNames,
   plugin,
@@ -28,9 +39,16 @@ export {
   describeWorkers,
   LINEAR,
   openLinearStore,
-  projectForIssue,
   requireLinearSecrets,
 } from './module.ts';
+export type { RoutedProject } from './projects.ts';
+export {
+  linearTeamCollisions,
+  parseLaneFlags,
+  projectForIssue,
+  projectLinear,
+  writeProjectLinear,
+} from './projects.ts';
 export type { WebhookApp } from './routes.ts';
 export { appWebhookPath, registerWebhookRoutes } from './routes.ts';
 export type {

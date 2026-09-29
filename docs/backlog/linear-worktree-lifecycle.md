@@ -60,7 +60,9 @@ the sweep.)
 
 ## Open live gates from the lane work this builds on
 
-- Interactive `aivi projects create` against a real repo, and a real
-  `--lane`/`--unlane` write (from `59b33fd`).
+- Interactive `aivi projects add` running Linear's project-setup contributor
+  against a real team set — the teams-and-lanes write, once done by
+  `projects create` and `--lane`/`--unlane` (from `59b33fd`, the flags gone
+  with the role-driven redo).
 - Vessel repo (tiny, disposable) as the first dogfood; example's config gains
   a triage app + lane when this lands.

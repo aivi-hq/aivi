@@ -137,11 +137,86 @@ export function assistantAgent(linear: LinearConfig | undefined): string {
   return linear?.agent ?? 'assistant';
 }
 
+/**
+ * A written lane binding: the OpenCode agent that works issues entering the
+ * lane, `null` for a lane humans work, or an object naming an agent that runs
+ * without a worktree — in the project's `source/` checkout on main, where
+ * only the agent file's own permissions say what it may not do.
+ */
+export const laneValueSchema = z.union([
+  z.string().min(1).nullable(),
+  z.strictObject({ agent: z.string().min(1), worktree: z.literal(false).optional() }),
+]);
+export type LaneValue = z.infer<typeof laneValueSchema>;
+/** A lane binding as routing sees it: the agent and whether it gets a worktree. */
+export interface LaneBinding {
+  agent: string;
+  worktree: boolean;
+}
+/** Normalise a written lane value (`agent | null | { agent, worktree }`); null for human lanes. */
+export function laneBinding(value: LaneValue): LaneBinding | null {
+  if (value === null) return null;
+  if (typeof value === 'string') return { agent: value, worktree: true };
+  return { agent: value.agent, worktree: value.worktree !== false };
+}
+
+/** The plugin's own `linear` section of a project entry (`projects.<id>.linear`),
+ *  contributed to the composed schema the way the `plugins` block contributes
+ *  its own. Core reads none of it. */
+export const linearProjectSchema = z.strictObject({
+  workspaceId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Linear organization id; only needed with more than one workspace.'),
+  teams: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
+  lanes: z
+    .record(z.string().min(1), laneValueSchema)
+    .default({})
+    .describe(
+      'Workflow state name → the OpenCode agent that works issues entering that state. `null` marks a human lane. `{ agent, worktree: false }` runs the agent in the project checkout on main, without a worktree. Empty by default: the listener delegates nothing until you map a lane.',
+    ),
+});
+export type LinearProjectEntry = z.infer<typeof linearProjectSchema>;
+
+/** The plugin's own section under `projectDefaults`: the lane convention every
+ *  Linear project inherits unless it maps the lane itself. */
+export const linearProjectDefaultsSchema = z.strictObject({
+  lanes: z
+    .record(z.string().min(1), laneValueSchema)
+    .default({})
+    .describe(
+      'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
+    ),
+  workspaceId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Linear organization id every project gets unless it names its own.'),
+});
+export type LinearProjectDefaults = z.infer<typeof linearProjectDefaultsSchema>;
+
+/** The project's Linear routing as it takes effect: `lanes` is the merge of
+ * `projectDefaults.linear.lanes` and the entry's own, entry winning one key at
+ * a time, with the human lanes (`null`) filtered out — those live in the file. */
+export interface ProjectLinear {
+  workspaceId?: string;
+  teams: string[];
+  lanes: Record<string, LaneBinding>;
+}
+
 /** The registry entry: the block holds no paths (credentials live in the
  *  environment, lanes name agents), so `home` finds nothing to resolve here;
- *  the module code loads lazily. */
+ *  the module code loads lazily. The `linear` sections of a project and of
+ *  `projectDefaults` are contributed here — core passes them through and this
+ *  plugin reads them back. */
 export const plugin: AiviPlugin<LinearConfig> = {
   id: 'linear',
   configSchema: linearSchema,
+  projectSchema: linearProjectSchema,
+  projectDefaultsSchema: linearProjectDefaultsSchema,
   createModule: config => import('./module.ts').then(m => m.createLinearModule(config)),
 };

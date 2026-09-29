@@ -1,8 +1,9 @@
 /** The safe writes behind every command that changes `config.json` or `.env`.
  *  One named block is written and nothing else is touched; the whole file must
  *  load again afterwards, and a write that does not validate is restored to
- *  its previous bytes. `writeProjectLinear` carries the same guarantee for its
- *  one block; these are the general shape of it. */
+ *  its previous bytes. A plugin's own project-section write (e.g. Linear's
+ *  `writeProjectLinear`) carries the same guarantee for its one block; these
+ *  are the general shape of it. */
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
 import { loadConfig } from './config.ts';

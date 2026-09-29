@@ -298,13 +298,14 @@ checkout because the entry outvotes the convention, and leaves `Triage` and
 project. `workspaceId` is optional and only needed when the installation spans
 Linear workspaces; `projectDefaults.linear.workspaceId` supplies it to every
 project that omits its own.
-`aivi projects add <git-url> --linear PEC` and `aivi projects create` write
-`teams` for you, resolving the team key Linear's URLs show to its id;
-`--lane "Dev:dev"` (shorthand `--lane "Dev,Review:dev"`) and
-`--unlane "Backlog"` write the lanes along with them. The mapped agent is
-resolved by OpenCode's ordinary discovery for the session's directory; an
-unknown agent file is OpenCode's own error at session start, not a config
-error.
+`aivi projects add` writes `teams` for you: it runs Linear's project-setup
+contributor (the plugin's `./setupProject`), which asks which teams may work
+the project and which agent works each lane, then hands the section back for
+core to write. The project's `linear` section is contributed and validated by
+the Linear plugin — core passes it through unread, the same contract any forge
+or other plugin joins. The mapped agent is resolved by OpenCode's ordinary
+discovery for the session's directory; an unknown agent file is OpenCode's own
+error at session start, not a config error.
 
 Credentials are never in JSON. The **primary** app reads the bare
 `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and `LINEAR_WEBHOOK_SECRET` — the

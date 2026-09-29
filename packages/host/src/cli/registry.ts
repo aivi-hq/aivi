@@ -16,8 +16,10 @@ import {
   loadConfig,
   type PluginProjectSections,
   type PluginProjectSectionsMap,
+  type ProjectRole,
+  projectRoles,
 } from '@aivi/core';
-import type { AiviModule, AiviPlugin } from '@aivi/plugin';
+import type { AiviModule, AiviPlugin, ProjectContributor } from '@aivi/plugin';
 import { z } from 'zod';
 
 /** One list entry: a package name, or `[name, enabled]` — the debug switch. */
@@ -139,4 +141,57 @@ export async function buildModules(
     } else modules.push(await entry.plugin.createModule(block, home));
   }
   return modules;
+}
+
+/** A plugin that helps set up a project: for one of core's roles, or for no
+ *  role at all (it jumps in after the roles). */
+export interface ProjectContributorEntry {
+  /** The npm package name, as the list holds it. */
+  name: string;
+  /** The module id: the key its section is written under. */
+  moduleId: string;
+  /** The role it serves; undefined means it serves none and runs last. */
+  role?: ProjectRole;
+  contributor: ProjectContributor;
+}
+
+/**
+ * The project-setup contributors the home lists: one lazy `./setupProject`
+ * import per enabled package, kept out of the light registry path so the
+ * client code a contributor pulls loads only when a project is being added.
+ * A package without the subpath serves no role and is skipped silently; one
+ * that exports it may name a core role or name none (it then runs after the
+ * roles). Whether a contributor is *configured* (has a `plugins.<id>` block)
+ * is the caller's to decide — it needs the loaded config, which this does not
+ * read.
+ */
+export async function projectContributors(home: string): Promise<ProjectContributorEntry[]> {
+  const found: ProjectContributorEntry[] = [];
+  for (const entry of (await pluginRegistry(home)).entries) {
+    if (!entry.enabled) continue;
+    let declared: unknown;
+    try {
+      declared = (await import(import.meta.resolve(`${entry.name}/setupProject`))).contributor;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      // No such subpath, or the package is not installed: either way this
+      // plugin serves no project role. A real import error is left to stand.
+      if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_MODULE_NOT_FOUND') continue;
+      throw error;
+    }
+    const contributor = declared as Partial<ProjectContributor> | undefined;
+    if (!contributor || typeof contributor.setup !== 'function')
+      throw new Error(`${entry.name}/setupProject exports no contributor (a { role?, setup } object).`);
+    if (contributor.role !== undefined && !projectRoles.includes(contributor.role))
+      throw new Error(
+        `${entry.name}/setupProject names a role core does not know (${contributor.role}); name one of ${projectRoles.join(', ')} or none.`,
+      );
+    found.push({
+      name: entry.name,
+      moduleId: entry.plugin.id,
+      ...(contributor.role === undefined ? {} : { role: contributor.role }),
+      contributor: contributor as ProjectContributor,
+    });
+  }
+  return found;
 }

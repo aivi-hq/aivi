@@ -242,7 +242,8 @@ from the plan while landing:
 - **The tsconfig references were a cycle, so the host's build is split.**
   Half 2 gives host dynamic `import()`s of `@aivi/browser`,
   `@aivi/channel-discord`, `@aivi/channel-slack` and `@aivi/tracker-linear` (the
-  `serve` if-chain and `projects add --linear`), and all of those packages
+  `serve` if-chain and `projects add` running a plugin's `./setupProject`), and
+  all of those packages
   import `@aivi/host` — so host cannot reference them in *one* project
   (`error TS6202`). The split is build-plumbing only: `tsconfig.build.json`
   is the engine (`src` minus `src/cli.ts`/`src/cli`, refs core), new

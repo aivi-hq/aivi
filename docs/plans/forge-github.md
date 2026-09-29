@@ -30,22 +30,45 @@ role explicit: the contract lives in **`@aivi/plugin/forge`** (D6: the
 subpath gets its first content from this build), the GitHub
 implementation is the plugin **`@aivi/forge-github`** (D20 naming).
 
-## The boundary: git is git; the forge is what git cannot see
+## The boundary: remote git is the forge's, local git is the orchestrator's
 
-No forge API moves bytes of the repository. The worktree mechanics stay
-plain git against `origin`, exactly as `tracker-linear/src/worktree.ts`
-does them today:
+The line is **remote, not clone**. Any git operation that reaches `origin`
+authenticates to it — so it carries credentials (passwords, tokens) and
+belongs to the **forge**, the system that holds them. Anything that only
+touches the local store is plain git the **orchestrator** runs itself.
+No forge *API* moves bytes of the repository: the forge moves bytes with
+**git using credentials it minted**; it uses its API only for what git
+cannot see (pull requests, reviews).
 
-| Thing | Who does it |
-| --- | --- |
-| fetch, worktree add, push, ff-updating a restored worktree | **git** — the remote URL is a project fact, not a forge API |
-| does a PR exist for this branch, which one, what state | **the forge** (API) |
-| review feedback on a PR | **the forge** (API) |
-| acting on GitHub as aivi's app (auth) | **the forge** (API) |
+| Thing | Local or remote | Who does it |
+| --- | --- | --- |
+| clone the project's checkout | remote | **the forge** — its `./setupProject` clones into `source/` |
+| fetch, and fast-forwarding `source/` (the sync) | remote | **the forge** — fetch authenticates; the orchestrator asks, the forge fetches and ff-merges |
+| bring a restored worktree up to date | remote | **the forge** — a fetch plus ff, no GitHub API call |
+| `git push` at turn end | remote | **the forge** performs it, authenticated as its app (below); the orchestrator only decides *when* |
+| worktree add / remove / prune, commits in a worktree | local | **the orchestrator** — raw git off refs already in the clone; never touches `origin`, holds no credentials |
+| does a PR exist for this branch, which one, what state | — | **the forge** (API) |
+| review feedback on a PR | — | **the forge** (API) |
+| acting on GitHub as aivi's app (auth) | — | **the forge** (API) |
 
-So "the orchestrator brings a restored worktree up to date with the
-forge" is `git fetch` plus a fast-forward — no GitHub API call. The forge
-answers *facts about* the branch.
+So "bring a restored worktree up to date with the forge" is the forge's
+`git fetch` plus a fast-forward; the orchestrator triggers it and reads the
+result. The orchestrator's own git is **local only** — it creates and
+reaps worktrees and the worker commits inside them, and it never clones,
+fetches, or pushes, because those need credentials it must not hold.
+
+**Two operations sit in the wrong package today** and move with the build
+that owns them: the sync fetch/ff lives in `host/src/projects.ts` (a forge
+operation — it becomes the forge's when `@aivi/forge-github` lands; until
+any forge exists the host runs it as plain generic git, naming no plugin),
+and the worktree git lives in `tracker-linear/src/worktree.ts` (an
+orchestrator operation — a tracker answers tickets, it does not manage
+worktrees; it moves into the orchestrator when that is extracted).
+
+**No shared `@aivi/git` package now** (ruled 2026-09-29): the orchestrator
+keeps its raw local git, a forge carries its own remote git; whether a
+shared git package earns its keep is a call made when building the first
+forge, not before.
 
 **The forge is a configurable path, not the spine** (ruled 2026-09-29).
 Forge workflows are not all workflows: a ticket can be "research X, make
@@ -77,7 +100,7 @@ interface Forge {
    *  state, approvals, the comment bodies. *Open threads only*: no
    *  `since` cursor (ruled 2026-09-29) — threads close immediately, a
    *  wake takes what is open and the worker must bring all of it to zero,
-   *  by agree (commit, and the orchestrator pushes at turn end) or
+   *  by agree (commit, and the forge pushes at turn end) or
    *  decline (comment + resolve).
    *  Every comment carries its author: a human, or aivi *with the worker
    *  role that posted it* (below) — without the role, a reviewer sees a
@@ -154,7 +177,7 @@ glance the shape is:
    gather for dev and reviewer alike.
 2. Worker turn in the recovered worktree; commits stay local.
 3. Closing report validated — in a review wake that is the resolution
-   turn — then the orchestrator pushes (only if the worker committed),
+   turn — then the orchestrator has the forge push (only if the worker committed),
    posts the signed replies, and resolves the threads.
 
 Every forge step here is a *path*, entered only when the ticket's
@@ -168,7 +191,7 @@ capabilities list does — with fallback chains owned by the orchestrator
 
 **The write side is in** (ruled 2026-09-29): the orchestrator posts the
 worker's replies with `resolveThread`, from the validated JSON of a
-dedicated turn. **Push and PR creation are the orchestrator's too**
+dedicated turn. **Push and PR creation go through the forge too**
 (resolved 2026-09-29, see Q1): the worker's git is local-only — commits
 in the worktree, `git push` denied by its agent file, the attribution
 plugin's move — and the closing report carries the PR message and any
@@ -275,7 +298,7 @@ instruction), now caught by validation instead of hope.
 | `identity.github` (commit pair) | stays — a git fact, no auth involved |
 | `identity.github.app` ("nothing reads it yet") | orphaned: the forge's app id lives in its own block; delete the field at landing |
 | Linear's "I know a PR exists" (a tracker capability) | stays a **tracker** answer; the forge is the fallback for trackers that cannot say |
-| PRs as invisible worker magic | the worker's git is **local-only** — `git push` denied by its agent file; push, PR creation, and review replies are all the orchestrator's (Q1, Q2 resolved). The worker never holds forge credentials |
+| PRs as invisible worker magic | the worker's git is **local-only** — `git push` denied by its agent file; push, PR creation, and review replies all go through the forge on the orchestrator's word (Q1, Q2 resolved). The worker never holds forge credentials |
 
 ## Open questions — the discussion
 
@@ -286,15 +309,16 @@ instruction), now caught by validation instead of hope.
    push goes out as the human), and nothing on a headless server (the
    push fails). The operator's ruling: the worker's git is **local-only
    — `git push` denied by its agent file**, the attribution plugin's
-   move — and the **orchestrator pushes at turn end**, injecting a
-   freshly minted installation token for that one command
-   (`git -c http.extraheader=…`; nothing is written into the worktree's
-   `.git/config`). PR creation rides along: a first push of a branch with
+   move — and the **forge pushes on the orchestrator's word (turn end)**, authenticating the push as its own
+   installation (`git -c http.extraheader=…`; nothing is written into the worktree's
+   `.git/config`). How it holds that token — mint once, cache to its TTL,
+   re-mint on 401 — is the forge's own choice, not this contract. PR
+   creation rides along: a first push of a branch with
    no PR gets one, built from the PR message in the worker's closing
    report. Why this over the alternatives: embedding a token in the
    remote URL (option a) made a ~1 h token an expiry problem for long
-   sessions — with an orchestrator-side push nothing sits around to
-   expire, the forge client mints fresh per use and caches; `gh` as a
+   sessions — with a forge-side push the client that owns the
+token also owns its renewal, so nothing sits around to expire; `gh` as a
    helper (option b) is one more thing installed for no gain; the
    hosted-MCP forwarder (option c) belongs to **interactive** tooling,
    never to push. Attribution of the push itself does not matter ("nobody
@@ -311,18 +335,23 @@ instruction), now caught by validation instead of hope.
    platform-blind; the wake hands it all facts, so it needs no forge
    tools to know its own history.
 3. **Per-project config for plugins.** (ruled 2026-09-29: **first in the
-   line**, before the extractions) Today `projectSchema` in `@aivi/core`
-   **hardcodes `linear.lanes`** — core names a plugin, a leftover from
-   before the registry; "plugins cannot configure projects" is only true
-   because core hardcodes them. The fix: the compose step (manifest →
-   compose → parse) lets a plugin contribute a *project-section* schema,
-   and `linear` leaves core — the project's own section shrinks to pure
-   spellings (`linear: { teams }`). The flow vocabulary it makes room
+   line**, before the extractions — **mechanism BUILT 2026-09-29**.)
+   `projectSchema` in `@aivi/core` **used to hardcode `linear.lanes`** —
+   core naming a plugin, a leftover from before the registry. That is
+   gone: the compose step (manifest → compose → parse) now lets a plugin
+   contribute a *project-section* schema (`AiviPlugin.projectSchema` /
+   `projectDefaultsSchema`, composed by `composeConfigSchema`), and
+   `linear` left core entirely — its lane merge, team-collision check and
+   section write live in `@aivi/tracker-linear`, and the plugin adds a
+   `./setupProject` contributor (`{ role, setup(ctx) }`) that `aivi
+   projects add` runs per configured role. Core spells only the roles
+   (`projectRoles = ['forge', 'tracker']`) and writes the bytes a
+   contributor hands back, reading none. The flow vocabulary it makes room
    for — `tracker: { id, lanes }`, `forge`, `queueLane`, `lanes` with
    `worktree`, in `projectDefaults` and per project, replace-not-merge —
    is ruled and owned by
    [orchestrator.md](templates/orchestrator.md#the-projects-config-ruled-2026-09-29);
-   the compose fix builds the **mechanism only**, those keys land with
+   that compose fix built the **mechanism only**, those keys land with
    the extraction that acts on them.
 4. **One app, one installation.** Resolved 2026-09-29 — see Auth.
 5. **PR conversations in the knowledge index.** Resolved 2026-09-29: not
@@ -352,10 +381,16 @@ flow detail stays proposed until worked examples are walked.
       proves the read against a real repo's PRs; `aivi add forge-github`.
 - [ ] Delete `identity.github.app` and its configuration.md line; the
       `identity.github` pair untouched.
-- [ ] Q1 built: the client exposes the minted installation token for
-      git-command injection (`http.extraheader`); the worker's
-      `git push` deny and the orchestrator-side push + PR creation are
+- [ ] Q1 built: the client exposes its installation token for
+      git-command injection (`http.extraheader`; caching and renewal are
+      the forge's own choice, bounded only by the token's TTL); the worker's
+      `git push` deny and the forge-side push + PR creation are
       built with the forge path, the orchestrator already proven by then.
+- [ ] Take the misplaced remote git out of its current package, do not
+      carry it forward as-is: `syncProject` in `host/src/projects.ts`
+      (the `projects-sync` job's fetch/ff — delete or rewrite, the forge
+      owns syncing `source/`), and `tracker-linear/src/worktree.ts`
+      (worktree git is the orchestrator's; a tracker answers tickets).
 - [ ] Signed comments end to end: `resolveThread` stamps `aivi · <role>`
       visibly, `reviewFeedback` parses it back into the author fact.
 - [ ] Contract tests against a scripted forge; live gate: one real PR

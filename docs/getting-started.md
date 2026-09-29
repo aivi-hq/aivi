@@ -95,11 +95,17 @@ real boundary (after the plugin spec points at your local build).
 ## A project
 
 ```sh
-npm run aivi -- projects add https://github.com/acme/website.git
+npm run aivi -- projects add
 ```
 
-That clones into `dev/projects/website/source`; restart `serve` and its `docs/`
-is searchable with `--project website`. What a project is and how it is
+`projects add` is interactive and **role-driven**: it asks the configured
+**forge** to clone a checkout and the configured **tracker** to map tickets,
+then writes what each hands back. With no forge configured you get a
+**repo-less project** — no checkout, but its own memory and knowledge (the
+shape a "research X, write it up" ticket lives in). A forge plugin
+(`@aivi/forge-github`) is what brings cloning and pull requests; until it is
+installed, `projects add` sets up repo-less projects. Restart `serve` and the
+project is searchable with `--project <id>`. What a project is and how it is
 described: [projects](projects.md).
 
 ## A chat channel

@@ -33,7 +33,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | channel module | a chat platform adapter (`discord`, `slack`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
 | conversation | what a channel module binds to one OpenCode session: a thread, a DM, or a whole channel |
 | source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`; a file belongs to its most specific source |
-| project | a repository the team works on: one directory `<home>/projects/<id>` holding the clean git checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `config.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project directory with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`) |
+| project | what the team works on: one directory `<home>/projects/<id>` holding a checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `config.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`); a project may be **repo-less** — a forge gives the checkout, so with no forge a project has memory and knowledge but no source |
+| forge / tracker | the two **systems** core names (in that order): a **forge** owns repositories (clones a project's checkout, branches, pull requests), a **tracker** owns tickets (lanes, delegation). Core spells the roles, never which plugin fills them; `projectRoles = ['forge', 'tracker']` |
+| project contributor | a plugin's `./setupProject` export — `{ role?, setup(ctx) }` — that sets a new project up for its role and hands back the config section core writes at `projects.<id>.<moduleId>`; core computes which are *configured* (a `plugins.<id>` block exists), offers one per role (asks if several), and runs the roleless ones after the roles; the plugin clones/asks, core writes bytes and reads none |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`, `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
@@ -146,8 +148,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
   `projects.<id>` in `config.json`, checkout at `<home>/projects/<id>/source`, a
   company-wide `docs/` convention (`docs` as `doc`, `docs/adr` as `decision`)
   with per-project override, and projects discovered as the directories of
-  `<home>/projects`, so adding a project is a `git clone` into `source/` and a repository
-  works the same outside aivi. No `aivi.project.json`
+  `<home>/projects`, so **core has no clone** — a forge's `./setupProject`
+  clones into `source/` (a repo-less project is created without one), and a
+  repository works the same outside aivi. No `aivi.project.json`
   ([projects](docs/projects.md)).
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
   through `aivi_jobs` (`POST /jobs`, the one job mutation on the

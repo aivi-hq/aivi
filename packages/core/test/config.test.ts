@@ -22,21 +22,6 @@ import {
   userTaskSchema,
 } from '../src/config.ts';
 
-test('a Linear team belongs to exactly one project', () => {
-  assert.match(
-    JSON.stringify(
-      configSchema.safeParse({
-        version: 1,
-        projects: {
-          website: { linear: { teams: ['lt-1'], lanes: {} } },
-          api: { linear: { teams: ['lt-1', 'lt-2'], lanes: {} } },
-        },
-      }).error?.issues,
-    ),
-    /already mapped to project website/,
-  );
-});
-
 test('plugins is an open record in the core schema: blocks pass through as written', () => {
   const block = { connection: { mode: 'launch', userDataDir: 'state/chrome' } };
   const parsed = configSchema.parse({ version: 1, plugins: { browser: block, 'cool-thing': { any: true } } });
@@ -273,7 +258,8 @@ test('projects are the directories of <home>/projects; config.json only override
     'a removed project keeps only its memory',
   );
   assert.equal(loaded.projects[1]!.directory, join(root, 'projects/website/source'));
-  assert.equal(loaded.projects[1]!.linear!.lanes.Review!.agent, 'worker');
+  // (the `linear` section is a plugin's own: core passes it through unread; the
+  //  lane merge and team checks live in @aivi/tracker-linear and are tested there)
   // The convention (docs as doc, docs/adr as decision) plus the project's memory, or the project's own list plus memory.
   assert.deepEqual(
     selectSources(loaded, ['website'], false).map(s => [s.id, s.kind, s.path]),
@@ -326,52 +312,26 @@ test('projects are the directories of <home>/projects; config.json only override
   assert.equal(configSchema.safeParse({ version: 1, projects: { 'Bad Id': {} } }).success, false);
 });
 
-test('projectDefaults.linear.lanes is the base; a project wins one lane at a time, and null means humans work it', async t => {
+test('core passes a plugin project section through unread and unwidened', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-lanes-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'projects/site/source'), { recursive: true });
-  const write = (extra: Record<string, unknown>) =>
-    writeFile(
-      join(root, 'config.json'),
-      JSON.stringify({ version: 1, linear: { primary: 'dev', apps: { dev: {}, review: {} } }, ...extra }),
-    );
-  await write({
-    projectDefaults: { linear: { lanes: { Dev: 'dev', Review: 'dev', Triage: null }, workspaceId: 'ws-default' } },
-    projects: {
-      site: { linear: { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } } },
-    },
-  });
-  const routing = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
-  assert.deepEqual(
-    routing.lanes,
-    { Dev: { agent: 'dev', worktree: true }, Review: { agent: 'reviewer', worktree: false } },
-    'the convention is the base, the entry wins per lane, and human lanes are absent from the map the listener consults',
+  const linearSection = { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } };
+  await writeFile(
+    join(root, 'config.json'),
+    JSON.stringify({
+      version: 1,
+      projectDefaults: { linear: { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
+      projects: { site: { linear: linearSection } },
+    }),
   );
-  assert.equal(routing.workspaceId, 'ws-default', 'workspaceId falls back to the convention');
-  const raw = JSON.parse(await readFile(join(root, 'config.json'), 'utf8'));
-  assert.equal(raw.projects.site.linear.lanes.Shipped, null, 'the file keeps the human lanes');
-
-  // A bare linear entry gets the whole convention, workspaceId included.
-  await write({
-    projectDefaults: { linear: { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
-    projects: { site: { linear: { teams: ['t-1'] } } },
-  });
-  const bare = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
-  assert.deepEqual(
-    bare.lanes,
-    { Dev: { agent: 'dev', worktree: true } },
-    'the convention applies untouched when the project maps nothing',
-  );
-  assert.equal(bare.workspaceId, 'ws-default');
-
-  // A lane names an OpenCode agent; no app resolution happens at load time — an
-  // unknown agent file is OpenCode's own error at session start.
-  await write({
-    projectDefaults: { linear: { lanes: { Dev: 'ghost-agent' } } },
-    projects: { site: { linear: { teams: ['t-1'] } } },
-  });
-  const ghosted = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
-  assert.deepEqual(ghosted.lanes, { Dev: { agent: 'ghost-agent', worktree: true } });
+  const loaded = await loadConfig(join(root, 'config.json'));
+  // The section is present in the raw config exactly as written — core parsed it
+  // with the open catchall and read nothing inside — and the plugin's own schema
+  // (its merge, its human-lane drop) is what turns it into routing, tested in
+  // @aivi/tracker-linear. The core Project view carries no `linear`.
+  assert.deepEqual((loaded.config.projects.site as unknown as { linear: unknown }).linear, linearSection);
+  assert.equal('linear' in loaded.projects[0]!, false, 'core hands the project view without a plugin section');
 });
 
 test('calendar calculations use the configured timezone across daylight saving changes', () => {

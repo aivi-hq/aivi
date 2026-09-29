@@ -1,4 +1,4 @@
-import type { LaneBinding, Logger, Project } from '@aivi/core';
+import type { Logger, Project } from '@aivi/core';
 import { errorMessage, gitIdentity } from '@aivi/core';
 import {
   ChannelEngine,
@@ -13,6 +13,8 @@ import { LinearApiError, LinearClient } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { assistantAgent, linearPrimarySecretNames, linearSecretNames, primaryLinearApp } from './config.ts';
 import { LinearMcp } from './mcp.ts';
+import type { LaneBinding } from './projects.ts';
+import { linearTeamCollisions, projectForIssue } from './projects.ts';
 import { registerWebhookRoutes } from './routes.ts';
 import {
   type AgentSessionEventPayload,
@@ -116,21 +118,14 @@ type LinearIssue = Awaited<ReturnType<LinearClient['issue']>>;
 const issueDossier = (issue: LinearIssue) =>
   `<issue identifier="${issue.identifier}"><title>${issue.title}</title><description>${issue.description ?? ''}</description></issue>`;
 
-/** Which aivi project an issue belongs to: by the issue's Linear team, and by workspace when one is configured. */
-export function projectForIssue(
-  projects: Project[],
-  issue: { teamId: string; organizationId: string },
-): Project | undefined {
-  return projects.find(
-    p =>
-      !p.removed &&
-      p.linear?.teams.includes(issue.teamId) === true &&
-      (!p.linear.workspaceId || p.linear.workspaceId === issue.organizationId),
-  );
-}
+/** Which aivi project an issue belongs to moved to `./projects.ts` with the
+ *  project's `linear` section: core hands the section through unread and the
+ *  plugin merges it here. */
 
 async function startLinear(config: LinearConfig, services: AiviServices, givenClients?: Map<string, LinearClient>) {
   const log = services.log.getChild('linear');
+  const collisions = linearTeamCollisions(services.loaded);
+  if (collisions.length) throw new Error(`Linear config: ${collisions.join('; ')}`);
   const store = openLinearStore(services.store);
   const interrupted = store.recover();
   if (interrupted.length) log.warn('turns.interrupted', { blocked: interrupted.length });
@@ -382,19 +377,19 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
           conversation,
           `${issue.identifier} carries the \`${config.humanLabel}\` label, so a person handles it. Remove the label to let me work on it.`,
         );
-      const project = projectForIssue(services.loaded.projects, {
+      const routed = projectForIssue(services.loaded, {
         teamId: issue.team.id,
         organizationId: payload.organizationId,
       });
-      const lane = project?.linear?.lanes[issue.state.name];
+      const lane = routed?.linear.lanes[issue.state.name];
       if (issue.delegate?.id === app.userId) {
         // The app was named to work: a lane that claims it runs the worker;
         // a delegation nothing can run is answered plainly, and no agent is
         // left behind to improvise.
-        if (project && lane) {
-          if (!(await startWorker(app, payload, issue, project, lane, conversation))) return;
+        if (routed && lane) {
+          if (!(await startWorker(app, payload, issue, routed.project, lane, conversation))) return;
           engine?.tick();
-        } else if (!project) {
+        } else if (!routed) {
           await unclaimed(app, issue, conversation, 'its team is not connected to an aivi project.');
         } else if (lane === null) {
           await unclaimed(app, issue, conversation, `the "${issue.state.name}" lane is marked as human's work.`);
@@ -405,7 +400,7 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
       }
       // A person addressing us is a conversation the assistant holds,
       // mapped lanes or not.
-      await startAssistant(app, payload, issue, project, conversation);
+      await startAssistant(app, payload, issue, routed?.project, conversation);
       engine?.tick();
     };
 
@@ -514,13 +509,13 @@ async function startLinear(config: LinearConfig, services: AiviServices, givenCl
       const changed = Object.keys(payload.updatedFrom ?? {});
       if (!changed.some(k => ['stateId', 'labelIds', 'delegateId'].includes(k))) return;
       const issue = await primary.client.issue(payload.data.id);
-      const project = projectForIssue(services.loaded.projects, {
+      const routed = projectForIssue(services.loaded, {
         teamId: issue.team.id,
         organizationId: payload.organizationId,
       });
-      if (!project) return;
+      if (!routed) return;
       // Lane names are per Linear team; two mapped teams sharing a state name share the lane's agent.
-      const lane = project.linear?.lanes[issue.state.name];
+      const lane = routed.linear.lanes[issue.state.name];
       const human = issue.labels.some(l => l.name === config.humanLabel);
       const pending = store.pendingForIssue(issue.id);
       await stopOrphans(pending, issue, lane, human, changed);

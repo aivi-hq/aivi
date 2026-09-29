@@ -184,33 +184,14 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
   { id: 'adr', path: 'docs/adr', kind: 'decision' },
 ] as const satisfies readonly z.input<typeof source>[];
 /**
- * A written lane binding: the OpenCode agent that works issues entering the
- * lane, `null` for a lane humans work, or an object naming an agent that runs
- * without a worktree — in the project's `source/` checkout on main, where
- * only the agent file's own permissions say what it may not do.
- */
-export const laneValueSchema = z.union([
-  z.string().min(1).nullable(),
-  z.strictObject({ agent: z.string().min(1), worktree: z.literal(false).optional() }),
-]);
-export type LaneValue = z.infer<typeof laneValueSchema>;
-/** A lane binding as routing sees it: the agent and whether it gets a worktree. */
-export interface LaneBinding {
-  agent: string;
-  worktree: boolean;
-}
-/** Normalise a written lane value (`agent | null | { agent, worktree }`); null for human lanes. */
-export function laneBinding(value: LaneValue): LaneBinding | null {
-  if (value === null) return null;
-  if (typeof value === 'string') return { agent: value, worktree: true };
-  return { agent: value.agent, worktree: value.worktree !== false };
-}
-/**
  * One project: a clean git checkout at `<home>/projects/<id>`, discovered from
  * that directory. An entry here is only needed to override: `knowledge`
  * replaces `projectDefaults.knowledge` for a repository laid out differently
  * (paths relative to the checkout), `enabled: false` hides a checkout from
- * indexing and memory, `linear.lanes` is validated ahead of the module.
+ * indexing and memory. Anything else a project carries is a plugin's own
+ * section — keyed by module id, contributed through the registry
+ * (`AiviPlugin.projectSchema`) and validated by the plugin's schema, never
+ * by core.
  */
 export const projectSchema = z.strictObject({
   enabled: z.boolean().default(true).describe('false: the checkout stays but aivi ignores it.'),
@@ -218,27 +199,20 @@ export const projectSchema = z.strictObject({
     .array(source)
     .optional()
     .describe('Replaces projectDefaults.knowledge for this project; paths relative to the checkout.'),
-  linear: z
-    .strictObject({
-      workspaceId: z
-        .string()
-        .min(1)
-        .optional()
-        .describe('Linear organization id; only needed with more than one workspace.'),
-      teams: z
-        .array(z.string().min(1))
-        .min(1)
-        .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
-      lanes: z
-        .record(z.string().min(1), laneValueSchema)
-        .default({})
-        .describe(
-          'Workflow state name → the OpenCode agent that works issues entering that state. `null` marks a human lane. `{ agent, worktree: false }` runs the agent in the project checkout on main, without a worktree. Empty by default: the listener delegates nothing until you map a lane.',
-        ),
-    })
-    .optional(),
 });
 type ProjectEntry = z.infer<typeof projectSchema>;
+/**
+ * The **roles** a project is set up against, in the order the setup walks
+ * them: a forge first (it owns the checkout — it clones), a tracker second
+ * (it maps issues to the project). These are the *systems* core knows about;
+ * core never names which plugin plays a role. A plugin declares the role it
+ * serves at its `./setupProject` subpath (`ProjectContributor` in
+ * `@aivi/plugin`), and `aivi projects add` offers the configured plugin of
+ * each role. A project may have neither — then it has no source host and the
+ * setup leaves an untracked checkout directory.
+ */
+export const projectRoles = ['forge', 'tracker'] as const;
+export type ProjectRole = (typeof projectRoles)[number];
 /**
  * Where the host API listens. `bind` defaults to loopback; use a LAN/tailnet
  * address or `0.0.0.0` to let remote clients reach the API. Commands are open:
@@ -476,22 +450,6 @@ export const projectDefaultsSchema = z.strictObject({
     .array(source)
     .default([...DEFAULT_PROJECT_KNOWLEDGE])
     .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
-  linear: z
-    .strictObject({
-      lanes: z
-        .record(z.string().min(1), laneValueSchema)
-        .default({})
-        .describe(
-          'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
-        ),
-      workspaceId: z
-        .string()
-        .min(1)
-        .optional()
-        .describe('Linear organization id every project gets unless it names its own.'),
-    })
-    .optional()
-    .describe('The lane convention for projects that do not map the lane themselves.'),
 });
 
 const projectDefaultsDefault = () => ({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] });
@@ -655,18 +613,6 @@ function memoryIsReserved(config: Config, report: AddIssue): void {
         report([...path, i, 'id'], 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically');
 }
 
-/** An issue lands in one checkout, so a Linear team may belong to exactly one project. */
-function teamsHaveOneProject(config: Config, report: AddIssue): void {
-  const owners = new Map<string, string>();
-  for (const [project, entry] of Object.entries(config.projects))
-    for (const [i, team] of entry.linear?.teams.entries() ?? []) {
-      const owner = owners.get(team);
-      if (owner && owner !== project)
-        report(['projects', project, 'linear', 'teams', i], `This Linear team is already mapped to project ${owner}`);
-      owners.set(team, project);
-    }
-}
-
 /** A plugin block that names a capacity pool must name one that exists. Generic on
  *  purpose: core never learns what a module is, only that a block may carry `resource`. */
 function pluginPoolsAreNamed(config: Config, report: AddIssue): void {
@@ -735,7 +681,6 @@ function schedulerKnobsAreSound(config: Config, report: AddIssue): void {
 function crossFieldRules(config: Config, report: AddIssue): void {
   idsAreUnique(config, report);
   memoryIsReserved(config, report);
-  teamsHaveOneProject(config, report);
   pluginPoolsAreNamed(config, report);
   jobsObeyTheirPools(config, report);
   schedulerKnobsAreSound(config, report);
@@ -744,12 +689,20 @@ function crossFieldRules(config: Config, report: AddIssue): void {
 /** The core schema with plugin blocks as an open record: what `loadConfig` parses when
  *  nothing is composed in — the thin installer's path, tests, and the write-then-validate
  *  guarantee of `writeConfigBlock`. Core's own fields keep every rule; a `plugins` block
- *  passes through as written, its contents the business of the plugin that owns it. The
- *  server and the operator CLI load the composed, closed schema instead. */
-export const configSchema = configShape.catchall(z.unknown()).superRefine((config, ctx) => {
-  const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
-  crossFieldRules(config, report);
-});
+ *  passes through as written, its contents the business of the plugin that owns it — and
+ *  a plugin's sections under `projects` and `projectDefaults` pass through the same way,
+ *  which is what lets a plugin's own write-then-validate check them with its own schema.
+ *  The server and the operator CLI load the composed, closed schema instead. */
+export const configSchema = configShape
+  .catchall(z.unknown())
+  .extend({
+    projects: z.record(id, projectSchema.catchall(z.unknown())).default({}),
+    projectDefaults: projectDefaultsSchema.catchall(z.unknown()).default(projectDefaultsDefault),
+  })
+  .superRefine((config, ctx) => {
+    const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+    crossFieldRules(config, report);
+  });
 
 /** Plugin blocks as the registered plugins bring them: module id → the plugin's own schema. */
 export type PluginConfigSchemas = Record<string, z.ZodType>;
@@ -868,21 +821,16 @@ export interface KnowledgeSource {
   scope: 'core' | 'project';
   projectId?: string;
 }
-/** The project's Linear routing as it takes effect: `lanes` is the merge of
- * `projectDefaults.linear.lanes` and the entry's own, entry winning one key at
- * a time, with the human lanes (`null`) filtered out — those live in the file. */
-export interface ProjectLinear {
-  workspaceId?: string;
-  teams: string[];
-  lanes: Record<string, LaneBinding>;
-}
+/** The project's routing view: id, the clean checkout, and the memory marker.
+ *  Plugin-owned sections of the config entry are not core's business; the plugin
+ *  reads them from `loaded.config.projects` with its own schema (see
+ *  `AiviPlugin.projectSchema`). */
 export interface Project {
   id: string;
   /** The clean checkout: `<home>/projects/<id>/source`; absent on disk when `removed`. `projectLayout(dirname(directory))` names the rest. */
   directory: string;
   /** The checkout is gone but `memory/` remains: still listed and searchable until purged. */
   removed?: true;
-  linear?: ProjectLinear;
 }
 export interface LoadedConfig {
   config: Config;
@@ -965,21 +913,6 @@ function absolutizePaths(config: Config, base: string): void {
 
 /** The lanes the listener consults: the projectDefaults base merged with the entry's own,
  *  with `null` lanes — human-worked — dropped. */
-function projectLinearBinding(config: Config, entry: ProjectEntry): ProjectLinear | undefined {
-  if (!entry.linear) return undefined;
-  // Lanes merge per lane — the convention is the base and the entry wins one
-  // key at a time — and `null` means a human works the lane, so it is absent
-  // from the map the listener consults while it stays written in the file.
-  const merged = { ...(config.projectDefaults.linear?.lanes ?? {}), ...entry.linear.lanes };
-  const lanes: Record<string, LaneBinding> = {};
-  for (const [lane, value] of Object.entries(merged)) {
-    const binding = laneBinding(value);
-    if (binding) lanes[lane] = binding;
-  }
-  const workspaceId = entry.linear.workspaceId ?? config.projectDefaults.linear?.workspaceId;
-  return { teams: entry.linear.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
-}
-
 export async function loadConfig(path: string, schema: z.ZodType<Config> = configSchema): Promise<LoadedConfig> {
   path = resolve(path);
   const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
@@ -1001,12 +934,10 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
       for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
         sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
     sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
-    const linear = projectLinearBinding(config, entry);
     projects.push({
       id: projectId,
       directory: layout.source,
       ...(removed ? { removed: true } : {}),
-      ...(linear ? { linear } : {}),
     });
   }
   return { config, path, sources, projects };

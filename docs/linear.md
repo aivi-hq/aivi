@@ -184,9 +184,12 @@ recording.
    `read,write,app:assignable,app:mentionable`; nothing is persisted.
 3. `soul.md` in the home, and the assistant's agent file shipped in
    `packages/cli/templates/agents/` as the strong default — rename both if you choose another name.
-4. `aivi projects add <git-url> --linear PEC`. Empty lanes means the listener
-   delegates nothing; the assistant still answers pings. A hand delegation an
-   empty lane cannot run gets the fixed answer, not the assistant.
+4. `aivi projects add` — it runs Linear's project-setup step (the plugin's
+   `./setupProject`), which asks which teams may work the project and which
+   agent works each lane. Empty lanes means the listener delegates nothing;
+   the assistant still answers pings. A hand delegation an empty lane cannot
+   run gets the fixed answer, not the assistant. With no forge installed the
+   project is repo-less (memory and knowledge, no checkout).
 5. Later, only if a second face in Linear's UI is wanted: another app, its
    `LINEAR_<FACE>_*` secrets, `apps.<face>: {}`, and `linear.primary` naming
    the data-carrying app (required once several apps are configured).
@@ -197,11 +200,10 @@ nothing until you map a lane; hand delegation always works; `null` marks a
 lane humans work). `projectDefaults.linear.lanes` is the company-wide
 convention the entries merge over, one lane at a time. A repository may map
 several teams to one checkout; a team belongs to one project only.
-`aivi projects add <git-url> --linear PEC --lane "Dev:dev" --unlane Triage`
-writes the `teams` and lanes itself, resolving the team key you see in
-Linear's URLs to its id — or run `aivi projects create`, which shows the
-convention and asks only for the lanes it leaves open. The HITL label must
-exist in **each** mapped team — labels are per team in Linear.
+`aivi projects add` writes the `teams` and lanes itself — it runs Linear's
+project-setup step, which resolves the team key you see in Linear's URLs to
+its id, shows the convention and asks only for the lanes it leaves open. The
+HITL label must exist in **each** mapped team — labels are per team in Linear.
 
 The agent files: `<home>/.opencode/agents/<agent>.md`, or the repository's
 own `.opencode/agents/<agent>.md` to override it per project.

@@ -29,7 +29,9 @@ The rework changed the ground this page stood on:
   holders: they already run on the channel machinery with per-agent files, and
   the soul exists as a file an agent could maintain.
 - **The CLI's operations are already library code** (`packages/core/src/projects.ts`:
-  `addProject`, `writeProjectLinear`, `removeProject`, `purgeProject`), and the
+  `removeProject`, `purgeProject`; adding a project is the role-driven
+  `runProjectSetup` in `packages/host/src/cli/project-setup.ts`, which runs each
+  configured plugin's `./setupProject`), and the
   plugin already reaches the host API (`aivi_jobs` can create, run, pause,
   remove). An operator tool is mostly a thin wrapper over an existing path.
 - **Linear onboarding proved the pattern live** (2026-09-19 dogfood): the
@@ -47,7 +49,7 @@ CLI code path — no new host API, no new authority model:
 
 | Action | Wraps | Notes |
 | --- | --- | --- |
-| `projects.add` | `addProject` + `writeProjectLinear` | the full `projects add` path, Linear mapping included; needs team resolution, which lives in `@aivi/tracker-linear` |
+| `projects.add` | `runProjectSetup` (the role-driven path) | the full `projects add` flow: it runs the configured forge and tracker `./setupProject` contributors, team resolution and lanes included, all inside `@aivi/tracker-linear` |
 | `projects.remove` / `purge` | same-named CLI functions | `purge` keeps its `confirm` semantics: the agent must relay what goes and get an explicit yes in chat |
 | `jobs.*` | exists today (`aivi_jobs`) | no new work |
 | `knowledge.index` | the host operation | via the jobs path or a direct POST, as `aivi jobs run` does |
