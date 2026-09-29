@@ -6,10 +6,23 @@ import type { AiviPlugin } from '@aivi/plugin';
 import { z } from 'zod';
 
 const snowflake = z.string().regex(/^\d{17,20}$/);
+/** The module id, and with it the key of this plugin's block in `config.json`
+ *  (`plugins.channel-discord`), its `/status` id and its log category: the
+ *  module id is the package's short name (`@aivi/channel-discord`), so the
+ *  word a person typed into `aivi add` is the word they write in config.json
+ *  (ruled 2026-09-30 for every plugin). What deliberately keeps the platform's
+ *  short name is everything naming Discord rather than this package: the SQLite
+ *  prefix and the session and message id prefixes (`discord_turns`,
+ *  `ses_discord_…`), which say who a conversation is on — renaming one would
+ *  orphan every conversation already bound to it.
+ */
+export const MODULE_ID = 'channel-discord';
+
 /**
  * The Discord module: gateway, access policy and reply behaviour. Its block lives at
- * `plugins.discord` in config.json; the `aivi-plugins` list in app/package.json says
- * whether the module runs. Its one secret, `DISCORD_BOT_TOKEN`, comes from the environment.
+ * `plugins.channel-discord` in config.json; the `aivi-plugins` list in app/package.json
+ * says whether the module runs. Its one secret, `DISCORD_BOT_TOKEN`, comes from the
+ * environment.
  */
 export const discordConfigSchema = z
   .strictObject({
@@ -60,7 +73,7 @@ export function reaches(config: DiscordConfig, route: Route): boolean {
  *  `directory` is the one path the block holds; it resolves against the home here,
  *  and the module code is imported lazily so composing the schema stays cheap. */
 export const plugin: AiviPlugin<DiscordConfig> = {
-  id: 'discord',
+  id: MODULE_ID,
   configSchema: discordConfigSchema,
   createModule: (config, home) =>
     import('./module.ts').then(m =>

@@ -11,9 +11,21 @@ export const isChannelId = (id: string) => /^[CG][A-Z0-9]{8,}$/.test(id);
 export const isDMChannelId = (id: string) => /^D[A-Z0-9]{8,}$/.test(id);
 export const isUserId = (id: string) => /^[UW][A-Z0-9]{8,}$/.test(id);
 const channelId = z.string().refine(isChannelId, 'Expected a Slack channel id (C… or G…)');
+/** The module id, and with it the key of this plugin's block in `config.json`
+ *  (`plugins.channel-slack`), its `/status` id and its log category: the module
+ *  id is the package's short name (`@aivi/channel-slack`), so the word a person
+ *  typed into `aivi add` is the word they write in config.json (ruled 2026-09-30
+ *  for every plugin). What deliberately keeps the platform's short name is
+ *  everything naming Slack rather than this package: the SQLite prefix and the
+ *  session and message id prefixes (`slack_turns`, `ses_slack_…`), which say who
+ *  a conversation is on — renaming one would orphan every conversation already
+ *  bound to it.
+ */
+export const MODULE_ID = 'channel-slack';
+
 /**
  * The Slack module: access policy, command prefix and reply behaviour. Its block lives
- * at `plugins.slack` in config.json; the `aivi-plugins` list in app/package.json says
+ * at `plugins.channel-slack` in config.json; the `aivi-plugins` list in app/package.json says
  * whether the module runs. Its secrets, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, come
  * from the environment.
  */
@@ -60,7 +72,7 @@ export function reaches(config: SlackConfig, route: AccessRoute): boolean {
  *  `directory` is the one path the block holds; it resolves against the home here,
  *  and the module code is imported lazily so composing the schema stays cheap. */
 export const plugin: AiviPlugin<SlackConfig> = {
-  id: 'slack',
+  id: MODULE_ID,
   configSchema: slackConfigSchema,
   createModule: (config, home) =>
     import('./module.ts').then(m =>

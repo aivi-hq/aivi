@@ -18,7 +18,11 @@ export type ReentryContext = DeliveryContext & { run: Run };
  * `report.to: "channel"` with its id posts through it.
  */
 export interface ChannelModule {
-  /** Module id: `report.module`, table prefix, lease owner, `metadata.aivi.origin`. */
+  /** What a conversation is **on**: `report.module`, table prefix, lease owner,
+   *  `metadata.aivi.origin`. Not the plugin registry's module id — that one is
+   *  the package name (`tracker-linear`) and keys `config.json`, while this one
+   *  is the platform's short name (`linear`) and keys the database, so renaming
+   *  it would orphan every bound conversation that already exists. */
   id: string;
   /** This session is one of the module's conversations (bound or adopted). */
   ownsSession(sessionId: string): boolean;

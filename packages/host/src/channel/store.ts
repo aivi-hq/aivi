@@ -73,11 +73,28 @@ const turn = (r: Row): Turn => ({
 
 const PENDING = "('queued','running','replying','blocked')";
 
-/** Table names and ids derived from the module id; Discord's predate the contract and are unchanged by it. */
+/** A platform adapter's id, and the table names and ids derived from it —
+ *  Discord's tables predate the contract and are unchanged by it.
+ *
+ *  This id says **who a conversation is on**, not which package speaks for it.
+ *  `@aivi/tracker-linear`'s module id is its package name; its platform id stays
+ *  `linear`, because renaming a prefix would leave every bound conversation in
+ *  an existing database pointing at a table nobody opens again, and the old
+ *  tables sitting there for ever. A prefix is renamed by a migration or not at
+ *  all.
+ *
+ *  It is still an adapter author's string, so it enters SQL as a **quoted**
+ *  identifier: unquoted, an id carrying dashes would parse as subtraction and
+ *  the adapter would die at its first `CREATE TABLE`. Quoting renames nothing —
+ *  `"linear_turns"` is the table `linear_turns` was. Values (the lease owner,
+ *  the lease id, a session id) are not identifiers and are left exactly as
+ *  written. */
+const table = (name: string) => `"${name.replaceAll('"', '""')}"`;
+
 const namesFor = (id: string) => ({
-  binding: `${id}_binding`,
-  sessions: `${id}_sessions`,
-  turns: `${id}_turns`,
+  binding: table(`${id}_binding`),
+  sessions: table(`${id}_sessions`),
+  turns: table(`${id}_turns`),
   leaseOwner: id,
   leaseID: (turnId: string) => `${id}:${turnId}`,
   newSession: () => `ses_${id}_${randomUUID().replaceAll('-', '')}`,
@@ -89,9 +106,9 @@ const migrations = (n: ReturnType<typeof namesFor>, id: string) => [
    CREATE TABLE ${n.turns}(seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE,
      channel TEXT NOT NULL, user TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL,
      session TEXT NOT NULL, state TEXT NOT NULL, result TEXT, error TEXT);
-   CREATE INDEX ${id}_pending ON ${n.turns}(state,seq);`,
+   CREATE INDEX ${table(`${id}_pending`)} ON ${n.turns}(state,seq);`,
   `ALTER TABLE ${n.turns} ADD COLUMN kind TEXT NOT NULL DEFAULT 'message' CHECK(kind IN ('message','job'));
-   CREATE INDEX ${id}_session_lookup ON ${n.sessions}(session);`,
+   CREATE INDEX ${table(`${id}_session_lookup`)} ON ${n.sessions}(session);`,
   `ALTER TABLE ${n.sessions} ADD COLUMN agent TEXT;
    ALTER TABLE ${n.sessions} ADD COLUMN directory TEXT;
    ALTER TABLE ${n.sessions} ADD COLUMN seed TEXT;`,

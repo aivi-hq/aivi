@@ -12,11 +12,24 @@ const id = z.string().regex(PROJECT_ID);
  * **Issues** data feed on its webhook route, receives every agent-session
  * event, and its token authorises the Linear MCP. Extra apps are *faces* — a
  * name and icon in Linear's UI, their own credentials (`LINEAR_<APP>_*`) and
- * webhook route, no routing meaning. Lanes in `projects.<id>.linear.lanes`
- * name OpenCode agents directly. The block lives at `plugins.linear` in
- * config.json; the `aivi-plugins` list in app/package.json says whether the
- * module runs.
+ * webhook route, no routing meaning. Lanes in
+ * `projects.<id>.tracker-linear.lanes` name OpenCode agents directly. The block
+ * lives at `plugins.tracker-linear` in config.json — the module id is the
+ * package name, ruled 2026-09-30 — and the `aivi-plugins` list in
+ * app/package.json says whether the module runs.
  */
+/** The module id, and with it the key of this plugin's block in `config.json`
+ *  (`plugins.tracker-linear`), its `/status` id and its log category: the module
+ *  id is the package name (`@aivi/tracker-linear`), ruled 2026-09-30 for every
+ *  plugin, so a person writes the word they already typed into `aivi add` and
+ *  never opens a source file to learn what to call a plugin. What deliberately
+ *  keeps the shorter `linear` is everything naming the **platform** rather than
+ *  this package: the SQLite prefix and session-id prefix (renaming those would
+ *  orphan every conversation in an existing database for no gain), the webhook
+ *  URL Linear's dashboard holds, and the `aivi linear` command.
+ */
+export const MODULE_ID = 'tracker-linear';
+
 export const linearSchema = z
   .strictObject({
     agent: z
@@ -214,7 +227,7 @@ export interface ProjectLinear {
  *  `projectDefaults` are contributed here — core passes them through and this
  *  plugin reads them back. */
 export const plugin: AiviPlugin<LinearConfig> = {
-  id: 'linear',
+  id: MODULE_ID,
   configSchema: linearSchema,
   projectSchema: linearProjectSchema,
   projectDefaultsSchema: linearProjectDefaultsSchema,

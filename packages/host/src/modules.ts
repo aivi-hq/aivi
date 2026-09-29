@@ -8,6 +8,11 @@ export interface RunningModule {
   stop(): Promise<void>;
 }
 export interface ModuleContract<Services = unknown> {
+  /** The module id — the package's short name (`channel-discord`), the same
+   *  word as `plugins.<id>`. It keys the supervisor, shows as the `/status`
+   *  id and owns task claims. Not the channel's platform id: that one is
+   *  `discord` and keys the database, and a module that registers a channel
+   *  carries both on purpose. */
   id: string;
   start(services: Services): Promise<RunningModule>;
   /**

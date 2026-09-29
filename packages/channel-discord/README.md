@@ -8,8 +8,10 @@ contract; the host owns the inbox, bindings, engine, and turn runner.
 
 | Path | Contents |
 | --- | --- |
-| `@aivi/channel-discord` | `createDiscordModule` — the `HostModule` a running server composes |
-| `@aivi/channel-discord/setup` | self-configuration entry used by `aivi add discord` |
+| `@aivi/channel-discord` | `createDiscordModule` — the module a running server composes |
+| `./config` | the `plugin` declaration: module id and config schema |
+| `./setup` | the setup guide `aivi add discord` runs |
+| `./cli` | the `aivi discord` command |
 
 ## Enable it
 
@@ -17,9 +19,16 @@ The short way is `aivi add discord`: it prints how to create the
 Discord app, asks for the tokens, verifies each, writes `config.json` and
 `.env` itself, and aivi comes back with the module running.
 
-By hand: presence of a validated `modules.discord` block in `config.json`
-enables the module; `false` is an explicit off. Put `DISCORD_BOT_TOKEN` in
-`.env`. Slash commands are registered at start.
+By hand: list `@aivi/channel-discord` in `aivi-plugins` in
+`app/package.json` — the list is what enables a module, the block is only
+its setup — and write a validated `plugins.channel-discord` block in
+`config.json`. Put `DISCORD_BOT_TOKEN` in `.env`. Slash commands are
+registered at start.
+
+The module id is `channel-discord`, the package's short name; the *platform*
+id stays `discord` and is what keys the database tables and session ids,
+because renaming a prefix would orphan every conversation already bound
+to it.
 
 ## Dependencies
 

@@ -257,7 +257,7 @@ test('slack manifest dumps the whole app manifest as JSON, prefix from the flag,
     JSON.stringify({
       version: 1,
       identity: { name: 'Clawd' },
-      plugins: { slack: { commandPrefix: 'spider', access: { channels: [] } } },
+      plugins: { 'channel-slack': { commandPrefix: 'spider', access: { channels: [] } } },
     }),
   );
   const configured = await run(['slack', 'manifest'], env);

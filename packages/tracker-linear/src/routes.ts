@@ -1,6 +1,7 @@
 import type { Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
 import type { PublicRequest, PublicRoutes } from '@aivi/host';
+import { MODULE_ID } from './config.ts';
 import { type LinearWebhook, verifyWebhook } from './webhook.ts';
 
 /** An app's own stream, at `app/<id>`: agent-session events — and, for the
@@ -50,7 +51,7 @@ export function registerWebhookRoutes(
   routes: PublicRoutes,
   apps: WebhookApp[],
   dispatch: (app: string, payload: LinearWebhook) => Promise<void>,
-  log: Logger = getLogger(['aivi', 'linear']),
+  log: Logger = getLogger(['aivi', MODULE_ID]),
 ): () => void {
   const unregister = apps.map(app =>
     routes.register(

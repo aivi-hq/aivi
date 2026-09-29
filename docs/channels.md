@@ -17,7 +17,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 
 | Member | Meaning |
 | --- | --- |
-| `id` | The module id (`discord`, `slack`): `report.module`, table prefix, lease owner, `metadata.aivi.origin` |
+| `id` | The **platform** id (`discord`, `slack`): `report.module`, table prefix, lease owner, `metadata.aivi.origin`. Not the plugin registry's module id, which is the package's short name and keys `plugins.<id>` — `@aivi/tracker-linear` registers the platform `linear` |
 | `ownsSession(sessionId)` | This OpenCode session is one of the module's conversations (bound or adopted) |
 | `reenter(sessionId, text, context)` | Bring a run's outcome into the conversation bound to that session as a turn of kind `job`; `context` is `{ run, state }` |
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
@@ -148,8 +148,10 @@ with the answer only.
 
 ## Identifiers and prefixes
 
-All derive from the module id so two platforms never collide in one database
-or one OpenCode:
+All derive from the platform id — who a conversation is on, not which package
+speaks for it — so two platforms never collide in one database or one OpenCode.
+A prefix is never renamed once conversations are bound to it; quoting it in SQL
+is not a rename:
 
 | What | Shape |
 | --- | --- |

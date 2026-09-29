@@ -16,14 +16,22 @@ import {
 
 export type { LaneBinding } from './config.ts';
 
-/** The `linear` section of a project entry as written — typed, or undefined.
- *  Core passes the section through; reading it is this plugin's business. */
-const writtenLinear = (loaded: LoadedConfig, projectId: string): LinearProjectEntry | undefined =>
-  (loaded.config.projects[projectId] as { linear?: unknown } | undefined)?.linear as LinearProjectEntry | undefined;
+/** The module id, which is also the key of this plugin's section under every
+ *  project and under `projectDefaults`: core writes what it is keyed by, so one
+ *  word names both and a person never guesses which is which. */
+export const SECTION = 'tracker-linear';
 
-/** The `linear` section of `projectDefaults` as written. */
+/** The `tracker-linear` section of a project entry as written — typed, or
+ *  undefined. Core passes the section through; reading it is this plugin's
+ *  business. */
+const writtenLinear = (loaded: LoadedConfig, projectId: string): LinearProjectEntry | undefined =>
+  (loaded.config.projects[projectId] as Record<string, unknown> | undefined)?.[SECTION] as
+    | LinearProjectEntry
+    | undefined;
+
+/** The `tracker-linear` section of `projectDefaults` as written. */
 const writtenDefaults = (loaded: LoadedConfig): LinearProjectDefaults | undefined =>
-  (loaded.config.projectDefaults as { linear?: unknown }).linear as LinearProjectDefaults | undefined;
+  (loaded.config.projectDefaults as Record<string, unknown>)[SECTION] as LinearProjectDefaults | undefined;
 
 /** The lanes the listener consults for one project: the projectDefaults base
  *  merged with the entry's own — entry winning one lane at a time — with the
@@ -51,7 +59,7 @@ export function linearTeamCollisions(loaded: LoadedConfig): string[] {
     for (const team of writtenLinear(loaded, project)?.teams ?? []) {
       const owner = owners.get(team);
       if (owner && owner !== project)
-        collisions.push(`projects.${project}.linear.teams: this Linear team is already mapped to project ${owner}`);
+        collisions.push(`projects.${project}.${SECTION}.teams: this Linear team is already mapped to project ${owner}`);
       owners.set(team, project);
     }
   return collisions;
@@ -81,7 +89,7 @@ export function projectForIssue(
 
 /**
  * Point a project at Linear teams, and optionally its lanes: writes
- * `projects.<id>.linear.teams` (and `lanes` when given) and touches nothing
+ * `projects.<id>.tracker-linear.teams` (and `lanes` when given) and touches nothing
  * else — every other part of the file stays as it was, an existing `lanes`
  * included when none is passed. The written file must hold: the core config
  * must still load, the section must parse against this plugin's own schema,
@@ -102,8 +110,8 @@ export async function writeProjectLinear(
   raw.projects = projects;
   const entry = (projects[id] ?? {}) as Record<string, unknown>;
   projects[id] = entry;
-  const linear = (entry.linear ?? {}) as Record<string, unknown>;
-  entry.linear = linear;
+  const linear = (entry[SECTION] ?? {}) as Record<string, unknown>;
+  entry[SECTION] = linear;
   linear.teams = options.teams;
   if (options.lanes) linear.lanes = options.lanes;
   await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);

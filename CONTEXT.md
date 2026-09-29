@@ -39,7 +39,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | tracker adapter | the translator between aivi and one ticket system, at the `@aivi/plugin/tracker` seam: platform events in (`started`/`prompted`/`updated` on a *conversation*, the tracker's word for one working session), neutral updates out (`issue`, `assign`/`unassign`, `startSession`, `comment`, `laneStates`). A translator and nothing else — lanes, guards, capacity, worktrees and the exit contract are aivi's machinery, which spells `tracker` and never parses a conversation or reads a webhook. Linear's adapter is `tracker-linear/src/tracker.ts`; the machinery speaking it is what the orchestrator extraction lifts into the host |
 | forge adapter | the translator between aivi and one repository host, at the `@aivi/plugin/forge` seam: the facts a clone cannot see (which pull request stands for a branch, what its review said) and the operations only it may authenticate — everything that reaches `origin`: clone, the `source/` sync, push. An **installation** is the grant from an account to the app, and aivi speaks through exactly one, as its own app and never as the person at the keyboard; its posts are signed `_worker: aivi · <role>_` in the text a human reads, so a wake can tell them from replies. Local git — worktrees, commits — is not a forge's, and the line is remote, not clone. `forge-github` is the one built; the host-side registry with "who owns this project's remote?" comes with the orchestrator |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
-| origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`, `linear`), `job`, `dreaming`; on messages also `job-result` |
+| origin | `metadata.aivi.origin` on every session aivi creates: a channel **platform** id (`discord`, `slack`, `linear` — the platform a
+  conversation is on, not the package that speaks for it, which is why
+  `@aivi/tracker-linear` writes `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
 | model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
 | chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates |
@@ -171,8 +173,13 @@ runs in one process; adapters are optional modules with a start/stop contract.
   as `degraded` in status; only a `ConfigurationError` (something the operator
   must change) is fatal ([operations](docs/operations.md#startup)).
 - **One config file, and it is yours.** One `plugins` object holds one block
-  per plugin, keyed by the plugin's own **module id** (`plugins.discord`,
-  `plugins.linear`); what enables a module is the **`aivi-plugins` list** in
+  per plugin, keyed by the plugin's own **module id, which is the package's
+  short name** (`plugins.tracker-linear`, `plugins.forge-github`) — the word a
+  person typed into `aivi add`, so nobody reads a source file to learn what to
+  write in `config.json`. The platform's short name survives only where it names
+  the **platform** and not the package: Linear's table prefix and session ids
+  stay `linear`, because renaming a prefix orphans every conversation already
+  bound to it. What enables a module is the **`aivi-plugins` list** in
   `app/package.json`, which holds npm **package names** — the install fact
   (`aivi add @someone/aivi-cool-plugin`) — while the module id is the config
   key, the logger category and the `/status` id, declared by the package's
@@ -215,7 +222,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   it, so the name has one owner and a soul edit cannot change it
   ([linear](docs/linear.md), [configuration](docs/configuration.md#the-soul)).
 - **A repository is a Linear team.** Routing reads the issue's team only
-  (`projects.<id>.linear.teams`, a list: several teams may share one
+  (`projects.<id>.tracker-linear.teams`, a list: several teams may share one
   checkout); lanes, branch-name format and labels all live per Linear team,
   while a Linear *project* is the humans' epic with a completion date and
   aivi never consults it ([linear](docs/linear.md)).
@@ -247,7 +254,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   is answered once per start with the link hint; in channels aivi stays
   silent ([discord](docs/discord.md#behavior)).
 - **The lane map is a convention with per-project deviations.**
-  `projectDefaults.linear.lanes` is the company-wide base and a project wins
+  `projectDefaults.tracker-linear.lanes` is the company-wide base and a project wins
   one lane at a time over it (merge, where `projectDefaults.knowledge`
   replaces: a lane map is a lookup table, not a list); `null` marks a lane
   humans work — written in the file, absent from the map the listener

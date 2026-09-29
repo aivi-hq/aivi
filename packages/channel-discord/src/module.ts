@@ -46,7 +46,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { DiscordConfig, Route } from './config.ts';
-import { authorized, reaches } from './config.ts';
+import { authorized, MODULE_ID, reaches } from './config.ts';
 
 const safeSend = {
   allowedMentions: { parse: [] as never[], repliedUser: false },
@@ -99,7 +99,7 @@ export async function registerDiscordCommands(config: DiscordConfig): Promise<vo
 }
 
 export function createDiscordModule(config: DiscordConfig): AiviModule {
-  return { id: 'discord', start: services => startDiscord(config, services) };
+  return { id: MODULE_ID, start: services => startDiscord(config, services) };
 }
 
 /** Discord thread names are capped at 100 characters; use the opening words of the message. */
@@ -116,7 +116,7 @@ function requireToken(): string {
 }
 
 async function startDiscord(config: DiscordConfig, services: AiviServices) {
-  const log = services.log.getChild('discord');
+  const log = services.log.getChild(MODULE_ID);
   const token = requireToken();
   const store = openDiscordStore(services.store, config);
   if (store.rebound)

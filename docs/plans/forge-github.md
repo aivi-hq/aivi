@@ -24,8 +24,8 @@ The word distinguishes two things that keep getting conflated:
   the [orchestrator](templates/orchestrator.md) seam; unrelated to this.
 
 Today GitHub is a forge implicitly: every project clone has `origin`,
-`identity.github` names the commit bot, `identity.github.app` waits
-unused, and PRs are entirely the worker's own business. This makes the
+`identity.github` names the commit bot, and PRs are entirely the worker's
+own business. This makes the
 role explicit: the contract lives in **`@aivi/plugin/forge`** (D6: the
 subpath gets its first content from this build), the GitHub
 implementation is the plugin **`@aivi/forge-github`** (D20 naming).
@@ -230,8 +230,10 @@ instruction), now caught by validation instead of hope.
 - **The app id is the plugin's own config** (ruled 2026-09-29):
   `plugins.forge-github.app`. `identity` is per-project commit facts; a
   plugin's default belongs under the plugin, where its schema validates
-  it. `identity.github.app` ("nothing reads it yet") is orphaned and dies
-  at landing. The **private key is a secret**: `GITHUB_APP_PRIVATE_KEY` in
+  it. `identity.github.app` was orphaned — **deleted 2026-09-30**, with its
+  `configuration.md` row and the `app` field of `AIVI_AGENT_BOT`: core keeps the
+  commit pair and no GitHub fact, because the id belongs to whoever mints a
+  token as the app. The **private key is a secret**: `GITHUB_APP_PRIVATE_KEY` in
   `<home>/.env`. **The host's named scrub list does not grow** (corrected
   as built, 2026-09-29): every key of `<home>/.env` is already withheld from
   a task script's environment (`protectedEnv`, from `loadEnvFile` in
@@ -287,10 +289,15 @@ instruction), now caught by validation instead of hope.
   do. **Module id `forge-github`**,
   same as the package name — ruled 2026-09-29 to prevent config
   fragmentation: list entry, `plugins.forge-github` block and `/status`
-  all say the one word. (The same rule says Linear's module id should be
-  `tracker-linear`; renaming it is free **before v1** — no installed
-  config exists to break, and D22 nukes the dev home. Recorded for the
-  tracker extraction to land, not done today.)
+  all say the one word. **The rule holds for every plugin** (ruled again
+  2026-09-30, and applied): a person writes the word they already typed into
+  `aivi add`, not one they have to find in a source file. Linear's module id
+  became `tracker-linear` that day — its config block, its `/status` id, its log
+  category and its project section. What did **not** move is everything naming
+  the platform rather than the package: the SQLite prefix and session-id prefix
+  (`linear_turns`, `ses_linear_…`), the webhook URL Linear's dashboard holds,
+  and the `aivi linear` command. Renaming a table prefix would leave every
+  conversation already bound in a database pointing at a table nobody opens.
 - Listed in `aivi-plugins` (D9). Config minimal to the point of empty:
   the app id is `plugins.forge-github.app`, the repos come from project
   remotes — **no per-project forge config**; a project whose remote parses
@@ -314,7 +321,7 @@ instruction), now caught by validation instead of hope.
 | Today | After |
 | --- | --- |
 | `identity.github` (commit pair) | stays — a git fact, no auth involved |
-| `identity.github.app` ("nothing reads it yet") | orphaned: the forge's app id lives in its own block; delete the field at landing |
+| `identity.github.app` ("nothing reads it yet") | **gone (2026-09-30)**: the forge's app id lives in its own block; the `identity.github` commit pair untouched |
 | Linear's "I know a PR exists" (a tracker capability) | stays a **tracker** answer; the forge is the fallback for trackers that cannot say |
 | PRs as invisible worker magic | the worker's git is **local-only** — `git push` denied by its agent file; push, PR creation, and review replies all go through the forge on the orchestrator's word (Q1, Q2 resolved). The worker never holds forge credentials |
 
@@ -456,10 +463,10 @@ flow detail stays proposed until worked examples are walked.
       screen. Whether that is enough is what a live run judges.
 - [ ] Live gate: one real pull request read, and one real thread resolved as
       `aivi-agent[bot]`, the signed comment's look judged by eye.
-- [ ] Delete `identity.github.app` and its configuration.md line; the
-      `identity.github` pair untouched. **Held back on purpose**: the operator's
-      live config still holds the field, and a `strictObject` would reject his
-      running configuration.
+- [x] Deleted `identity.github.app`, its `configuration.md` row and the `app`
+      field of `AIVI_AGENT_BOT` (2026-09-30, the operator's call: there is no
+      installed config to break, no backwards compatibility to hold). Core keeps
+      the commit pair — name and email — and no GitHub fact at all.
 - [ ] Q1's other half: the worker's `git push` deny in its own agent file, and
       the push at turn end on the orchestrator's word with the pull-request
       message from the closing report. The transfer side is built above; the

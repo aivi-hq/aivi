@@ -356,12 +356,14 @@ export function accessReaches(policy: AccessPolicy, route: AccessRoute): boolean
  * The aivi GitHub App, created 2026-09-20. The last resort for the git identity
  * and the only identity that works unattended: GitHub resolves a bot commit's
  * avatar and link from the email **inside the commit**, never from who pushed,
- * so this needs no token and no installation.
+ * so this needs no token and no installation. What is here is a commit
+ * identity and nothing else: the app's *id* belongs to whichever plugin mints a
+ * token as the app — `plugins.forge-github.app` — because core names systems,
+ * not GitHub.
  */
 export const AIVI_AGENT_BOT = {
   user: 'aivi-agent[bot]',
   email: '331678708+aivi-agent[bot]@users.noreply.github.com',
-  app: 5011508,
 } as const;
 /**
  * Who aivi is. `name` is the persona every platform shows; `github` is who aivi
@@ -393,14 +395,6 @@ export const identitySchema = z
           .optional()
           .describe(
             'The git author email, same order as `user`. GitHub links the commit from this email, so the default is the app’s noreply address.',
-          ),
-        app: z
-          .number()
-          .int()
-          .min(1)
-          .optional()
-          .describe(
-            'The GitHub App id. Nothing reads it yet; whoever mints an installation token to act on GitHub as the app signs a JWT issued to this.',
           ),
       })
       .optional()

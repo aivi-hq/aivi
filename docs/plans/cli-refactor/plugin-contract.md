@@ -107,6 +107,18 @@ code.
   future `tracker-github`.
 - Cheapest moment is now: pre-1.0, few installs, and these packages are opened
   anyway. Changesets under the fixed group.
+- **The module id is the package's short name** (ruled 2026-09-30, as the forge
+  landed): `plugins.tracker-linear`, `plugins.forge-github` — the same word as
+  the npm name after the scope, and the same word `/status` and the log category
+  use. Linear's id moved to `tracker-linear` that day; there was no installed
+  config to break. Not module ids, and so not renamed, are the **platform**'s
+  short names: the SQLite prefix and session-id prefixes (`linear_turns`,
+  `ses_linear_…`), the webhook URL Linear's dashboard holds, the `aivi linear`
+  command. **The operator ruled the same for the channels** (2026-09-30, the
+  day after): `@aivi/channel-discord` and `@aivi/channel-slack` key their
+  blocks `plugins.channel-discord` and `plugins.channel-slack` too, and the
+  rule now holds for every plugin that can be installed; their **platform**
+  ids stay `discord` and `slack`, which is what keys the database.
 
 ## Core loses its last CLI face
 

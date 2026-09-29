@@ -22,7 +22,7 @@ const run = promisify(execFile);
 
 /** The typed block out of the open core parse: the plugin's own schema fills defaults. */
 const linearBlock = (config: { plugins: Record<string, unknown> }): LinearConfig =>
-  linearSchema.parse(config.plugins.linear);
+  linearSchema.parse(config.plugins['tracker-linear']);
 const git = (cwd: string, ...args: string[]) =>
   run('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
 
@@ -238,8 +238,8 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
-    plugins: { linear: { agent: 'assistant', primary: 'dev', apps: { dev: {}, face: {} }, mcp: false } },
-    projects: { website: { linear: { teams: ['t', 'tx'], lanes: { 'In Progress': 'developer' } } } },
+    plugins: { 'tracker-linear': { agent: 'assistant', primary: 'dev', apps: { dev: {}, face: {} }, mcp: false } },
+    projects: { website: { 'tracker-linear': { teams: ['t', 'tx'], lanes: { 'In Progress': 'developer' } } } },
   });
   const opencode = await fakeOpenCode(t, 'Done: fixed the header.');
   config.opencode.url = opencode.url;
@@ -250,7 +250,7 @@ test('a delegation in a mapped lane runs the lane agent in a worktree; people re
       {
         id: 'website',
         directory: source,
-        linear: { teams: ['t', 'tx'], lanes: { 'In Progress': { agent: 'developer', worktree: true } } },
+        'tracker-linear': { teams: ['t', 'tx'], lanes: { 'In Progress': { agent: 'developer', worktree: true } } },
       },
     ],
     sources: [],
@@ -426,10 +426,10 @@ test('a read-only lane runs its agent in the project checkout without a worktree
   const config = configSchema.parse({
     version: 1,
     opencode: { url: 'http://placeholder' },
-    plugins: { linear: { apps: { dev: {} }, mcp: false } },
+    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false } },
     projects: {
       site: {
-        linear: { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
+        'tracker-linear': { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
       },
     },
   });
@@ -442,7 +442,7 @@ test('a read-only lane runs its agent in the project checkout without a worktree
       {
         id: 'site',
         directory: source,
-        linear: { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
+        'tracker-linear': { teams: ['t'], lanes: { Research: { agent: 'researcher', worktree: false } } },
       },
     ],
     sources: [],
@@ -529,8 +529,10 @@ test('the listener delegates an issue entering a mapped lane and starts the work
   const config = configSchema.parse({
     version: 1,
     opencode: { url: opencode.url },
-    plugins: { linear: { apps: { dev: {} }, mcp: false, listener: true } },
-    projects: { api: { linear: { teams: ['t'], lanes: { 'In Progress': 'developer', Review: 'developer' } } } },
+    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false, listener: true } },
+    projects: {
+      api: { 'tracker-linear': { teams: ['t'], lanes: { 'In Progress': 'developer', Review: 'developer' } } },
+    },
   });
   const loaded = {
     config,
@@ -539,7 +541,7 @@ test('the listener delegates an issue entering a mapped lane and starts the work
       {
         id: 'api',
         directory: source,
-        linear: {
+        'tracker-linear': {
           teams: ['t'],
           lanes: {
             'In Progress': { agent: 'developer', worktree: true },

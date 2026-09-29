@@ -453,7 +453,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   await ctx.writeSecret(linearPrimarySecretNames.clientId, clientId);
   await ctx.writeSecret(linearPrimarySecretNames.clientSecret, clientSecret);
   await ctx.writeSecret(linearPrimarySecretNames.webhookSecret, webhookSecret);
-  await ctx.writeConfigBlock(['plugins', 'linear'], {
+  await ctx.writeConfigBlock(['plugins', 'tracker-linear'], {
     ...existingBlock,
     apps: { ...(existingBlock?.apps ?? {}), [id]: {} },
   });
@@ -469,7 +469,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   // service is installed the CLI restarts it anyway and reports that as
   // it happens. Performing a restart never belongs to this flow.
   return {
-    module: 'linear',
+    module: 'tracker-linear',
     summary: failed.length
       ? `Linear is configured: ${outcome}.`
       : `Linear is configured: ${outcome}. Restart aivi to load Linear.`,

@@ -33,6 +33,7 @@ export type JobSource = 'config' | 'agent' | 'operator' | 'system';
 export type JobState = 'active' | 'paused' | 'done' | 'missed';
 /** One optional module as the host sees it; `degraded` means its start failed and is being retried. */
 export interface ModuleHealth {
+  /** The module's own id — the package's short name, as `plugins.<id>`. */
   id: string;
   state: 'starting' | 'running' | 'degraded' | 'stopped';
   attempts: number;

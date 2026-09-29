@@ -7,11 +7,12 @@ import type { PluginCliContext } from '@aivi/plugin';
 import { resolveBlocked } from '@aivi/plugin';
 import { Command } from 'commander';
 import type { SlackConfig } from './config.ts';
+import { MODULE_ID } from './config.ts';
 
 const enabled = async (ctx: PluginCliContext): Promise<SlackConfig> => {
   const loaded = await ctx.loaded();
-  const config = loaded.config.plugins.slack as SlackConfig | undefined;
-  if (!config) throw new Error('Slack is not configured in config.json (no plugins.slack block)');
+  const config = loaded.config.plugins[MODULE_ID] as SlackConfig | undefined;
+  if (!config) throw new Error('Slack is not configured in config.json (no plugins.channel-slack block)');
   return config;
 };
 
@@ -27,7 +28,7 @@ export default (ctx: PluginCliContext): Command => {
       // The prefix that matters is the one the configured module runs with;
       // `--prefix` overrides, and an unconfigured home is prompted — this
       // command exists to set the app up in the first place.
-      const configured = (loaded.config.plugins.slack as SlackConfig | undefined)?.commandPrefix;
+      const configured = (loaded.config.plugins[MODULE_ID] as SlackConfig | undefined)?.commandPrefix;
       let prefix = options.prefix ? String(options.prefix) : configured;
       if (!prefix) {
         if (!process.stdin.isTTY)

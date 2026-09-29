@@ -97,7 +97,7 @@ export type TrackerUpdate =
  * binds it to agents, projects and issues in its own store.
  */
 export interface Tracker {
-  /** The module id this tracker speaks for (`linear`). */
+  /** The module id this tracker speaks for (`tracker-linear`). */
   readonly id: string;
   /** The team's workflow states as the platform holds them, so a proposed
    *  lane mapping can be validated against what exists. */

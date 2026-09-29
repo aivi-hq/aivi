@@ -9,7 +9,7 @@ import { parseEnv } from 'node:util';
 import { loadConfig } from './config.ts';
 
 /**
- * Write one block into `config.json` at a path like `['plugins', 'discord']`:
+ * Write one block into `config.json` at a path like `['plugins', 'channel-discord']`:
  * only that path is created or replaced, everything else keeps its bytes, and
  * the result must load with `loadConfig` — otherwise the old file returns and
  * the validation error stands.
@@ -34,7 +34,7 @@ export async function writeConfigBlock(configPath: string, path: string[], value
 }
 
 /**
- * Remove one block from `config.json` at a path like `['plugins', 'discord']`:
+ * Remove one block from `config.json` at a path like `['plugins', 'channel-discord']`:
  * only that path disappears (an absent path is no error, and answers false),
  * everything else keeps its bytes, and the result must load with `loadConfig`
  * — otherwise the old file returns and the validation error stands. The

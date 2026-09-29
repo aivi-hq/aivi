@@ -22,7 +22,7 @@ import type { AiviModule, AiviServices, Store } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { Tracker, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
 import type { LinearConfig } from './config.ts';
-import { assistantAgent } from './config.ts';
+import { assistantAgent, MODULE_ID } from './config.ts';
 import { LinearMcp } from './mcp.ts';
 import type { LaneBinding } from './projects.ts';
 import { linearTeamCollisions, projectForIssue } from './projects.ts';
@@ -35,6 +35,12 @@ import { ensureWorktree, globalGitConfig, worktreePathFor } from './worktree.ts'
  * effects beyond their reply, so a restart mid-turn blocks instead of discarding.
  */
 export const LINEAR: ChannelPlatform = {
+  // The **platform** id, and so the table prefix, the lease owner, the session
+  // and message id prefixes and the session origin. It says who a conversation
+  // is on, which is Linear, not which package happens to speak for it: renaming
+  // it would leave every bound conversation in an existing database pointing at
+  // a table nobody opens. The module's own id — `plugins.tracker-linear`, the
+  // log category — is `MODULE_ID`, and the two are deliberately different.
   id: 'linear',
   label: 'Linear',
   replyLimit: 60_000,
@@ -80,18 +86,18 @@ type MakeTracker = (services: AiviServices) => Promise<Tracker>;
  */
 export function createLinearModule(config: LinearConfig, makeTracker?: MakeTracker): AiviModule {
   return {
-    id: LINEAR.id,
+    id: MODULE_ID,
     start: services =>
       startLinear(
         config,
         services,
-        makeTracker ?? (({ routes, log }) => createLinearTracker(config, routes, undefined, log.getChild('linear'))),
+        makeTracker ?? (({ routes, log }) => createLinearTracker(config, routes, undefined, log.getChild(MODULE_ID))),
       ),
   };
 }
 
 async function startLinear(config: LinearConfig, services: AiviServices, makeTracker: MakeTracker) {
-  const log = services.log.getChild('linear');
+  const log = services.log.getChild(MODULE_ID);
   const collisions = linearTeamCollisions(services.loaded);
   if (collisions.length) throw new Error(`Linear config: ${collisions.join('; ')}`);
   const store = openLinearStore(services.store);
@@ -283,7 +289,7 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       promptContext?: string,
     ) => {
       store.bind(conversation, {
-        agent: assistantAgent(services.loaded.config.plugins.linear as LinearConfig | undefined),
+        agent: assistantAgent(services.loaded.config.plugins['tracker-linear'] as LinearConfig | undefined),
         directory: project ? project.directory : home,
         project: project?.id ?? null,
       });

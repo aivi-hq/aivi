@@ -30,7 +30,7 @@ test('a home without a manifest is a home without plugins: empty registry, core 
   assert.deepEqual(registry.entries, []);
   assert.equal(registry.configSchema.safeParse({ version: 1 }).success, true);
   assert.equal(
-    registry.configSchema.safeParse({ version: 1, plugins: { slack: slackBlock } }).success,
+    registry.configSchema.safeParse({ version: 1, plugins: { 'channel-slack': slackBlock } }).success,
     false,
     'no plugin is registered, so no block is known',
   );
@@ -42,9 +42,13 @@ test('the list imports each package’s declaration and composes its schema', as
   assert.equal(registry.entries.length, 1);
   assert.equal(registry.entries[0]!.name, '@aivi/channel-slack');
   assert.equal(registry.entries[0]!.enabled, true);
-  assert.equal(registry.entries[0]!.plugin.id, 'slack', 'the module id is the package’s own declaration');
+  assert.equal(registry.entries[0]!.plugin.id, 'channel-slack', 'the module id is the package’s own declaration');
   const loaded = await loadComposedConfig(root, join(root, 'config.json'));
-  assert.deepEqual(loaded.config.plugins.slack, undefined, 'an absent block stays absent: defaults are serve’s step');
+  assert.deepEqual(
+    loaded.config.plugins['channel-slack'],
+    undefined,
+    'an absent block stays absent: defaults are serve’s step',
+  );
 });
 
 test('a registry read after the list changed sees the change: add’s own sequence', async () => {
@@ -54,7 +58,7 @@ test('a registry read after the list changed sees the change: add’s own sequen
   // schema here and refused the config the wizard had just written.
   const root = await home();
   await loadComposedConfig(root, join(root, 'config.json'));
-  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { slack: slackBlock } }));
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { 'channel-slack': slackBlock } }));
   await writeFile(
     join(root, 'app', 'package.json'),
     JSON.stringify({
@@ -65,15 +69,23 @@ test('a registry read after the list changed sees the change: add’s own sequen
     }),
   );
   const loaded = await loadComposedConfig(root, join(root, 'config.json'));
-  assert.equal(asSlack(loaded.config.plugins.slack).commandPrefix, 'aivi', 'the fresh entry validates its block');
+  assert.equal(
+    asSlack(loaded.config.plugins['channel-slack']).commandPrefix,
+    'aivi',
+    'the fresh entry validates its block',
+  );
 });
 
 test('the composed schema fills the plugin’s defaults and refuses an unlisted block', async () => {
   const root = await home('@aivi/channel-slack');
-  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { slack: slackBlock } }));
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { 'channel-slack': slackBlock } }));
   const loaded = await loadComposedConfig(root, join(root, 'config.json'));
-  assert.equal(asSlack(loaded.config.plugins.slack).commandPrefix, 'aivi', 'the plugin schema fills its defaults');
-  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { discord: {} } }));
+  assert.equal(
+    asSlack(loaded.config.plugins['channel-slack']).commandPrefix,
+    'aivi',
+    'the plugin schema fills its defaults',
+  );
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { 'channel-discord': {} } }));
   await assert.rejects(
     loadComposedConfig(root, join(root, 'config.json')),
     /discord/,
@@ -85,9 +97,13 @@ test('a disabled entry keeps its schema and skips serve: the list entry is exist
   const root = await home(['@aivi/channel-slack', false]);
   const registry = await pluginRegistry(root);
   assert.equal(registry.entries[0]!.enabled, false);
-  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { slack: slackBlock } }));
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { 'channel-slack': slackBlock } }));
   const loaded = await loadComposedConfig(root, join(root, 'config.json'));
-  assert.equal(asSlack(loaded.config.plugins.slack).commandPrefix, 'aivi', 'a plugin on standby still validates');
+  assert.equal(
+    asSlack(loaded.config.plugins['channel-slack']).commandPrefix,
+    'aivi',
+    'a plugin on standby still validates',
+  );
   const modules = await buildModules(registry, loaded, root);
   assert.deepEqual(modules, [], 'standby means serve does not build it');
 });
@@ -99,15 +115,15 @@ test('buildModules: an enabled entry with no block takes its defaults or its own
   // Slack's schema demands `access`: an enabled plugin with nothing to read says so.
   await assert.rejects(
     buildModules(registry, loaded, root),
-    /@aivi\/channel-slack is in the plugin list but config\.json has no plugins\.slack block[\s\S]*access/,
+    /@aivi\/channel-slack is in the plugin list but config\.json has no plugins\.channel-slack block[\s\S]*access/,
   );
   // With the block written, the module is built from the plugin's own code.
-  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { slack: slackBlock } }));
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, plugins: { 'channel-slack': slackBlock } }));
   const built = await loadComposedConfig(root, join(root, 'config.json'));
   const modules = await buildModules(registry, built, root);
   assert.deepEqual(
     modules.map(m => m.id),
-    ['slack'],
+    ['channel-slack'],
   );
 });
 

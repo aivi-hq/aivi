@@ -46,8 +46,8 @@ tail of that install, and of `aivi setup`.
    config.json". **No diffs** — the operator knows what to look for, and can
    later ask the assistant instead ([self-knowledge.md](self-knowledge.md)).
 
-The lane map itself lands in `config.json` (`projectDefaults.linear.lanes` /
-`projects.<id>.linear.lanes`), owned per platform by the operator — the
+The lane map itself lands in `config.json` (`projectDefaults.tracker-linear.lanes` /
+`projects.<id>.tracker-linear.lanes`), owned per platform by the operator — the
 template only proposes. The lane-proposing flow is now **role-driven and
 names no plugin** (built 2026-09-29): `aivi projects add` walks core's systems
 (forge, then tracker), runs each configured plugin's `./setupProject`, and

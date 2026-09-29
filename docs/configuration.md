@@ -64,7 +64,6 @@ containing facts is the wrong file growing.
 | `version` | Required; `1` |
 | `identity.name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Nothing derives agent names from it (the assistant is `assistant` unless a module says otherwise); the display name stays free-form. The plugin says it to every agent (`Your name is aivi.`) ahead of the soul, so `soul.md` never repeats it. aivi cannot set names on the platforms: the operator uses this name in each console |
 | `identity.github` | Who a **worker aivi launched** commits as, as a `{user, email}` pair: name the pair or neither, never half. Default: `opencode.coauthor` in the machine's git config, else the aivi app `aivi-agent[bot] <331678708+aivi-agent[bot]@users.noreply.github.com>`. GitHub resolves a bot commit's avatar and link from the email *inside the commit*, never from who pushed, so no token and no app installation is involved ([linear](linear.md)) |
-| `identity.github.app` | The GitHub App id. Nothing reads it yet: whoever mints an installation token to act on GitHub as the app signs a JWT issued to this |
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
@@ -73,9 +72,9 @@ containing facts is the wrong file growing.
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (set this in any home tests and smoke checks read, so they never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
-| `projectDefaults.linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
+| `projectDefaults.tracker-linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
 | `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a project that is neither checked out nor remembered fails. `<home>/projects/<id>/memory` is each project's `memory` source |
-| `plugins` | One block per plugin, keyed by the plugin's own module id: `plugins.discord`, `plugins.slack`, `plugins.linear`, `plugins.browser`. The block is the plugin's whole setup and is validated by the plugin's own schema; what *enables* a module is the `aivi-plugins` list in `app/package.json`, not the block — a listed plugin with no block takes its defaults or its own clear complaint, and a block for a plugin nobody listed fails validation. Each plugin's doc owns its block: [discord](discord.md), [slack](slack.md), [linear](linear.md), [browser](browser.md) |
+| `plugins` | One block per plugin, keyed by the plugin's own **module id**, which is the package's short name: `plugins.channel-discord`, `plugins.channel-slack`, `plugins.tracker-linear`, `plugins.forge-github`, `plugins.browser`. A person writes the word they typed into `aivi add`, never one they have to find in a source file — the rule holds for every plugin that can be installed (ruled 2026-09-30). What stays the platform's short name is anything naming the platform rather than the package — the table prefixes and session ids (`discord_turns`, `ses_linear_…`) and the `aivi discord`/`aivi linear` commands — because renaming a prefix orphans the conversations already bound to it. The block is the plugin's whole setup and is validated by the plugin's own schema; what *enables* a module is the `aivi-plugins` list in `app/package.json`, not the block — a listed plugin with no block takes its defaults or its own clear complaint, and a block for a plugin nobody listed fails validation. Each plugin's doc owns its block: [discord](discord.md), [slack](slack.md), [linear](linear.md), [browser](browser.md) |
 | `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked runs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
@@ -227,14 +226,17 @@ list` shows them beside the configured ones.
 
 ## Linear
 
-The `plugins.linear` block is the Linear module's whole setup; the module runs
-when `@aivi/tracker-linear` stands in the `aivi-plugins` list
-([linear](linear.md)).
+The `plugins.tracker-linear` block is the Linear module's whole setup; the
+module runs when `@aivi/tracker-linear` stands in the `aivi-plugins` list
+([linear](linear.md)). The key is the package name; the database's prefix, the
+webhook URL Linear's dashboard holds and the `aivi linear` command keep the
+platform's short name, since those say who a conversation is on rather than
+which package speaks for it.
 
 ```json
 {
   "plugins": {
-    "linear": {
+    "tracker-linear": {
       "agent": "aivi",
       "primary": "aivi",
       "apps": { "aivi": {}, "reviewer": {} },
@@ -268,11 +270,11 @@ is a team workflow state, by name):
 ```json
 {
   "projectDefaults": {
-    "linear": { "lanes": { "Dev": "dev", "Review": "dev", "Triage": null } }
+    "tracker-linear": { "lanes": { "Dev": "dev", "Review": "dev", "Triage": null } }
   },
   "projects": {
     "website": {
-      "linear": {
+      "tracker-linear": {
         "teams": ["linear-team-id"],
         "lanes": { "Review": { "agent": "reviewer", "worktree": false }, "Shipped": null }
       }
@@ -290,13 +292,13 @@ work. A lane may be an object `{ agent, worktree: false }`: the agent runs in
 the project's clean checkout on main without a worktree — aivi builds no
 enforcement there, the agent file's own `edit` deny is the only guard, and the
 checkout is never worked in by a lane that does not say so. Lanes merge one
-key at a time over `projectDefaults.linear.lanes` (where `knowledge`
+key at a time over `projectDefaults.tracker-linear.lanes` (where `knowledge`
 replaces: a lane map is a lookup table, not a list), so a project whose site
 works `Dev` with `dev` as the convention says, `Review` with `reviewer` in the
 checkout because the entry outvotes the convention, and leaves `Triage` and
 `Shipped` to people. `teams` is never defaulted: a team belongs to one
 project. `workspaceId` is optional and only needed when the installation spans
-Linear workspaces; `projectDefaults.linear.workspaceId` supplies it to every
+Linear workspaces; `projectDefaults.tracker-linear.workspaceId` supplies it to every
 project that omits its own.
 `aivi projects add` writes `teams` for you: it runs Linear's project-setup
 contributor (the plugin's `./setupProject`), which asks which teams may work

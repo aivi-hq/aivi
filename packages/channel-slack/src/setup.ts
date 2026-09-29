@@ -10,7 +10,7 @@
  * loads is restored to its old bytes.
  */
 import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
-import { isChannelId } from './config.ts';
+import { isChannelId, MODULE_ID } from './config.ts';
 import { slackManifest } from './module.ts';
 
 /** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
@@ -69,10 +69,10 @@ async function collectIds(
 }
 
 const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
-  const existing = (ctx.config.plugins as Record<string, unknown> | undefined)?.slack;
+  const existing = (ctx.config.plugins as Record<string, unknown> | undefined)?.[MODULE_ID];
   if (existing !== undefined)
     throw new Error(
-      'Slack is already configured (the plugins.slack block in config.json). Edit that block; aivi add configures a module that is not configured yet.',
+      'Slack is already configured (the plugins.channel-slack block in config.json). Edit that block; aivi add configures a module that is not configured yet.',
     );
   const prefix =
     settled(
@@ -157,9 +157,9 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   };
   await ctx.writeSecret('SLACK_BOT_TOKEN', botToken);
   await ctx.writeSecret('SLACK_APP_TOKEN', appToken);
-  await ctx.writeConfigBlock(['plugins', 'slack'], block);
+  await ctx.writeConfigBlock(['plugins', MODULE_ID], block);
   return {
-    module: 'slack',
+    module: MODULE_ID,
     summary: [
       `Slack is configured for workspace ${workspace}: /${prefix}-* commands.`,
       channelIds.length ? '' : 'No shared channels: aivi will answer DMs only.',

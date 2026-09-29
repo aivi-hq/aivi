@@ -116,14 +116,14 @@ each, writes `dev/config.json` and `dev/.env` itself, joins the `aivi-plugins`
 list, and aivi comes back with
 the module running ([operations](operations.md#plugins-aivi-add-and-aivi-remove)).
 
-By hand: put your application and channel IDs in the `plugins.discord` block
+By hand: put your application and channel IDs in the `plugins.channel-discord` block
 of `dev/config.json`, put `DISCORD_BOT_TOKEN` in `dev/.env`, add
 `@aivi/channel-discord` to the `aivi-plugins` list in `dev/app/package.json`,
 and run `serve`
 as above (slash commands are registered at start)
 ([Discord setup](discord.md#setup)). For Slack, create the app from the
 manifest in [Slack setup](slack.md#setup) (`npm run aivi -- slack manifest`),
-fill in the `plugins.slack` block, list `@aivi/channel-slack`, and put
+fill in the `plugins.channel-slack` block, list `@aivi/channel-slack`, and put
 `SLACK_BOT_TOKEN` and
 `SLACK_APP_TOKEN` in `dev/.env`.
 

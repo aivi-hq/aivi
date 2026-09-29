@@ -24,7 +24,7 @@ import type {
 } from '@aivi/plugin/tracker';
 import { LinearApiError, LinearClient } from './client.ts';
 import type { LinearConfig } from './config.ts';
-import { linearPrimarySecretNames, linearSecretNames, primaryLinearApp } from './config.ts';
+import { linearPrimarySecretNames, linearSecretNames, MODULE_ID, primaryLinearApp } from './config.ts';
 import { registerWebhookRoutes } from './routes.ts';
 import { isAgentSessionEvent, isIssueEvent, type LinearWebhook } from './webhook.ts';
 
@@ -95,7 +95,7 @@ export function neutralIssue(issue: Awaited<ReturnType<LinearClient['issue']>>):
 }
 
 export class LinearTracker implements Tracker {
-  readonly id = 'linear';
+  readonly id = MODULE_ID;
 
   private readonly config: LinearConfig;
   private readonly routes: PublicRoutes;
@@ -112,7 +112,7 @@ export class LinearTracker implements Tracker {
     config: LinearConfig,
     routes: PublicRoutes,
     clients?: Map<string, LinearClient>,
-    log: Logger = getLogger(['aivi', 'linear']),
+    log: Logger = getLogger(['aivi', MODULE_ID]),
   ) {
     this.config = config;
     this.log = log;

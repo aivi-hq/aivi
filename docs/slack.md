@@ -3,7 +3,8 @@
 `@aivi/channel-slack` is an optional module inside the host application. It
 connects to Slack over **Socket Mode** (no public URL) with `@slack/socket-mode`
 and `@slack/web-api`, and implements the [channel module contract](channels.md)
-with the module id `slack`; the inbox, session bindings, engine, turn runner,
+with the platform id `slack` (the
+module id, the `plugins` key and the `/status` id, is `channel-slack`); the inbox, session bindings, engine, turn runner,
 recovery and feedback described there are the host's. This page has what is
 Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 
@@ -76,7 +77,7 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 ## Setup
 
 The short way: `aivi add slack`. It prints the app manifest itself, asks
-for the two tokens, verifies each against Slack, writes the `plugins.slack`
+for the two tokens, verifies each against Slack, writes the `plugins.channel-slack`
 block and both secrets, and restarts aivi
 ([operations](operations.md#plugins-aivi-add-and-aivi-remove)). The manual path:
 
@@ -168,8 +169,8 @@ anywhere ([people](people.md#link-codes-discord-slack)).
 The short way is `aivi add slack` ([operations](operations.md#plugins-aivi-add-and-aivi-remove)):
 it runs this package's own setup, which prints the manifest to paste into
 Slack's app setup, asks for the two tokens, verifies each against Slack, and
-writes the `plugins.slack` block into `<home>/config.json` and the tokens
-into `.env` itself. By hand, put a `plugins.slack` block in
+writes the `plugins.channel-slack` block into `<home>/config.json` and the tokens
+into `.env` itself. By hand, put a `plugins.channel-slack` block in
 `<home>/config.json`, filled with
 your ids, and put `@aivi/channel-slack` in the `aivi-plugins` list in
 `app/package.json` — the list is what enables the module, the block is its
@@ -178,7 +179,7 @@ whole setup:
 ```json
 {
   "plugins": {
-    "slack": {
+    "channel-slack": {
       "agent": "assistant",
       "commandPrefix": "aivi",
       "access": {

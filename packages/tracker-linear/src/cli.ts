@@ -8,8 +8,8 @@ import type { LinearConfig } from './config.ts';
 
 const enabled = async (ctx: PluginCliContext) => {
   const loaded = await ctx.loaded();
-  const config = loaded.config.plugins.linear as LinearConfig | undefined;
-  if (!config) throw new Error('Linear is not configured in config.json (no plugins.linear block)');
+  const config = loaded.config.plugins['tracker-linear'] as LinearConfig | undefined;
+  if (!config) throw new Error('Linear is not configured in config.json (no plugins.tracker-linear block)');
   return config;
 };
 

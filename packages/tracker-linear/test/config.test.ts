@@ -8,6 +8,7 @@ import {
   plugin,
   primaryLinearApp,
 } from '../src/config.ts';
+import { LINEAR } from '../src/module.ts';
 
 test('linear settings: defaults, secret names, the loopback MCP', () => {
   const linear = linearSchema.parse({ apps: { dev: {} } });
@@ -49,7 +50,13 @@ test('the assistant has one fallback name, never the persona slugged into it', (
 });
 
 test('the plugin declaration is the registry entry: module id and schema', () => {
-  assert.equal(plugin.id, 'linear', 'the module id is the plugins.linear config key');
+  // The module id is the package name, so the block in config.json, the /status
+  // id and the word typed into `aivi add` are one word. What stays `linear` is
+  // the platform's own naming — the table prefix, the webhook URL, the `aivi
+  // linear` command — which says who a conversation is on, not which package
+  // speaks for it.
+  assert.equal(plugin.id, 'tracker-linear', 'the module id is the plugins.tracker-linear config key');
+  assert.equal(LINEAR.id, 'linear', 'the platform id is Linear, and it is what prefixes the tables');
   assert.equal(plugin.configSchema, linearSchema);
   assert.equal(typeof plugin.createModule, 'function');
 });

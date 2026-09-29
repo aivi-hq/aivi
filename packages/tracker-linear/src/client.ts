@@ -1,5 +1,6 @@
 import type { Logger } from '@aivi/core';
 import { errorMessage, getLogger } from '@aivi/core';
+import { MODULE_ID } from './config.ts';
 
 /** What one Linear app needs to talk to the API: a client-credentials token, nothing persisted. */
 export interface LinearCredentials {
@@ -143,7 +144,7 @@ export class LinearClient {
     this.credentials = credentials;
     this.baseUrl = (options.baseUrl ?? 'https://api.linear.app').replace(/\/$/, '');
     this.fetchImpl = options.fetch ?? fetch;
-    this.log = options.log ?? getLogger(['aivi', 'linear']);
+    this.log = options.log ?? getLogger(['aivi', MODULE_ID]);
     this.scope = options.scope ?? DEFAULT_SCOPE;
     this.skew = options.refreshSkewMs ?? 3_600_000;
   }

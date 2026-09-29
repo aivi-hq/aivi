@@ -113,15 +113,20 @@ today) and overridable per project:
 
 ```jsonc
 "projectDefaults": {
-  "tracker": { "id": "linear", "lanes": ["Triage","Backlog","Todo","Development","Review","Done"] },
-  "forge": "github",
+  "tracker": { "id": "tracker-linear", "lanes": ["Triage","Backlog","Todo","Development","Review","Done"] },
+  "forge": "forge-github",
   "queueLane": "Todo",
   "lanes": { "Triage": { "agent": "product" },
              "Development": { "agent": "dev", "worktree": true },
              "Review": { "agent": "dev", "worktree": true } }
 },
-"projects": { "aivi": { "linear": { "teams": ["ENG"] } } }
+"projects": { "aivi": { "tracker-linear": { "teams": ["ENG"] } } }
 ```
+
+Which plugin fills a role is named by its **module id**, which is its package
+name (`tracker-linear`, `forge-github`) — the same word as its `plugins.<id>`
+block, so one word is written everywhere and nobody looks in the code to learn
+what to type.
 
 - `tracker.id` selects the tracker module; `tracker.lanes` is the lane
   order — **a fallback**, the tracker is asked, and the **setup step

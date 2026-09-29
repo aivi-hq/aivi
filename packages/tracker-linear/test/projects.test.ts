@@ -16,12 +16,12 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
   const written = await writeProjectLinear(config, 'site', { teams: ['t-1', 't-2'] });
   assert.deepEqual(written, { id: 'site', teams: ['t-1', 't-2'] });
   const raw = JSON.parse(await readFile(config, 'utf8'));
-  assert.deepEqual(raw.projects, { site: { linear: { teams: ['t-1', 't-2'] } } });
+  assert.deepEqual(raw.projects, { site: { 'tracker-linear': { teams: ['t-1', 't-2'] } } });
   assert.deepEqual(raw.knowledge, [{ id: 'company', path: 'kb' }], 'the rest of the file is kept');
 
   // An existing lanes block survives a rewrite of the teams; so do other projects' entries.
   await mkdir(join(root, 'projects/other/source'), { recursive: true });
-  raw.projects.site.linear.lanes = { 'In Progress': 'developer' };
+  raw.projects.site['tracker-linear'].lanes = { 'In Progress': 'developer' };
   raw.projects.other = { enabled: true };
   await writeFile(config, JSON.stringify(raw, null, 2));
   assert.deepEqual(await writeProjectLinear(config, 'site', { teams: ['t-3'] }), {
@@ -37,7 +37,7 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
     teams: ['t-4'],
     lanes: { Dev: 'dev', Triage: null },
   });
-  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site.linear.lanes, {
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site['tracker-linear'].lanes, {
     Dev: 'dev',
     Triage: null,
   });
@@ -52,7 +52,9 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
   assert.equal(await readFile(config, 'utf8'), before, 'a write the plugin schema rejects is restored');
   // A lane names an OpenCode agent: no app resolution happens at write time.
   await writeProjectLinear(config, 'site', { teams: ['t-5'], lanes: { Dev: 'ghost-agent' } });
-  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site.linear.lanes, { Dev: 'ghost-agent' });
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site['tracker-linear'].lanes, {
+    Dev: 'ghost-agent',
+  });
 });
 
 test('lane flags read as a lane map: shorthand, human lanes, colons kept', () => {
@@ -80,9 +82,13 @@ test('projectLinear: the convention is the base, the entry wins one lane at a ti
     writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, ...extra }));
 
   await write({
-    projectDefaults: { linear: { lanes: { Dev: 'dev', Review: 'dev', Triage: null }, workspaceId: 'ws-default' } },
+    projectDefaults: {
+      'tracker-linear': { lanes: { Dev: 'dev', Review: 'dev', Triage: null }, workspaceId: 'ws-default' },
+    },
     projects: {
-      site: { linear: { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } } },
+      site: {
+        'tracker-linear': { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } },
+      },
     },
   });
   const loaded = await loadConfig(join(root, 'config.json'));
@@ -94,12 +100,12 @@ test('projectLinear: the convention is the base, the entry wins one lane at a ti
   );
   assert.equal(routing.workspaceId, 'ws-default', 'workspaceId falls back to the convention');
   const raw = JSON.parse(await readFile(join(root, 'config.json'), 'utf8'));
-  assert.equal(raw.projects.site.linear.lanes.Shipped, null, 'the file keeps the human lanes');
+  assert.equal(raw.projects.site['tracker-linear'].lanes.Shipped, null, 'the file keeps the human lanes');
 
-  // A bare linear entry gets the whole convention, workspaceId included.
+  // A bare section entry gets the whole convention, workspaceId included.
   await write({
-    projectDefaults: { linear: { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
-    projects: { site: { linear: { teams: ['t-1'] } } },
+    projectDefaults: { 'tracker-linear': { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
+    projects: { site: { 'tracker-linear': { teams: ['t-1'] } } },
   });
   const bare = projectLinear(await loadConfig(join(root, 'config.json')), 'site')!;
   assert.deepEqual(bare.lanes, { Dev: { agent: 'dev', worktree: true } }, 'the convention applies untouched');
@@ -120,8 +126,8 @@ test('a Linear team belongs to exactly one project; the collision is said for ev
     JSON.stringify({
       version: 1,
       projects: {
-        website: { linear: { teams: ['lt-1'], lanes: {} } },
-        api: { linear: { teams: ['lt-1', 'lt-2'], lanes: {} } },
+        website: { 'tracker-linear': { teams: ['lt-1'], lanes: {} } },
+        api: { 'tracker-linear': { teams: ['lt-1', 'lt-2'], lanes: {} } },
       },
     }),
   );

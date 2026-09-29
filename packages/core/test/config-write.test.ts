@@ -21,29 +21,29 @@ const configPath = () => join(directory, 'config.json');
 function seedConfig(): void {
   writeFileSync(
     configPath(),
-    `${JSON.stringify({ version: 1, identity: { name: 'Clawd' }, plugins: { discord: { agent: 'old' } } }, null, 2)}\n`,
+    `${JSON.stringify({ version: 1, identity: { name: 'Clawd' }, plugins: { alpha: { agent: 'old' } } }, null, 2)}\n`,
   );
 }
 
 test('writeConfigBlock writes one nested block and keeps the rest of the file', async () => {
   seedConfig();
-  await writeConfigBlock(configPath(), ['plugins', 'discord'], {
+  await writeConfigBlock(configPath(), ['plugins', 'alpha'], {
     applicationId: '10000000000000001',
     access: { channels: [] },
   });
   const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as {
     identity: { name: string };
-    plugins: { discord: { applicationId: string } };
+    plugins: { alpha: { applicationId: string } };
   };
   assert.equal(raw.identity.name, 'Clawd', 'untouched blocks keep their bytes');
-  assert.equal(raw.plugins.discord.applicationId, '10000000000000001', 'the old block is replaced whole');
+  assert.equal(raw.plugins.alpha.applicationId, '10000000000000001', 'the old block is replaced whole');
 });
 
 test('writeConfigBlock creates intermediate objects in a bare config', async () => {
   writeFileSync(configPath(), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
-  await writeConfigBlock(configPath(), ['plugins', 'slack'], { access: { channels: [] } });
-  const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as { plugins: { slack: unknown } };
-  assert.ok(raw.plugins.slack);
+  await writeConfigBlock(configPath(), ['plugins', 'beta'], { access: { channels: [] } });
+  const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as { plugins: { beta: unknown } };
+  assert.ok(raw.plugins.beta);
 });
 
 test('writeConfigBlock restores the old bytes when the result does not load', async () => {
@@ -73,21 +73,21 @@ test('writeConfigBlock refuses an empty or malformed path', async () => {
 
 test('deleteConfigBlock drops one block and keeps the rest', async () => {
   seedConfig();
-  assert.equal(await deleteConfigBlock(configPath(), ['plugins', 'discord']), true);
+  assert.equal(await deleteConfigBlock(configPath(), ['plugins', 'alpha']), true);
   const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as {
     version: number;
     identity: { name: string };
     plugins: Record<string, unknown>;
   };
-  assert.equal('discord' in raw.plugins, false, 'the block is gone');
+  assert.equal('alpha' in raw.plugins, false, 'the block is gone');
   assert.equal(raw.identity.name, 'Clawd', 'everything else keeps its bytes');
 });
 
 test('deleteConfigBlock answers false for an absent path and writes nothing', async () => {
   seedConfig();
   const before = readFileSync(configPath(), 'utf8');
-  assert.equal(await deleteConfigBlock(configPath(), ['plugins', 'slack']), false, 'no such block');
-  assert.equal(await deleteConfigBlock(configPath(), ['nowhere', 'slack']), false, 'no such parent');
+  assert.equal(await deleteConfigBlock(configPath(), ['plugins', 'beta']), false, 'no such block');
+  assert.equal(await deleteConfigBlock(configPath(), ['nowhere', 'beta']), false, 'no such parent');
   assert.equal(readFileSync(configPath(), 'utf8'), before, 'an absent path is not a write');
 });
 

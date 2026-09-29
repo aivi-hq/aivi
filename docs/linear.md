@@ -22,12 +22,12 @@ ahead of the code.
 | --- | --- |
 | app | One Linear OAuth application acting as an app user (Linear's UI says "agent"); `linear.apps.<id>`. The **primary** carries the data feed and the bare `LINEAR_*` secrets; every other app is a face |
 | face | An extra app: a name and icon in Linear's UI, its own credentials (`LINEAR_<APP>_*`) and webhook route, and no meaning for routing at all. An activity is posted with the token of the app the session lives on |
-| primary | The one app by default; with faces, `linear.primary` names the app that carries the workspace data feed and authorises the Linear MCP. The listener always delegates on the primary, since that is whose token it holds |
+| primary | The one app by default; with faces, `plugins.tracker-linear.primary` names the app that carries the workspace data feed and authorises the Linear MCP. The listener always delegates on the primary, since that is whose token it holds |
 | assistant | The OpenCode agent people address directly on Linear (`linear.agent`, default the aivi name): comment mentions. It answers, clarifies or refuses; it does not do work. Delegations it never sees — one nobody can run gets a fixed answer instead |
 | delegate | `Issue.delegate`: the app working the issue while the human assignee stays responsible. Its one meaning: *an app is working this issue* |
 | agent session | Linear's unit of agent work on an issue; aivi treats each as one conversation, id `<app>:<agent session id>` |
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `response` (the answer) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
-| lane | A team workflow state by name; `projects.<id>.linear.lanes` maps lane → **agent**, `null` leaves it to humans. `{ agent, worktree: false }` runs the agent in the project's checkout instead of a worktree |
+| lane | A team workflow state by name; `projects.<id>.tracker-linear.lanes` maps lane → **agent**, `null` leaves it to humans. `{ agent, worktree: false }` runs the agent in the project's checkout instead of a worktree |
 | listener | `linear.listener: true`: aivi delegates an issue that enters a mapped lane to the primary and starts the lane agent's session; off, only what people do in Linear starts a worker |
 | worker | The OpenCode session that does work: the lane agent, in `<home>/projects/<id>/worktrees/<agent session>` (or the project checkout for a `worktree: false` lane), kept for the whole run |
 
@@ -144,7 +144,7 @@ with no refresh token; Linear's documented pattern). Writes attribute to the
 app, never a human; personal API keys would never expire but attribute to a
 human: disqualified. OpenCode connects as a remote MCP
 (`type: "remote"`, `url: http://127.0.0.1:4101/mcp` —
-what a home's `opencode.jsonc` gains when the `plugins.linear` block names `mcp`; see
+what a home's `opencode.jsonc` gains when the `plugins.tracker-linear` block names `mcp`; see
 the comment setup seeds). The MCP lives and dies with `serve`, like the
 webhooks and the workers it serves.
 
@@ -191,13 +191,13 @@ recording.
    run gets the fixed answer, not the assistant. With no forge installed the
    project is repo-less (memory and knowledge, no checkout).
 5. Later, only if a second face in Linear's UI is wanted: another app, its
-   `LINEAR_<FACE>_*` secrets, `apps.<face>: {}`, and `linear.primary` naming
+   `LINEAR_<FACE>_*` secrets, `apps.<face>: {}`, and `primary` naming
    the data-carrying app (required once several apps are configured).
 
-In `config.json`: `projects.<id>.linear.teams` (the Linear team ids this
+In `config.json`: `projects.<id>.tracker-linear.teams` (the Linear team ids this
 repository works) with `lanes` (empty by default: the listener delegates
 nothing until you map a lane; hand delegation always works; `null` marks a
-lane humans work). `projectDefaults.linear.lanes` is the company-wide
+lane humans work). `projectDefaults.tracker-linear.lanes` is the company-wide
 convention the entries merge over, one lane at a time. A repository may map
 several teams to one checkout; a team belongs to one project only.
 `aivi projects add` writes the `teams` and lanes itself — it runs Linear's

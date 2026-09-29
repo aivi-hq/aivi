@@ -4,7 +4,8 @@
 to Discord through discord.js and uses the host's OpenCode connection,
 knowledge service, database, and capacity limits. `aivi serve` starts and stops it;
 there is no separate Discord server or daemon command. It implements the
-[channel module contract](channels.md) with the module id `discord`; the
+[channel module contract](channels.md) with the platform id `discord` (the
+module id, the `plugins` key and the `/status` id, is `channel-discord`); the
 inbox, session bindings, engine, turn runner and recovery described there are
 the host's. This page has what is Discord's.
 
@@ -105,7 +106,7 @@ the host's. This page has what is Discord's.
 
 The short way: `aivi add discord`. It prints the application steps below,
 verifies the token against Discord, derives the application id from the bot,
-writes the `plugins.discord` block and `DISCORD_BOT_TOKEN`, and restarts aivi
+writes the `plugins.channel-discord` block and `DISCORD_BOT_TOKEN`, and restarts aivi
 ([operations](operations.md#plugins-aivi-add-and-aivi-remove)). The manual path:
 
 Create a Discord application
@@ -115,7 +116,7 @@ reactions, create public threads, and send messages in threads. Private threads 
 membership/access.
 
 The short way is `aivi add discord`, which runs the package's own setup
-and writes the block for you. By hand, put a `plugins.discord` block in
+and writes the block for you. By hand, put a `plugins.channel-discord` block in
 `<home>/config.json`, filled
 with your ids, and put `@aivi/channel-discord` in the `aivi-plugins` list in
 `app/package.json` — the list is what enables the module, the block is its
@@ -124,7 +125,7 @@ whole setup:
 ```json
 {
   "plugins": {
-    "discord": {
+    "channel-discord": {
       "applicationId": "10000000000000001",
       "agent": "assistant",
       "access": {

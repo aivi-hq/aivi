@@ -69,7 +69,7 @@ only overrides:
   collection ignores the inner one's subtree.
 - Beyond core's `enabled` and `knowledge`, a project carries **plugin sections**
   keyed by module id — each contributed and validated by the plugin that owns
-  it, read by no other. `projects.<id>.linear` (`teams`, `lanes`, optional
+  it, read by no other. `projects.<id>.tracker-linear` (`teams`, `lanes`, optional
   `workspaceId`) is the Linear tracker's; the same place a forge or any other
   plugin writes what a project needs
   ([configuration](configuration.md#linear)).
