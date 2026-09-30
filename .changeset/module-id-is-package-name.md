@@ -15,7 +15,10 @@ call a plugin. Linear's module id is `tracker-linear`, Discord's
 blocks (`plugins.tracker-linear`, `plugins.channel-discord`,
 `plugins.channel-slack`), Linear's project section (under both `projects.<id>`
 and `projectDefaults`), their `/status` ids and their log categories.
-`@aivi/forge-github` and `@aivi/browser` already read this way.
+`@aivi/forge-github` and `@aivi/browser` already read this way. The Linear
+installer reads and writes its block through the same `MODULE_ID` constant
+its declaration exports — no second spelling of the key survives in the
+package.
 
 What keeps the platform's short name is everything naming the **platform**
 rather than the package, and it is unchanged: the SQLite prefixes

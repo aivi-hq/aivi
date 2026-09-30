@@ -28,7 +28,7 @@ import {
 } from '@aivi/plugin';
 import { LinearClient, type LinearTeam } from './client.ts';
 import type { LinearConfig } from './config.ts';
-import { linearPrimarySecretNames } from './config.ts';
+import { linearPrimarySecretNames, MODULE_ID } from './config.ts';
 import { appWebhookPath } from './routes.ts';
 import { isAgentSessionEvent, isIssueEvent, type LinearWebhook, verifyWebhook } from './webhook.ts';
 
@@ -164,7 +164,9 @@ const POLL_MS = 2_000;
 const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupResult> => {
   const windowMs = probeWindowMs();
   const config = configSchema.parse(ctx.config);
-  const existingBlock = (ctx.config.plugins as Record<string, unknown> | undefined)?.linear as LinearConfig | undefined;
+  const existingBlock = (ctx.config.plugins as Record<string, unknown> | undefined)?.[MODULE_ID] as
+    | LinearConfig
+    | undefined;
   const configured = Object.keys(existingBlock?.apps ?? {});
   if (configured.length > 1)
     throw new Error(
@@ -447,13 +449,13 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   }
 
   // 4. Only now is anything written: the secrets under the bare primary
-  //    names, `host.public` if the installer asked for it, and the `linear` block
-  //    with this app added.
+  //    names, `host.public` if the installer asked for it, and the
+  //    `tracker-linear` block with this app added.
   if (!config.host.public) await ctx.writeConfigBlock(['host', 'public'], base);
   await ctx.writeSecret(linearPrimarySecretNames.clientId, clientId);
   await ctx.writeSecret(linearPrimarySecretNames.clientSecret, clientSecret);
   await ctx.writeSecret(linearPrimarySecretNames.webhookSecret, webhookSecret);
-  await ctx.writeConfigBlock(['plugins', 'tracker-linear'], {
+  await ctx.writeConfigBlock(['plugins', MODULE_ID], {
     ...existingBlock,
     apps: { ...(existingBlock?.apps ?? {}), [id]: {} },
   });
@@ -469,7 +471,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   // service is installed the CLI restarts it anyway and reports that as
   // it happens. Performing a restart never belongs to this flow.
   return {
-    module: 'tracker-linear',
+    module: MODULE_ID,
     summary: failed.length
       ? `Linear is configured: ${outcome}.`
       : `Linear is configured: ${outcome}. Restart aivi to load Linear.`,
