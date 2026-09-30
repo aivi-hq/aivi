@@ -414,6 +414,61 @@ verification with the replay window, and the diary-watch installer that
 proves both systems before writing a byte, are the strongest files in the
 repo.
 
+## M. Plugin names inside core — the purity scan
+
+The red line is that core spells `tracker`/`forge`, never `linear`/`github`.
+This is the behaviour scan; comments that *explain* the id split by naming a
+plugin as their example are excluded on purpose.
+
+- **`packages/core/src/log.ts:39-42`** — `CATEGORY_COLORS` hand-lists
+  `channel-discord`, `channel-slack`, `tracker-linear` and `browser`: core
+  names every first-party plugin just to colour its log lines. The map is
+  already wrong, which is the symptom: `forge-github` has no entry, so the
+  newest module's lines fall back to host blue. The direction out: a module
+  carries its colour in its `./config` declaration, or core hashes a colour
+  from the id and the hand-list dies.
+- **`packages/core/src/config.ts:96`** — `dreaming.origins` defaults to
+  `['discord']`: core deciding that dreaming reviews Discord conversations
+  is a platform fact living in a core default. It should default to what aivi
+  actually sees (or empty meaning all) — the operator's call which.
+- **`packages/core/src/config.ts:374-412`** — `identity.github` (field and
+  superRefine path) and `AIVI_AGENT_BOT`'s noreply email. The commit pair is
+  the operator's ruling (2026-09-29) and the app id is gone; what remains is
+  GitHub's *word* in core's vocabulary — the schema has no generic commit
+  identity, it has a field called `github`. There is no live config, so a
+  rename (`identity.commit`?) is free; whether the pair should leave core
+  with the forge entirely is the bigger question, since no-forge projects
+  use the fallback today too.
+- **`packages/cli/templates/agents/dreamer.md:70`** — the dreamer template
+  core ships teaches its memory format with a platform example:
+  `(discord, RWOverdijk)`. Harmless today; these are words people copy into
+  real memory files.
+
+## N. Decision numbers in source outlive the plan that defines them
+
+`(decision D12)` rides in `packages/cli/src/exec.ts:10,17`, `(D13)` in
+`exec.ts:114`, `service.ts:155`, `update.ts:29,179`, and `(decision D15)` in
+`packages/host/src/runtime.ts:37` and `api/exec.ts:115,283`. They point at
+decision headings inside `docs/plans/cli-refactor/remote-exec.md` — a plan
+whose whole purpose is to die when the work is done. Afterwards D15 is an
+orphan number and the reader has nothing to open. The sentences around each
+number already carry the reason; the number should be dropped and the reason
+kept. The same disease in milder form: shipped source comments link
+`docs/plans/…` files as living documentation (`tracker-linear/src/module.ts`
+header, `forge-github/src/module.ts:10`); tolerable while the plan lives,
+dangling links when it is archived.
+
+## Operator rulings on the findings (2026-09-30)
+
+- **A1** is latent, not live: there are no configured homes, so nothing to
+  lose. What stands is the stale read itself — and the root form of it:
+  `setup.ts` uses the package's own `MODULE_ID` constant nowhere, reading
+  one stale literal and writing a hand-edited second one.
+- **A2/A3** need a misbehaving or undesigned client; downgraded to
+  hardening nits. `echo x | aivi -r …` is not the designed use.
+- The review asked for **architectural anomalies**, bugs included — hence
+  section M. Nits wait; the report file is not going anywhere.
+
 ## Suggested order of repair
 
 1. **A1** (stale read + missing setup test) — the only silent data-losing
