@@ -299,3 +299,53 @@ test('a second start on one connection answers an error, not a second child', as
   assert.ok(events.some(event => event.t === 'error' && event.message === 'start sent twice'));
   assert.equal(events.filter(event => event.t === 'ready').length, 1, 'exactly one child ran');
 });
+
+test('a second start racing the pty import is told, not spawned', async t => {
+  // The guard must hold while the first start still awaits the import: the
+  // session is owned by the start, not by the child it has not built yet.
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  let spawned = 0;
+  const fake = {
+    spawn: () => {
+      spawned++;
+      return {
+        pid: 4242,
+        onData: (_cb: (data: string) => void) => {},
+        onExit: (_cb: ({ exitCode }: { exitCode: number | null }) => void) => {},
+        kill: () => {},
+        write: () => {},
+        resize: () => {},
+      };
+    },
+  };
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nexit 0\n', {
+    importPty: async () => {
+      await gate;
+      return fake as unknown as typeof import('node-pty');
+    },
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
+  const events: Record<string, unknown>[] = [];
+  ws.on('message', (data: Buffer, isBinary: boolean) => {
+    if (!isBinary) events.push(JSON.parse(data.toString('utf8')) as Record<string, unknown>);
+  });
+  const opened = new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  ws.on('error', () => {});
+  await opened;
+  // Both frames land before the import resolves: the first owns the session.
+  ws.send(JSON.stringify({ t: 'start', argv: ['status'] }));
+  ws.send(JSON.stringify({ t: 'start', argv: ['status'] }));
+  await until(() => events.some(event => event.t === 'error'));
+  assert.match(String(events.find(event => event.t === 'error')!.message), /start sent twice/);
+  assert.equal(spawned, 0, 'nothing spawned while the import was still in flight');
+  release();
+  await until(() => events.some(event => event.t === 'ready'));
+  assert.equal(spawned, 1, 'the start that was already in flight spawned exactly one child');
+  ws.terminate();
+});

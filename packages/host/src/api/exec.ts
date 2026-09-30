@@ -58,6 +58,10 @@ export interface ExecDeps {
 interface Session {
   pty: IPty | null;
   pipe: ChildProcessWithoutNullStreams | null;
+  /** A start still awaiting the pty import already owns the session: only
+   *  the child this session holds has a kill handle, so a second start
+   *  racing the import must be told, never spawned. */
+  starting: boolean;
   /** Bytes split mid-character across frames rejoin here before the child. */
   stdin: StringDecoder;
   /** True once the child is gone; kills after that are lies worth skipping. */
@@ -112,7 +116,7 @@ export function attachExec(server: Server, deps: ExecDeps): void {
     socket.destroy();
   };
 
-  /** The child's closed environment (decision D15): the audit evidence says
+  /** The child's closed environment: the audit evidence says
    *  which human drove, and nothing else from the host's secrets travels.
    *  PATH and HOME are what `aivi add` and `aivi update` need to exec npm and
    *  git; AIVI_OPERATOR_BEARER is the bearer this connection presented. */
@@ -132,7 +136,13 @@ export function attachExec(server: Server, deps: ExecDeps): void {
 
   const open = (ws: WebSocket, req: IncomingMessage, person: { id: string; name: string }, bearer: string): void => {
     const address = req.socket.remoteAddress ?? null;
-    const session: Session = { pty: null, pipe: null, stdin: new StringDecoder('utf8'), exited: false };
+    const session: Session = {
+      pty: null,
+      pipe: null,
+      starting: false,
+      stdin: new StringDecoder('utf8'),
+      exited: false,
+    };
     sessions.set(ws, session);
     let audited = false;
     const send = (message: Record<string, unknown>): void => {
@@ -180,7 +190,7 @@ export function attachExec(server: Server, deps: ExecDeps): void {
     };
 
     const start = async (message: StartMessage): Promise<void> => {
-      if (session.pty || session.pipe) return send({ t: 'error', message: 'start sent twice' });
+      if (session.starting || session.pty || session.pipe) return send({ t: 'error', message: 'start sent twice' });
       const valid =
         message?.t === 'start' &&
         Array.isArray(message.argv) &&
@@ -188,6 +198,9 @@ export function attachExec(server: Server, deps: ExecDeps): void {
         message.argv.every(arg => typeof arg === 'string') &&
         (message.pty === undefined || message.pty === false || message.pty === true);
       if (!valid) return send({ t: 'error', message: 'start needs a non-empty string argv' });
+      // The session is claimed before its first await: a second start frame
+      // racing the pty import finds this line, not a second child.
+      session.starting = true;
       const env = execEnv(bearer, message.term ?? 'xterm-256color');
       if (message.pty === false) return pipeSession(message.argv, env);
       try {
@@ -280,7 +293,7 @@ export function attachExec(server: Server, deps: ExecDeps): void {
       });
     // The bearer this connection already presented, re-exported into the
     // child so `whoami`, link creation and association name the remote human,
-    // never the server's own client-config token (decision D15).
+    // never the server's own client-config token.
     const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '');
     wss.handleUpgrade(req, socket, head, ws => open(ws, req, { id: person.id, name: person.name }, bearer));
   });
