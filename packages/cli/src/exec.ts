@@ -7,14 +7,14 @@
  *  terminal **restored on every exit path** — that is the ctrl+c lesson,
  *  applied on the client where it belongs. When this side's stdout is not a
  *  TTY (`aivi status | jq` from a laptop) the session asks for pipes instead
- *  of a PTY and JSON stays JSON (decision D12). */
+ *  of a PTY and JSON stays JSON. */
 import { existsSync, readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 import { type ClientConfig, clientConfigPath, clientConfigSchema } from './client-config.ts';
 import { aiviVersion } from './version.ts';
 
 /** Injectable for tests; the relay otherwise speaks for the real terminal.
- *  `isTTY` is what decides PTY vs pipes (decision D12), so the streams are
+ *  `isTTY` is what decides PTY vs pipes, so the streams are
  *  typed where that question is answerable. */
 export interface ExecIo {
   stdout?: (NodeJS.WritableStream & { isTTY?: boolean }) | undefined;
@@ -111,7 +111,7 @@ export async function execRemote(argv: string[], io: ExecIo = {}): Promise<void>
       if (message.t === 'err') return void stderr.write(Buffer.from(String(message.b64), 'base64'));
       if (message.t === 'error') return void stderr.write(`${String(message.message)}\n`);
     });
-    // Gone is gone (decision D13): no retry, no resume. The client says so
+    // Gone is gone: no retry, no resume. The client says so
     // and exits with whatever it has; the next command finds out about the host.
     ws.on('close', () => settle(() => reject(new Error('connection lost'))));
 

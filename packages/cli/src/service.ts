@@ -152,7 +152,8 @@ export function serviceStart(): void {
   else throw new Error(`aivi service is not supported on ${process.platform}.`);
 }
 
-/** The D13 discipline, in the one place the host actually dies: a command
+/** Announce first, then do the disconnecting thing — in the one place the
+ *  host actually dies: a command
  *  about to disconnect a session says so first, to stdout, in plain bytes —
  *  `server restarting…` reaches the client before the host behind it does.
  *  The write is synchronous (`writeSync`, not console.log): the disconnecting

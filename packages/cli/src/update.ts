@@ -26,7 +26,7 @@ export interface UpdateIo {
   healthProbe(url: string): Promise<boolean>;
   /** The managed host keeps answering through the install; the one
    *  disconnect is the final restart, and its announce rides inside
-   *  serviceRestart (D13: announce first, then do the disconnecting thing). */
+   *  serviceRestart: announce first, then do the disconnecting thing. */
   service: { installed(): boolean; restart(): void };
 }
 
@@ -176,7 +176,7 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
   // be swapped safely under it — refuse before touching anything. A managed
   // host keeps answering through the install: an exec session driving this
   // command is the host's own child, and the one disconnect comes last,
-  // announced — stopping first would kill the updater mid-npm (D13).
+  // announced — stopping first would kill the updater mid-npm.
   const url = await healthUrl(home);
   const managed = io.service.installed();
   if (!managed && (await io.healthProbe(url)))
