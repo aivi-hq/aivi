@@ -468,6 +468,40 @@ dangling links when it is archived.
   hardening nits. `echo x | aivi -r …` is not the designed use.
 - The review asked for **architectural anomalies**, bugs included — hence
   section M. Nits wait; the report file is not going anywhere.
+- **C1** is solved by configuration, not by the adapter: *finished* is a
+  **lane fact the project configures** — which of a team's lanes are done
+  work — and not a platform word at all. That is exactly what the
+  orchestrator extraction reads when it maps lanes, so the fix is the
+  extraction itself: the neutral contract carries the verdict, and
+  `completed`/`canceled` live only where Linear's lane config is read.
+  This makes the extraction the owner of C1, C2 and B1's machinery.
+- **A3** is deferred until someone needs the mixed case; `echo x | aivi -r …`
+  is not the designed use.
+- **B1/B2**: the scheduled `projects.sync` should indeed use **the project's
+  forge** — the transfer moves behind `Forge.syncSource` with the
+  orchestrator extraction, which owns the registry that answers "which forge
+  for this project". Until then the ambient fetch stands, unhidden.
+
+**Repaired with those rulings (2026-09-30):** A1 — the installer now reads
+and writes its block through its own `MODULE_ID` constant, the same one its
+declaration exports; A2 — a start claims the exec session before its first
+await, so a racing second frame is told, not spawned (test added); and the
+section-N decision numbers are gone from shipped source — the sentences
+carry their own reasons now. What remains of A1 is only the missing setup
+test for the Linear installer.
+
+The operator's direction on the section-M findings, for whoever picks them
+up:
+
+- **Colors**: they should come from the plugins themselves — but only if
+  that is clean within logtape's normal usage. No custom plumbing.
+- **Dreaming**: the dreamer is entirely built on the old shape; the whole of
+  it wants a revisit, and likely more is broken than the one default. The
+  shipped `dreamer.md` belongs to that revisit: its inline example probably
+  does not index the way the operator expects — inline text is not
+  sufficient for grouping.
+- **Commit identity**: probably belongs per-project. A GitHub-bot noreply
+  email is a github-forge fact, so it lives with the forge, not core.
 
 ## Suggested order of repair
 
