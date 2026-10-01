@@ -334,6 +334,68 @@ test('core passes a plugin project section through unread and unwidened', async 
   assert.equal('linear' in loaded.projects[0]!, false, 'core hands the project view without a plugin section');
 });
 
+test('lane arrays load-validate: unique names, real next/previous targets, and one queue feeding a worker', () => {
+  const lanes = (written: unknown[]) => configSchema.safeParse({ version: 1, projects: { site: { lanes: written } } });
+  assert.equal(
+    lanes([
+      { name: 'Todo', agent: 'dev', pool: 'worker' },
+      { name: 'Review', agent: 'dev' },
+    ]).success,
+    true,
+    'queue and pool are optional; a named pool loads inert until the dispatcher is built',
+  );
+  assert.equal(
+    lanes([
+      { name: 'Todo', agent: 'dev' },
+      { name: 'Todo', agent: 'dev' },
+    ]).success,
+    false,
+  );
+  assert.match(JSON.stringify(lanes([{ name: 'Todo', agent: 'dev', next: 'Gone' }]).error?.issues), /not a lane/);
+  // The queue lane's rules (docs/orchestrator.md): at most one per workflow,
+  // never worked by an agent of its own, and its next lane — by override or
+  // by order — is a worker lane. All loud, all at load.
+  assert.equal(
+    lanes([
+      { name: 'Todo', queue: true },
+      { name: 'In Progress', agent: 'dev' },
+    ]).success,
+    true,
+  );
+  assert.match(
+    JSON.stringify(
+      lanes([
+        { name: 'Todo', queue: true, agent: 'dev' },
+        { name: 'Doing', agent: 'dev' },
+      ]).error?.issues,
+    ),
+    /holds work, it works none/,
+  );
+  assert.match(
+    JSON.stringify(
+      lanes([
+        { name: 'A', queue: true },
+        { name: 'B', queue: true },
+        { name: 'C', agent: 'dev' },
+      ]).error?.issues,
+    ),
+    /at most one queue lane/,
+  );
+  assert.match(JSON.stringify(lanes([{ name: 'Todo', queue: true }]).error?.issues), /has no next lane/);
+  assert.match(
+    JSON.stringify(lanes([{ name: 'Todo', queue: true }, { name: 'Review' }]).error?.issues),
+    /no agent works/,
+  );
+  assert.match(
+    JSON.stringify(
+      lanes([{ name: 'Todo', queue: true, next: 'Review' }, { name: 'In Progress', agent: 'dev' }, { name: 'Review' }])
+        .error?.issues,
+    ),
+    /no agent works/,
+    'the next override is held to the same rule as plain order',
+  );
+});
+
 test('calendar calculations use the configured timezone across daylight saving changes', () => {
   const pattern = '0 9 * * *';
   assert.equal(

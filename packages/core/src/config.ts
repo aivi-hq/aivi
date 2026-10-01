@@ -188,6 +188,8 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
  * the orchestrator decides moves from the order, and no tracker is asked
  * where a ticket goes next; the tracker only performs a move in its
  * platform's words. The names are the tracker platform's own state names.
+ * Closed states (Linear's Done, Canceled, Duplicate) are **never written**:
+ * the tracker recognizes them by type, they are not places in the workflow.
  */
 export const projectLaneSchema = z.strictObject({
   name: z.string().min(1).describe('The lane, spelled as the tracker platform spells its workflow state.'),
@@ -196,20 +198,33 @@ export const projectLaneSchema = z.strictObject({
     .min(1)
     .optional()
     .describe('The OpenCode agent that works tickets entering this lane; absent: humans work the lane.'),
+  queue: z
+    .boolean()
+    .default(false)
+    .describe(
+      'true: a queue lane — fresh work waits here for capacity, and the orchestrator treats it as the bottom of its next worker lane’s list. A queue lane has no agent and moves tickets, it works none.',
+    ),
+  pool: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'The dispatcher pool this lane’s work draws capacity from (the dispatcher names it; lanes that name none draw from the default pool). Inert until the dispatcher is built.',
+    ),
   worktree: z
     .boolean()
     .default(false)
     .describe(
       'true: the agent gets its own git worktree, so its writes cannot touch the shared checkout. Default false: it works in the project checkout itself. Matters once a forge gives worktrees.',
     ),
-  complete: z
+  next: z
     .string()
     .min(1)
     .optional()
     .describe(
       'Where a ticket goes when the run succeeds. Default: the next lane in the array. The configured exception.',
     ),
-  return: z
+  previous: z
     .string()
     .min(1)
     .optional()
@@ -224,9 +239,11 @@ export type ProjectLaneInput = z.input<typeof projectLaneSchema>;
  *  is working there goes silent — no move, no updates. */
 export const laneOf = (project: Project, name: string): ProjectLane | undefined =>
   project.lanes?.find(lane => lane.name === name);
-/** The written lane array: names unique, and every `complete`/`return` must
- *  name a lane of this very array — a typo is a load error, never a surprise
- *  mid-run with a ticket in hand. */
+/** The written lane array: names unique; every `next`/`previous` names a
+ *  lane of this very array (a typo is a load error, never a surprise mid-run
+ *  with a ticket in hand); and the queue lane's rules — at most one per
+ *  workflow, never with an agent of its own, and its next lane (by override
+ *  or by order) must be a worker lane. All loud, all at load. */
 export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes, ctx) => {
   const names = new Set<string>();
   for (const lane of lanes) {
@@ -235,14 +252,39 @@ export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes,
   }
   for (const lane of lanes)
     for (const [field, target] of [
-      ['complete', lane.complete],
-      ['return', lane.return],
+      ['next', lane.next],
+      ['previous', lane.previous],
     ] as const)
       if (target !== undefined && !names.has(target))
         ctx.addIssue({
           code: 'custom',
           message: `lane "${lane.name}" names ${field} "${target}", which is not a lane of this project`,
         });
+  const queues = lanes.filter(lane => lane.queue);
+  if (queues.length > 1)
+    ctx.addIssue({
+      code: 'custom',
+      message: `${queues.length} lanes are marked queue; a workflow has at most one queue lane`,
+    });
+  for (const [at, lane] of lanes.entries()) {
+    if (!lane.queue) continue;
+    if (lane.agent !== undefined)
+      ctx.addIssue({
+        code: 'custom',
+        message: `queue lane "${lane.name}" also names agent "${lane.agent}"; a queue lane holds work, it works none`,
+      });
+    const target = lane.next !== undefined ? lanes.find(other => other.name === lane.next) : lanes[at + 1];
+    if (!target)
+      ctx.addIssue({
+        code: 'custom',
+        message: `queue lane "${lane.name}" has no next lane; the queue feeds a worker lane and must name one (by order or by next)`,
+      });
+    else if (!target.agent)
+      ctx.addIssue({
+        code: 'custom',
+        message: `queue lane "${lane.name}" feeds "${target.name}", which no agent works; the queue's next lane must be a worker lane`,
+      });
+  }
 });
 
 /**
@@ -264,7 +306,7 @@ export const projectSchema = z.strictObject({
   lanes: projectLanesSchema
     .optional()
     .describe(
-      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to `complete` or the next lane; failure to `return` or the previous one; a stop moves nothing.',
+      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to the `next` lane, failure to the `previous` one — neighbours by default, overridden per lane; a stop moves nothing. `queue: true` marks the workflow’s one queue lane, waiting fresh work for the worker lane it feeds; `pool` names the dispatcher pool the lane draws from (inert until the dispatcher is built). Closed states are never written: the tracker recognizes them by type.',
     ),
 });
 type ProjectEntry = z.infer<typeof projectSchema>;

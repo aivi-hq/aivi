@@ -4,7 +4,7 @@
  *  Linear's own; the **lanes are core's** — this file writes them into the
  *  project's core `lanes` array and reads nothing back from it. */
 import { readFile, writeFile } from 'node:fs/promises';
-import { type LoadedConfig, loadConfig, PROJECT_ID, type Project, type ProjectLane } from '@aivi/core';
+import { type LoadedConfig, loadConfig, PROJECT_ID, type Project, type ProjectLaneInput } from '@aivi/core';
 import type { LinearProjectDefaults, LinearProjectEntry, ProjectLinear } from './config.ts';
 import { linearProjectSchema } from './config.ts';
 
@@ -87,8 +87,8 @@ export function projectForIssue(
 export async function writeProjectLinear(
   configPath: string,
   id: string,
-  options: { teams: string[]; lanes?: ProjectLane[] },
-): Promise<{ id: string; teams: string[]; lanes?: ProjectLane[] }> {
+  options: { teams: string[]; lanes?: ProjectLaneInput[] },
+): Promise<{ id: string; teams: string[]; lanes?: ProjectLaneInput[] }> {
   if (!PROJECT_ID.test(id)) throw new Error(`Project id "${id}" must match ${PROJECT_ID}`);
   if (!options.teams.length) throw new Error('Set at least one Linear team');
   const before = await readFile(configPath, 'utf8');
@@ -121,7 +121,7 @@ export async function writeProjectLinear(
     await writeFile(configPath, before);
     throw error;
   }
-  const lanes = entry.lanes as ProjectLane[] | undefined;
+  const lanes = entry.lanes as ProjectLaneInput[] | undefined;
   return { id, teams: options.teams, ...(lanes ? { lanes } : {}) };
 }
 
@@ -130,12 +130,13 @@ export async function writeProjectLinear(
  * flags state the order they are given in — first flag, first lane. Each
  * `--lane` is `LANE[,LANE…]:AGENT` (split at the *last* colon, so a lane name
  * may hold one); each `--unlane` is a lane with no agent, worked by humans,
- * a separate flag so no word is reserved. `complete`/`return` targets are
- * the configured exception and get hand-written into the file, not flagged.
+ * a separate flag so no word is reserved. `next`/`previous` targets and the
+ * queue and pool marks are the configured exception and get hand-written
+ * into the file, not flagged.
  * A lane given both ways is an error.
  */
-export function parseLaneFlags(lanes: string[], unlanes: string[]): ProjectLane[] {
-  const byName = new Map<string, ProjectLane>();
+export function parseLaneFlags(lanes: string[], unlanes: string[]): ProjectLaneInput[] {
+  const byName = new Map<string, ProjectLaneInput>();
   for (const entry of lanes) readLaneFlag(byName, entry);
   for (const entry of unlanes) readUnlaneFlag(byName, entry);
   return [...byName.values()];
@@ -143,7 +144,7 @@ export function parseLaneFlags(lanes: string[], unlanes: string[]): ProjectLane[
 
 /** One `--lane` entry appended to the order; split at the last colon, so a
  *  lane name may hold one. */
-function readLaneFlag(out: Map<string, ProjectLane>, entry: string): void {
+function readLaneFlag(out: Map<string, ProjectLaneInput>, entry: string): void {
   const at = entry.lastIndexOf(':');
   const agent = at < 0 ? '' : entry.slice(at + 1).trim();
   if (!agent || at <= 0) throw new Error(`--lane "${entry}" must read LANE:AGENT, e.g. --lane "Dev:dev"`);
@@ -156,7 +157,7 @@ function readLaneFlag(out: Map<string, ProjectLane>, entry: string): void {
 }
 
 /** One `--unlane` entry: a lane with no agent, unless `--lane` claimed it first. */
-function readUnlaneFlag(out: Map<string, ProjectLane>, entry: string): void {
+function readUnlaneFlag(out: Map<string, ProjectLaneInput>, entry: string): void {
   const name = entry.trim();
   if (!name) throw new Error('--unlane needs a lane name');
   if (out.has(name)) throw new Error(`Lane "${name}" is given both --lane and --unlane; choose one`);

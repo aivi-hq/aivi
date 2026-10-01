@@ -68,7 +68,8 @@ export interface ProjectSetupResult {
   section?: Record<string, unknown>;
   /** The project's **core** `lanes` array — the ordered tracker workflow,
    *  written at `projects.<id>.lanes` and validated by core (unique names,
-   *  every `complete`/`return` a lane of the array). Lanes are core's fact;
+   *  every `next`/`previous` a lane of the array, the queue lane's rules).
+   *  Lanes are core's fact;
    *  whoever knows the board — the tracker role — offers its order, and two
    *  contributors naming one workflow is an error, not a merge. */
   lanes?: ProjectLaneInput[];

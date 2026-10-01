@@ -109,7 +109,7 @@ test('projectLinear: the convention is the base, the entry wins one lane at a ti
         'tracker-linear': { teams: ['t-1'] },
         lanes: [
           { name: 'Dev', agent: 'dev', worktree: true },
-          { name: 'Review', agent: 'reviewer', worktree: false, complete: 'Shipped' },
+          { name: 'Review', agent: 'reviewer', worktree: false, next: 'Shipped' },
           { name: 'Shipped' },
         ],
       },
@@ -126,17 +126,18 @@ test('projectLinear: the convention is the base, the entry wins one lane at a ti
   assert.deepEqual(
     project.lanes,
     [
-      { name: 'Dev', agent: 'dev', worktree: true },
-      { name: 'Review', agent: 'reviewer', worktree: false, complete: 'Shipped' },
-      { name: 'Shipped', worktree: false },
+      { name: 'Dev', agent: 'dev', queue: false, worktree: true },
+      { name: 'Review', agent: 'reviewer', queue: false, worktree: false, next: 'Shipped' },
+      { name: 'Shipped', queue: false, worktree: false },
     ],
-    'the lanes are core\u2019s, on the project, in the written order, complete/return kept',
+    'the lanes are core\u2019s, on the project, in the written order; queue and worktree default in',
   );
   assert.deepEqual(laneOf(project, 'Review'), {
     name: 'Review',
     agent: 'reviewer',
+    queue: false,
     worktree: false,
-    complete: 'Shipped',
+    next: 'Shipped',
   });
   assert.equal(laneOf(project, 'Gone'), undefined, 'an unmapped state is silence');
 

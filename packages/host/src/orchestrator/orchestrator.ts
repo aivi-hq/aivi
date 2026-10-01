@@ -299,8 +299,9 @@ export class Orchestrator {
   /**
    * Where an ended run's ticket moves, from the project's lane order — a
    * core decision that the orchestrator makes and no tracker is asked about:
-   * success goes to the lane's `complete` or the next lane; failure to its
-   * `return` or the previous one. A stop never calls this (cancel carries no
+   * success goes to the lane's `next` or the neighbouring lane below it;
+   * failure to its `previous` or the one above. A stop never calls this
+   * (cancel carries no
    * lane: a stopped ticket stays where the person left it), and a run whose
    * lane is no longer configured goes nowhere — unconfigured is silent.
    */
@@ -309,7 +310,7 @@ export class Orchestrator {
     const at = lanes.findIndex(l => l.name === run.lane);
     if (at < 0) return undefined;
     const lane = lanes[at]!;
-    return success ? (lane.complete ?? lanes[at + 1]?.name) : (lane.return ?? lanes[at - 1]?.name);
+    return success ? (lane.next ?? lanes[at + 1]?.name) : (lane.previous ?? lanes[at - 1]?.name);
   }
 
   /** The worker says it is done. A tool call, so it is a fact: end the run,

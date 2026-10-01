@@ -31,7 +31,7 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
 | delegate | `Issue.delegate`: the app working the issue while the human assignee stays responsible. Its one meaning: *an app is working this issue* |
 | agent session | Linear's unit of agent work on an issue; aivi treats each as one conversation, id `<app>:<agent session id>` |
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `elicitation` (a worker's question, with its `select` signal when there are options), `response` (the answer, which **ends** the agent session) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
-| lane | One entry of the **core** ordered array `projects.<id>.lanes` — `{ name, agent?, worktree? }`. A lane naming an `agent` is worked; naming none is worked by humans. Success moves a ticket to its `complete` lane or the **next** entry; failure to its `return` lane or the **previous** one; a stop moves nothing |
+| lane | One entry of the **core** ordered array `projects.<id>.lanes` — `{ name, agent?, queue?, pool?, worktree?, next?, previous? }`. A lane naming an `agent` is worked; naming none is worked by humans; `queue: true` marks the workflow's one queue lane (owner: [orchestrator.md](orchestrator.md)). Success moves a ticket to the **next** entry, failure to the **previous** one — overridden per lane by `next`/`previous`; a stop moves nothing |
 | listener | `linear.listener: true` (the default): aivi delegates an issue that enters a worked lane to the primary and the lane agent works it; off, only what people do in Linear starts a worker |
 | follower | What the Linear module is to the orchestrator: it records the pair (agent session ↔ OpenCode session ↔ ticket) in **its own table**, renders run events, posts people's messages into the worker's session itself, and retries **its own** delivery failures at wake and boot. The orchestrator never calls it |
 | worker | The run's OpenCode session (`ses_run_…`): the lane's agent, working in the project's checkout — kept for the whole run and left there after a stop for inspection. Git worktrees wait for a forge to give them; the module's worktree helpers stay exported for that day |
@@ -89,8 +89,9 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    worker and ends the run cancelled — see 7.
 7. **The ending, and the catch-up.** Only a tool call ends a run: the
    completion tool records the outcome and the **target lane** the project's
-   lane order chose (success → its `complete` or the next entry; failure →
-   its `return` or the previous; a stop → none), and the orchestrator emits
+   lane order chose (success → the **next** entry, failure → the
+   **previous**, per-lane `next`/`previous` overrides aside; a stop → none),
+   and the orchestrator emits
    `ended`. The follower then pays its ceremony **in this order**: the
    **result** (a success posts the summary as the `response`, which completes
    the agent session and stops the "working" state; a failure posts an `error`

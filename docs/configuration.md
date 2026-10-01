@@ -264,48 +264,48 @@ which package speaks for it.
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
 | `turnTimeoutMs` | A worker turn longer than this is interrupted and ends `stopped` (default two hours) |
 
-The project entry routes by Linear **team** and selects agents by lane (a lane
-is a team workflow state, by name):
+The project entry routes by Linear **team** (a repository may list several
+teams — one checkout, several teams; a team belongs to at most one project;
+Linear *projects* (epics) play no routing part). The workflow itself is not a
+Linear field: it is **core's** lane array on the project,
+`projects.<id>.lanes` — left to right, the order **is** the priority:
 
 ```json
 {
-  "projectDefaults": {
-    "tracker-linear": { "lanes": { "Dev": "dev", "Review": "dev", "Triage": null } }
-  },
   "projects": {
     "website": {
-      "tracker-linear": {
-        "teams": ["linear-team-id"],
-        "lanes": { "Review": { "agent": "reviewer", "worktree": false }, "Shipped": null }
-      }
+      "tracker-linear": { "teams": ["linear-team-id"] },
+      "lanes": [
+        { "name": "Todo", "queue": true },
+        { "name": "In Progress", "agent": "dev", "pool": "worker", "worktree": true },
+        { "name": "Review", "agent": "reviewer" },
+        { "name": "Release" }
+      ]
     }
   }
 }
 ```
 
-A repository may list several teams (one checkout, several teams); a team
-belongs to at most one project. Linear *projects* (epics) play no routing
-part. `lanes` defaults to empty: the listener delegates nothing until you map
-a lane, while hand delegation always works. A lane names an **OpenCode agent**
-directly; several lanes may name the same agent; `null` marks a lane humans
-work. A lane may be an object `{ agent, worktree: false }`: the agent runs in
-the project's clean checkout on main without a worktree — aivi builds no
-enforcement there, the agent file's own `edit` deny is the only guard, and the
-checkout is never worked in by a lane that does not say so. Lanes merge one
-key at a time over `projectDefaults.tracker-linear.lanes` (where `knowledge`
-replaces: a lane map is a lookup table, not a list), so a project whose site
-works `Dev` with `dev` as the convention says, `Review` with `reviewer` in the
-checkout because the entry outvotes the convention, and leaves `Triage` and
-`Shipped` to people. `teams` is never defaulted: a team belongs to one
-project. `workspaceId` is optional and only needed when the installation spans
-Linear workspaces; `projectDefaults.tracker-linear.workspaceId` supplies it to every
-project that omits its own.
-`aivi projects add` writes `teams` for you: it runs Linear's project-setup
-contributor (the plugin's `./setupProject`), which asks which teams may work
-the project and which agent works each lane, then hands the section back for
-core to write. The project's `linear` section is contributed and validated by
-the Linear plugin — core passes it through unread, the same contract any forge
-or other plugin joins. The mapped agent is resolved by OpenCode's ordinary
+A lane naming an `agent` is worked; one naming none is worked by humans; a
+tracker state named nowhere in the array is silence. `next` and `previous`
+override where a success and a failure move the ticket — neighbours by
+default, and a stop never moves. `queue: true` marks the workflow's **one**
+queue lane: fresh work waiting for capacity, an extension of the worker lane
+it feeds; the load says so loudly for two queue lanes, a queue lane naming
+an agent, or a queue whose next lane (by order or by `next`) works nothing.
+`pool` names the dispatcher pool the lane's work draws capacity from — inert
+until the dispatcher is built; lanes naming none draw from the default pool.
+`worktree: true` gives the worker its own git worktree; default false works
+the project checkout itself, where the agent file's own `edit` deny is the
+only guard. **Closed states (Done, Canceled, Duplicate) are never written**:
+the tracker recognizes them by type, and a run ending in the last configured
+lane moves nowhere. [orchestrator.md](orchestrator.md) owns the vocabulary.
+`aivi projects add` writes the array for you — names, agents, worktrees; the
+wizard's queue-lane question lands with the dispatcher build. `teams` is
+never defaulted. `workspaceId` is optional and only needed when the
+installation spans Linear workspaces;
+`projectDefaults.tracker-linear.workspaceId` supplies it to every project
+that omits its own. The mapped agent is resolved by OpenCode's ordinary
 discovery for the session's directory; an unknown agent file is OpenCode's own
 error at session start, not a config error.
 
