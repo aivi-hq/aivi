@@ -19,7 +19,7 @@ template scaffolds.
 
 | Piece | What it is |
 | --- | --- |
-| [orchestrator.md](orchestrator.md) | The platform-neutral ticket orchestrator: lanes, guards, dispatch, capacity, worktrees, the worker exit contract. Extracted from the Linear module; Linear becomes an adapter. |
+| [orchestrator.md](orchestrator.md) | The platform-neutral ticket orchestrator's run contracts: run states, worker tools, the completion and question contracts, recovery, the adapter seam. Lanes, priority and capacity are owned by [../../orchestrator.md](../../orchestrator.md) since 2026-10-02. |
 | [scaffolding.md](scaffolding.md) | Templates proper: plain agent files (product, dev, review) plus a proposed lane map, offered at setup and at ticket-system install. Written once, then yours. |
 | [self-knowledge.md](self-knowledge.md) | The assistant knows what is installed, learns it from plugin docs (the `manual` source kind), and edits `config.json` for you through a validated tool. |
 

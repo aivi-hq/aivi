@@ -162,10 +162,15 @@ run in order within one thread, continue that thread's session, reply into the
 thread, and must start within seconds. Folding them into the job table would
 teach the scheduler what a conversation is. What the two share is capacity:
 every turn takes a resource lease from the same pools as jobs
-(`Store.acquireLease`), so the `local-model` limit holds across both.
+(`Store.acquireLease`), so the `local-model` limit holds across both. These
+pools are the follower-era interim: they become the dispatcher's
+`dispatcher.pools` with the work-pull-flow build
+([orchestrator](orchestrator.md)).
 
 Linear workers are conversations of the same machinery, one per
-agent session, each in its own git worktree; a stop ends the worker and
+agent session, working in the project's checkout (a lane that says
+`worktree: true` gets its own git worktree once a forge gives them);
+a stop ends the worker and
 releases the issue, and only an unverifiable stop is `blocked`
 ([plans/linear.md](plans/linear.md)).
 
