@@ -78,6 +78,24 @@ class FakeLinear extends LinearClient {
       },
     };
   }
+  /** Closing-note surface: the standing comments per issue and the session
+   *  urls, with every posted note recorded. */
+  commentsByIssue = new Map<string, string[]>();
+  sessionUrls = new Map<string, string>();
+  posted: { issueId: string; body: string }[] = [];
+  override async closingNoteFacts(issueId: string) {
+    return {
+      comments: (this.commentsByIssue.get(issueId) ?? []).map(body => ({ body })),
+      sessions: [...(this.sessionsByIssue.get(issueId) ?? [])].map(s => ({
+        id: s.id,
+        url: this.sessionUrls.get(s.id) ?? null,
+      })),
+    };
+  }
+  override async createComment(issueId: string, body: string): Promise<void> {
+    this.posted.push({ issueId, body });
+    this.commentsByIssue.set(issueId, [...(this.commentsByIssue.get(issueId) ?? []), body]);
+  }
 }
 
 const linearIssue = (id: string, extra: Partial<LinearIssue> = {}): LinearIssue => ({
@@ -272,7 +290,7 @@ test('startSession is the delegate mutation: the pending session in its own answ
   assert.deepEqual(client.delegated.at(-1), ['eng-8', null]);
 });
 
-test('the neutral issue is translated at the border: archived, delegate, and blockers in the platform own words', async t => {
+test('the neutral issue is translated at the border: archived, delegate, and the closed-verdict on blockers', async t => {
   const { client, tracker } = await wired(t);
   client.issues.set(
     'eng-2',
@@ -295,8 +313,21 @@ test('the neutral issue is translated at the border: archived, delegate, and blo
     delegateId: 'app-user-1',
     assignee: null,
     archived: true,
-    blockedByStates: ['started'],
+    completed: false,
+    blockedBy: [{ id: 'eng-0', completed: false }],
   });
+  // The closed-verdict is the adapter's: both of Linear's finished words —
+  // Done and Won't Fix — say the blocker holds nothing back.
+  client.issues.set(
+    'eng-3',
+    linearIssue('eng-3', {
+      state: { id: 'd', name: 'Done', type: 'completed' },
+      blockedBy: [{ id: 'eng-0', state: { id: 'w', name: "Won't Fix", type: 'canceled' } }],
+    }),
+  );
+  const verdict = await tracker.issue('dev', 'eng-3');
+  assert.equal(verdict.completed, true);
+  assert.deepEqual(verdict.blockedBy, [{ id: 'eng-0', completed: true }]);
 });
 
 test('lane states come from the live board; identities come from the credentials', async t => {
@@ -312,4 +343,25 @@ test('lane states come from the live board; identities come from the credentials
   assert.deepEqual(tracker.parts('face:as-3'), { app: 'face', session: 'as-3' });
   assert.deepEqual(tracker.parts('dev'), { app: 'dev', session: '' }, 'a bare app id is the app own feed');
   await assert.rejects(tracker.comment('dev', 'nowhere to speak', 'answer'), /names no agent session/);
+});
+
+test('the closing note stands on the ticket once: linked to its session, never posted twice', async t => {
+  const { client, tracker } = await wired(t);
+  client.sessionsByIssue.set('eng-1', [{ id: 'as-1', status: 'active' }]);
+  client.sessionUrls.set('as-1', 'https://linear.app/x/agent-session/as-1');
+  await tracker.closingNote!('dev:as-1', 'eng-1', 'Header aligned.');
+  assert.deepEqual(client.posted, [
+    {
+      issueId: 'eng-1',
+      body: 'Header aligned.\n\n— aivi · [agent session](https://linear.app/x/agent-session/as-1)',
+    },
+  ]);
+  // A retry — the wake or the boot pass driving an owed ending again — sees
+  // the session id standing on the ticket and says nothing twice.
+  await tracker.closingNote!('dev:as-1', 'eng-1', 'Header aligned.');
+  assert.equal(client.posted.length, 1, 'a note already standing is not posted twice');
+  // A session the platform names no url for still gets its note, marked by id.
+  client.sessionsByIssue.set('eng-2', [{ id: 'as-2', status: 'active' }]);
+  await tracker.closingNote!('dev:as-2', 'eng-2', 'Stopped: a person takes over.');
+  assert.equal(client.posted[1]!.body, 'Stopped: a person takes over.\n\n— aivi · agent session `as-2`');
 });

@@ -1,20 +1,12 @@
 /** Linear's project sections: the write path the `aivi projects` wizard uses,
- *  the routing merge the module consults, and the cross-project checks the
- *  plugin owns because core reads nothing inside a contributed section. The
- *  file is Linear's spelling of "a project points at teams and lanes"; core
- *  discovered the checkout and knows nothing more. */
+ *  the routing the module consults, and the cross-project checks the plugin
+ *  owns because core reads nothing inside a contributed section. Teams are
+ *  Linear's own; the **lanes are core's** — this file writes them into the
+ *  project's core `lanes` array and reads nothing back from it. */
 import { readFile, writeFile } from 'node:fs/promises';
-import { type LoadedConfig, loadConfig, PROJECT_ID, type Project } from '@aivi/core';
-import {
-  type LaneBinding,
-  type LinearProjectDefaults,
-  type LinearProjectEntry,
-  laneBinding,
-  linearProjectSchema,
-  type ProjectLinear,
-} from './config.ts';
-
-export type { LaneBinding } from './config.ts';
+import { type LoadedConfig, loadConfig, PROJECT_ID, type Project, type ProjectLane } from '@aivi/core';
+import type { LinearProjectDefaults, LinearProjectEntry, ProjectLinear } from './config.ts';
+import { linearProjectSchema } from './config.ts';
 
 /** The module id, which is also the key of this plugin's section under every
  *  project and under `projectDefaults`: core writes what it is keyed by, so one
@@ -33,21 +25,15 @@ const writtenLinear = (loaded: LoadedConfig, projectId: string): LinearProjectEn
 const writtenDefaults = (loaded: LoadedConfig): LinearProjectDefaults | undefined =>
   (loaded.config.projectDefaults as Record<string, unknown>)[SECTION] as LinearProjectDefaults | undefined;
 
-/** The lanes the listener consults for one project: the projectDefaults base
- *  merged with the entry's own — entry winning one lane at a time — with the
- *  human lanes (`null`) dropped; those live in the file. */
+/** The project's Linear routing as it takes effect: which teams speak for it
+ *  and in which workspace. Lanes are not here — they are core's ordered
+ *  workflow on the `Project` itself (`projects.<id>.lanes`), which the
+ *  orchestrator reads to decide moves and this plugin only ever performs. */
 export function projectLinear(loaded: LoadedConfig, projectId: string): ProjectLinear | undefined {
   const entry = writtenLinear(loaded, projectId);
   if (!entry) return undefined;
-  const defaults = writtenDefaults(loaded);
-  const merged = { ...(defaults?.lanes ?? {}), ...(entry.lanes ?? {}) };
-  const lanes: Record<string, LaneBinding> = {};
-  for (const [lane, value] of Object.entries(merged)) {
-    const binding = laneBinding(value);
-    if (binding) lanes[lane] = binding;
-  }
-  const workspaceId = entry.workspaceId ?? defaults?.workspaceId;
-  return { teams: entry.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
+  const workspaceId = entry.workspaceId ?? writtenDefaults(loaded)?.workspaceId;
+  return { teams: entry.teams, ...(workspaceId ? { workspaceId } : {}) };
 }
 
 /** A checkout receives one issue stream, so a Linear team may belong to
@@ -88,20 +74,21 @@ export function projectForIssue(
 }
 
 /**
- * Point a project at Linear teams, and optionally its lanes: writes
- * `projects.<id>.tracker-linear.teams` (and `lanes` when given) and touches nothing
- * else — every other part of the file stays as it was, an existing `lanes`
- * included when none is passed. The written file must hold: the core config
- * must still load, the section must parse against this plugin's own schema,
- * and no team may belong to two projects — if any check fails, the previous
- * bytes are restored and the error stands. The result is what got written,
- * human lanes (`null`) included.
+ * Point a project at Linear teams, and optionally (re)write its lanes: teams
+ * go to `projects.<id>.tracker-linear.teams`, lanes to the project's **core**
+ * `lanes` array — the ordered workflow, which core validates and the
+ * orchestrator decides moves from. Nothing else in the file is touched; an
+ * existing `lanes` stays as it was when none is passed. The written file must
+ * hold: the core config must still load (which validates the lane order and
+ * every `complete`/`return` reference), the section must parse against this
+ * plugin's own schema, and no team may belong to two projects — if any check
+ * fails, the previous bytes are restored and the error stands.
  */
 export async function writeProjectLinear(
   configPath: string,
   id: string,
-  options: { teams: string[]; lanes?: Record<string, string | null> },
-): Promise<{ id: string; teams: string[]; lanes?: Record<string, string | null> }> {
+  options: { teams: string[]; lanes?: ProjectLane[] },
+): Promise<{ id: string; teams: string[]; lanes?: ProjectLane[] }> {
   if (!PROJECT_ID.test(id)) throw new Error(`Project id "${id}" must match ${PROJECT_ID}`);
   if (!options.teams.length) throw new Error('Set at least one Linear team');
   const before = await readFile(configPath, 'utf8');
@@ -113,7 +100,7 @@ export async function writeProjectLinear(
   const linear = (entry[SECTION] ?? {}) as Record<string, unknown>;
   entry[SECTION] = linear;
   linear.teams = options.teams;
-  if (options.lanes) linear.lanes = options.lanes;
+  if (options.lanes) entry.lanes = options.lanes;
   await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
   try {
     const loaded = await loadConfig(configPath);
@@ -134,41 +121,44 @@ export async function writeProjectLinear(
     await writeFile(configPath, before);
     throw error;
   }
-  const lanes = linear.lanes as Record<string, string | null> | undefined;
+  const lanes = entry.lanes as ProjectLane[] | undefined;
   return { id, teams: options.teams, ...(lanes ? { lanes } : {}) };
 }
 
 /**
- * The `--lane`/`--unlane` flags as a lane map, exactly what writeProjectLinear
- * writes. Each `--lane` is `LANE[,LANE…]:AGENT` — split at the *last* colon,
- * so a lane name may hold one; each `--unlane` is a lane to mark for humans
- * (`null`, a separate flag so no word is reserved). A lane given both ways is
- * an error.
+ * The `--lane`/`--unlane` flags as the ordered lane array core stores. The
+ * flags state the order they are given in — first flag, first lane. Each
+ * `--lane` is `LANE[,LANE…]:AGENT` (split at the *last* colon, so a lane name
+ * may hold one); each `--unlane` is a lane with no agent, worked by humans,
+ * a separate flag so no word is reserved. `complete`/`return` targets are
+ * the configured exception and get hand-written into the file, not flagged.
+ * A lane given both ways is an error.
  */
-export function parseLaneFlags(lanes: string[], unlanes: string[]): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
-  for (const entry of lanes) readLaneFlag(out, entry);
-  for (const entry of unlanes) readUnlaneFlag(out, entry);
-  return out;
+export function parseLaneFlags(lanes: string[], unlanes: string[]): ProjectLane[] {
+  const byName = new Map<string, ProjectLane>();
+  for (const entry of lanes) readLaneFlag(byName, entry);
+  for (const entry of unlanes) readUnlaneFlag(byName, entry);
+  return [...byName.values()];
 }
 
-/** One `--lane` entry written into the map; split at the last colon, so a
+/** One `--lane` entry appended to the order; split at the last colon, so a
  *  lane name may hold one. */
-function readLaneFlag(out: Record<string, string | null>, entry: string): void {
+function readLaneFlag(out: Map<string, ProjectLane>, entry: string): void {
   const at = entry.lastIndexOf(':');
   const agent = at < 0 ? '' : entry.slice(at + 1).trim();
   if (!agent || at <= 0) throw new Error(`--lane "${entry}" must read LANE:AGENT, e.g. --lane "Dev:dev"`);
   for (const lane of entry.slice(0, at).split(',')) {
     const name = lane.trim();
     if (!name) throw new Error(`--lane "${entry}" has an empty lane name`);
-    out[name] = agent;
+    if (out.has(name)) throw new Error(`Lane "${name}" is given twice`);
+    out.set(name, { name, agent, worktree: true });
   }
 }
 
-/** One `--unlane` entry: a lane marked for humans, unless `--lane` claimed it first. */
-function readUnlaneFlag(out: Record<string, string | null>, entry: string): void {
+/** One `--unlane` entry: a lane with no agent, unless `--lane` claimed it first. */
+function readUnlaneFlag(out: Map<string, ProjectLane>, entry: string): void {
   const name = entry.trim();
   if (!name) throw new Error('--unlane needs a lane name');
-  if (out[name] !== undefined) throw new Error(`Lane "${name}" is given both --lane and --unlane; choose one`);
-  out[name] = null;
+  if (out.has(name)) throw new Error(`Lane "${name}" is given both --lane and --unlane; choose one`);
+  out.set(name, { name, worktree: true });
 }

@@ -14,7 +14,7 @@ test('linear settings: defaults, secret names, the loopback MCP', () => {
   const linear = linearSchema.parse({ apps: { dev: {} } });
   assert.deepEqual(
     [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs, linear.logMisroutes],
-    [false, 'needs-human', 'local-model', 'tools', 7_200_000, true],
+    [true, 'needs-human', 'local-model', 'tools', 7_200_000, true],
   );
   assert.deepEqual(linear.mcp, { port: 4101 }, 'the Linear MCP is on by default on its loopback port');
   assert.deepEqual(linearSchema.parse({ apps: { dev: {} }, mcp: false }).mcp, false);

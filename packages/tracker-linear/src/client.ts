@@ -130,6 +130,18 @@ const issueOf = ({ labels, inverseRelations, ...rest }: RawIssue): LinearIssue =
  * memory, refreshed ahead of its expiry and re-fetched once on a 401. There is
  * no `@linear/sdk`: six operations do not justify it.
  */
+/** Linear's workflow state groups in board order. `position` is scoped
+ *  **within a type group** (SDL: "States are displayed in ascending order
+ *  of position within their type group"), so sorting by position alone
+ *  interleaves the groups: Done and Canceled each rank near 0 of their own
+ *  group and would sort before a late `started` lane. Group first, then
+ *  position — that is the board. */
+const stateGroupOrder = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled', 'duplicate'];
+const byBoardOrder = (a: { type: string; position: number }, b: { type: string; position: number }): number => {
+  const group = stateGroupOrder.indexOf(a.type) - stateGroupOrder.indexOf(b.type);
+  return group !== 0 ? group : a.position - b.position;
+};
+
 export class LinearClient {
   private readonly credentials: LinearCredentials;
   private readonly baseUrl: string;
@@ -203,10 +215,10 @@ export class LinearClient {
   /** The app user's own id and its workspace in one round; also proves the
    *  credentials work. The tracker adapter learns `userId`/`orgId` here. */
   async viewer(): Promise<{ id: string; organizationId: string }> {
-    const data = await this.graphql<{ viewer: { id: string; organizationId: string } }>(
-      'query { viewer { id organizationId } }',
+    const data = await this.graphql<{ viewer: { id: string; organization: { id: string } } }>(
+      'query { viewer { id organization { id } } }',
     );
-    return { id: data.viewer.id, organizationId: data.viewer.organizationId };
+    return { id: data.viewer.id, organizationId: data.viewer.organization.id };
   }
 
   /** The app user's own id in this workspace; also proves the credentials work. */
@@ -219,13 +231,22 @@ export class LinearClient {
    * Linear returns `states` as a connection; its `nodes` are flattened here. */
   async listTeams(): Promise<LinearTeam[]> {
     const data = await this.graphql<{
-      teams: { nodes: { id: string; key: string; name: string; states: { nodes: LinearTeam['states'] } }[] };
-    }>('query { teams { nodes { id key name states { nodes { id name type } } } } }');
+      teams: {
+        nodes: {
+          id: string;
+          key: string;
+          name: string;
+          states: { nodes: { id: string; name: string; type: string; position: number }[] };
+        }[];
+      };
+    }>('query { teams { nodes { id key name states { nodes { id name type position } } } } }');
+    // The connection's own order is not the board's; the group order and
+    // the per-group `position` are.
     return data.teams.nodes.map(team => ({
       id: team.id,
       key: team.key,
       name: team.name,
-      states: team.states.nodes,
+      states: team.states.nodes.sort(byBoardOrder).map(({ position: _position, ...state }) => state),
     }));
   }
 
@@ -236,6 +257,73 @@ export class LinearClient {
     );
     if (!data.agentActivityCreate.success) throw new LinearApiError('agentActivityCreate was not successful', 200);
     return data.agentActivityCreate.agentActivity.id;
+  }
+
+  /** Move an issue to a workflow state by its id — how a lane move is
+   *  performed. (schema: `issueUpdate(id: String!, input: IssueUpdateInput!)`,
+   *  the state carried as `input.stateId`.) */
+  async transitionIssue(issueId: string, stateId: string): Promise<void> {
+    const data = await this.graphql<{ issueUpdate: { success: boolean } }>(
+      `mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`,
+      { id: issueId, input: { stateId } },
+    );
+    if (!data.issueUpdate.success) throw new LinearApiError('issueUpdate was not successful', 200);
+  }
+
+  /** A comment on the **issue** itself, not the agent session's activity:
+   *  the closing note a person reads without opening the session. Posted
+   *  with the app's token, so it stands as the app's comment. */
+  async createComment(issueId: string, body: string): Promise<void> {
+    const data = await this.graphql<{ commentCreate: { success: boolean } }>(
+      `mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }`,
+      { input: { issueId, body } },
+    );
+    if (!data.commentCreate.success) throw new LinearApiError('commentCreate was not successful', 200);
+  }
+
+  /** What a closing note asks Linear for in one round: the issue's comment
+   *  bodies (the idempotence check — a note already standing is never
+   *  posted twice) and the agent sessions with their web urls (the note's
+   *  marker and the link a person clicks to read the whole trail). The
+   *  comment page is deliberately wide: the check must see a note older
+   *  than any retry horizon. */
+  async closingNoteFacts(
+    issueId: string,
+  ): Promise<{ comments: { body: string }[]; sessions: { id: string; url: string | null }[] }> {
+    const data = await this.graphql<{
+      issue: {
+        comments: { nodes: { body: string }[] };
+        agentSessions: { nodes: { id: string; url: string | null }[] };
+      } | null;
+    }>(
+      `query($id: String!) { issue(id: $id) { comments(first: 100) { nodes { body } } agentSessions { nodes { id url } } } }`,
+      { id: issueId },
+    );
+    if (!data.issue) throw new LinearApiError(`issue ${issueId} not found`, 200);
+    return { comments: data.issue.comments.nodes, sessions: data.issue.agentSessions.nodes };
+  }
+
+  /** Whether Linear has closed this agent session: `endedAt` is its own word
+   *  for "the result was shown", which is what a follower's retry asks
+   *  before it would render a result twice. */
+  async agentSessionEnded(agentSessionId: string): Promise<boolean> {
+    const data = await this.graphql<{ agentSession: { endedAt: string | null } }>(
+      'query($id: String!) { agentSession(id: $id) { endedAt } }',
+      { id: agentSessionId },
+    );
+    return data.agentSession.endedAt !== null;
+  }
+
+  /** Replace the session's plan wholesale — Linear takes the full array
+   *  every time (docs/agent-interaction, Agent Plans: partial updates are
+   *  explicitly not a thing). `plan` is a JSONObject: the steps array as
+   *  `{content, status}`. */
+  async setPlan(agentSessionId: string, steps: { content: string; status: string }[]): Promise<void> {
+    const data = await this.graphql<{ agentSessionUpdate: { success: boolean } }>(
+      `mutation($id: String!, $input: AgentSessionUpdateInput!) { agentSessionUpdate(id: $id, input: $input) { success } }`,
+      { id: agentSessionId, input: { plan: steps } },
+    );
+    if (!data.agentSessionUpdate.success) throw new LinearApiError('agentSessionUpdate was not successful', 200);
   }
 
   async issue(id: string): Promise<LinearIssue> {

@@ -1,11 +1,14 @@
 /**
  * The **tracker** contract: the seam between aivi and a ticket system.
  * A tracker owns tickets — lanes, delegation, what people write on them.
- * An adapter is a translator in both directions and nothing else: it turns
- * the platform's events into the neutral ones below and aivi's neutral
- * updates into the platform's mutations. Lane matching, guards, capacity,
- * worktrees and the exit contract are aivi's machinery, never the
- * adapter's, and they spell `tracker` — never `linear` or any other name.
+ * An adapter translates in both directions and speaks its platform's voice:
+ * it turns the platform's events into the neutral ones below, aivi's neutral
+ * updates into the platform's mutations, and it is **required** to render a
+ * worker's question and a run's outcome the way its platform shows them
+ * (`ask`, and the answer/outcome kinds of `comment`) — the host's orchestrator
+ * owns the run itself: its durable record, its session, the two worker tools
+ * and the rule that only a tool call ends it. All of that machinery spells
+ * `tracker` — never `linear` or any other name.
  *
  * Types only — the machinery consuming them ships in the host. The exact
  * member set is **provisional by design** ([orchestrator.md](../../docs/plans/templates/orchestrator.md)):
@@ -44,9 +47,14 @@ export interface TrackerIssue {
   /** True once the platform has deleted the ticket as far as work goes;
    *  a dead ticket gets nothing from aivi. */
   archived: boolean;
-  /** The states of the tickets blocking this one, in the platform's own
-   *  words; the platform answers which of them are finished. */
-  blockedByStates: string[];
+  /** Whether the ticket has finished as far as work goes — the adapter's
+   *  **verdict**, not a platform word: each tracker decides which of its
+   *  states mean closed (Linear's `completed` and `canceled` both do), and the
+   *  decision code never sees the words. */
+  completed: boolean;
+  /** The tickets blocking this one, each with the same verdict: a blocker
+   *  that has finished holds nothing back. */
+  blockedBy: { id: string; completed: boolean }[];
 }
 
 /** What changed on a ticket, in neutral words: only the three things
@@ -79,6 +87,26 @@ export type TrackerCommentKind =
   | 'note'
   /** A terminal outcome: finished, stopped, or refused. */
   | 'outcome';
+
+/**
+ * A worker's question to a person, in neutral words: the text, and the
+ * options when there are clear choices. `label` is what the person sees;
+ * `value` is what an answer arrives as (they may also answer in free text —
+ * platforms that render options, like Linear's `select` signal, emit the
+ * chosen value as an ordinary message).
+ */
+export interface TrackerQuestion {
+  question: string;
+  options?: { label: string; value: string }[];
+}
+
+/** One step of a worker's plan: what it will do, and where it stands.
+ *  The four statuses are the neutral words; a platform with its own
+ *  vocabulary (Linear's `inProgress`) maps them in the adapter. */
+export interface TrackerPlanStep {
+  content: string;
+  status: 'pending' | 'inProgress' | 'completed' | 'canceled';
+}
 
 /** What the machinery asks of the platform, in neutral words. The adapter
  *  translates and performs; *when* to act stays the machinery's decision. */
@@ -145,6 +173,37 @@ export interface Tracker {
   /** One message into the conversation, rendered the platform's way; the
    *  platform's message id when it names them (the engine may edit by it). */
   comment(conversation: string, text: string, kind: TrackerCommentKind): Promise<string | undefined>;
+  /** Whether this working session has already had its result rendered —
+   *  the follower's idempotence question, decided the platform's own way
+   *  (Linear: the agent session is ended; another: a result comment exists).
+   *  A catch-up that would say it twice says it once. */
+  resultShown(conversation: string): Promise<boolean>;
+  /** A closing note on the **ticket itself**, so an ending is readable
+   *  without opening the agent session (ruled 2026-10-02: the answer was
+   *  only visible inside the session — "hard to get to now"). Optional: a
+   *  platform with nothing standing outside the session posts no extra note
+   *  and loses nothing. **Idempotence is the adapter's** — the follower
+   *  retries this on every wake and boot like the rest of the ceremony, so
+   *  a note already standing must never be posted twice. */
+  closingNote?(conversation: string, issueId: string, text: string): Promise<void>;
+  /**
+   * Put a worker's question to the people, in the platform's own shape.
+   * **Required of every tracker** (ruled 2026-09-30): the orchestrator records
+   * the question and does nothing else with it — only the adapter knows what a
+   * question looks like on its platform (Linear renders an elicitation activity,
+   * with its `select` signal when there are options; GitHub Issues would post a
+   * numbered comment). The answer arrives as an ordinary message event; the
+   * open OpenCode form is the discriminator, read from OpenCode, never a
+   * guess from texts.
+   */
+  ask(conversation: string, question: TrackerQuestion): Promise<void>;
+  /**
+   * Show the worker's working plan — the whole checklist, as it now stands.
+   * A forwarding like the orchestrator's own: the tracker renders it in its
+   * platform's shape (Linear replaces the session's agent plan wholesale)
+   * and nothing about a run waits on its delivery.
+   */
+  plan(conversation: string, steps: TrackerPlanStep[]): Promise<void>;
   /** Subscribe to the normalized events. The adapter owns the platform's
    *  whole inbound surface — endpoints, signatures, acknowledgements;
    *  registration happens at module start. Returns the unsubscribe. */

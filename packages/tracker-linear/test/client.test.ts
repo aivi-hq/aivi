@@ -50,7 +50,7 @@ test('the token comes from client credentials once, is shared by concurrent call
       rejectFirstBearer = false;
       return { status: 401, body: { error: 'expired' } };
     }
-    return { status: 200, body: { data: { viewer: { id: 'app-user', organizationId: 'org-1' } } } };
+    return { status: 200, body: { data: { viewer: { id: 'app-user', organization: { id: 'org-1' } } } } };
   });
   const baseUrl = await linear.start();
   t.after(linear.stop);
@@ -138,7 +138,7 @@ test('GraphQL errors and HTTP failures surface as LinearApiError; mutations chec
   assert.equal(issue.branchName, 'me/eng-1-t');
 });
 
-test('listTeams asks for the teams this app can see and flattens the states connection', async t => {
+test('listTeams asks for the teams this app can see, flattens the states connection and sorts by board order: type group, then position', async t => {
   const linear = mockLinear(seen =>
     seen.body.includes('teams')
       ? {
@@ -153,9 +153,17 @@ test('listTeams asks for the teams this app can see and flattens the states conn
                     name: 'Peck Track',
                     states: {
                       nodes: [
-                        { id: 's-1', name: 'Todo', type: 'unstarted' },
-                        { id: 's-2', name: 'In Progress', type: 'started' },
-                        { id: 's-3', name: 'Done', type: 'completed' },
+                        // The live-test team's shape, out of board order on
+                        // purpose: `position` is scoped **per type group**,
+                        // so In Review (position 1 of `started`) must beat
+                        // Done/Canceled/Duplicate (low positions of their
+                        // own groups), not sort after them.
+                        { id: 's-3', name: 'Done', type: 'completed', position: 0 },
+                        { id: 's-1', name: 'Todo', type: 'unstarted', position: 1 },
+                        { id: 's-4', name: 'In Review', type: 'started', position: 1 },
+                        { id: 's-2', name: 'In Progress', type: 'started', position: 0 },
+                        { id: 's-5', name: 'Canceled', type: 'canceled', position: 0 },
+                        { id: 's-6', name: 'Duplicate', type: 'duplicate', position: 0 },
                       ],
                     },
                   },
@@ -177,11 +185,14 @@ test('listTeams asks for the teams this app can see and flattens the states conn
       states: [
         { id: 's-1', name: 'Todo', type: 'unstarted' },
         { id: 's-2', name: 'In Progress', type: 'started' },
+        { id: 's-4', name: 'In Review', type: 'started' },
         { id: 's-3', name: 'Done', type: 'completed' },
+        { id: 's-5', name: 'Canceled', type: 'canceled' },
+        { id: 's-6', name: 'Duplicate', type: 'duplicate' },
       ],
     },
   ]);
-  assert.match(linear.seen.find(s => s.path === '/graphql')!.body, /states \{ nodes \{ id name type \} \}/);
+  assert.match(linear.seen.find(s => s.path === '/graphql')!.body, /states \{ nodes \{ id name type position \} \}/);
 });
 
 test('resolveTeams takes ids and keys alike; an unknown token lists what the app can see', () => {

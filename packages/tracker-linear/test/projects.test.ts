@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { loadConfig } from '@aivi/core';
+import { laneOf, loadConfig } from '@aivi/core';
 import { linearTeamCollisions, parseLaneFlags, projectLinear, writeProjectLinear } from '../src/projects.ts';
 
 test('writeProjectLinear writes teams, keeps everything else, and restores a config that stops loading', async t => {
@@ -21,26 +21,40 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
 
   // An existing lanes block survives a rewrite of the teams; so do other projects' entries.
   await mkdir(join(root, 'projects/other/source'), { recursive: true });
-  raw.projects.site['tracker-linear'].lanes = { 'In Progress': 'developer' };
+  raw.projects.site.lanes = [{ name: 'In Progress', agent: 'developer', worktree: true }];
   raw.projects.other = { enabled: true };
   await writeFile(config, JSON.stringify(raw, null, 2));
   assert.deepEqual(await writeProjectLinear(config, 'site', { teams: ['t-3'] }), {
     id: 'site',
     teams: ['t-3'],
-    lanes: { 'In Progress': 'developer' },
+    lanes: [{ name: 'In Progress', agent: 'developer', worktree: true }],
   });
   assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.other, { enabled: true });
 
-  // Given lanes are written as they are, human lanes included.
-  assert.deepEqual(await writeProjectLinear(config, 'site', { teams: ['t-4'], lanes: { Dev: 'dev', Triage: null } }), {
-    id: 'site',
-    teams: ['t-4'],
-    lanes: { Dev: 'dev', Triage: null },
-  });
-  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site['tracker-linear'].lanes, {
-    Dev: 'dev',
-    Triage: null,
-  });
+  // Given lanes are written to the project's **core** array, in order,
+  // human lanes (no agent) included; the plugin section holds teams only.
+  assert.deepEqual(
+    await writeProjectLinear(config, 'site', {
+      teams: ['t-4'],
+      lanes: [
+        { name: 'Triage', worktree: true },
+        { name: 'Dev', agent: 'dev', worktree: true },
+      ],
+    }),
+    {
+      id: 'site',
+      teams: ['t-4'],
+      lanes: [
+        { name: 'Triage', worktree: true },
+        { name: 'Dev', agent: 'dev', worktree: true },
+      ],
+    },
+  );
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site.lanes, [
+    { name: 'Triage', worktree: true },
+    { name: 'Dev', agent: 'dev', worktree: true },
+  ]);
+  assert.equal(JSON.parse(await readFile(config, 'utf8')).projects.site['tracker-linear'].lanes, undefined);
 
   await assert.rejects(writeProjectLinear(config, 'site', { teams: [] }), /at least one Linear team/);
   const before = await readFile(config, 'utf8');
@@ -51,21 +65,28 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
   );
   assert.equal(await readFile(config, 'utf8'), before, 'a write the plugin schema rejects is restored');
   // A lane names an OpenCode agent: no app resolution happens at write time.
-  await writeProjectLinear(config, 'site', { teams: ['t-5'], lanes: { Dev: 'ghost-agent' } });
-  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site['tracker-linear'].lanes, {
-    Dev: 'ghost-agent',
+  await writeProjectLinear(config, 'site', {
+    teams: ['t-5'],
+    lanes: [{ name: 'Dev', agent: 'ghost-agent', worktree: true }],
   });
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site.lanes, [
+    { name: 'Dev', agent: 'ghost-agent', worktree: true },
+  ]);
 });
 
-test('lane flags read as a lane map: shorthand, human lanes, colons kept', () => {
-  assert.deepEqual(parseLaneFlags(['Dev:dev', 'Review,Build:review'], ['Backlog']), {
-    Dev: 'dev',
-    Review: 'review',
-    Build: 'review',
-    Backlog: null,
-  });
-  assert.deepEqual(parseLaneFlags(['Stand:up:dev'], []), { 'Stand:up': 'dev' }, 'split at the last colon');
-  assert.deepEqual(parseLaneFlags([], []), {});
+test('lane flags read as the ordered lane array: shorthand, human lanes, colons kept', () => {
+  assert.deepEqual(parseLaneFlags(['Dev:dev', 'Review,Build:review'], ['Backlog']), [
+    { name: 'Dev', agent: 'dev', worktree: true },
+    { name: 'Review', agent: 'review', worktree: true },
+    { name: 'Build', agent: 'review', worktree: true },
+    { name: 'Backlog', worktree: true },
+  ]);
+  assert.deepEqual(
+    parseLaneFlags(['Stand:up:dev'], []),
+    [{ name: 'Stand:up', agent: 'dev', worktree: true }],
+    'split at the last colon',
+  );
+  assert.deepEqual(parseLaneFlags([], []), []);
   assert.throws(() => parseLaneFlags(['Dev'], []), /must read LANE:AGENT/);
   assert.throws(() => parseLaneFlags(['Dev:'], []), /must read LANE:AGENT/);
   assert.throws(() => parseLaneFlags([':dev'], []), /must read LANE:AGENT/);
@@ -82,33 +103,49 @@ test('projectLinear: the convention is the base, the entry wins one lane at a ti
     writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, ...extra }));
 
   await write({
-    projectDefaults: {
-      'tracker-linear': { lanes: { Dev: 'dev', Review: 'dev', Triage: null }, workspaceId: 'ws-default' },
-    },
+    projectDefaults: { 'tracker-linear': { workspaceId: 'ws-default' } },
     projects: {
       site: {
-        'tracker-linear': { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } },
+        'tracker-linear': { teams: ['t-1'] },
+        lanes: [
+          { name: 'Dev', agent: 'dev', worktree: true },
+          { name: 'Review', agent: 'reviewer', worktree: false, complete: 'Shipped' },
+          { name: 'Shipped' },
+        ],
       },
     },
   });
   const loaded = await loadConfig(join(root, 'config.json'));
   const routing = projectLinear(loaded, 'site')!;
   assert.deepEqual(
-    routing.lanes,
-    { Dev: { agent: 'dev', worktree: true }, Review: { agent: 'reviewer', worktree: false } },
-    'the convention is the base, the entry wins per lane, human lanes are absent from the map the listener consults',
+    routing,
+    { teams: ['t-1'], workspaceId: 'ws-default' },
+    'the section routes teams and workspace only',
   );
-  assert.equal(routing.workspaceId, 'ws-default', 'workspaceId falls back to the convention');
-  const raw = JSON.parse(await readFile(join(root, 'config.json'), 'utf8'));
-  assert.equal(raw.projects.site['tracker-linear'].lanes.Shipped, null, 'the file keeps the human lanes');
+  const project = loaded.projects.find(p => p.id === 'site')!;
+  assert.deepEqual(
+    project.lanes,
+    [
+      { name: 'Dev', agent: 'dev', worktree: true },
+      { name: 'Review', agent: 'reviewer', worktree: false, complete: 'Shipped' },
+      { name: 'Shipped', worktree: false },
+    ],
+    'the lanes are core\u2019s, on the project, in the written order, complete/return kept',
+  );
+  assert.deepEqual(laneOf(project, 'Review'), {
+    name: 'Review',
+    agent: 'reviewer',
+    worktree: false,
+    complete: 'Shipped',
+  });
+  assert.equal(laneOf(project, 'Gone'), undefined, 'an unmapped state is silence');
 
-  // A bare section entry gets the whole convention, workspaceId included.
+  // A bare section entry still gets the convention workspace.
   await write({
-    projectDefaults: { 'tracker-linear': { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
+    projectDefaults: { 'tracker-linear': { workspaceId: 'ws-default' } },
     projects: { site: { 'tracker-linear': { teams: ['t-1'] } } },
   });
   const bare = projectLinear(await loadConfig(join(root, 'config.json')), 'site')!;
-  assert.deepEqual(bare.lanes, { Dev: { agent: 'dev', worktree: true } }, 'the convention applies untouched');
   assert.equal(bare.workspaceId, 'ws-default');
 
   // A project with no linear section routes nothing: undefined, not an empty map.

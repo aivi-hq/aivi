@@ -1,15 +1,35 @@
 /** Linear's project-setup contributor, at its `./setupProject` subpath: it
- *  maps a new project to Linear teams and lanes. It clones nothing (a tracker
- *  has no checkout to give) and hands back the `linear` section core writes
- *  under the project. Everything Linear-specific — apps, teams, workflow
- *  states — lives here; core only knows this plugin serves the `tracker` role. */
-import { getLogger } from '@aivi/core';
-import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
+ *  maps a new project to Linear teams and offers the project's lane array —
+ *  the board's states in board order, each asked who works it. It clones
+ *  nothing (a tracker has no checkout to give): it hands back the `linear`
+ *  section core writes under the project, and the **core** `lanes` array
+ *  core writes on the project. Everything Linear-specific — apps, teams,
+ *  workflow states — lives here; core only knows this plugin serves the
+ *  `tracker` role. */
+import { getLogger, type ProjectLaneInput } from '@aivi/core';
+import { PluginSetupCancelled, type ProjectContributor } from '@aivi/plugin';
 import { type LinearTeam, resolveTeams } from './client.ts';
-import type { LaneValue, LinearConfig } from './config.ts';
+import type { LinearConfig } from './config.ts';
 import { clientFor } from './tracker.ts';
 
 const log = getLogger(['aivi', 'projects']);
+
+/** The states the wizard asks about, in board order: deduped by name across
+ *  the picked teams, and **closed states are gone** (ruled 2026-10-02 —
+ *  Done, Canceled and Duplicate end work; the tracker recognizes them by
+ *  type, they are not places in the workflow and never get written). A run
+ *  that ends in the last configured lane moves nowhere: a person closes the
+ *  ticket. Exported for the test that pins this ruling; the client already
+ *  returns each team's states in board order (type group, then position). */
+export function openStates(states: LinearTeam['states']): LinearTeam['states'] {
+  const closed = new Set(['completed', 'canceled', 'duplicate']);
+  const seen = new Set<string>();
+  return states.filter(state => {
+    if (closed.has(state.type) || seen.has(state.name)) return false;
+    seen.add(state.name);
+    return true;
+  });
+}
 
 const contributor: ProjectContributor = {
   role: 'tracker',
@@ -57,31 +77,51 @@ const contributor: ProjectContributor = {
     if (ctx.prompts.isCancel(idAnswer)) throw new PluginSetupCancelled('no project id given');
     const id = (String(idAnswer).trim() || suggested).toLowerCase();
 
-    // Lanes: the projectDefaults convention is the base; only the states it
-    // leaves open get asked, and a state that only ends work never does.
-    const conventions = (ctx.projectDefaults?.lanes ?? {}) as Record<string, LaneValue>;
-    const open = [
-      ...new Set(
-        chosen.flatMap(team =>
-          team.states.filter(state => state.type !== 'completed' && state.type !== 'canceled').map(state => state.name),
-        ),
-      ),
-    ].filter(name => !(name in conventions));
-    const lanes: Record<string, string | null> = {};
-    for (const name of open) {
-      const answer = await ctx.prompts.text({
-        message: `Which OpenCode agent works the "${name}" lane?`,
-        placeholder: 'leave empty to leave it for humans',
+    // Lanes: core's ordered workflow (`projects.<id>.lanes`), and the board
+    // is the order — the client returns a team's states in board order
+    // (type group, then position). One prompt per lane: who works it.
+    // "-- None --" leaves a human lane: the orchestrator's silence, exactly
+    // as configured.
+    const lanes: ProjectLaneInput[] = [];
+    // A pick-list, never typing: the agents OpenCode can run as a primary
+    // in this project's checkout. A service that answers with no agents
+    // means something is broken — aivi always ships at least two — so the
+    // setup says so and stops.
+    const agentNames = await ctx.agents(id);
+    if (!agentNames.length) throw new Error('Unable to configure lanes: there appear to be no agents available.');
+    for (const state of openStates(chosen.flatMap(team => team.states))) {
+      const answer = await ctx.prompts.select({
+        message: `Which OpenCode agent works the "${state.name}" lane?`,
+        options: [...agentNames.map(name => ({ value: name, label: name })), { value: '', label: '-- None --' }],
       });
       if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
-      lanes[name] = String(answer).trim() ? String(answer).trim() : null;
+      const agent = String(answer).trim();
+      // A worked lane with git possible: does its work write files? Only a
+      // yes is written — core's default is false, and a key stating the
+      // default is noise. "No" is not a promise of read-only: that is the
+      // agent file's own deny, never aivi's. Without a forge there are no
+      // worktrees to promise, so nothing is asked.
+      let worktree = false;
+      if (agent && ctx.forgeConfigured) {
+        const writes = await ctx.prompts.select({
+          message: `Does work in the "${state.name}" lane write files (will use git worktrees)?`,
+          options: [
+            { value: 'yes', label: 'yes — it writes, give it its own worktree' },
+            { value: 'no', label: 'no — it works in the checkout itself' },
+          ],
+        });
+        if (ctx.prompts.isCancel(writes)) throw new PluginSetupCancelled('lane setup incomplete');
+        worktree = writes === 'yes';
+      }
+      lanes.push({ name: state.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
     }
-    if (!open.length)
-      await ctx.prompts.log.message('the projectDefaults convention already covers every lane these teams work in');
+    if (!lanes.length)
+      await ctx.prompts.log.message(
+        'these teams have no workflow states yet — lanes get written once the board has some',
+      );
 
     const section: Record<string, unknown> = { teams: resolveTeams(teams, teamIds) };
-    if (Object.keys(lanes).length) section.lanes = { ...conventions, ...lanes };
-    return { id, section, cloned: false };
+    return { id, section, ...(lanes.length ? { lanes } : {}), cloned: false };
   },
 };
 

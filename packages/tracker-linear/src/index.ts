@@ -9,8 +9,6 @@ export type {
 } from './client.ts';
 export { LinearApiError, LinearClient, resolveTeams } from './client.ts';
 export type {
-  LaneBinding,
-  LaneValue,
   LinearConfig,
   LinearProjectDefaults,
   LinearProjectEntry,
@@ -18,8 +16,6 @@ export type {
 } from './config.ts';
 export {
   assistantAgent,
-  laneBinding,
-  laneValueSchema,
   linearPrimarySecretNames,
   linearProjectDefaultsSchema,
   linearProjectSchema,

@@ -20,7 +20,10 @@ import type {
   TrackerCommentKind,
   TrackerEvent,
   TrackerIssue,
+  TrackerPlanStep,
+  TrackerQuestion,
   TrackerState,
+  TrackerUpdate,
 } from '@aivi/plugin/tracker';
 import { LinearApiError, LinearClient } from './client.ts';
 import type { LinearConfig } from './config.ts';
@@ -74,6 +77,14 @@ export function clientFor(config: LinearConfig, app: string | undefined, log: Lo
   return new LinearClient(creds!, { log });
 }
 
+/** Linear's verdict of *finished as far as work goes*: `completed` (Done) and
+ *  `canceled` (Canceled, Won't Fix, Could not reproduce) both end the ticket's
+ *  claim on anyone's attention. The words live here and nowhere above — the
+ *  neutral contract carries only the verdict (`completed`), which is what the
+ *  decision code and the orchestrator ever see. */
+const isClosed = (stateType: string): boolean =>
+  stateType === 'completed' || stateType === 'canceled' || stateType === 'duplicate';
+
 /** Translate a fresh Linear issue into the neutral facts the decision code
  *  reads. This is the only place Linear field names survive. */
 export function neutralIssue(issue: Awaited<ReturnType<LinearClient['issue']>>): TrackerIssue {
@@ -90,7 +101,8 @@ export function neutralIssue(issue: Awaited<ReturnType<LinearClient['issue']>>):
     delegateId: issue.delegate?.id ?? null,
     assignee: issue.assignee,
     archived: issue.archivedAt !== null,
-    blockedByStates: issue.blockedBy.map(b => b.state.type),
+    completed: isClosed(issue.state.type),
+    blockedBy: issue.blockedBy.map(b => ({ id: b.id, completed: isClosed(b.state.type) })),
   };
 }
 
@@ -240,6 +252,73 @@ export class LinearTracker implements Tracker {
       content,
       ...(kind === 'progress' ? { ephemeral: true } : {}),
     });
+  }
+
+  /**
+   * Linear's way with a question: an `elicitation` activity in the agent
+   * session, carrying the `select` signal with the options when there are
+   * any (docs/agent-signals, live shape). The person may answer by picking —
+   * the choice arrives as an ordinary `prompted` event carrying the value —
+   * or in free text, which dismisses the elicitation just the same. The
+   * session waits in `awaitingInput` for as long as it takes: an elicitation
+   * is not on any clock.
+   */
+  async ask(conversation: string, question: TrackerQuestion): Promise<void> {
+    await this.of(conversation).client.createActivity({
+      agentSessionId: this.sessionOf(conversation),
+      content: { type: 'elicitation', body: question.question },
+      ...(question.options?.length ? { signal: 'select' as const, signalMetadata: { options: question.options } } : {}),
+    });
+  }
+
+  /** Linear's way with a plan: replace the agent session's plan wholesale —
+   *  the same words Linear's own API uses for it, statuses and all
+   *  (docs/agent-interaction, Agent Plans). */
+  async plan(conversation: string, steps: TrackerPlanStep[]): Promise<void> {
+    await this.of(conversation).client.setPlan(this.sessionOf(conversation), steps);
+  }
+
+  /** Linear's word for "the result was shown": the response activity that
+   *  renders a success *completes* the agent session (docs, live), so an
+   *  ended session has said its piece and a retry must not say it again. */
+  async resultShown(conversation: string): Promise<boolean> {
+    return this.of(conversation).client.agentSessionEnded(this.sessionOf(conversation));
+  }
+
+  /** The closing note on the **ticket** (ruled 2026-10-02: the answer was
+   *  only readable by opening the agent session). The person gets the text
+   *  plus a link to the session that did the work. Idempotence is ours, as
+   *  the seam demands: the marker is this conversation's agent session id —
+   *  a comment already carrying it means the note stands, so wake retries
+   *  and the boot pass never post it twice. */
+  async closingNote(conversation: string, issueId: string, text: string): Promise<void> {
+    const session = this.sessionOf(conversation);
+    const facts = await this.of(conversation).client.closingNoteFacts(issueId);
+    if (facts.comments.some(c => c.body.includes(session))) return;
+    const url = facts.sessions.find(s => s.id === session)?.url;
+    const link = url ? `[agent session](${url})` : `agent session \`${session}\``;
+    await this.of(conversation).client.createComment(issueId, `${text}\n\n— aivi · ${link}`);
+  }
+
+  /**
+   * Perform one neutral update. A `move` resolves the lane's *name* against
+   * the issue's team — the names come from the project's lane config, which
+   * is core's decision; Linear is only ever asked to transition, and only
+   * when the issue is not in that state already (the boot pass may re-drive
+   * a move that already landed). Labels wait for their own mutation work;
+   * nothing on today's path asks for one.
+   */
+  async apply(conversation: string, issueId: string, update: TrackerUpdate): Promise<void> {
+    if (update.kind === 'comment') return void (await this.comment(conversation, update.text, 'note'));
+    if (update.kind !== 'move') throw new Error(`Linear cannot apply "${update.kind}" yet`);
+    const client = this.of(conversation).client;
+    const issue = await client.issue(issueId);
+    const teams = await client.listTeams();
+    const state = teams.find(t => t.id === issue.team.id)?.states.find(s => s.name === update.lane);
+    if (!state)
+      throw new Error(`Linear team ${issue.team.key} has no state named "${update.lane}" — check the project's lanes`);
+    if (issue.state.id === state.id) return; // already there: the move landed before a crash
+    await client.transitionIssue(issueId, state.id);
   }
 
   /** One public route per app, verified by that app's secret, acknowledged
