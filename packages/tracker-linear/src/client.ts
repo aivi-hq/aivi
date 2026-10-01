@@ -55,6 +55,11 @@ export interface LinearIssue {
   archivedAt: string | null;
   /** Issues blocking this one; a blocker not in a finished state holds the listener back. */
   blockedBy: { id: string; state: { id: string; name: string; type: string } }[];
+  /** Linear's rank — 1 Urgent through 4 Low, 0 for unranked: what sorts a
+   *  board top to bottom, unranked last. */
+  priority: number;
+  /** ISO instant of creation; the tie-break under priority, oldest first. */
+  createdAt: string;
 }
 
 export interface LinearAgentSession {
@@ -108,6 +113,8 @@ const ISSUE_FIELDS = `
   delegate { id }
   assignee { id name }
   archivedAt
+  priority
+  createdAt
   inverseRelations { nodes { type issue { id state { id name type } } } }
 `;
 
@@ -324,6 +331,34 @@ export class LinearClient {
       { id: agentSessionId, input: { plan: steps } },
     );
     if (!data.agentSessionUpdate.success) throw new LinearApiError('agentSessionUpdate was not successful', 200);
+  }
+
+  /** Tickets sitting in one state of one team — the eligibility walk's
+   *  top-to-bottom reading. Linear's public query cannot sort (its `sort`
+   *  parameter is internal), so the board's order is computed here:
+   *  Linear's own priority sort — Urgent first, unranked last — and oldest
+   *  first within a rank. Archived issues never show: the connection
+   *  leaves them out unless asked. `truncated` says more than 100 sit in
+   *  the lane; the walk is told rather than shown a partial board in
+   *  silence. */
+  async issuesIn(teamId: string, stateId: string): Promise<{ issues: LinearIssue[]; truncated: boolean }> {
+    const data = await this.graphql<{
+      issues: { nodes: RawIssue[]; pageInfo: { hasNextPage: boolean } };
+    }>(
+      `query($teamId: String!, $stateId: String!) {
+         issues(
+           filter: { team: { id: { eq: $teamId } }, state: { id: { eq: $stateId } } }
+           orderBy: createdAt
+           first: 100
+         ) { nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage } }
+       }`,
+      { teamId, stateId },
+    );
+    const rank = (priority: number) => (priority === 0 ? 5 : priority);
+    const issues = data.issues.nodes
+      .map(issueOf)
+      .sort((a, b) => rank(a.priority) - rank(b.priority) || a.createdAt.localeCompare(b.createdAt));
+    return { issues, truncated: data.issues.pageInfo.hasNextPage };
   }
 
   async issue(id: string): Promise<LinearIssue> {

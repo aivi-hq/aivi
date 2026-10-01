@@ -82,7 +82,7 @@ export function clientFor(config: LinearConfig, app: string | undefined, log: Lo
  *  claim on anyone's attention. The words live here and nowhere above — the
  *  neutral contract carries only the verdict (`completed`), which is what the
  *  decision code and the orchestrator ever see. */
-const isClosed = (stateType: string): boolean =>
+export const isClosed = (stateType: string): boolean =>
   stateType === 'completed' || stateType === 'canceled' || stateType === 'duplicate';
 
 /** Translate a fresh Linear issue into the neutral facts the decision code

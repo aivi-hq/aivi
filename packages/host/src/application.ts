@@ -7,6 +7,8 @@ import { attachExec } from './api/exec.ts';
 import { PublicRoutes } from './api/public.ts';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
+import { Dispatcher, type DispatcherLease } from './dispatcher/dispatcher.ts';
+import { LeaseStore } from './dispatcher/leases.ts';
 import { EventStream, type SessionEvents } from './events.ts';
 import { createJobHandler } from './jobs.ts';
 import { ConfigurationError, type ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
@@ -155,6 +157,22 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   // OpenCode plugin registers them as `aivi_work_complete`/`aivi_ask`, and every call
   // arrives with the trusted session id — which is how a tool call finds its run.
   const ledger = new RunLedger(store);
+  // The dispatcher is the only part that knows how much capacity is left;
+  // the orchestrator's claims are leases here, and when the dispatcher ends
+  // one on its own the mirrored claim must clear. The link between them is
+  // set in the same synchronous breath that builds both — anything firing
+  // earlier says so, rather than silently losing an ended lease.
+  let clearClaim: (lease: DispatcherLease, reason: string) => void = () => {
+    throw new Error('a lease ended before the orchestrator was wired to the dispatcher');
+  };
+  const dispatcher = new Dispatcher({
+    leases: new LeaseStore(store),
+    dispatcher: loaded.config.dispatcher,
+    opencode,
+    signal: abort.signal,
+    log,
+    onEnded: (lease, reason) => clearClaim(lease, reason),
+  });
   const orchestrator = new Orchestrator({
     ledger,
     opencode,
@@ -163,7 +181,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     signal: abort.signal,
     // Moves come from core's lane order, read straight off the loaded config.
     lanes: id => loaded.config.projects[id]?.lanes ?? [],
+    directory: id => {
+      const project = loaded.projects.find(p => p.id === id);
+      if (!project) throw new Error(`no project ${id} in the loaded config`);
+      return project.directory;
+    },
+    dispatcher,
   });
+  clearClaim = (lease, reason) => void orchestrator.leaseEnded(lease, reason);
   for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);
 
   const serve = async (scheduler: Scheduler, channels: Channels, knowledge: KnowledgeService) => {
@@ -230,6 +255,10 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     // and shows as degraded in status; only a ConfigurationError is fatal.
     supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks, tools);
     await supervisor.start(modules);
+    // Leases stand or fall against OpenCode's reality before anything is
+    // re-armed: a claim whose session died at the restart clears first, so
+    // the watch below never re-attaches to a run that is already over.
+    await dispatcher.reconcile();
     // Boot recovery after the modules: a tracker must be registered before its owed
     // ceremonies are re-driven. Live OpenCode turns were resumed by OpenCode itself;
     // this pass re-attaches the watch and fetches the state of anything owed.

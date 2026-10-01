@@ -50,6 +50,16 @@ export class RunLinks {
       .run(agentSession, ticketId, now);
   }
 
+  /** The delegation never became a run — the pool was full and the
+   *  orchestrator refused. The pair goes: a later delegation of the same
+   *  ticket is fresh work, not a redelivery folded into a pair that never
+   *  worked. Only unattached pairs die here; a live pair is a live run. */
+  release(agentSession: string): void {
+    this.store.db
+      .prepare('DELETE FROM tracker_linear_run_links WHERE agent_session=? AND opencode_session IS NULL')
+      .run(agentSession);
+  }
+
   /** The run's session exists: attach it to the newest unattached pair for
    *  the ticket. Absent means the pair was already recorded (a replay). */
   attach(ticketId: string, opencodeSession: string): boolean {

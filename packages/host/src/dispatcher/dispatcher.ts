@@ -4,6 +4,8 @@ import type { OpenCodeClient } from '../opencode.ts';
 import { agentModel, type NativeModel } from '../session.ts';
 import { type DispatcherLease, type LeaseStore, UNLIMITED } from './leases.ts';
 
+export type { DispatcherLease };
+
 /**
  * The dispatcher: the only part that knows how much capacity is left
  * (docs/orchestrator.md). Everything that wants to spend — the orchestrator
@@ -174,7 +176,9 @@ export class Dispatcher {
       if (session.agent !== work.agent || session.location.directory !== work.directory)
         throw new Error(`session ${sessionId} no longer runs agent ${work.agent} in ${work.directory}`);
     } else {
-      sessionId = `ses_${randomBytes(10).toString('hex')}`;
+      // The id names the service: whose worker a session is stays readable
+      // in OpenCode's own list, and tests can point at one kind of session.
+      sessionId = `ses_${lease.service}_${randomBytes(10).toString('hex')}`;
       const spec = this.pools[lease.pool]?.model;
       const model = spec ? parseModelSpec(spec) : await agentModel(client, work.agent, work.directory, request);
       await client.session.create(

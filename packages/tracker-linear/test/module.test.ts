@@ -22,6 +22,8 @@ import type { SessionEvents } from '@aivi/host';
 import {
   Channels,
   connectOpenCode,
+  Dispatcher,
+  LeaseStore,
   Orchestrator,
   PublicRoutes,
   RunLedger,
@@ -45,6 +47,7 @@ import type { LinearConfig } from '../src/config.ts';
 import { linearSchema } from '../src/config.ts';
 import { RunLinks } from '../src/links.ts';
 import { createLinearModule, openLinearStore } from '../src/module.ts';
+import { StoppedTickets } from '../src/stopped.ts';
 
 const run = promisify(execFile);
 
@@ -334,6 +337,14 @@ const issue = (id: string, extra: Partial<TrackerIssue> = {}): TrackerIssue => (
 });
 
 const noEvents: SessionEvents = { watch: () => () => {} };
+/** A board with no projects on it: these tests drive runs through the tracker
+ *  fake, and the eligibility walk never asks a Linear installation here. */
+const emptyFeed: import('@aivi/host').TicketFeed = {
+  projects: () => [],
+  tickets: async () => [],
+  moveTo: async () => {},
+  firstMessage: async () => undefined,
+};
 const until = async (check: () => boolean, what: string) => {
   for (let i = 0; i < 500 && !check(); i++) await new Promise(r => setTimeout(r, 10));
   assert.ok(check(), what);
@@ -344,19 +355,33 @@ const knowledge: KnowledgeService = { search: async () => [], index: async () =>
  *  Store, watching nothing (no live turn ends; the tools drive the run). The
  *  boot-reconcile test passes the same orchestrator to a second module. */
 function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController): AiviServices {
+  const opencode = () => connectOpenCode(loaded.config.opencode, {});
   const orchestrator = new Orchestrator({
     ledger: new RunLedger(store),
-    opencode: () => connectOpenCode(loaded.config.opencode, {}),
+    opencode,
     events: noEvents,
     log: getLogger(['aivi']),
     signal: abort.signal,
     lanes: id => loaded.config.projects[id]?.lanes ?? [],
+    directory: id => {
+      const project = loaded.projects.find(pr => pr.id === id);
+      if (!project) throw new Error(`no project ${id}`);
+      return project.directory;
+    },
+    // No pools configured here: the dispatcher tracks every lease and grants
+    // every request — the same capacity the tests always had.
+    dispatcher: new Dispatcher({
+      leases: new LeaseStore(store),
+      dispatcher: loaded.config.dispatcher,
+      opencode,
+      signal: abort.signal,
+    }),
   });
   return {
     loaded,
     store,
     knowledge,
-    opencode: () => connectOpenCode(loaded.config.opencode, {}),
+    opencode,
     events: noEvents,
     signal: abort.signal,
     log: getLogger(['aivi']),
@@ -386,7 +411,7 @@ function restartServices(base: AiviServices): AiviServices {
 
 /** The worker session the orchestrator made for a ticket, from the fake's keys. */
 const workerSession = (sessions: Map<string, unknown>, since = 0) =>
-  [...sessions.keys()].filter(id => id.startsWith('ses_run_'))[since]!;
+  [...sessions.keys()].filter(id => id.startsWith('ses_orchestrator_'))[since]!;
 
 test('a delegation runs the lane agent; plan, question, answer and interjection reach the worker; the ending catches Linear up in order; refusals answer plainly', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
@@ -431,7 +456,11 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
-  const running = await createLinearModule(linearBlock(config), async () => tracker).start(services);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => emptyFeed,
+  ).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
@@ -667,7 +696,11 @@ test('a worked lane runs its agent in the project checkout; the ending without a
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
-  const running = await createLinearModule(linearBlock(config), async () => tracker).start(services);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => emptyFeed,
+  ).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
@@ -742,7 +775,11 @@ test('the listener delegates an issue entering a worked lane; a stop ends the ru
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
-  const running = await createLinearModule(linearBlock(config), async () => tracker).start(services);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => emptyFeed,
+  ).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
@@ -839,7 +876,11 @@ test('boot reconcile heals an ending the follower missed, and says nothing twice
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
-  const running = await createLinearModule(linearBlock(config), async () => first).start(services);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => first,
+    () => emptyFeed,
+  ).start(services);
 
   // The delegation lands and the worker starts...
   await first.drive({
@@ -862,7 +903,11 @@ test('boot reconcile heals an ending the follower missed, and says nothing twice
   // record says ended; Linear is caught up — result, move, delegate.
   const second = new FakeTracker(linearBlock(config));
   second.issues.set('api-9', issue('api-9', { identifier: 'API-9', title: 'Ship it' }));
-  const restarted = await createLinearModule(linearBlock(config), async () => second).start(restartServices(services));
+  const restarted = await createLinearModule(
+    linearBlock(config),
+    async () => second,
+    () => emptyFeed,
+  ).start(restartServices(services));
   assert.deepEqual(
     second.comments.filter(c => c.conversation === 'dev:as-9').map(c => [c.kind, c.text]),
     [['answer', 'It ships.']],
@@ -894,10 +939,147 @@ test('boot reconcile heals an ending the follower missed, and says nothing twice
   // boot must not post it twice (the marker is the agent session id, which
   // the fake's text-equality guard stands in for).
   third.closingNotes.push({ conversation: 'dev:as-9', issueId: 'api-9', text: 'It ships.' });
-  const again = await createLinearModule(linearBlock(config), async () => third).start(restartServices(services));
+  const again = await createLinearModule(
+    linearBlock(config),
+    async () => third,
+    () => emptyFeed,
+  ).start(restartServices(services));
   assert.deepEqual(third.comments, [], 'a catch-up that already happened is silent');
   assert.deepEqual(third.moves, [], 'and nothing re-moves');
   assert.equal(third.closingNotes.length, 1, 'a standing closing note is not posted twice');
   await again.stop();
   store.close();
+});
+
+/** The walk's board over one ticket: what the module's own feed answers with
+ *  the stopped-ticket filter — the same two lines `linearFeed` runs. */
+function pickedBoard(store: Store, stopped: StoppedTickets): import('@aivi/host').TicketFeed {
+  return {
+    projects: () => ['website'],
+    tickets: async () => (stopped.has('eng-1') ? [] : [{ id: 'eng-1', blocked: false }]),
+    moveTo: async () => {},
+    firstMessage: async () => 'picked eng-1 for you',
+  };
+}
+
+async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await checkout(root, 'website');
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: 'http://placeholder' },
+    plugins: { 'tracker-linear': { agent: 'assistant', primary: 'dev', apps: { dev: {} }, mcp: false } },
+    projects: {
+      website: {
+        'tracker-linear': { teams: ['t'] },
+        lanes: [
+          { name: 'Backlog' },
+          { name: 'Todo', queue: true },
+          { name: 'In Progress', agent: 'developer' },
+          { name: 'Done' },
+        ],
+      },
+    },
+  });
+  const opencode = await fakeOpenCode(t, 'unused here');
+  config.opencode.url = opencode.url;
+  const loaded: LoadedConfig = {
+    config,
+    path: join(root, 'config.json'),
+    projects: [{ id: 'website', directory: source, lanes: config.projects.website!.lanes! }],
+    sources: [],
+  };
+  const tracker = new FakeTracker(linearBlock(config));
+  tracker.issues.set('eng-1', issue('eng-1'));
+  const store = new Store(':memory:');
+  const abort = new AbortController();
+  const stopped = new StoppedTickets(store);
+  const services = makeServices(loaded, store, abort);
+  return { tracker, config, store, services, stopped, opencode, orchestrator: services.orchestrator };
+}
+
+test('a picked-up run’s ending is said on the ticket with the installation’s own credentials, and stop means stop', async t => {
+  const { tracker, config, store, services, stopped, opencode, orchestrator } = await walkHarness(t);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => pickedBoard(store, stopped),
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+
+  // The walk takes the ticket: no delegation, so no agent session anywhere.
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+  assert.match(opencode.prompts[0]!.text, /picked eng-1 for you/);
+  const run = orchestrator.activeRun('tracker-linear', 'eng-1')!;
+
+  // The person stops it. The ending has no session to complete and no
+  // delegate to release: the closing note is said on the ticket with the
+  // installation's own app, and nothing moves — a stop moves nothing.
+  await orchestrator.stop(run.id, 'a person asked to stop eng-1 from the session.');
+  await until(() => tracker.closingNotes.length === 1, 'the ticket heard its ending without an agent session');
+  assert.deepEqual(tracker.closingNotes[0], {
+    conversation: 'dev',
+    issueId: 'eng-1',
+    text: 'a person asked to stop eng-1 from the session.',
+  });
+  assert.deepEqual(tracker.moves, [], 'a stop moves nothing');
+  assert.equal(stopped.has('eng-1'), true, 'the stop is remembered');
+
+  // And the walk that very ending woke does not take the ticket back.
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'stop means stop, even for the walk');
+});
+
+test('an ending that arrived while nobody followed is found at boot from the orchestrator’s record', async t => {
+  const { tracker, config, store, services, stopped, opencode, orchestrator } = await walkHarness(t);
+  const first = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => pickedBoard(store, stopped),
+  ).start(services);
+
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+
+  // The follower stops listening — a module restart while the host lives.
+  // The worker ends in that gap: nobody is following, and the walk takes
+  // the ticket again (failed work is work; only a person's stop says
+  // otherwise). The record of the first ending waits in the ledger.
+  await first.stop();
+  const worker = workerSession(opencode.sessions);
+  await orchestrator.completeTool({
+    sessionId: worker,
+    input: { outcome: 'failure', summary: 'the worker died mid-outage' },
+  });
+  assert.equal(tracker.closingNotes.length, 0, 'nobody was listening to say it');
+  await until(() => opencode.prompts.length === 2, 'the failed ticket is work again, and the walk takes it');
+
+  // The second module boots: the missed ending is found in the
+  // orchestrator's own record from the watermark — said on the ticket and
+  // moved where the lane order chose, with the installation's own app.
+  const again = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => pickedBoard(store, stopped),
+  ).start(restartServices(services));
+  t.after(async () => {
+    await again.stop();
+    store.close();
+  });
+  assert.equal(tracker.closingNotes.length, 1, 'the boot pass rendered the missed ending');
+  assert.deepEqual(tracker.closingNotes[0], {
+    conversation: 'dev',
+    issueId: 'eng-1',
+    text: 'the worker died mid-outage',
+  });
+  assert.deepEqual(
+    tracker.moves.map(m => m.update),
+    [{ kind: 'move', lane: 'Todo' }],
+    'the failure move the lane order chose landed too',
+  );
 });

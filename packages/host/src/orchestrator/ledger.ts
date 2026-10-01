@@ -36,6 +36,10 @@ export interface Run {
    *  orchestrator from the project's lane order. A stop leaves it unset: a
    *  stopped ticket stays where the person left it. */
   targetLane?: string;
+  /** The dispatcher lease this run **claims**: the run row is the ticket's
+   *  mirror of the slot its worker spends. Set at the claim, and the lease
+   *  is released when the run ends. */
+  leaseId?: string;
   nudges: number;
   createdAt: number;
   updatedAt: number;
@@ -69,6 +73,7 @@ const map = (r: Row): Run => ({
   ...(r.worktree === null ? {} : { worktree: String(r.worktree) }),
   ...(r.outcome === null ? {} : { outcome: JSON.parse(String(r.outcome)) as RunOutcome }),
   ...(r.target_lane === null ? {} : { targetLane: String(r.target_lane) }),
+  ...(r.lease_id === null || r.lease_id === undefined ? {} : { leaseId: String(r.lease_id) }),
   nudges: Number(r.nudges),
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
@@ -98,6 +103,12 @@ const migrations = [
    ALTER TABLE orchestrator_runs DROP COLUMN question;
    ALTER TABLE orchestrator_runs DROP COLUMN delivered;
    UPDATE orchestrator_runs SET state='working' WHERE state='awaiting_input';`,
+  // Version 3 (the dispatcher era, docs/orchestrator.md): a claim mirrors a
+  // lease. The run row is the orchestrator's record of the ticket's slot;
+  // the dispatcher never learns the ticket, and the orchestrator never
+  // counts the slot — the column is the join.
+  `ALTER TABLE orchestrator_runs ADD COLUMN lease_id TEXT;
+   CREATE INDEX orchestrator_runs_lease ON orchestrator_runs(lease_id);`,
 ];
 
 export class RunLedger {
@@ -161,6 +172,38 @@ export class RunLedger {
       )
       .get(trackerId, ticketId) as Row | undefined;
     return row && map(row);
+  }
+
+  /** Bind a run to the lease it claims. */
+  setLease(id: string, leaseId: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db.prepare('UPDATE orchestrator_runs SET lease_id=?, updated_at=? WHERE id=?').run(leaseId, now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** The live claim on a lease, if one still stands: the dispatcher's way
+   *  back to the ticket when it ends a lease itself. */
+  byLease(leaseId: string): Run | undefined {
+    const row = this.core.db
+      .prepare(`SELECT * FROM orchestrator_runs WHERE lease_id=? AND ${ACTIVE} ORDER BY created_at DESC LIMIT 1`)
+      .get(leaseId) as Row | undefined;
+    return row && map(row);
+  }
+
+  /** Runs that reached their ending after the instant, oldest first: what
+   *  a follower's boot pass asks with its own watermark — endings that
+   *  arrived while aivi slept, the picked-up work included. */
+  terminalSince(trackerId: string, since: number): Run[] {
+    return (
+      this.core.db
+        .prepare(
+          `SELECT * FROM orchestrator_runs
+           WHERE tracker_id=? AND state IN ('completed','failed','cancelled') AND updated_at > ?
+           ORDER BY updated_at`,
+        )
+        .all(trackerId, since) as Row[]
+    ).map(map);
   }
 
   /** Every run not yet terminal, oldest first: the boot pass re-attaches to these. */

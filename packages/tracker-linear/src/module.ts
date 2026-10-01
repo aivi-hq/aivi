@@ -18,6 +18,7 @@
  * machinery until the channels reform.
  */
 import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
+import type { TicketFeed } from '@aivi/host';
 import {
   ChannelEngine,
   ConfigurationError,
@@ -29,12 +30,16 @@ import {
 import type { AiviModule, AiviServices, RunEvent, Store } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { Tracker, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
+import type { LinearClient } from './client.ts';
 import type { LinearConfig } from './config.ts';
-import { assistantAgent, MODULE_ID } from './config.ts';
+import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
+import { issueDossier, linearFeed } from './feed.ts';
 import { type RunLink, RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue } from './projects.ts';
-import { createLinearTracker, LinearTracker } from './tracker.ts';
+import { StoppedTickets } from './stopped.ts';
+import { clientFor, createLinearTracker, LinearTracker } from './tracker.ts';
+import { WalkWatermark } from './watermark.ts';
 
 /**
  * The platform: an agent session is a conversation. Its id is `<app>:<agent session id>`
@@ -73,9 +78,6 @@ export function openLinearStore(store: Store): ConversationStore {
 
 /** The `<issue>` block that accompanies every start when the event brought
  *  no context of its own. */
-const issueDossier = (issue: TrackerIssue) =>
-  `<issue identifier="${issue.identifier}"><title>${issue.title}</title><description>${issue.description ?? ''}</description></issue>`;
-
 // Which aivi project an issue belongs to lives in `./projects.ts` with the
 // project's `linear` section: core hands the section through unread and the
 // plugin merges it here.
@@ -91,7 +93,11 @@ type MakeTracker = (services: AiviServices) => Promise<Tracker>;
  * the host orchestrator's, and Linear is one follower among any number it
  * will never know about.
  */
-export function createLinearModule(config: LinearConfig, makeTracker?: MakeTracker): AiviModule {
+/** The board, pull-shaped, for the orchestrator's walk; a test hands its own
+ *  lanes the way it hands its own tracker. */
+type MakeFeed = (services: AiviServices) => TicketFeed;
+
+export function createLinearModule(config: LinearConfig, makeTracker?: MakeTracker, makeFeed?: MakeFeed): AiviModule {
   return {
     id: MODULE_ID,
     start: services =>
@@ -99,21 +105,35 @@ export function createLinearModule(config: LinearConfig, makeTracker?: MakeTrack
         config,
         services,
         makeTracker ?? (({ routes, log }) => createLinearTracker(config, routes, undefined, log.getChild(MODULE_ID))),
+        makeFeed ?? (s => linearFeed(config, s, s.log.getChild(MODULE_ID))),
       ),
   };
 }
 
-async function startLinear(config: LinearConfig, services: AiviServices, makeTracker: MakeTracker) {
+async function startLinear(config: LinearConfig, services: AiviServices, makeTracker: MakeTracker, makeFeed: MakeFeed) {
   const log = services.log.getChild(MODULE_ID);
   const collisions = linearTeamCollisions(services.loaded);
   if (collisions.length) throw new Error(`Linear config: ${collisions.join('; ')}`);
   const store = openLinearStore(services.store);
   const links = new RunLinks(services.store);
+  // The installation's own reader: the primary app when it is named, else
+  // the first configured — every app reads the same workspace, so the
+  // choice is credentials and nothing more. Picked-up work has no agent
+  // session to speak through; what its ticket is owed is said with these.
+  const readerApp = primaryLinearApp(config) ?? Object.keys(config.apps)[0]!;
+  let reader: LinearClient | undefined;
+  const read = () => (reader ??= clientFor(config, readerApp, log));
+  const stopped = new StoppedTickets(services.store);
+  const watermark = new WalkWatermark(services.store);
   const interrupted = store.recover();
   if (interrupted.length) log.warn('turns.interrupted', { blocked: interrupted.length });
 
   // The adapter takes the whole platform in: apps, credentials, endpoints.
   const tracker = await makeTracker(services);
+  // The eligibility walk reads the board through this feed: which projects
+  // this installation speaks for, what sits in a lane, how a ticket enters
+  // one. Webhooks keep pushing delegations; the walk needs none of them.
+  services.orchestrator.addFeed(MODULE_ID, makeFeed(services));
 
   const abort = new AbortController();
   let engine: ChannelEngine | undefined;
@@ -261,8 +281,66 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       await drive(event.run.id);
     };
 
+    /**
+     * A picked-up run's ending, owed to the ticket without an agent session:
+     * the **closing note** on the ticket, then the **move** the lane order
+     * chose — both ask Linear's real state first, so the live event and the
+     * boot pass can both try without ever saying anything twice. There is no
+     * result step (no session to complete) and no delegate to release (the
+     * app never sat on this ticket as its worker). A failure keeps the run
+     * owed: the next wake tries again, and the boot pass re-derives the list
+     * from the orchestrator's record through the watermark.
+     */
+    const walkOwed = new Map<string, Extract<RunEvent, { type: 'ended' }>>();
+
+    const walkEnding = async (event: Extract<RunEvent, { type: 'ended' }>): Promise<void> => {
+      // The stop's memory rides the ending even when the ending arrives
+      // after a restart: the event fired while nobody listened, but the
+      // person said stop and that stands.
+      if (event.run.state === 'cancelled') stopped.mark(event.run.ticketId);
+      const text = event.outcome.kind === 'success' ? event.outcome.summary : event.outcome.reason;
+      if (tracker.closingNote) await tracker.closingNote(readerApp, event.run.ticketId, text);
+      if (event.targetLane) {
+        const issue = await tracker.issue(readerApp, event.run.ticketId);
+        if (issue.state.name !== event.targetLane) {
+          if (!tracker.apply) throw new Error('Linear cannot apply a move');
+          await tracker.apply(readerApp, event.run.ticketId, { kind: 'move', lane: event.targetLane });
+        }
+      }
+      watermark.advanceTo(event.run.updatedAt);
+      log.info('walk.caught-up', { run: event.run.id, ticket: event.run.ticketId });
+    };
+
+    const driveWalk = async (runId: string, event?: Extract<RunEvent, { type: 'ended' }>): Promise<void> => {
+      if (event) walkOwed.set(runId, event);
+      const ending = walkOwed.get(runId);
+      if (!ending) return;
+      try {
+        await walkEnding(ending);
+        walkOwed.delete(runId);
+      } catch (error) {
+        log.warn('walk.catchup.failed', { run: runId, error }); // owed to the next wake and to the boot pass
+      }
+    };
+
+    /** The wait made visible where the ticket lives: picked-up work has no
+     *  agent session to carry a `select`, so the question arrives as a
+     *  ticket comment while the OpenCode form stays the durable record of
+     *  the wait — the answer reaches the worker through the form, and the
+     *  elicitation keep-alive holds the slot meanwhile (docs/orchestrator.md). */
+    const walkQuestion = async (event: Extract<RunEvent, { type: 'question' }>): Promise<void> => {
+      const options = event.question.options?.length
+        ? `\n\n${event.question.options.map(o => `- ${o.label}`).join('\n')}`
+        : '';
+      await read().createComment(
+        event.run.ticketId,
+        `The worker on this ticket needs an answer:\n\n> ${event.question.question}${options}\n\nAnswer in the worker's session and it reaches them there; the ticket keeps its slot until the elicitation keep-alive says otherwise.`,
+      );
+    };
+
     const retryOwed = async (): Promise<void> => {
       for (const runId of [...owed.keys()]) await drive(runId);
+      for (const runId of [...walkOwed.keys()]) await driveWalk(runId);
     };
 
     /** The pair store's other half: `started` attaches the OpenCode session
@@ -271,13 +349,31 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
      *  the log — the orchestrator never waits on us. */
     const unsubscribeRuns = services.orchestrator.subscribe(async (event): Promise<void> => {
       if (abort.signal.aborted || event.run.trackerId !== MODULE_ID) return;
+      // The stop and its answer are recorded in the same synchronous breath
+      // the events arrive: the walk wakes off the very ending, and a pass
+      // starting one microtask later must never read a board not yet told.
+      if (event.type === 'ended' && event.run.state === 'cancelled') stopped.mark(event.run.ticketId);
+      if (event.type === 'started') stopped.clear(event.run.ticketId); // a fresh run answers the stop
       try {
         if (event.type === 'started') {
           if (event.run.sessionId) links.attach(event.run.ticketId, event.run.sessionId);
           return;
         }
         const link = event.run.sessionId ? links.byOpencodeSession(event.run.sessionId) : undefined;
-        if (!link) return void log.warn('run.unlinked', { run: event.run.id, event: event.type });
+        if (!link) {
+          // A run the eligibility walk picked up: no delegation, so no agent
+          // session — and the ticket is owed its ceremony all the same, with
+          // the installation's own credentials. The question gets the ticket
+          // as its comment, because the person who must answer watches the
+          // ticket; the plan is the one thing a sessionless run cannot show,
+          // and the lane it moves in says enough.
+          if (event.type === 'ended') return void (await driveWalk(event.run.id, event));
+          if (event.type === 'question') return void (await walkQuestion(event));
+          if (event.type === 'plan') return log.info('plan.sessionless', { run: event.run.id });
+          // Today every event has its sessionless answer above; an event
+          // type added later says so here, loudly, instead of going quiet.
+          return void log.warn('event.sessionless.unrendered');
+        }
         const conversation = tracker.idFor(link.agentSession);
         if (event.type === 'question') return void (await tracker.ask(conversation, event.question));
         if (event.type === 'plan') return void (await tracker.plan(conversation, event.plan.steps));
@@ -308,7 +404,7 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       const directory = project.directory;
       const { app, session: agentSession } = tracker.parts(conversation);
       links.bind(agentSession, issue.id);
-      const { created } = await services.orchestrator.requestWork({
+      const { created, refused } = await services.orchestrator.requestWork({
         projectId: project.id,
         trackerId: MODULE_ID,
         ticketId: issue.id,
@@ -320,6 +416,19 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
           promptContext ?? issueDossier(issue),
         ].join('\n\n'),
       });
+      if (refused) {
+        // No slot, said plainly — silence is not an answer a delegator
+        // gets. The ticket stays in the lane it is in, and the eligibility
+        // walk starts it when a slot frees; the pair goes with the refusal
+        // so that moment arrives as fresh work, not a swallowed replay.
+        links.release(agentSession);
+        await say(
+          conversation,
+          `No slot is free in the pool behind lane "${issue.state.name}" right now. ${issue.identifier} stays where it is and I will start it as soon as a slot frees.`,
+          'answer',
+        );
+        return log.info('run.refused', { issue: issue.identifier, pool: refused, conversation });
+      }
       if (!created) return log.info('run.deduped', { issue: issue.identifier, conversation });
       // The first activity inside the session's first seconds: Linear marks a
       // silent new session unresponsive. The orchestrator's own progress
@@ -654,6 +763,13 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       await stopOrphanRun(issue, lane, human, event.changed);
       const pending = store.pendingForIssue(issue.id);
       await stopOrphans(pending, issue, lane, human, event.changed);
+      // Anything a person does to a ticket's place or standing wakes the
+      // walk — including moves no lane claims (a queue lane has no agent),
+      // which is exactly what the walk exists to pick up.
+      if (event.changed.includes('state') || event.changed.includes('labels')) {
+        stopped.clear(issue.id); // the person's own move answers a stop
+        void services.orchestrator.wake(routed.project.id);
+      }
       if (!config.listener || !event.changed.includes('state') || !lane?.agent || human || pending.length) return;
       if (services.orchestrator.activeRun(MODULE_ID, issue.id)) return; // one worker per ticket
       await listenerPickup(issue, lane, routed.project, event.conversation);
@@ -688,12 +804,29 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
     // catch-up that already happened says nothing twice.
     for (const link of links.attached()) {
       const run = services.orchestrator.runBySession(link.opencodeSession!);
+      if (run && run.state === 'cancelled') stopped.mark(link.ticketId); // stop survives the restart
       if (run && isTerminal(run.state) && run.outcome)
         await catchUp(
           { type: 'ended', run, outcome: run.outcome, ...(run.targetLane ? { targetLane: run.targetLane } : {}) },
           link,
         );
     }
+
+    // Picked-up work has no pair to boot from: its endings live in the
+    // orchestrator's record, and the watermark is where this module left
+    // off reading it. Delegated endings above are the pairs' own business;
+    // seeing them again here costs a local check and no word to Linear.
+    for (const run of services.orchestrator.endedSince(MODULE_ID, watermark.since())) {
+      if (run.sessionId && links.byOpencodeSession(run.sessionId)) continue;
+      if (run.outcome)
+        walkOwed.set(run.id, {
+          type: 'ended',
+          run,
+          outcome: run.outcome,
+          ...(run.targetLane ? { targetLane: run.targetLane } : {}),
+        });
+    }
+    for (const runId of [...walkOwed.keys()]) await driveWalk(runId);
 
     const unregister = services.channels.register({
       id: LINEAR.id,

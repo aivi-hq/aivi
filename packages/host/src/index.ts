@@ -55,6 +55,10 @@ export { Channels } from './channel/router.ts';
 export type { ModelRef, Turn, TurnKind, TurnState } from './channel/store.ts';
 export { ConversationStore } from './channel/store.ts';
 export { createTurnRunner, messageIdFor } from './channel/turns.ts';
+export type { Refusal } from './dispatcher/dispatcher.ts';
+export { Dispatcher } from './dispatcher/dispatcher.ts';
+export type { DispatcherLease, LeaseKind, LeaseState } from './dispatcher/leases.ts';
+export { LeaseStore, UNLIMITED } from './dispatcher/leases.ts';
 export type { DreamingResult } from './dreaming.ts';
 export { collectSessions, dream, readCursor, renderTranscript, writeCursor } from './dreaming.ts';
 export type { SessionEvent, SessionEventListener, SessionEvents } from './events.ts';
@@ -67,7 +71,7 @@ export type { DiscoveredEndpoint, OpenCodeClient } from './opencode.ts';
 export { connectOpenCode, discoverTolerant } from './opencode.ts';
 export type { Run, RunRequest } from './orchestrator/ledger.ts';
 export { RunLedger, view } from './orchestrator/ledger.ts';
-export type { OrchestratorDeps, WorkRequest } from './orchestrator/orchestrator.ts';
+export type { OrchestratorDeps, TicketFeed, WorkRequest } from './orchestrator/orchestrator.ts';
 export { Orchestrator } from './orchestrator/orchestrator.ts';
 export type {
   RunEvent,

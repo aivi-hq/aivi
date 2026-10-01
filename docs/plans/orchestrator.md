@@ -53,10 +53,15 @@ close).
       the agent file's model wins only in a pool that names no model. A
       session keeps its pool for life: fallback never applies to a resume.
       (2026-10-02)
-- [ ] 7 Orchestrator onto leases: the eligibility walk (lanes right→left,
+- [x] 7 Orchestrator onto leases: the eligibility walk (lanes right→left,
       tickets top→bottom), a queue lane is the bottom of its worker lane's
       list, move-then-start with the self-webhook folded into the claim, a
-      refusal stops that pool for the pass, claims mirror leases.
+      refusal stops that pool for the pass, claims mirror leases. Built
+      with it: the stop-memory (a person's stop holds the walk off the
+      ticket until their next move) and the sessionless ceremonies —
+      picked-up endings said with the installation's own app, questions as
+      ticket comments, missed endings rendered at boot from the
+      orchestrator's record through the follower's watermark. (2026-10-02)
 - [ ] 8 In-memory dispatcher queue + per-service callback namespaces +
       cancellation (one pending request per service+pool; ephemeral by
       design; only bites once pools are configured).

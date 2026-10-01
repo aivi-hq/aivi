@@ -366,6 +366,28 @@ platform's ordering leaks into another's.
 
 If the dispatcher ends a lease, the orchestrator clears the corresponding claim.
 
+**Ruled and built 2026-10-02.** A ticket a person stopped stays off the
+walk's list until that person acts again — a move of the ticket, or a
+fresh run. The board may still hold the ticket (a stop leaves it where
+the person left it), but the follower remembers the stop and leaves the
+ticket off what it offers: the walk never hands a fresh worker to work a
+person just stopped. The memory survives restarts — an ending that
+arrived while nobody followed carries it into the new process.
+
+**Ruled 2026-10-02.** Picked-up work has no agent session — nobody
+delegated it — and its ticket is owed its ceremony all the same: the
+closing note and the lane move are said with the installation's own
+credentials (the primary app), and the worker's question arrives as a
+ticket comment, the OpenCode form remaining the durable record of the
+wait. The plan is the one thing a sessionless run does not show; the
+lane it moves in says enough. Endings that arrived while nobody was
+listening are rendered at boot from the orchestrator's own record,
+through the follower's read watermark; a rendering that fails leaves the
+watermark where it stands and the next boot tries again. The narrow gap
+this leaves — a stop landing exactly inside a module restart while the
+host lives, before any follower could remember it — is a known
+observation for the live round, not a silent claim of closure.
+
 Pending lease requests are cancelled when their ticket moves, becomes blocked, or otherwise stops being eligible.
 
 ## When a worker needs human input

@@ -84,6 +84,10 @@ export interface RunView {
    *  orchestrator's decision; performing the move is the follower's. Absent:
    *  the ticket stays — a stop moves nothing, an unmapped lane goes silent. */
   readonly targetLane?: string;
+  /** When the run last changed: a follower's rendering watermark reads
+   *  endings through it, so nothing that arrived while aivi slept is
+   *  missed and nothing already rendered is said twice. */
+  readonly updatedAt: number;
 }
 
 /**
