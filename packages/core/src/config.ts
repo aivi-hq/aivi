@@ -184,6 +184,68 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
   { id: 'adr', path: 'docs/adr', kind: 'decision' },
 ] as const satisfies readonly z.input<typeof source>[];
 /**
+ * One lane of a project's tracker workflow. Lanes are **core's** concept —
+ * the orchestrator decides moves from the order, and no tracker is asked
+ * where a ticket goes next; the tracker only performs a move in its
+ * platform's words. The names are the tracker platform's own state names.
+ */
+export const projectLaneSchema = z.strictObject({
+  name: z.string().min(1).describe('The lane, spelled as the tracker platform spells its workflow state.'),
+  agent: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('The OpenCode agent that works tickets entering this lane; absent: humans work the lane.'),
+  worktree: z
+    .boolean()
+    .default(false)
+    .describe(
+      'true: the agent gets its own git worktree, so its writes cannot touch the shared checkout. Default false: it works in the project checkout itself. Matters once a forge gives worktrees.',
+    ),
+  complete: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Where a ticket goes when the run succeeds. Default: the next lane in the array. The configured exception.',
+    ),
+  return: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Where a ticket goes when the run fails. Default: the previous lane in the array. A stop never moves.'),
+});
+export type ProjectLane = z.infer<typeof projectLaneSchema>;
+/** What a lane-setup offers before core's defaults land: the written shape
+ *  of a lane, which the config load completes into a `ProjectLane`. */
+export type ProjectLaneInput = z.input<typeof projectLaneSchema>;
+/** The lane configured for a state name, if the project maps it. Absent means
+ *  the state is **ignored**: nothing is picked up there, and a ticket a run
+ *  is working there goes silent — no move, no updates. */
+export const laneOf = (project: Project, name: string): ProjectLane | undefined =>
+  project.lanes?.find(lane => lane.name === name);
+/** The written lane array: names unique, and every `complete`/`return` must
+ *  name a lane of this very array — a typo is a load error, never a surprise
+ *  mid-run with a ticket in hand. */
+export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes, ctx) => {
+  const names = new Set<string>();
+  for (const lane of lanes) {
+    if (names.has(lane.name)) ctx.addIssue({ code: 'custom', message: `lane "${lane.name}" is configured twice` });
+    names.add(lane.name);
+  }
+  for (const lane of lanes)
+    for (const [field, target] of [
+      ['complete', lane.complete],
+      ['return', lane.return],
+    ] as const)
+      if (target !== undefined && !names.has(target))
+        ctx.addIssue({
+          code: 'custom',
+          message: `lane "${lane.name}" names ${field} "${target}", which is not a lane of this project`,
+        });
+});
+
+/**
  * One project: a clean git checkout at `<home>/projects/<id>`, discovered from
  * that directory. An entry here is only needed to override: `knowledge`
  * replaces `projectDefaults.knowledge` for a repository laid out differently
@@ -199,6 +261,11 @@ export const projectSchema = z.strictObject({
     .array(source)
     .optional()
     .describe('Replaces projectDefaults.knowledge for this project; paths relative to the checkout.'),
+  lanes: projectLanesSchema
+    .optional()
+    .describe(
+      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to `complete` or the next lane; failure to `return` or the previous one; a stop moves nothing.',
+    ),
 });
 type ProjectEntry = z.infer<typeof projectSchema>;
 /**
@@ -823,6 +890,10 @@ export interface Project {
   id: string;
   /** The clean checkout: `<home>/projects/<id>/source`; absent on disk when `removed`. `projectLayout(dirname(directory))` names the rest. */
   directory: string;
+  /** The tracker workflow in order, as configured; absent means the project
+   *  maps no lanes: nothing is picked up for it and its tickets are silent.
+   *  The orchestrator decides moves from this order; a tracker only performs. */
+  lanes?: ProjectLane[];
   /** The checkout is gone but `memory/` remains: still listed and searchable until purged. */
   removed?: true;
 }
@@ -905,8 +976,6 @@ function absolutizePaths(config: Config, base: string): void {
   }
 }
 
-/** The lanes the listener consults: the projectDefaults base merged with the entry's own,
- *  with `null` lanes — human-worked — dropped. */
 export async function loadConfig(path: string, schema: z.ZodType<Config> = configSchema): Promise<LoadedConfig> {
   path = resolve(path);
   const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
@@ -931,6 +1000,7 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
     projects.push({
       id: projectId,
       directory: layout.source,
+      ...(entry.lanes ? { lanes: entry.lanes } : {}),
       ...(removed ? { removed: true } : {}),
     });
   }

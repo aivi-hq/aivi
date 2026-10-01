@@ -9,8 +9,25 @@
  * plugin author imports it through.
  */
 
-export type { AiviModule, AiviServices, PublicRequest, PublicRoutes, RunningModule, Store } from '@aivi/host';
+/** The orchestrator's face as a tracker module meets it: hand work over,
+ *  stop a run, follow the typed run events. The run types are the host's;
+ *  the shared event a tracker subscribes to is this package's. */
+export type {
+  AiviModule,
+  AiviServices,
+  Orchestrator,
+  PublicRequest,
+  PublicRoutes,
+  RunningModule,
+  RunOutcome,
+  RunQuestion,
+  RunState,
+  RunView,
+  Store,
+  WorkRequest,
+} from '@aivi/host';
 export * from './cli.ts';
 export * from './plugin.ts';
+export * from './run-events.ts';
 export * from './setup.ts';
 export * from './setup-project.ts';

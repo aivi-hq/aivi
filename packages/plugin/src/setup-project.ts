@@ -14,7 +14,7 @@
  * threads the project name from one role to the next so it is asked once.
  */
 
-import type { OutputBlock, ProjectRole } from '@aivi/core';
+import type { OutputBlock, ProjectLaneInput, ProjectRole } from '@aivi/core';
 import type { Store } from '@aivi/host';
 import type * as prompts from '@clack/prompts';
 import { PluginSetupCancelled } from './setup.ts';
@@ -36,6 +36,11 @@ export interface ProjectSetupContext {
   /** The project name chosen by an earlier role, or undefined when this role
    *  is the first to settle it (and so offers the default). */
   projectId?: string;
+  /** Whether a forge is configured in this home — so a checkout (and once
+   *  a forge gives them, worktrees) is possible for this project. Core
+   *  computes it from the configured plugins; contributors that could work
+   *  a lane with git ask their own worktree questions with it. */
+  forgeConfigured: boolean;
   /** Raw JSON on stdout when the value is for copying (core's `print`). */
   print(value: unknown, output?: OutputBlock[] | string): void;
   /** The very `@clack/prompts` the runner renders with; a cancelled prompt
@@ -43,6 +48,12 @@ export interface ProjectSetupContext {
   prompts: typeof prompts;
   /** Platform calls the contributor verifies with; the runner supplies fetch. */
   fetch(url: string, init?: RequestInit): Promise<Response>;
+  /** The OpenCode agents that can work this project: what the project's
+   *  checkout directory defines (its `.opencode/`), plus the global ones,
+   *  minus the subagent-only ones — a lane works as the session's primary.
+   *  The runner starts an OpenCode service when none answers, and a failure
+   *  to reach or start one stops the setup — it is never swallowed. */
+  agents(projectId: string): Promise<string[]>;
   /** The home's SQLite store, open for the callback and closed after. */
   withStore<T>(fn: (store: Store) => T | Promise<T>): Promise<T>;
 }
@@ -55,6 +66,12 @@ export interface ProjectSetupResult {
   /** The section core writes at `projects.<id>.<moduleId>`, validated against
    *  this plugin's own `projectSchema`; absent means the role wrote nothing. */
   section?: Record<string, unknown>;
+  /** The project's **core** `lanes` array — the ordered tracker workflow,
+   *  written at `projects.<id>.lanes` and validated by core (unique names,
+   *  every `complete`/`return` a lane of the array). Lanes are core's fact;
+   *  whoever knows the board — the tracker role — offers its order, and two
+   *  contributors naming one workflow is an error, not a merge. */
+  lanes?: ProjectLaneInput[];
   /** True when this contributor leaves a git checkout at `projects/<id>/source`
    *  — it cloned one, or the checkout was already there for the repository the
    *  person named. A forge owns the clone because cloning reaches `origin`.

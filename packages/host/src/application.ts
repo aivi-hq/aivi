@@ -11,6 +11,8 @@ import { EventStream, type SessionEvents } from './events.ts';
 import { createJobHandler } from './jobs.ts';
 import { ConfigurationError, type ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
 import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
+import { RunLedger } from './orchestrator/ledger.ts';
+import { Orchestrator } from './orchestrator/orchestrator.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
@@ -73,6 +75,11 @@ export interface AiviServices {
   tasks: TaskClaims;
   /** The tool surface the OpenCode plugin registers at load: the host claims its own tools here, modules claim theirs. */
   tools: ToolClaims;
+  /** Ticket-to-run machinery: a tracker module hands work over, stops runs
+   *  and reads run records here, and **subscribes** to the typed run events
+   *  to follow them on its platform. The orchestrator owns the run's state
+   *  machine, the worker session, and the worker tools; it never calls back. */
+  orchestrator: Orchestrator;
   /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
   wake(): void;
   /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
@@ -143,6 +150,22 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
 
+  // The run ledger is the durable ticket↔run↔session link; the orchestrator is the one
+  // authority that turns a ticket into a run. Its two worker tools are host tools: the
+  // OpenCode plugin registers them as `aivi_work_complete`/`aivi_ask`, and every call
+  // arrives with the trusted session id — which is how a tool call finds its run.
+  const ledger = new RunLedger(store);
+  const orchestrator = new Orchestrator({
+    ledger,
+    opencode,
+    events,
+    log,
+    signal: abort.signal,
+    // Moves come from core's lane order, read straight off the loaded config.
+    lanes: id => loaded.config.projects[id]?.lanes ?? [],
+  });
+  for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);
+
   const serve = async (scheduler: Scheduler, channels: Channels, knowledge: KnowledgeService) => {
     // With lifecycle "own", a running service is replaced now, before any module or job needs it:
     // the fresh one has the current plugin build and aivi's token. Failure to do so is not fatal;
@@ -198,6 +221,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       // The supervisor replaces this with each module's own scope before start; nothing else reads it.
       tasks: tasks.forModule('host'),
       tools: tools.forModule('host'),
+      orchestrator,
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
       fail,
@@ -206,6 +230,10 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     // and shows as degraded in status; only a ConfigurationError is fatal.
     supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks, tools);
     await supervisor.start(modules);
+    // Boot recovery after the modules: a tracker must be registered before its owed
+    // ceremonies are re-driven. Live OpenCode turns were resumed by OpenCode itself;
+    // this pass re-attaches the watch and fetches the state of anything owed.
+    await orchestrator.recover();
     abort.signal.throwIfAborted();
     options.onReady?.(http.address());
 

@@ -1,0 +1,220 @@
+import { randomBytes } from 'node:crypto';
+import type { Store } from '../store.ts';
+import type { RunOutcome, RunState, RunView } from './vocabulary.ts';
+
+/**
+ * The durable record of every run: ticket ↔ OpenCode session ↔ state. This
+ * is the reason a restart is survivable: the row, not memory, is the truth.
+ *
+ * What a run is **not** here: no conversation (a tracker's own session is
+ * not an orchestrator fact — the tracker keeps that pair in its own store),
+ * no delivery flag (whether a platform has been told is the follower's
+ * business; the orchestrator emits events and forgets who listens), and no
+ * mirror of the open question (the OpenCode form is the record, read from
+ * OpenCode). A capacity lease is deliberately absent too: the dispatcher's
+ * lease joins this table as a column when capacity lands, and nothing about
+ * a run's identity changes.
+ *
+ * Pure storage: it performs no external effect and knows no platform. It
+ * speaks only the neutral vocabulary; the state *machine* is the
+ * orchestrator's, not this class's.
+ */
+
+/** A full run row, as the orchestrator reads it (the view is the outside's). */
+export interface Run {
+  id: string;
+  projectId: string;
+  trackerId: string;
+  ticketId: string;
+  lane: string;
+  agent: string;
+  state: RunState;
+  sessionId?: string;
+  worktree?: string;
+  outcome?: RunOutcome;
+  /** The lane the terminal run's ticket belongs in, chosen by the
+   *  orchestrator from the project's lane order. A stop leaves it unset: a
+   *  stopped ticket stays where the person left it. */
+  targetLane?: string;
+  nudges: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** What intake needs to open a run: the ticket's facts, in neutral words.
+ *  The double-work guard is the ledger's: one **active** run per ticket, and
+ *  it holds until the completion tool ends that run. Everything after —
+ *  whether a re-delegation is new work — is the tracker module's decision. */
+export interface RunRequest {
+  projectId: string;
+  trackerId: string;
+  ticketId: string;
+  lane: string;
+  agent: string;
+}
+
+type Row = Record<string, unknown>;
+
+const ACTIVE = "state IN ('preparing','working')";
+
+const map = (r: Row): Run => ({
+  id: String(r.id),
+  projectId: String(r.project_id),
+  trackerId: String(r.tracker_id),
+  ticketId: String(r.ticket_id),
+  lane: String(r.lane),
+  agent: String(r.agent),
+  state: r.state as RunState,
+  ...(r.session === null ? {} : { sessionId: String(r.session) }),
+  ...(r.worktree === null ? {} : { worktree: String(r.worktree) }),
+  ...(r.outcome === null ? {} : { outcome: JSON.parse(String(r.outcome)) as RunOutcome }),
+  ...(r.target_lane === null ? {} : { targetLane: String(r.target_lane) }),
+  nudges: Number(r.nudges),
+  createdAt: Number(r.created_at),
+  updatedAt: Number(r.updated_at),
+});
+
+const migrations = [
+  // Version 1: the table as first built. Kept as history: every database
+  // walks its versions in order, and version 2 below is what the shape is.
+  `CREATE TABLE orchestrator_runs(
+     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, tracker_id TEXT NOT NULL, ticket_id TEXT NOT NULL,
+     conversation TEXT NOT NULL, lane TEXT NOT NULL, agent TEXT NOT NULL, state TEXT NOT NULL,
+     session TEXT, worktree TEXT, outcome TEXT, question TEXT, move_lane TEXT,
+     delivered INTEGER NOT NULL DEFAULT 0, nudges INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+   CREATE UNIQUE INDEX orchestrator_runs_request ON orchestrator_runs(tracker_id, project_id, conversation, ticket_id);
+   CREATE INDEX orchestrator_runs_session ON orchestrator_runs(session);
+   CREATE INDEX orchestrator_runs_active_ticket ON orchestrator_runs(tracker_id, ticket_id, state);`,
+  // Version 2 (ruled 2026-10-01, the follower design): a conversation is a
+  // tracker's session, not an orchestrator fact; whether a tracker was told
+  // is the follower's outbox, not this row's flag; the open question lives
+  // in the OpenCode form. The target lane keeps its meaning under its own
+  // name, and `awaiting_input` collapses into `working` — the form is the
+  // truth of waiting, read from OpenCode when a turn ends.
+  `DROP INDEX orchestrator_runs_request;
+   ALTER TABLE orchestrator_runs RENAME COLUMN move_lane TO target_lane;
+   ALTER TABLE orchestrator_runs DROP COLUMN conversation;
+   ALTER TABLE orchestrator_runs DROP COLUMN question;
+   ALTER TABLE orchestrator_runs DROP COLUMN delivered;
+   UPDATE orchestrator_runs SET state='working' WHERE state='awaiting_input';`,
+];
+
+export class RunLedger {
+  private readonly core: Store;
+  constructor(core: Store) {
+    this.core = core;
+    core.migrate('orchestrator', migrations);
+  }
+
+  /**
+   * Open a run for a ticket, idempotently while it matters: a run still
+   * **active** on this ticket — however it was reached — is returned, so one
+   * ticket never gets two workers at a time. A finished run does not hold
+   * the ticket: a later delegation is new work, and whether to ask for it is
+   * the tracker's. `created` says whether this call made the row — only then
+   * does the orchestrator prepare a session.
+   */
+  request(request: RunRequest, now = Date.now()): { run: Run; created: boolean } {
+    return this.core.transaction(() => {
+      const live = this.core.db
+        .prepare(
+          `SELECT * FROM orchestrator_runs WHERE tracker_id=? AND ticket_id=? AND ${ACTIVE} ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(request.trackerId, request.ticketId) as Row | undefined;
+      if (live) return { run: map(live), created: false };
+      const id = `run_${randomBytes(6).toString('hex')}`;
+      this.core.db
+        .prepare(
+          `INSERT INTO orchestrator_runs(id,project_id,tracker_id,ticket_id,lane,agent,state,created_at,updated_at)
+           VALUES(?,?,?,?,?,?, 'preparing', ?, ?)`,
+        )
+        .run(id, request.projectId, request.trackerId, request.ticketId, request.lane, request.agent, now, now);
+      return { run: this.#require(id), created: true };
+    });
+  }
+
+  #require(id: string): Run {
+    const row = this.core.db.prepare('SELECT * FROM orchestrator_runs WHERE id=?').get(id) as Row | undefined;
+    if (!row) throw new Error(`No run ${id}`);
+    return map(row);
+  }
+
+  get(id: string): Run | undefined {
+    const row = this.core.db.prepare('SELECT * FROM orchestrator_runs WHERE id=?').get(id) as Row | undefined;
+    return row && map(row);
+  }
+
+  /** Which run a worker session belongs to: how a tool call and turn events find their run. */
+  bySession(sessionId: string): Run | undefined {
+    const row = this.core.db
+      .prepare(`SELECT * FROM orchestrator_runs WHERE session=? ORDER BY created_at DESC LIMIT 1`)
+      .get(sessionId) as Row | undefined;
+    return row && map(row);
+  }
+
+  /** The run, if any, that is still live on this ticket: the double-work guard. */
+  activeByTicket(trackerId: string, ticketId: string): Run | undefined {
+    const row = this.core.db
+      .prepare(
+        `SELECT * FROM orchestrator_runs WHERE tracker_id=? AND ticket_id=? AND ${ACTIVE} ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(trackerId, ticketId) as Row | undefined;
+    return row && map(row);
+  }
+
+  /** Every run not yet terminal, oldest first: the boot pass re-attaches to these. */
+  active(): Run[] {
+    return (
+      this.core.db.prepare(`SELECT * FROM orchestrator_runs WHERE ${ACTIVE} ORDER BY created_at`).all() as Row[]
+    ).map(map);
+  }
+
+  /** The session and work directory exist: `preparing` → `working`. */
+  attachSession(id: string, sessionId: string, worktree: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db
+        .prepare(`UPDATE orchestrator_runs SET session=?, worktree=?, state='working', updated_at=? WHERE id=?`)
+        .run(sessionId, worktree, now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** One more premature turn-end counted; the orchestrator decides when the budget is spent. */
+  bumpNudge(id: string, now = Date.now()): number {
+    return this.core.transaction(() => {
+      this.core.db.prepare(`UPDATE orchestrator_runs SET nudges=nudges+1, updated_at=? WHERE id=?`).run(now, id);
+      return this.#require(id).nudges;
+    });
+  }
+
+  /**
+   * A validated outcome ends the run: `completed` on success, `failed` on
+   * failure. `targetLane` — computed from the project's lane order by the
+   * orchestrator, never by a tracker — travels on the `ended` event; the
+   * follower performs the move in its own time.
+   */
+  finish(id: string, outcome: RunOutcome, targetLane?: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db
+        .prepare(`UPDATE orchestrator_runs SET outcome=?, target_lane=?, state=?, updated_at=? WHERE id=?`)
+        .run(JSON.stringify(outcome), targetLane ?? null, outcome.kind === 'success' ? 'completed' : 'failed', now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** A stop ended the run without an outcome of the worker's; the ticket stays. */
+  cancel(id: string, reason: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db
+        .prepare(`UPDATE orchestrator_runs SET outcome=?, target_lane=NULL, state='cancelled', updated_at=? WHERE id=?`)
+        .run(JSON.stringify({ kind: 'failure', reason } satisfies RunOutcome), now, id);
+      return this.#require(id);
+    });
+  }
+}
+
+/** Project a run row to the read-only shape the outside may hold. */
+export function view(run: Run): RunView {
+  return { ...run };
+}

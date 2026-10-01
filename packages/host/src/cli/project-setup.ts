@@ -2,14 +2,17 @@
  *  in order, each served by the one configured plugin that declared it, then
  *  any configured plugin that serves no role. Core spells only the systems
  *  (`forge`, then `tracker`); the plugin asks its own platform questions and
- *  hands back the section to write. Nothing platform-specific lives here. A
- *  forge clones the checkout; with no forge the runner leaves an untracked
- *  directory and says so. */
+ *  hands back the section to write — and the tracker role hands back the
+ *  project's **core** `lanes` array, the ordered workflow it just read from
+ *  its board. Nothing platform-specific lives here. A forge clones the
+ *  checkout; with no forge the runner leaves an untracked directory and
+ *  says so. */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { errorMessage, type ProjectRole, print, projectRoles } from '@aivi/core';
+import { errorMessage, type ProjectLaneInput, type ProjectRole, print, projectRoles } from '@aivi/core';
 import { PluginSetupCancelled, type ProjectSetupContext } from '@aivi/plugin';
 import * as p from '@clack/prompts';
+import { connectOpenCode } from '../opencode.ts';
 import { context, withStore } from './context.ts';
 import type { ProjectContributorEntry } from './registry.ts';
 import { projectContributors } from './registry.ts';
@@ -40,20 +43,27 @@ export function projectSetupPlan(
   };
 }
 
-/** The project entry as written, with each contributor's section merged under
- *  its module id; the file must load against the composed schema or the old
- *  bytes return (the plugin's own `projectSchema` is what rejects a bad section). */
+/** The project entry as written: the core `lanes` array (when a contributor
+ *  offered one) and each contributor's section merged under its module id;
+ *  the file must load against the composed schema or the old bytes return
+ *  (core's lane validation and the plugin's own `projectSchema` are what
+ *  reject a bad write). */
 async function writeProjectSections(
   configPath: string,
   id: string,
   sections: Record<string, Record<string, unknown>>,
+  lanes?: ProjectLaneInput[],
 ): Promise<void> {
   const { registry } = await context();
   const before = await readFile(configPath, 'utf8');
   const raw = JSON.parse(before) as Record<string, unknown>;
   const projects = (raw.projects ?? {}) as Record<string, unknown>;
   raw.projects = projects;
-  projects[id] = { ...(projects[id] as Record<string, unknown> | undefined), ...sections };
+  projects[id] = {
+    ...(projects[id] as Record<string, unknown> | undefined),
+    ...(lanes ? { lanes } : {}),
+    ...sections,
+  };
   await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
   try {
     registry.configSchema.parse(raw);
@@ -91,6 +101,7 @@ export async function runProjectSetup(options: {
 
   let projectId: string | undefined = options.name;
   const sections: Record<string, Record<string, unknown>> = {};
+  let lanes: ProjectLaneInput[] | undefined;
   let cloned = false;
 
   /** Run one contributor, folding its answer in: the first to name the
@@ -103,6 +114,24 @@ export async function runProjectSetup(options: {
       print: (value, output) => print(value, output),
       prompts: p,
       fetch: (url, init) => fetch(url, init),
+      // Whether a checkout with git is possible here: a plugin serving
+      // core's `forge` role is configured. Core's fact, never a plugin name.
+      forgeConfigured: plan.roles.some(r => r.role === 'forge' && r.candidates.length > 0),
+      // Who could work a lane, listed from the project's own checkout.
+      // The checkout is created here before anything asks, so it always
+      // exists when OpenCode is pointed at it. `ensure`: when no service
+      // answers, start one — a wizard that cannot list agents is a broken
+      // wizard, so a failure here is said, not swallowed.
+      async agents(projectId: string): Promise<string[]> {
+        const source = join(options.home, 'projects', projectId, 'source');
+        await mkdir(source, { recursive: true });
+        const client = await connectOpenCode({ ...loaded.config.opencode, lifecycle: 'ensure' });
+        const listed = await client.agent.list({ location: { directory: source } });
+        // A lane runs its agent as the session's primary; OpenCode says
+        // which agents can be (`mode`), so the subagent-only ones never
+        // show up as a lane's worker.
+        return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
+      },
       async withStore(fn) {
         return withStore((await context()).loaded, fn);
       },
@@ -113,6 +142,13 @@ export async function runProjectSetup(options: {
     const result = await chosen.contributor.setup(ctx);
     projectId ??= result.id;
     if (result.section) sections[chosen.moduleId] = result.section;
+    // One workflow per project: the tracker role offers the lane array it
+    // read from its board; a second contributor offering one is a conflict,
+    // never a merge.
+    if (result.lanes) {
+      if (lanes) throw new Error(`${chosen.moduleId} also named a lane array; a project has one workflow`);
+      lanes = result.lanes;
+    }
     cloned ||= result.cloned === true;
   };
 
@@ -138,7 +174,7 @@ export async function runProjectSetup(options: {
       await mkdir(source, { recursive: true });
       await writeFile(join(source, 'AGENTS.md'), UNTRACKED_NOTE, { flag: 'wx' }).catch(() => {});
     }
-    await writeProjectSections(options.configPath, projectId, sections);
+    await writeProjectSections(options.configPath, projectId, sections, lanes);
     p.outro(
       cloned
         ? `${projectId} is set up.${sectionsTrailing(sections)} Restart \`aivi serve\` to index it.`
