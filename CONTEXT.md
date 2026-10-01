@@ -26,7 +26,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | run | one execution of a job: `queued → running → succeeded / failed / blocked`, or `cancelled`, or `missed`; one row, one audit trail, always a `jobId`; snapshots the task |
 | missed | a run recorded for an occurrence found later than its misfire grace; terminal, never executed, reported like a failure |
 | turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a conversation turn is of kind `message` (a person) or `job` (an outcome re-entering) |
-| pool / lease | named capacity (`local-model`, `maintenance`); runs and conversation turns take leases from the same pools |
+| pool / lease | a slot in a named capacity pool; every service that runs model work draws from the same numbers (today `scheduler.resources`; the dispatcher's `dispatcher.pools` are the built target: [orchestrator](docs/orchestrator.md)) |
 | blocked | ended without proof that the external side stopped; keeps its capacity until `runs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
 | report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing |
@@ -36,7 +36,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | project | what the team works on: one directory `<home>/projects/<id>` holding a checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `config.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`); a project may be **repo-less** — a forge gives the checkout, so with no forge a project has memory and knowledge but no source |
 | forge / tracker | the two **systems** core names (in that order): a **forge** owns repositories (clones a project's checkout, branches, pull requests), a **tracker** owns tickets (lanes, delegation). Core spells the roles, never which plugin fills them; `projectRoles = ['forge', 'tracker']` |
 | project contributor | a plugin's `./setupProject` export — `{ role?, setup(ctx) }` — that sets a new project up for its role and hands back the config section core writes at `projects.<id>.<moduleId>`; core computes which are *configured* (a `plugins.<id>` block exists), offers one per role (asks if several), and runs the roleless ones after the roles; the plugin clones/asks, core writes bytes and reads none |
-| tracker adapter | the translator between aivi and one ticket system, at the `@aivi/plugin/tracker` seam: platform events in (`started`/`prompted`/`updated` on a *conversation*, the tracker's word for one working session), neutral updates out (`issue`, `assign`/`unassign`, `startSession`, `comment`, `laneStates`). A translator and nothing else — lanes, guards, capacity, worktrees and the exit contract are aivi's machinery, which spells `tracker` and never parses a conversation or reads a webhook. Linear's adapter is `tracker-linear/src/tracker.ts`; the machinery speaking it is what the orchestrator extraction lifts into the host |
+| tracker adapter | the translator between aivi and one ticket system, at the `@aivi/plugin/tracker` seam: platform events in (`started`/`prompted`/`updated` on a *conversation*, the tracker's word for one working session), neutral updates out (`issue`, `assign`/`unassign`, `startSession`, `comment`, `laneStates`, `ask`/`plan`, `resultShown`, `apply`). It is also the run's **follower**: it subscribes to the orchestrator's typed run events, keeps the pair (its session ↔ the OpenCode session ↔ the ticket) in its own namespaced table, posts people's messages into the worker's session itself, and retries its own delivery failures. Lanes, guards and the exit contract stay the machinery's, which spells `tracker` and never parses a conversation or reads a webhook. Linear's adapter is `tracker-linear/src/tracker.ts`; the machinery it follows is `host/src/orchestrator/` |
 | forge adapter | the translator between aivi and one repository host, at the `@aivi/plugin/forge` seam: the facts a clone cannot see (which pull request stands for a branch, what its review said) and the operations only it may authenticate — everything that reaches `origin`: clone, the `source/` sync, push. An **installation** is the grant from an account to the app, and aivi speaks through exactly one, as its own app and never as the person at the keyboard; its posts are signed `_worker: aivi · <role>_` in the text a human reads, so a wake can tell them from replies. Local git — worktrees, commits — is not a forge's, and the line is remote, not clone. `forge-github` is the one built; the host-side registry with "who owns this project's remote?" comes with the orchestrator |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
 | origin | `metadata.aivi.origin` on every session aivi creates: a channel **platform** id (`discord`, `slack`, `linear` — the platform a
@@ -199,16 +199,23 @@ runs in one process; adapters are optional modules with a start/stop contract.
   test and typecheck commands; nothing is rewritten at publish, and nothing
   ships from a package root. The
   git-checkout installation decision is superseded; packages publish to npm.
-- **Blocked runs hold global capacity** on purpose until per-project pools
-  exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
-- **An agent session is a conversation.** The Linear module runs on the
-  channel machinery: a delegation is a `created` webhook → one bound
-  conversation → one worker turn of the lane's agent in its own git worktree
-  (`projects/<id>/worktrees/<session>`, on Linear's branch name), progress as
-  ephemeral thoughts, the answer as a response. Stop means stop: the turn is
-  discarded, capacity released, worktree and session kept; only an
-  unverifiable stop is `blocked`. One worker per issue; worktrees isolate
-  concurrent workers, so there is no per-project lock
+- **Capacity becomes the dispatcher's pools.** Ruled 2026-10-02: one
+  installation-wide pool set; the orchestrator asks, the dispatcher decides;
+  a lease idles out on its own instead of a blocked run holding capacity
+  forever ([orchestrator](docs/orchestrator.md); the follower-era
+  `scheduler.resources` and the blocked-holds-capacity rule are the
+  interim, superseded by that build).
+- **An agent session is a conversation the follower answers.** A delegation
+  reaches the host's orchestrator, which owns the run: durable record, worker
+  session (the lane's agent in the project checkout), worker tools, and the
+  target lane its lane order chose; it emits `started`/`question`/`plan`/
+  `ended` and never calls a tracker. The Linear module follows — pair in its
+  own table, ceremony in its own order (result, move, delegate), people's
+  messages posted straight into the OpenCode session, the open form the
+  discriminator between answer and steer. The **assistant** still rides the
+  channel machinery; worktrees wait for a forge. Stop means stop: the worker
+  is interrupted and the run cancelled, its session kept for inspection; the
+  delegate stays sitting so the trail is readable
   ([linear](docs/linear.md); what is left: [plans/linear.md](docs/plans/linear.md)).
 - **One Linear app, one persona, lanes pick agents.** The primary app carries
   the workspace's data feed and every agent-session webhook on one route and
@@ -253,15 +260,26 @@ runs in one process; adapters are optional modules with a start/stop contract.
   listens, linked or not: redemption is its own proof. An unlinked DM sender
   is answered once per start with the link hint; in channels aivi stays
   silent ([discord](docs/discord.md#behavior)).
-- **The lane map is a convention with per-project deviations.**
-  `projectDefaults.tracker-linear.lanes` is the company-wide base and a project wins
-  one lane at a time over it (merge, where `projectDefaults.knowledge`
-  replaces: a lane map is a lookup table, not a list); `null` marks a lane
-  humans work — written in the file, absent from the map the listener
-  consults. A lane names an OpenCode agent; `{ agent, worktree: false }` runs
-  it in the project's checkout. Deviations stay at project level; a per-team
-  lane map is the named escape hatch if two teams in one checkout ever want
-  different routing for the same lane name ([linear](docs/linear.md)).
+- **The lane array *is* the workflow, and it is core's.** Ruled 2026-10-01,
+  superseding the `projectDefaults.tracker-linear.lanes` lookup table:
+  `projects.<id>.lanes` is an ordered array of `{ name, agent?, worktree? }`
+  spelled as the tracker platform spells its workflow states. A lane naming
+  an agent is worked; naming none is worked by humans. Success moves a
+  ticket to the **next** entry, failure to the **previous** one — the
+  neighbours by default, overridden per lane by `next` and `previous`
+  (the old `complete`/`return` names die with the dispatcher build); a stop
+  moves nothing; a state outside the array is silence. **Closed states are
+  never written** — the tracker recognizes them by type. `worktree` defaults
+  to false and matters once a forge gives worktrees. The orchestrator decides
+  the target lane from the array; followers only perform it
+  ([linear](docs/linear.md), [orchestrator](docs/orchestrator.md)).
+- **The orchestrator may not know a tracker exists.** Ruled 2026-10-01: it
+  orchestrates and emits typed run events; it never calls a tracker, never
+  mirrors delivery, and holds no conversation column — its ledger is aivi's
+  fact about the *work* only. Trackers follow sessions on their own, in
+  their own time, retrying their own failures; a tracker that listens to
+  nothing loses nothing the orchestrator cares about. The old row-as-outbox
+  design is superseded ([orchestrator](docs/plans/templates/orchestrator.md)).
 
 ## Where each fact lives
 
@@ -279,13 +297,15 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |
 | Discord behavior, setup, recovery | [docs/discord.md](docs/discord.md) |
 | Slack behavior, app manifest, setup | [docs/slack.md](docs/slack.md) |
-| Linear behavior (agent sessions as conversations, worktrees and their attribution, stops), setup | [docs/linear.md](docs/linear.md) |
+| Linear behavior (follower catch-up, stops and their trails, attribution), setup | [docs/linear.md](docs/linear.md) |
+| The work-pull flow (orchestrator and dispatcher: lanes, priority, queue lanes, pools, leases, how work gets picked) | [docs/orchestrator.md](docs/orchestrator.md) |
+| The orchestrator's run contracts (run states, worker tools, completion and question contracts, recovery, run events) | [docs/plans/templates/orchestrator.md](docs/plans/templates/orchestrator.md) |
 | Browser service | [docs/browser.md](docs/browser.md) |
 | Decisions | [docs/architecture.md](docs/architecture.md) |
 | Status per milestone, live gates, next steps | [docs/roadmap.md](docs/roadmap.md) |
 | Product requirements | [docs/requirements.md](docs/requirements.md) |
 | Unscheduled ideas | `docs/backlog/` (one file per topic) |
-| Scheduled work in progress, as checklists that shrink as steps land | `docs/plans/` ([cli-refactor](docs/plans/cli-refactor/index.md), [linear](docs/plans/linear.md), [client-aivi](docs/plans/client-aivi.md), [templates](docs/plans/templates/index.md)) |
+| Scheduled work in progress, as checklists that shrink as steps land | `docs/plans/` ([cli-refactor](docs/plans/cli-refactor/index.md), [linear](docs/plans/linear.md), [client-aivi](docs/plans/client-aivi.md), [templates](docs/plans/templates/index.md), [orchestrator build](docs/plans/orchestrator.md)) |
 | Review findings (not specs; each has a disposition section) | `docs/review/` |
 
 ## Where things are
