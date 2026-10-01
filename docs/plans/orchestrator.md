@@ -40,12 +40,12 @@ close).
       took its place (the explicit way behind); `finalAnswer`'s steer-marker
       trust rule unchanged in substance, restated for the new default.
       Slack's live manifest needs the `/queue` entry re-applied. (2026-10-02)
-- [ ] 5 Dispatcher config: `dispatcher` at the config root — `pools`
-      `{ model?, capacity, fallback? }`, `timeouts` `{ idle '180m', prepare
-      '5m' }`; `orchestrator.elicitationKeepAlive` (default `5m`) at the
-      config root too. Validation: fallback chains acyclic and naming real
-      pools; durations parse (`parseDuration` sums space-separated parts,
-      `1h 30m`). No `pools` block means **unlimited** — the intended default.
+- [x] 5 Dispatcher config at the root: `dispatcher.pools` (absent =
+      **unlimited**, the intended default), `dispatcher.timeouts` `{ idle
+      '180m', prepare '5m' }`, `orchestrator.elicitationKeepAlive` `5m`.
+      Fallback chains load-checked (exist, acyclic); `parseDuration` sums
+      space-separated parts (`1h 30m` = 90 minutes). Inert until 6+.
+      (2026-10-02)
 - [ ] 6 Lease store: durable dispatcher leases (attach / release / revoke),
       boot reconciles; unlimited mode always grants. The pool's model wins at
       session create; the agent file's model wins only in a pool that names

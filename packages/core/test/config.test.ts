@@ -334,6 +334,35 @@ test('core passes a plugin project section through unread and unwidened', async 
   assert.equal('linear' in loaded.projects[0]!, false, 'core hands the project view without a plugin section');
 });
 
+test('dispatcher config: no pools means unlimited, timeouts default, fallback chains load-check', () => {
+  const plain = configSchema.parse({ version: 1 });
+  assert.equal(plain.dispatcher.pools, undefined, 'no pools block: capacity is not moderated');
+  assert.deepEqual(plain.dispatcher.timeouts, { idle: '180m', prepare: '5m' });
+  assert.equal(plain.orchestrator.elicitationKeepAlive, '5m', 'the orchestrator’s own dial, at the root');
+
+  const pools = { default: { capacity: 2 }, worker: { model: 'a/b', capacity: 2, fallback: 'default' } };
+  const ok = configSchema.safeParse({
+    version: 1,
+    dispatcher: { pools, timeouts: { idle: '1h 30m' } },
+    orchestrator: { elicitationKeepAlive: '10m' },
+  });
+  assert.equal(ok.success, true, 'durations add by spaces: 1h 30m parses');
+
+  const missing = configSchema.safeParse({ version: 1, dispatcher: { pools: { a: { capacity: 1, fallback: 'b' } } } });
+  assert.equal(missing.success, false);
+  assert.match(JSON.stringify(missing.error?.issues), /falls back to .*b.* which is not a configured pool/);
+
+  const cycle = configSchema.safeParse({
+    version: 1,
+    dispatcher: { pools: { a: { capacity: 1, fallback: 'b' }, b: { capacity: 1, fallback: 'a' } } },
+  });
+  assert.equal(cycle.success, false, 'fallback chains must end');
+  assert.match(JSON.stringify(cycle.error?.issues), /cycles through/);
+
+  const bogus = configSchema.safeParse({ version: 1, dispatcher: { timeouts: { idle: '90' } } });
+  assert.match(JSON.stringify(bogus.error?.issues), /Not a duration/);
+});
+
 test('lane arrays load-validate: unique names, real next/previous targets, and one queue feeding a worker', () => {
   const lanes = (written: unknown[]) => configSchema.safeParse({ version: 1, projects: { site: { lanes: written } } });
   assert.equal(

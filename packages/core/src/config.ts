@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import { z } from 'zod';
+import { parseDuration } from './clock.ts';
 import type { ProjectSummary } from './contracts.ts';
 import type { KnowledgeKind } from './kinds.ts';
 import { knowledgeKindHelp, knowledgeKindNames } from './kinds.ts';
@@ -557,6 +558,103 @@ export const projectDefaultsSchema = z.strictObject({
 
 const projectDefaultsDefault = () => ({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] });
 
+/** A duration string as the dispatcher and orchestrator read it: counts
+ *  with s, m, h or d, added by spaces (`30m`, `2h`, `1h 30m`). The one
+ *  reader is parseDuration; the schema only says it at load. */
+const durationString = z
+  .string()
+  .min(1)
+  .superRefine((value, ctx) => {
+    try {
+      parseDuration(value);
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Not a duration: "${value}". Use counts with s, m, h or d, added by spaces (30m, 2h, 1h 30m)`,
+      });
+    }
+  });
+
+/** One capacity pool of the dispatcher: fixed slots, an optional model the
+ *  pool decides when a session is created, an optional fallback pool. The
+ *  design and every ruling: docs/orchestrator.md. */
+export const dispatcherPoolSchema = z.strictObject({
+  model: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'provider/model. The pool decides the model at session create; an agent file names a model only in a pool that names none (ruled 2026-10-02).',
+    ),
+  capacity: z.number().int().min(1).max(64).describe('Slots; one active lease occupies one.'),
+  fallback: z
+    .string()
+    .optional()
+    .describe('Pool to grant from when this one is full — new sessions only; a session keeps its pool for life.'),
+});
+export type DispatcherPool = z.infer<typeof dispatcherPoolSchema>;
+
+/** The dispatcher: capacity pools and the timeouts that watch leases. It is
+ *  the only part that knows how much capacity is left; every service draws
+ *  from the same pools. **No pools means capacity is not moderated** —
+ *  unlimited, the intended default (docs/orchestrator.md). */
+const dispatcherSchema = z
+  .strictObject({
+    pools: z
+      .record(id, dispatcherPoolSchema)
+      .optional()
+      .describe('Absent or empty: unlimited. Pools belong to the installation, never to a project.'),
+    timeouts: z
+      .strictObject({
+        idle: durationString
+          .default('180m')
+          .describe(
+            'Silence on an attached session before the dispatcher treats the lease as abandoned: kill it, confirm, take the slot back. An unconfirmed kill leaves the slot unavailable. It measures silence, not total duration.',
+          ),
+        prepare: durationString
+          .default('5m')
+          .describe('How long a lease without a session may take to be provided with one before being revoked.'),
+      })
+      .default({ idle: '180m', prepare: '5m' })
+      .describe('Watches on leases; durations add by spaces (1h 30m).'),
+  })
+  .superRefine((dispatcher, ctx) => {
+    const pools = dispatcher.pools ?? {};
+    for (const [name, pool] of Object.entries(pools))
+      if (pool.fallback !== undefined && !(pool.fallback in pools))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['pools', name, 'fallback'],
+          message: `pool "${name}" falls back to "${pool.fallback}", which is not a configured pool`,
+        });
+    for (const start of Object.keys(pools)) {
+      const seen = new Set<string>();
+      let at: string | undefined = start;
+      while (at !== undefined && at in pools) {
+        if (seen.has(at)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['pools', start, 'fallback'],
+            message: `pool "${start}" has a fallback chain that cycles through "${at}"; chains must end`,
+          });
+          break;
+        }
+        seen.add(at);
+        at = pools[at]!.fallback;
+      }
+    }
+  });
+
+/** The orchestrator's own dials. Its territory, not the dispatcher's:
+ *  docs/orchestrator.md, "When a worker needs human input". */
+const orchestratorSchema = z.strictObject({
+  elicitationKeepAlive: durationString
+    .default('5m')
+    .describe(
+      'How long an open elicitation holds its slot (an in-session question to a person, like Linear elicitation). After it the lease releases and the ticket waits; the answer reacquires capacity and resumes the same session — fallback never applies to a resume.',
+    ),
+});
+
 const configShape = z.strictObject({
   $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
   version: z.literal(1),
@@ -671,6 +769,14 @@ const configShape = z.strictObject({
       retention: { cron: '0 4 * * *', olderThanDays: 30 },
       projectsSync: { cron: '0 * * * *' },
     }),
+  dispatcher: dispatcherSchema
+    .prefault({})
+    .describe(
+      'Capacity pools every service draws from — the orchestrator, chat turns, jobs, the dreamer — and the timeouts that watch leases. No pools: unlimited, today’s behavior.',
+    ),
+  orchestrator: orchestratorSchema
+    .prefault({})
+    .describe('The ticket orchestrator’s own dials; capacity is not among them — that is the dispatcher’s.'),
   jobs: z.array(jobSchema).default([]),
   plugins: z
     .record(id, z.unknown())
