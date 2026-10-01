@@ -44,7 +44,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   `@aivi/tracker-linear` writes `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
 | model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
-| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates |
+| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/queue`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates. A message arriving mid-turn **interjects** (steers) by default; `/queue` is the way behind |
 | attribution | which names a commit carries: the bot as author/co-author from aivi's identity, the human as author from their own git config — a git fact, it never consults whoami ([people](docs/people.md)) |
 | association | which person a record belongs to: link codes, job ownership, session stamps, memories — a host fact, taken from the calling bearer, never from what a message claimed ([people](docs/people.md)) |
 | link | a channel account bound to a person, minted by `aivi link` and redeemed by `/link`; the binding is also the channel admission — who may talk, while config names only where ([people](docs/people.md)) |
@@ -139,8 +139,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Commands are adapter UI over host operations.** One command table in the
   host feeds Discord's registration, Slack's manifest and `/help`; a module
   translates, never decides. A `/stop` is the person's choice, so the turn is
-  discarded like a shutdown (not blocked) and said so; a `/steer` goes into
-  the running turn with `delivery: "steer"` and is marked as its own; a
+  discarded like a shutdown (not blocked) and said so; a message that arrives
+  mid-turn interjects — `delivery: "steer"`, marked as part of the running
+  turn (ruled 2026-10-02; `/steer` died and `/queue` took its place); a
   `/model` pin is a session property set before each turn and refused while
   one runs; `/agent` is deliberately absent (personalities by configuration)
   ([channels](docs/channels.md#chat-commands)).
@@ -337,7 +338,7 @@ runs the server boot (`@aivi/host/server`) directly against it.
   channels, Slack replies as a `markdown` block. Not yet seen live: dreaming
   writing into a project's memory; Slack's `response_url` answered 500 to a
   `markdown` block for `/…-context` (plain-text fallback added); the
-  `/model`, `/stop`, `/steer`, `/jobs` and `/help` commands on either
+  `/model`, `/stop`, `/queue` (and the default interjection), `/jobs` and `/help` commands on either
   platform (Slack needs the manifest in [slack.md](docs/slack.md#setup)
   re-applied first).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).

@@ -12,9 +12,10 @@ export {
   chatCommand,
   describeJobs,
   helpText,
+  INTERJECTED,
+  interject,
   isChatCommand,
   redeemLink,
-  steerTurn,
   stopTurn,
   usageHint,
 } from './channel/commands.ts';

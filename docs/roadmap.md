@@ -30,7 +30,7 @@ Mock tests do not establish these; each has its own command.
   (`🔧 …`, `✍️ writing the answer`) and disappears when the answer is posted;
   with `"tools"` the tool calls are listed beneath; a failing turn leaves the
   notice in the placeholder's place. Not yet seen live: `/model` (autocomplete
-  and a pinned answer), `/stop` on a running turn, `/steer`, `/jobs`, `/help`.
+  and a pinned answer), `/stop` on a running turn, interjection and `/queue`, `/jobs`, `/help`.
 - Linear: not yet run live; the gates are listed in [plans/linear.md](plans/linear.md#live-gates).
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in

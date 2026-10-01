@@ -35,10 +35,11 @@ close).
       orchestrator, wizard types and docs; `queue?`/`pool?` fields land inert
       until 5+, load-validated (one queue per workflow, never with an agent,
       its next lane — by order or override — must be a worker lane). (2026-10-02)
-- [ ] 4 Delivery flip: interjection defaults to **steer** (already the
-      follower's behavior — verify); the `/steer` command dies and becomes
-      `/queue`; the steer-marker trust logic in `session.ts` follows (it is
-      load-bearing for verified answers).
+- [x] 4 Delivery flip: interjection defaults to **steer** on both channels
+      (the follower already steered — verified); `/steer` died and `/queue`
+      took its place (the explicit way behind); `finalAnswer`'s steer-marker
+      trust rule unchanged in substance, restated for the new default.
+      Slack's live manifest needs the `/queue` entry re-applied. (2026-10-02)
 - [ ] 5 Dispatcher config: `dispatcher` at the config root — `pools`
       `{ model?, capacity, fallback? }`, `timeouts` `{ idle '180m', prepare
       '5m' }`; `orchestrator.elicitationKeepAlive` (default `5m`) at the

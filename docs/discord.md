@@ -73,9 +73,11 @@ the host's. This page has what is Discord's.
   "Stopped at your request." in place of the answer, the turn is discarded
   (not blocked), its capacity released, OpenCode's session interrupted, and
   queued messages follow. Nothing running: it says so.
-- `/steer text` passes text into the running turn (`delivery: "steer"`)
-  instead of queueing it behind; with no turn running it says so and queues
-  nothing.
+- A message sent while the conversation's turn runs **interjects** into it
+  (the default since 2026-10-02): steering, marked as part of the turn, ⚡ as
+  the ack; a steer that fails queues anyway, logged.
+- `/queue text` is the explicit way behind the running turn; with no turn
+  running it queues the same and says so.
 - `/jobs` lists the next five job occurrences and the last ten runs.
 - `/help` lists the commands, one line each.
 - People always get a signal: a ⏳ reaction while a message waits behind other
@@ -174,7 +176,7 @@ npm run aivi -- serve
 
 Commands follow the code: at every start the module overwrites the application's
 command list with the shared command table (`/new`, `/status`, `/context`,
-`/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/help`; best effort,
+`/search`, `/model`, `/stop`, `/queue`, `/jobs`, `/help`; best effort,
 logged); `discord register` does the same on demand without a restart. Global
 commands can take up to an hour to appear in clients. Only the final command is a long-running aivi process: it starts
 the host HTTP API, scheduler, knowledge service, and Discord together. OpenCode

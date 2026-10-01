@@ -53,13 +53,13 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   prefix (`commandPrefix`, default `aivi`), one per entry of the shared
   command table ([channels](channels.md#chat-commands)): `/<prefix>-new`,
   `/<prefix>-status`, `/<prefix>-context`, `/<prefix>-search QUERY [project]`,
-  `/<prefix>-model [model]`, `/<prefix>-stop`, `/<prefix>-steer TEXT`,
+  `/<prefix>-model [model]`, `/<prefix>-stop`, `/<prefix>-queue TEXT`,
   `/<prefix>-jobs`, `/<prefix>-help`; replies are ephemeral through the
   command's `response_url`. Slack commands
   carry no thread, so in a `threads` channel they speak for the channel:
   `-new` says that every new top-level message already starts a fresh
   conversation, `-status` counts the pending turns of all its threads, and
-  `-context`, `-model`, `-stop` and `-steer` say they cannot tell which
+  `-context`, `-model`, `-stop` and `-queue` say they cannot tell which
   thread is meant (Slack itself refuses slash commands inside threads; ask the
   agent for the context there). In a DM or a `channel`-mode channel they
   behave like Discord's commands ([discord](discord.md#behavior)).
@@ -117,8 +117,8 @@ features:
     - command: /{prefix}-stop
       description: Stop the turn running in this conversation
       should_escape: false
-    - command: /{prefix}-steer
-      description: Tell the agent something while it works on this conversation
+    - command: /{prefix}-queue
+      description: Send this behind the running turn instead of interjecting into it
       usage_hint: TEXT
       should_escape: false
     - command: /{prefix}-jobs
@@ -236,8 +236,8 @@ multi-workspace (org) installs.
 Tests mirror Discord's: routing and access with Slack ids, the manifest snippet above against the shared command table, and the
 module against a fake connection and the real OpenCode client
 on a mock server (mention → thread reply, dedupe, files, report thread
-adoption, re-entry, slash commands including `-model`, `-stop` and `-steer`
-against a running turn, waiting reaction, not-started turns, the
+adoption, re-entry, interjection into a running turn (the default),
+`-queue` behind it, `-model` and `-stop` against it, waiting reaction, not-started turns, the
 progress placeholder through `chat.update`/`chat.delete`). The
 Socket Mode client itself is only exercised live.
 

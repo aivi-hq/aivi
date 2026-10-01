@@ -7,9 +7,9 @@ import {
   CHAT_COMMANDS,
   describeJobs,
   helpText,
+  interject,
   isChatCommand,
   redeemLink,
-  steerTurn,
   stopTurn,
   usageHint,
 } from '../src/channel/commands.ts';
@@ -132,14 +132,15 @@ async function mockOpenCode(t: { after(fn: () => Promise<void>): void }) {
 test('the command table feeds /help and the platform manifests: names, one usage hint, short descriptions', () => {
   assert.deepEqual(
     CHAT_COMMANDS.map(c => c.name),
-    ['new', 'status', 'context', 'search', 'model', 'stop', 'steer', 'jobs', 'link', 'help'],
+    ['new', 'status', 'context', 'search', 'model', 'stop', 'queue', 'jobs', 'link', 'help'],
   );
   assert.ok(
     CHAT_COMMANDS.every(c => c.description.length < 100),
     'Discord caps descriptions at 100',
   );
   assert.ok(CHAT_COMMANDS.every(c => c.arguments.every(a => a.description.length < 100)));
-  assert.equal(isChatCommand('steer'), true);
+  assert.equal(isChatCommand('queue'), true, 'the way behind a running turn');
+  assert.equal(isChatCommand('steer'), false, '/steer died: interjection is the default now');
   assert.equal(isChatCommand('agent'), false);
   assert.equal(usageHint(CHAT_COMMANDS.find(c => c.name === 'search')!), 'QUERY [project]');
   assert.equal(usageHint(CHAT_COMMANDS.find(c => c.name === 'new')!), '');
@@ -147,7 +148,7 @@ test('the command table feeds /help and the platform manifests: names, one usage
   assert.equal(help.split('\n').length, CHAT_COMMANDS.length);
   assert.match(help, /^`\/aivi-new` — Start a fresh conversation\n/);
   assert.match(help, /`\/aivi-search QUERY \[project\]` — Search team knowledge/);
-  assert.match(help, /`\/aivi-steer TEXT` — /);
+  assert.match(help, /`\/aivi-queue TEXT` — /);
 });
 
 test('/jobs lists the next five occurrences and the last ten runs from the host store', t => {
@@ -269,7 +270,7 @@ test('/model shows the pin, the last answer and the agent default; switching val
   assert.equal(store.sessionOf('dm-a')?.model, null);
 });
 
-test('/stop and /steer act on the running turn only: interrupt after the engine abort, a steer prompt marked for its turn', async t => {
+test('/stop acts on the running turn; an interjection steers into it, marked for that turn (and dies quietly when none runs)', async t => {
   const core = new Store(':memory:');
   t.after(() => core.close());
   const store = new ConversationStore(core, platform, 'binding');
@@ -292,9 +293,10 @@ test('/stop and /steer act on the running turn only: interrupt after the engine 
     text: 'Nothing is running in this conversation.',
     stopped: false,
   });
-  assert.equal(
-    (await steerTurn(core, store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'also this')).steered,
-    false,
+  assert.deepEqual(
+    await interject(core, store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'also this'),
+    { steered: false },
+    'nothing running: not an interjection, and the caller queues the message instead',
   );
   assert.equal(requests.length, 0, 'nothing running: OpenCode is not asked');
 
@@ -302,7 +304,7 @@ test('/stop and /steer act on the running turn only: interrupt after the engine 
   engine.tick();
   await Promise.resolve();
   const session = store.sessionOf('dm-a')!.session;
-  const steered = await steerTurn(
+  const steered = await interject(
     core,
     store,
     platform,
@@ -320,10 +322,10 @@ test('/stop and /steer act on the running turn only: interrupt after the engine 
     metadata: { aivi: { origin: 'discord', channel: 'dm-a', user: 'u1', steer: 'msg_discord_one' } },
   });
 
-  // Steer words land in the session like the turn's own, so a linked speaker is the person.
+  // Steered words land in the session like the turn's own, so a linked speaker is the person.
   const ada = core.createPerson({ name: 'Ada' });
   core.redeemLinkCode(core.mintLinkCode(ada.id).code, 'discord', 'u1');
-  await steerTurn(core, store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'and the appendix');
+  await interject(core, store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'and the appendix');
   assert.deepEqual(requests.at(-1)!.body, {
     text: '[Discord message from Ada (user u1)]\nand the appendix',
     delivery: 'steer',

@@ -10,13 +10,13 @@ import {
   describeJobs,
   describeModel,
   helpText,
+  interject,
   isChatCommand,
   OFFLINE_NOTICE,
   ONLINE_NOTICE,
   redeemLink,
   splitReply,
   status,
-  steerTurn,
   stopTurn,
   switchModel,
   usageHint,
@@ -31,6 +31,9 @@ import { createSocketModeConnection, requireSlackTokens } from './connection.ts'
 /** Slack's limit is 4000 characters (`chat.postMessage` truncates at 40 000; the UI collapses above 4000). */
 export const SLACK: ChannelPlatform = { id: 'slack', label: 'Slack', replyLimit: 3900 };
 const WAITING = 'hourglass_flowing_sand';
+// The ack for an interjection that steered into the running turn: the turn
+// will speak for it, the reaction only says the words arrived.
+const STEERED = 'high_brightness';
 /** Slack has no typing indicator for bots; 👀 on the message says the agent is on it. */
 const WORKING = 'eyes';
 /** What an unlinked account hears once: a link code is its only door, and DMs are where it opens. */
@@ -332,9 +335,28 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
         await send(replyTo, 'Text messages only for now; paste the relevant text.');
         return;
       }
+      const speaker = { name: await nameOf(event.user!), user: event.user! };
+      // A message arriving while this conversation's turn runs **interjects**
+      // into it (ruled 2026-10-02: steer is the default; `/queue` is the way
+      // behind). A steer that fails is not a lost message: it queues anyway,
+      // with the failure logged.
+      const injected = await interject(
+        services.store,
+        store,
+        SLACK,
+        services.opencode,
+        routed.conversation,
+        speaker,
+        routed.text,
+      ).catch(error => ({ steered: false as const, error }));
+      if (injected.error) log.warn('interject.failed', { channel: event.channel, error: injected.error });
+      if (injected.steered) {
+        await slack.react(event.channel, event.ts, STEERED).catch(() => {});
+        return;
+      }
       try {
         store.enqueue(
-          { id, channel: routed.conversation, user: event.user!, name: await nameOf(event.user!), text: routed.text },
+          { id, channel: routed.conversation, user: event.user!, name: speaker.name, text: routed.text },
           config.maxPending,
         );
         engine?.tick(); // pick it up now; the poll loop is only the fallback
@@ -415,13 +437,25 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
       return call.reply(result.text);
     };
 
-    const steerCommand = async (call: CommandCall) => {
+    /** `/queue`: the explicit way **behind** the running turn — interjection
+     *  is the default now, this command opts out of it. */
+    const queueCommand = async (call: CommandCall) => {
       const text = call.command.text.trim();
-      if (!text) return call.reply(`Usage: ${spell('steer')} TEXT`);
+      if (!text) return call.reply(`Usage: ${spell('queue')} TEXT`);
       const speaker = { name: await nameOf(call.command.user_id), user: call.command.user_id };
-      const result = await steerTurn(services.store, store, SLACK, services.opencode, call.channel, speaker, text);
-      if (result.error) log.warn('steer.failed', { error: result.error });
-      return call.reply(result.text);
+      try {
+        store.enqueue(
+          { id: `slash:${Date.now()}`, channel: call.channel, user: speaker.user, name: speaker.name, text },
+          config.maxPending,
+        );
+        engine?.tick();
+        return call.reply(
+          store.running(call.channel) ? 'Queued behind the running turn.' : 'Queued; nothing is running.',
+        );
+      } catch (error) {
+        log.warn('queue.rejected', { error });
+        return call.reply('I could not queue this message. The queue may be full; check the status command.');
+      }
     };
 
     const newCommand = (call: CommandCall) => {
@@ -503,7 +537,7 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
       // Slash commands carry no thread, so in thread mode they speak for the channel: every new
       // top-level message is already a fresh conversation, and status covers all its threads.
       // Anything that acts on one conversation cannot tell which thread is meant.
-      if (call.threads && ['context', 'model', 'stop', 'steer'].includes(name))
+      if (call.threads && ['context', 'model', 'stop', 'queue'].includes(name))
         return reply(
           'In this channel every thread is its own conversation; slash commands cannot tell which one you mean.',
         );
@@ -512,7 +546,7 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
         context: contextCommand,
         model: modelCommand,
         stop: stopCommand,
-        steer: steerCommand,
+        queue: queueCommand,
         new: newCommand,
       };
       const answerConversation = conversationCommands[name];

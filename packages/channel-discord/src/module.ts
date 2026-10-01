@@ -14,6 +14,7 @@ import {
   describeModel,
   formatModel,
   helpText,
+  interject,
   isChatCommand,
   listModels,
   matchModels,
@@ -22,7 +23,6 @@ import {
   redeemLink,
   splitReply,
   status,
-  steerTurn,
   stopTurn,
   switchModel,
 } from '@aivi/host';
@@ -276,6 +276,25 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
       const text = message.content.replace(new RegExp(`<@!?${client.user!.id}>`, 'g'), '').trim() || message.content;
       const conversation = await conversationFor(message, route, text);
       if (!conversation) return; // the thread would not open; the speaker was told why
+      const speaker = { name: message.member?.displayName ?? message.author.displayName, user: message.author.id };
+      // A message arriving while this conversation's turn runs **interjects**
+      // into it (ruled 2026-10-02: steer is the default; /queue is the way
+      // behind). A steer that fails is not a lost message: it queues anyway,
+      // with the failure logged.
+      const injected = await interject(
+        services.store,
+        store,
+        DISCORD,
+        services.opencode,
+        conversation,
+        speaker,
+        text,
+      ).catch(error => ({ steered: false as const, error }));
+      if (injected.error) log.warn('interject.failed', { channel: message.channelId, error: injected.error });
+      if (injected.steered) {
+        await message.react('⚡').catch(() => {});
+        return;
+      }
       await enqueueTurn(message, conversation, text);
     }
 
@@ -407,7 +426,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
         context: contextCommand,
         model: modelCommand,
         stop: stopCommand,
-        steer: steerCommand,
+        queue: queueCommand,
         new: newCommand,
       };
       const answerConversation = conversationCommands[name];
@@ -500,8 +519,9 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
       await reply(result.text);
     }
 
-    /** /steer: add a voice to the running turn, as the person who spoke. */
-    async function steerCommand(call: CommandCall): Promise<void> {
+    /** /queue: the explicit way **behind** the running turn — interjection
+     *  into it is the default now, this command opts out of it. */
+    async function queueCommand(call: CommandCall): Promise<void> {
       const { interaction, reply } = call;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const member = interaction.member;
@@ -509,17 +529,25 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
         name: member && 'displayName' in member ? member.displayName : interaction.user.displayName,
         user: interaction.user.id,
       };
-      const result = await steerTurn(
-        services.store,
-        store,
-        DISCORD,
-        services.opencode,
-        interaction.channelId,
-        speaker,
-        interaction.options.getString('text', true),
-      );
-      if (result.error) log.warn('steer.failed', { error: result.error });
-      await reply(result.text);
+      try {
+        store.enqueue(
+          {
+            id: `slash:${Date.now()}`,
+            channel: interaction.channelId,
+            user: speaker.user,
+            name: speaker.name,
+            text: interaction.options.getString('text', true),
+          },
+          config.maxPending,
+        );
+        engine?.tick();
+        await reply(
+          store.running(interaction.channelId) ? 'Queued behind the running turn.' : 'Queued; nothing is running.',
+        );
+      } catch (error) {
+        log.warn('queue.rejected', { error });
+        await reply('I could not queue this message. The queue may be full; check /status.');
+      }
     }
 
     /** /new: forget this conversation's session; the next message starts fresh. */

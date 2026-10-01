@@ -153,12 +153,30 @@ function canned(url: string, method: string): string | undefined {
   return undefined;
 }
 
-/** The context of the last prompt: user, finished assistant, succeeded idle. */
-const lastTurnBody = (prompts: { id: string; text: string }[], answer: string) => {
-  const last = prompts.at(-1)!;
+/** The context of the last turn: its user message, any interjections steered
+ *  into it (the metadata is what finalAnswer's trust rule reads), a finished
+ *  assistant, a succeeded idle. */
+const lastTurnBody = (prompts: { id?: string; text: string; metadata?: any }[], answer: string) => {
+  const last = [...prompts].reverse().find(p => p.id !== undefined)!;
+  const steered = prompts.filter(
+    (p, at) => p.id === undefined && p.metadata?.aivi?.steer === last.id && at >= prompts.indexOf(last),
+  );
   return JSON.stringify({
     data: [
-      { type: 'user', id: last.id, text: last.text, time: { created: 1 } },
+      {
+        type: 'user',
+        id: last.id,
+        text: last.text,
+        ...(last.metadata ? { metadata: last.metadata } : {}),
+        time: { created: 1 },
+      },
+      ...steered.map((p, n) => ({
+        type: 'user',
+        id: `steered-${n}`,
+        text: p.text,
+        metadata: p.metadata,
+        time: { created: 1 },
+      })),
       {
         type: 'assistant',
         id: 'a',
@@ -444,17 +462,16 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.equal(slack.ephemerals.at(-1)!.split('\n').length, CHAT_COMMANDS.length);
   await slack.command({ command: '/spider-jobs' });
   assert.match(slack.ephemerals.at(-1)!, /^\*\*Next occurrences\*\*\nNo jobs are due\.\n\n\*\*Last runs\*\*\n/);
-  for (const name of ['model', 'stop', 'steer']) {
+  for (const name of ['model', 'stop', 'queue']) {
     await slack.command({ command: `/spider-${name}`, text: 'x' });
     assert.match(slack.ephemerals.at(-1)!, /cannot tell which one you mean/, name);
   }
   await slack.command({ command: '/spider-stop', channel_id: DM });
   assert.equal(slack.ephemerals.at(-1), 'Nothing is running in this conversation.');
-  await slack.command({ command: '/spider-steer', channel_id: DM });
-  assert.equal(slack.ephemerals.at(-1), 'Usage: /spider-steer TEXT');
-  await slack.command({ command: '/spider-steer', channel_id: DM, text: 'hey' });
-  assert.match(slack.ephemerals.at(-1)!, /^Nothing is running in this conversation\. Send it as a message instead\.$/);
-  assert.ok(!opencode.prompts.some(p => p.delivery === 'steer'), 'nothing was queued or steered');
+  await slack.command({ command: '/spider-queue', channel_id: DM });
+  assert.equal(slack.ephemerals.at(-1), 'Usage: /spider-queue TEXT');
+  // /queue's real passage (behind a running turn, answered after it) is
+  // proven end to end in the interjection test below.
   await slack.command({ command: '/spider-model', channel_id: DM });
   assert.deepEqual(slack.ephemerals.at(-1)!.split('\n'), [
     '🧠 **Model**',
@@ -701,7 +718,7 @@ test('the JSON manifest agrees with the YAML snippet: one command table, two spe
   }
 });
 
-test('-steer and -stop act on the running turn; -model is refused while it runs', async t => {
+test('a message interjects the running turn by default; /queue goes behind; -stop ends it; -model is refused while it runs', async t => {
   const store = new Store(':memory:');
   const ada = linkMe(store);
   let release!: () => void;
@@ -745,8 +762,11 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
   await until(() => opencode.prompts.length === 1 && inbox.sessionOf(DM)?.ready === true, 'the turn is running');
   const session = inbox.sessionOf(DM)!.session;
 
-  await slack.command({ command: '/spider-steer', channel_id: DM, text: 'also the appendix' });
-  assert.equal(slack.ephemerals.at(-1), 'Passed on to the agent mid-turn.');
+  // Interjection is the **default** (ruled 2026-10-02): a plain message that
+  // arrives while the turn runs steers into it, marked for that turn, and the
+  // ⚡ is the only ack — the turn's own answer will speak for it.
+  await slack.event(message({ channel: DM, ts: '41.0', text: 'also the appendix' }));
+  await until(() => opencode.prompts.length === 2, 'the interjection reached OpenCode');
   assert.deepEqual(opencode.prompts.at(-1), {
     id: undefined,
     text: `[Slack message from Ada (user ${ME})]\nalso the appendix`,
@@ -755,7 +775,18 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
       aivi: { origin: 'slack', channel: DM, user: ME, steer: `msg_slack_${DM}_40_0`, person: ada.id },
     },
   });
-  assert.equal(inbox.list().length, 1, 'a steer is not a queued turn');
+  assert.equal(inbox.list().length, 1, 'an interjection is not a queued turn');
+  await until(() => slack.reactions.at(-1) === `+high_brightness@${DM}:41.0`, 'the lightning acks the steer');
+
+  // /queue is the explicit way **behind** the running turn.
+  await slack.command({ command: '/spider-queue', channel_id: DM, text: 'after this please' });
+  assert.equal(slack.ephemerals.at(-1), 'Queued behind the running turn.');
+  assert.equal(inbox.list().length, 2, '/queue made a turn row; interjecting did not');
+
+  // /steer is gone: the name no longer steers anything (Slack's own manifest
+  // refuses it; the module's unknown-command fallback reads the status).
+  await slack.command({ command: '/spider-steer', channel_id: DM, text: 'not anymore' });
+  assert.equal(opencode.prompts.length, 2, 'no prompt was steered by the dead command');
 
   await slack.command({ command: '/spider-model', channel_id: DM, text: 'github-copilot/gpt-5.2' });
   assert.match(slack.ephemerals.at(-1)!, /^A turn is running in this conversation\./);
@@ -768,8 +799,17 @@ test('-steer and -stop act on the running turn; -model is refused while it runs'
   assert.deepEqual(slack.posts[0], { channel: DM, text: 'Stopped at your request.' });
   const [turn] = inbox.list();
   assert.deepEqual([turn!.state, turn!.error], ['discarded', 'Stopped at the person’s request']);
-  assert.equal(store.leases().length, 0, 'capacity is released');
-  await until(() => slack.reactions.at(-1) === `-eyes@${DM}:40.0`, 'the working reaction is cleared');
+  // The /queue turn waits **behind** the running turn; stopped mid-stride,
+  // the queued one takes the freed capacity and answers after it.
+  await until(() => slack.reactions.includes(`-eyes@${DM}:40.0`), 'the working reaction is cleared'); // includes: the queued turn's own reactions land after it
+  release();
+  await until(() => slack.posts.length === 2 && store.leases().length === 0, 'the queued turn answers after the stop');
+  assert.deepEqual(slack.posts[1], { channel: DM, text: 'Answer' });
+  assert.equal(
+    inbox.state(inbox.list().find(t => t.state !== 'discarded')!.id),
+    'sent',
+    'the queued turn ran after the stop',
+  );
   await slack.command({ command: '/spider-stop', channel_id: DM });
   assert.equal(slack.ephemerals.at(-1), 'Nothing is running in this conversation.');
 });
