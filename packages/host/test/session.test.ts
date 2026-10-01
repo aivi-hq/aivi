@@ -42,7 +42,7 @@ test('only the matching completed final answer is returned, without reasoning or
   const failed = structuredClone(messages);
   (failed.at(-1) as { outcome: string }).outcome = 'failed';
   assert.throws(() => finalAnswer(failed, 'msg_one', 'assistant'), /No confirmed/);
-  // A /steer into this turn is a user message that belongs to it; any other user message means the session moved on.
+  // An interjection steered into this turn is a user message that belongs to it; any other user message means the session moved on.
   const steered = structuredClone(messages);
   steered.splice(3, 0, {
     type: 'user',

@@ -46,10 +46,13 @@ close).
       Fallback chains load-checked (exist, acyclic); `parseDuration` sums
       space-separated parts (`1h 30m` = 90 minutes). Inert until 6+.
       (2026-10-02)
-- [ ] 6 Lease store: durable dispatcher leases (attach / release / revoke),
-      boot reconciles; unlimited mode always grants. The pool's model wins at
-      session create; the agent file's model wins only in a pool that names
-      no model.
+- [x] 6 Lease store + dispatcher state machine (`host/src/dispatcher/`):
+      durable leases (grant / attach / touch / release / expire), boot
+      reconcile (a silent OpenCode defers the whole pass, never a purge);
+      unlimited mode always grants. The pool's model wins at session create;
+      the agent file's model wins only in a pool that names no model. A
+      session keeps its pool for life: fallback never applies to a resume.
+      (2026-10-02)
 - [ ] 7 Orchestrator onto leases: the eligibility walk (lanes right→left,
       tickets top→bottom), a queue lane is the bottom of its worker lane's
       list, move-then-start with the self-webhook folded into the claim, a
