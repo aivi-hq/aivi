@@ -35,6 +35,15 @@ Two more directories live in the home, owned by the CLI rather than aivi:
 - `runtime/` — a managed Node installation, only when the machine's Node does
   not satisfy the server's requirement.
 
+A fourth directory is aivi's own: `prompts/` holds the operator's editable
+copies of the automated texts aivi speaks — `worker-contract`, `nudge`,
+`feedback-loop`, `review-posture`, `pr-body`, `escalation`, `job-result`.
+`server create` copies them in when the home is born and never overwrites
+one; the texts are read at use, so an edit lands on the next run and
+deleting a file is instant restoration of the built-in. `aivi prompts`
+lists the set and their sources, `aivi prompts install` re-copies what is
+missing, `aivi prompts show <name>` prints the words aivi speaks today.
+
 
 Paths in installation config and in task files resolve relative to the home.
 Project source paths resolve relative to the checkout, `<home>/projects/<id>/source`.

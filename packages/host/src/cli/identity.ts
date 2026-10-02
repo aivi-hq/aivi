@@ -3,7 +3,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { loadConfig, printedBaseUrl, writeConfigBlock } from '@aivi/core';
+import { installPrompts, loadConfig, printedBaseUrl, writeConfigBlock } from '@aivi/core';
 import { Store } from '@aivi/host';
 import * as p from '@clack/prompts';
 import { hostUrl } from './context.ts';
@@ -40,6 +40,11 @@ export async function serverCreate(options: {
 
   mkdirSync(home, { recursive: true });
   if (!existsSync(configPath)) writeFileSync(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  // The editable prompts ride with the home (docs/plans/git-workflow.md):
+  // core's built-ins are copied to `<home>/prompts/`, never overwriting, so
+  // the operator has words to edit from the first breath. Delete a file and
+  // the built-in returns; `aivi prompts` is the sight and the re-copy.
+  await installPrompts(home);
   // The reach address lands before anything reads the config: an invalid
   // value fails here, with nothing minted yet.
   await storeReach(configPath, options);

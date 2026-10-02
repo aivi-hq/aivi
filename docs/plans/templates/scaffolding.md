@@ -57,6 +57,22 @@ template flow is that machinery, generalized and better advertised.
 
 ## Captured requirements
 
+- **Copyable posture lines for agent files** (built 2026-10-02). The
+  automated texts aivi speaks are editable through `<home>/prompts/`
+  ([git-workflow.md](../git-workflow.md#prompts--the-guidance-the-operator-can-edit));
+  an agent file that wants the posture as its own words copies them from
+  here. For a worker that answers reviews:
+
+  > If this is returning work, with unresolved comments, process feedback by
+  > either agreeing (do the work) or disagreeing (leave a grounded comment);
+  > both use aivi_respond_feedback.
+
+  And for a review lane:
+
+  > Request changes for problems. Comments for nits.
+
+  These are guidance, not contract: the completion gate stays posture-blind
+  whatever the agent file says.
 - `aivi projects add` **detects which systems are installed** — it walks the
   roles against the `aivi-plugins` list (D8/D9) and the configured
   `./setupProject` contributors, offering per-system configuration instead of

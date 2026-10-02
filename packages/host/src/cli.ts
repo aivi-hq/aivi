@@ -18,6 +18,7 @@ import { registerJobs } from './cli/commands/jobs.ts';
 import { registerKnowledge } from './cli/commands/knowledge.ts';
 import { registerPeople } from './cli/commands/people.ts';
 import { registerProjects } from './cli/commands/projects.ts';
+import { registerPrompts } from './cli/commands/prompts.ts';
 import { registerServer } from './cli/commands/server.ts';
 import { home } from './cli/context.ts';
 
@@ -36,6 +37,7 @@ export async function registerCommands(program: Command, machine: MachineStatus)
   registerHost(program);
   registerPeople(program);
   registerProjects(program);
+  registerPrompts(program);
   registerKnowledge(program);
   registerJobs(program);
   // The plugin commands mount before parsing: their packages are asked for

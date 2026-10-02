@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
-import type { GitIdentity, Logger, ProjectLane, ToolDescriptor } from '@aivi/core';
-import { errorMessage } from '@aivi/core';
+import type { GitIdentity, Logger, ProjectLane, PromptName, ToolDescriptor } from '@aivi/core';
+import { errorMessage, fillPrompt, promptDefaults } from '@aivi/core';
 import type { ForgeOwner, Forges, PrFacts, ReviewFacts } from '@aivi/plugin/forge';
 import type { OpenCodeClient, Orchestrator as OrchestratorApi, SessionEvents, ToolHandler } from '@aivi/plugin/module';
 import type {
@@ -99,12 +99,12 @@ export interface OrchestratorDeps {
   keepAliveMs: number;
   /** Premature turn-ends tolerated before the run fails visibly. A safety net, not a poller. */
   nudgeBudget?: number;
+  /** The editable prompt texts (core's `prompts/` set), read at use: an
+   *  edit to `<home>/prompts/<name>.md` lands on the next run, a delete is
+   *  instant restoration. Absent dep: the built-in defaults, which is what
+   *  a host with no home on disk (a test, a CLI boot) speaks anyway. */
+  prompt?: (name: PromptName) => Promise<string>;
 }
-
-const NUDGE =
-  'Your turn ended without reporting. If you are finished, call the aivi_work_complete tool ' +
-  '(outcome "success" or "failure") with a one-line summary. If you are blocked or need a ' +
-  'decision from a person, call the aivi_ask tool with your question. Do not just reply in text.';
 
 /** Refused completions before the person is asked, in their words: "a max
  *  of 3 tries or something until HITL" (ruled 2026-10-02). */
@@ -115,34 +115,6 @@ const MAX_FEEDBACK_TRIES = 3;
 const clip = (text: string, max = 500): string => {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
-};
-
-/** The feedback-loop guidance the first prompt carries when the run started
- *  with an open pull request: the posture in the operator's words — process
- *  each by agreeing (do the work) or disagreeing (leave a grounded comment),
- *  both ending with aivi_respond_feedback — and the facts it applies to.
- *  Empty when there is nothing to say: a clean start carries no paragraph. */
-const feedbackGuidance = (pr: PrFacts, facts: ReviewFacts): string => {
-  const parts: string[] = [];
-  if (facts.threads.length)
-    parts.push(
-      `This ticket is returning work: the pull request ${pr.url} has unresolved review comments. ` +
-        'Process each one by either agreeing (do the work, move it with aivi_push) or disagreeing ' +
-        '(leave a grounded comment); both end by answering the thread with aivi_respond_feedback, ' +
-        'which resolves it. A thread a person resolved needs no answer: they are authoritative.',
-      ...facts.threads.map(t => `- [${t.id}] ${t.path ? `${t.path}: ` : ''}${clip(t.question)}`),
-    );
-  if (facts.comments.length)
-    parts.push(
-      'Plain comments on the pull request (answer them in the conversation too; aivi_review has the full text):',
-      ...facts.comments.slice(-10).map(c => `- ${c.author.login}: ${clip(c.body)}`),
-      ...(facts.comments.length > 10 ? [`(${facts.comments.length - 10} older comments: aivi_review)`] : []),
-    );
-  if (facts.pr.mergeable === 'dirty')
-    parts.push(
-      'The pull request does not merge cleanly into its base right now: integrate before you finish — aivi_sync, then merge or rebase with your git.',
-    );
-  return parts.join('\n');
 };
 
 const exec = promisify(execFile);
@@ -164,23 +136,12 @@ const gitRead = async (cwd: string, ...args: string[]): Promise<string | null> =
  *  The tools are the host's, so their explanation lives here and no tracker
  *  repeats or rewords it; the nudge above is the same contract restated
  *  when a turn ends without either tool. */
-const workerContract = (directory: string) =>
-  `You are an aivi worker for one ticket, working in ${directory}. ` +
-  'The ticket ends only through a tool call: when it is genuinely resolved, call aivi_work_complete with outcome ' +
-  '"success" and a one-line summary; when you could not finish it, call the same tool with outcome "failure". ' +
-  'When a person must decide something, give information, or grant permission, call aivi_ask with your question ' +
-  'and options when there are clear choices; they answer on the ticket and the answer reaches you as a follow-up. ' +
-  'Before you start, post your plan with aivi_plan \u2014 the whole checklist of steps, each with a status \u2014 and ' +
-  'send the full list again whenever a step changes; people watch it while you work. ' +
-  'Crossing to the remote is always through aivi\u2019s tools, never git push, fetch or pull: aivi_sync for the ' +
-  'remote\u2019s latest refs, aivi_push to move your commits, aivi_pr for the pull request. ' +
-  'End your turn right after calling aivi_work_complete or aivi_ask; the git and review tools do not end it. ' +
-  'A turn that ends without either is treated as a failure. ' +
-  'Never declare completion in plain text.';
-
 export class Orchestrator implements OrchestratorApi {
   private readonly deps: OrchestratorDeps;
   private readonly budget: number;
+  /** The editable prompt texts, read at use; the built-in defaults when the
+   *  host wires no home (core's `prompts/` set, docs/plans/git-workflow.md). */
+  private readonly prompt: (name: PromptName) => Promise<string>;
   private readonly trackers = new Map<string, Tracker>();
   private readonly passings = new Map<string, Promise<void>>();
   /** Work whose lease request waits in a dispatcher queue: the dispatcher's
@@ -196,6 +157,7 @@ export class Orchestrator implements OrchestratorApi {
   constructor(deps: OrchestratorDeps) {
     this.deps = deps;
     this.budget = deps.nudgeBudget ?? 2;
+    this.prompt = deps.prompt ?? (async name => promptDefaults[name]);
     // The dispatcher's callback namespace: when a waiting request of ours
     // becomes a lease, this hears it with the request id and the lease —
     // and the callback is also the wake to look for more work.
@@ -828,29 +790,20 @@ export class Orchestrator implements OrchestratorApi {
         dir = made.path;
         log.info('worktree.ready', { branch, base: made.base, ...(owned ? { forge: owned.repo.id } : {}) });
       }
-      // The feedback gather at start (docs/plans/git-workflow.md): the open
-      // review threads of **this moment** are the only ones the completion
-      // gate can ever owe, and the guidance rides the first prompt. A forge
-      // that cannot be read here is warned, not fatal: the run starts without
-      // a snapshot — started-clean, so the gate will owe nothing — and the
-      // log says why. Whether the agent is reviewing or answering a review
-      // is the agent file's word, never this code's.
+      // The feedback gather at start; see #gatherFeedback. Warned, never
+      // fatal: unreadable at start means started-clean.
       let feedback = '';
       if (owned && branch)
         try {
-          const pr = await owned.forge.prForBranch(owned.repo, branch);
-          if (pr?.state === 'open') {
-            const facts = await owned.forge.reviewFeedback(owned.repo, pr);
-            if (facts.threads.length)
-              this.deps.ledger.snapshotFeedback(
-                runId,
-                facts.threads.map(t => t.id),
-              );
-            feedback = feedbackGuidance(pr, facts);
-          }
+          feedback = await this.#gatherFeedback(runId, owned, branch);
         } catch (error) {
           log.warn('run.feedback.unreadable', { branch, error });
         }
+      // The writing-style guidance slots (core's `review-posture` and
+      // `pr-body` prompts): posture words for the tools every worker may
+      // use, editable live, and the gate stays posture-blind — nothing in
+      // the state machine reads these.
+      const style = [await this.prompt('review-posture'), await this.prompt('pr-body')].filter(Boolean).join('\n');
       const lease = await this.deps.dispatcher.provide(leaseId, { agent: run.agent, directory: dir });
       const sessionId = lease.sessionId!;
       // Watch before prompting: a live-only stream must not miss the first turn's end.
@@ -877,7 +830,8 @@ export class Orchestrator implements OrchestratorApi {
             }; the agent file says what you may change.]`,
             summary,
             ...(feedback ? [feedback] : []),
-            workerContract(dir),
+            ...(style ? [style] : []),
+            fillPrompt(await this.prompt('worker-contract'), { directory: dir }),
           ].join('\n\n'),
           delivery: 'queue',
         },
@@ -929,7 +883,7 @@ export class Orchestrator implements OrchestratorApi {
       await client.session.prompt({
         sessionID: sessionId,
         id: `msg_${randomBytes(6).toString('hex')}`,
-        text: NUDGE,
+        text: await this.prompt('nudge'),
         delivery: 'queue',
       });
     } catch (error) {
@@ -984,6 +938,54 @@ export class Orchestrator implements OrchestratorApi {
     if (at < 0) return undefined;
     const lane = lanes[at]!;
     return success ? (lane.next ?? lanes[at + 1]?.name) : (lane.previous ?? lanes[at - 1]?.name);
+  }
+
+  /**
+   * The feedback-loop guidance the first prompt carries when the run started
+   * with an open pull request: the operator-editable opening (core's
+   * `feedback-loop` prompt) and the facts it applies to. Empty when there is
+   * nothing to say: a clean start carries no paragraph. The facts stay code —
+   * composition fills guidance slots, it does not template ticket data.
+   */
+  async #feedbackGuidance(pr: PrFacts, facts: ReviewFacts): Promise<string> {
+    const parts: string[] = [];
+    if (facts.threads.length)
+      parts.push(
+        fillPrompt(await this.prompt('feedback-loop'), { pull: pr.url }),
+        ...facts.threads.map(t => `- [${t.id}] ${t.path ? `${t.path}: ` : ''}${clip(t.question)}`),
+      );
+    if (facts.comments.length)
+      parts.push(
+        'Plain comments on the pull request (answer them in the conversation too; aivi_review has the full text):',
+        ...facts.comments.slice(-10).map(c => `- ${c.author.login}: ${clip(c.body)}`),
+        ...(facts.comments.length > 10 ? [`(${facts.comments.length - 10} older comments: aivi_review)`] : []),
+      );
+    if (facts.pr.mergeable === 'dirty')
+      parts.push(
+        'The pull request does not merge cleanly into its base right now: integrate before you finish — aivi_sync, then merge or rebase with your git.',
+      );
+    return parts.join('\n');
+  }
+
+  /**
+   * The gathering at start (docs/plans/git-workflow.md): the open review
+   * threads of **this moment** are the only ones the completion gate can
+   * ever owe, and the guidance rides the first prompt. A forge that cannot
+   * be read here is warned, not fatal: the run starts without a snapshot —
+   * started-clean, so the gate will owe nothing — and the log says why.
+   * Whether the agent is reviewing or answering a review is the agent
+   * file's word, never this code's.
+   */
+  async #gatherFeedback(runId: string, owned: ForgeOwner, branch: string): Promise<string> {
+    const pr = await owned.forge.prForBranch(owned.repo, branch);
+    if (pr?.state !== 'open') return '';
+    const facts = await owned.forge.reviewFeedback(owned.repo, pr);
+    if (facts.threads.length)
+      this.deps.ledger.snapshotFeedback(
+        runId,
+        facts.threads.map(t => t.id),
+      );
+    return this.#feedbackGuidance(pr, facts);
   }
 
   /** The worker says it is done. A tool call, so it is a fact: end the run,
@@ -1042,9 +1044,7 @@ export class Orchestrator implements OrchestratorApi {
     const strikes = counted.feedback?.attempts ?? 0;
     const list = owed.map(t => `- ${t.path ? `${t.path}: ` : ''}${clip(t.question)} (id ${t.id})`).join('\n');
     if (strikes >= MAX_FEEDBACK_TRIES && !counted.feedback?.escalated) {
-      const question =
-        `Your worker finished, but the pull request ${pr.url} still holds unresolved feedback it owes answers on:\n${list}\n` +
-        'What should it do? (answer with instructions, resolve the threads here, or say to ship it as-is)';
+      const question = fillPrompt(await this.prompt('escalation'), { pull: pr.url, list });
       try {
         const client = await this.deps.opencode();
         const form = await client.session.form.create({

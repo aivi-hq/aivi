@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { configSchema, type Logger, type ProjectLane, parseDuration } from '@aivi/core';
+import { configSchema, type Logger, type ProjectLane, type PromptName, parseDuration, readPrompt } from '@aivi/core';
 import type { Tracker } from '@aivi/plugin';
 import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
@@ -44,8 +44,10 @@ interface Fake {
   /** Sessions that are spending: what `active` answers with. */
   busy: Set<string>;
   interrupted: string[];
-  /** The elicitations: askTool opens one, an answer closes it. */
-  forms: { id: string; sessionID: string; answered?: unknown }[];
+  /** The elicitations: askTool opens one, an answer closes it. The escalation
+   *  form's title is recorded too: the words an edited `escalation` prompt
+   *  speaks must be visible from here. */
+  forms: { id: string; sessionID: string; title?: string; answered?: unknown }[];
 }
 
 function fakeOpenCode(): Fake {
@@ -79,9 +81,9 @@ function fakeOpenCode(): Fake {
         fake.prompts.push({ sessionID: input.sessionID, text: input.text });
       },
       form: {
-        create: async (input: { sessionID: string }) => {
+        create: async (input: { sessionID: string; title?: string }) => {
           const id = `form_${fake.forms.length + 1}`;
-          fake.forms.push({ id, sessionID: input.sessionID });
+          fake.forms.push({ id, sessionID: input.sessionID, ...(input.title ? { title: input.title } : {}) });
           return { id };
         },
         list: async ({ sessionID }: { sessionID: string }) =>
@@ -171,6 +173,7 @@ function harness(
   abort = new AbortController(),
   forges = new Forges(),
   directory: (projectId: string) => string = () => '/checkout',
+  prompt?: (name: PromptName) => Promise<string>,
 ) {
   const store = new Store(':memory:');
   const ledger = new RunLedger(store);
@@ -195,6 +198,7 @@ function harness(
     identity: async () => ({ name: 't', email: 't@t' }),
     dispatcher,
     forges,
+    ...(prompt ? { prompt } : {}),
   });
   orchestrator.addTracker(work);
   return { ledger, dispatcher, orchestrator, fake, forges };
@@ -923,6 +927,7 @@ async function gateFixture(
   t: { after: (fn: () => Promise<unknown>) => void },
   name: string,
   openThreads: Record<string, { path?: string; question: string }>,
+  prompt?: (name: PromptName) => Promise<string>,
 ) {
   const root = await mkdtemp(join(tmpdir(), `aivi-${name}-`));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -955,7 +960,7 @@ async function gateFixture(
   };
   const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
   forges.register(localForge(upstream, seen, new Map([['me/t-gate', 'open']]), review) as never);
-  const { ledger, orchestrator } = harness(lanes, {}, work, fake, new AbortController(), forges, () => source);
+  const { ledger, orchestrator } = harness(lanes, {}, work, fake, new AbortController(), forges, () => source, prompt);
   await orchestrator.wake('site');
   await until(() => fake.prompts.length === 1, 'the worker starts with its ticket');
   const run = ledger.active()[0]!;
@@ -1094,4 +1099,51 @@ test('aivi_review shows what the gate checks, aivi_respond_feedback answers or c
     (error: unknown) => error instanceof ToolError && /COMMENT or REQUEST_CHANGES/.test(String(error)),
     'approval is not a thing aivi can post',
   );
+});
+
+test('the operator’s edited prompts are the words the run speaks: read at use, slot by slot', async t => {
+  const words = await mkdtemp(join(tmpdir(), 'aivi-words-'));
+  t.after(() => rm(words, { recursive: true, force: true }));
+  await mkdir(join(words, 'prompts'));
+  await writeFile(
+    join(words, 'prompts', 'worker-contract.md'),
+    'Work gently in {directory}. Finish with the completion tool.\n',
+  );
+  await writeFile(
+    join(words, 'prompts', 'feedback-loop.md'),
+    'The reviewers spoke first on {pull}. Answer each in the thread.\n',
+  );
+  await writeFile(join(words, 'prompts', 'escalation.md'), 'Human: {pull} still owes:\n{list}\nYour call?\n');
+  await writeFile(join(words, 'prompts', 'review-posture.md'), 'Nudge gently at review time.\n');
+
+  const g = await gateFixture(t, 'words', { PRRT_1: { path: 'a.ts', question: 'Why is this nil?' } }, name =>
+    readPrompt(words, name),
+  );
+  const first = g.fake.prompts[0]!.text;
+  assert.ok(first.includes(`Work gently in ${g.source}.`), 'the edited contract speaks, slot filled by composition');
+  assert.ok(
+    !first.includes('aivi_work_complete with outcome'),
+    'the built-in contract is gone when the file replaces it',
+  );
+  assert.match(
+    first,
+    /The reviewers spoke first on https:\/\/github\.com\/acme\/site\/pull\/1/,
+    'the edited feedback-loop opens',
+  );
+  assert.match(
+    first,
+    /- \[PRRT_1\] a\.ts: Why is this nil\?/,
+    'and the facts still ride under it: composition stays code',
+  );
+  assert.match(first, /Nudge gently at review time/, 'the edited posture line rides too');
+  assert.match(first, /pull request body for a human reviewer/, 'an unedited name keeps its built-in beside them');
+
+  // The third refusal asks the person in the operator's words, slots and all.
+  await assert.rejects(() => g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'x' })));
+  await assert.rejects(() => g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'x' })));
+  await assert.rejects(() => g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'x' })));
+  assert.equal(g.fake.forms.length, 1, 'the escalation form stands');
+  const title = g.fake.forms[0]!.title ?? '';
+  assert.match(title, /^Human: https:\/\/github\.com\/acme\/site\/pull\/1 still owes:/, 'the edited escalation asks');
+  assert.match(title, /- a\.ts: Why is this nil\? \(id PRRT_1\)/, 'with the owed list in place');
 });

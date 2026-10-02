@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { getLogger, gitIdentity, parseDuration, systemJobs } from '@aivi/core';
+import { getLogger, gitIdentity, parseDuration, readPrompt, systemJobs } from '@aivi/core';
 import type { AiviModule, AiviServices } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
 import { attachExec } from './api/exec.ts';
@@ -164,6 +165,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     identity: () => gitIdentity(loaded.config.identity, globalGitConfig),
     // The orchestrator's own dial: how long an open elicitation holds a slot.
     keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
+    // The editable prompts, read at use from the home's `prompts/` copies:
+    // an edit lands on the next run, a delete is instant restoration.
+    prompt: name => readPrompt(dirname(loaded.path), name),
   });
   clearClaim = (lease, reason) => void orchestrator.leaseEnded(lease, reason);
   for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);
@@ -271,7 +275,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       await client.session.prompt(
         {
           sessionID: sessionId,
-          text: reentryPrompt(text),
+          text: reentryPrompt(text, await readPrompt(dirname(loaded.path), 'job-result')),
           delivery: 'queue',
           metadata: { aivi: { origin: 'job-result', run: context.run.id } },
         },

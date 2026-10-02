@@ -209,24 +209,34 @@ anyway — the wall is the safety, the hook is courtesy.
 
 ## `prompts/` — the guidance the operator can edit
 
-Automated prompts don't fit in an agent file without making a mess, and
-"this is entirely up to the operator. They want to break their server,
-they can. … 'fixing it' is just removing their messed up version."
+**Built 2026-10-02.** Automated prompts don't fit in an agent file without
+making a mess, and "this is entirely up to the operator. They want to break
+their server, they can. … 'fixing it' is just removing their messed up
+version."
 
-- **Defaults live in core code**, tested, single source. The set:
-  `worker-contract`, `nudge`, `feedback-loop`, `review-posture`,
-  `pr-body`, `escalation` (the HITL form text), `job-result` (the re-entry
-  line). Grows only by ruling.
-- **Setup installs a copy** into `<home>/prompts/<name>.md`, never
-  overwrites an existing file, and each installed file opens with a
-  warning header: edit freely; delete this file to get the built-in back.
-- **Read at use**, so an edit lands on the next run and a delete is
-  instant restoration. Missing or unreadable file → the built-in default.
+- **Defaults live in core code** (`@aivi/core` `prompts.ts`), tested, one
+  source. The set: `worker-contract`, `nudge`, `feedback-loop`,
+  `review-posture`, `pr-body`, `escalation` (the HITL form text),
+  `job-result` (the re-entry line). Grows only by ruling.
+- **Setup installs a copy** into `<home>/prompts/<name>.md` — `server
+  create` does it as the home is born — never overwriting an existing file,
+  and each installed file opens with a warning header: edit freely; delete
+  this file to get the built-in back. `aivi prompts install` re-copies what
+  is missing.
+- **Read at use**, so an edit lands on the next run and a delete is instant
+  restoration. Missing, unreadable or emptied file → the built-in default.
+  `aivi prompts` lists the set with each source; `aivi prompts show <name>`
+  prints the words aivi speaks today.
 - **Composition stays code.** Templates fill the *guidance slots* of the
   orchestrator's first prompt; ticket data, tool mechanics and the state
   machine are not template material. A custom `worker-contract.md` that
   drops the completion sentence breaks the run — allowed, warned, and one
-  `rm` from fixed.
+  `rm` from fixed. The slots: `{directory}` in `worker-contract`; `{pull}`
+  in `feedback-loop` (the owed threads and plain comments still ride under
+  it as code composes them); `{pull}` and `{list}` in `escalation`;
+  `{text}` in `job-result`. `review-posture` and `pr-body` ride every first
+  prompt as one short paragraph — nothing in the state machine reads them,
+  so the completion gate stays posture-blind.
 - The **agent file** carries the per-lane posture line (the operator's:
   "if this is returning work, with unresolved comments, process feedback by
   either agreeing (do the work) or disagreeing (leave a grounded comment);
@@ -259,9 +269,11 @@ commit, and the operator's word to start.
    `aivi_respond_feedback`, `aivi_submit_review`, the completion gate with
    the 3-strike escalation form (an answer to *that form* resets the
    strikes).
-4. **The hook + `prompts/`** — session-scoped deny in aivi's plugin, the
-   host membership endpoint, core defaults + setup-installed copies +
-   read-at-use loader, templates doc for agent files.
+4. **The hook + `prompts/`** — **built 2026-10-02** — session-scoped deny in
+   aivi's plugin (`e2307ae`), the host membership endpoint (`GET /run`),
+   core defaults + setup-installed copies + read-at-use loader, the
+   `aivi prompts` command, copyable posture lines for agent files in
+   [templates/scaffolding.md](templates/scaffolding.md).
 5. **Live gate** — one real round trip on a real repository: push → PR →
    human review comment → ticket back → agree → push → disagree → respond
    → complete → review round → gate nudge → escalation answered → done.

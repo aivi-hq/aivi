@@ -430,7 +430,12 @@ once at the start: `docs/plans/git-workflow.md`), and the worker contract
 explaining the tools.
 The tools are the host's, so their explanation is core's, not any
 tracker's — `firstMessage` on a board feed is dead: the tracker supplies
-the ticket's words, never the worker's first message.
+the ticket's words, never the worker's first message. The *guidance texts*
+the composition fills — the worker contract, the feedback-loop opener, the
+posture lines, the escalation form, the job-result re-entry — are the
+operator's editable copies under `<home>/prompts/`, read at use
+([configuration](configuration.md#home)): the composition is code, the
+words are theirs.
 
 There is **no event bus**: the stages are the surface. A run's ending,
 failure or question never arrives as an event somebody must subscribe to;

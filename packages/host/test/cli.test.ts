@@ -347,3 +347,45 @@ test('host clear-logs insists on a duration it can read', async t => {
   assert.equal(bogus.status, 1);
   assert.match(bogus.stderr, /Not a duration/);
 });
+
+test('the prompts set rides with the home and answers list, install and show', async t => {
+  const { home, env, cleanup } = await scratch();
+  t.after(cleanup);
+  const done = await run(['server', 'create', '--use', 'this-machine', '--name', 'Nemo'], env);
+  assert.equal(done.status, 0, done.stderr);
+
+  // The copies came with the home: `aivi prompts` sees them all as files.
+  const listed = await run(['prompts'], env);
+  assert.equal(listed.status, 0, listed.stderr);
+  const rows = JSON.parse(listed.stdout) as { name: string; source: string; path: string }[];
+  assert.deepEqual(
+    rows.map(r => r.name),
+    ['worker-contract', 'nudge', 'feedback-loop', 'review-posture', 'pr-body', 'escalation', 'job-result'],
+  );
+  assert.ok(rows.every(r => r.source === 'file' && r.path === join(home, 'prompts', `${r.name}.md`)));
+  const nudge = await readFile(join(home, 'prompts', 'nudge.md'), 'utf8');
+  assert.match(nudge, /^<!-- aivi: this prompt is yours to edit/, 'the copy opens with the warning header');
+
+  // An edit is the operator's word, and install never overwrites it.
+  await writeFile(join(home, 'prompts', 'nudge.md'), 'Second chances are free.\n');
+  const installed = await run(['prompts', 'install'], env);
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.deepEqual(JSON.parse(installed.stdout).written, [], 'an existing file is nobody’s to overwrite');
+  const shown = await run(['prompts', 'show', 'nudge'], env);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.deepEqual(JSON.parse(shown.stdout), {
+    name: 'nudge',
+    source: 'file',
+    text: 'Second chances are free.',
+  });
+
+  // Delete restores the built-in: the file is gone, the words return.
+  await rm(join(home, 'prompts', 'nudge.md'));
+  const restored = await run(['prompts', 'show', 'nudge'], env);
+  assert.match(JSON.parse(restored.stdout).text, /Your turn ended without reporting/);
+  assert.equal(JSON.parse(restored.stdout).source, 'built-in');
+
+  const unknown = await run(['prompts', 'show', 'dayjob'], env);
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /Unknown prompt: dayjob/);
+});
