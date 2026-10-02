@@ -282,7 +282,87 @@ test('an unknown pool is said at the request, not silently treated as pressure',
   );
 });
 
-const mustGrant = (r: { lease?: unknown } | { refused?: unknown }, why = 'expected a grant') => {
+const mustGrant = (r: { lease?: unknown } | { queued?: unknown } | { refused?: unknown }, why = 'expected a grant') => {
   if ('lease' in r && r.lease) return r.lease as ReturnType<LeaseStore['require']>;
   throw assert.fail(why);
 };
+
+/** Register a service's callback namespace: everything the queue fulfils
+ *  for it is heard here. */
+function registrar(dispatcher: Dispatcher, service: string) {
+  const heard: { request: string; lease: string; pool: string }[] = [];
+  dispatcher.registerCallback(service, (requestId, lease) => {
+    heard.push({ request: requestId, lease: lease.id, pool: lease.pool });
+  });
+  return heard;
+}
+
+const queuedId = (r: { queued?: string }) => {
+  if (r.queued) return r.queued;
+  throw assert.fail('expected a queued request');
+};
+
+test('a full pool accepts into its queue, one place per service, and the service is told with its request id', () => {
+  const { dispatcher } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const told = registrar(dispatcher, 'caller');
+  const first = mustGrant(dispatcher.request({ service: 'first' }), 'a free slot grants at once');
+  const waiting = dispatcher.request({ service: 'caller' });
+  assert.ok('queued' in waiting, 'a full pool accepts the request into its queue');
+  const refused = dispatcher.request({ service: 'caller' });
+  assert.deepEqual(
+    refused,
+    { refused: 'waiting', pool: 'default' },
+    'a service holds one queue place per pool: the second ask is refused',
+  );
+  dispatcher.release(first.id);
+  assert.equal(told.length, 1, 'the callback is the wake: it hears when the request becomes a lease');
+  assert.equal(told[0]!.request, queuedId(waiting), 'told with the very request id it asked under');
+  assert.equal(told[0]!.pool, 'default');
+  assert.equal(dispatcher.leases.held('default'), 1, 'the freed slot went straight to the queue');
+});
+
+test('the queue walks in order, and a cancelled request only loses its place', () => {
+  const { dispatcher } = harness({ dispatcher: { pools: { default: { capacity: 2 } } } });
+  const heard = registrar(dispatcher, 'second');
+  registrar(dispatcher, 'third');
+  registrar(dispatcher, 'later');
+  const one = mustGrant(dispatcher.request({ service: 'one' }));
+  const two = mustGrant(dispatcher.request({ service: 'two' }));
+  const second = dispatcher.request({ service: 'second' });
+  const third = dispatcher.request({ service: 'third' });
+  assert.ok('queued' in second && 'queued' in third, 'the full pool takes both asks');
+  dispatcher.cancel(queuedId(third));
+  dispatcher.release(one.id);
+  assert.equal(heard.length, 1, 'the one still waiting walks in; the cancelled one does not');
+  assert.equal(heard[0]!.request, queuedId(second));
+  assert.equal(dispatcher.leases.held('default'), 2, 'second took the slot; the cancelled third stayed out');
+  const after = dispatcher.request({ service: 'later' });
+  assert.ok('queued' in after, 'and the queue goes on taking asks in the order they come');
+  dispatcher.release(two.id);
+  assert.equal(heard.length, 1, 'second was already told: the drain went to the next, not twice to one');
+  void after;
+});
+
+test('a resume waits in its own pool and returns there, never into the fallback that had room', async () => {
+  const { leases, dispatcher } = harness({
+    dispatcher: { pools: { home: { capacity: 1, fallback: 'away' }, away: { capacity: 5 } } },
+  });
+  const told = registrar(dispatcher, 'orchestrator');
+  const own = mustGrant(dispatcher.request({ service: 'orchestrator', pool: 'home' }));
+  await dispatcher.provide(own.id, { agent: 'dev', directory: '/w' });
+  const sessionId = leases.require(own.id).sessionId!;
+
+  // Someone else takes the fallback on their own ask; home still holds ours.
+  const other = mustGrant(dispatcher.request({ service: 'other', pool: 'home' }), 'the chain walks for a new session');
+  assert.equal(other.pool, 'away');
+
+  const waiting = dispatcher.request({ service: 'orchestrator', resume: sessionId });
+  assert.ok('queued' in waiting, 'a full original pool queues the resume — the fallback is not its answer');
+
+  dispatcher.release(own.id);
+  assert.equal(told.length, 1, 'the resume walks in the moment its own pool opens');
+  assert.equal(told[0]!.pool, 'home', 'back into its own pool, where its model and cache live');
+  assert.equal(leases.held('home'), 1);
+  assert.equal(leases.held('away'), 1, 'the other lease stands untouched');
+  assert.equal(leases.sessionPool(sessionId), 'home', 'the session never changed pools, queue or no queue');
+});

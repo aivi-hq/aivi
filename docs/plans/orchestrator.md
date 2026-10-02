@@ -62,9 +62,12 @@ close).
       picked-up endings said with the installation's own app, questions as
       ticket comments, missed endings rendered at boot from the
       orchestrator's record through the follower's watermark. (2026-10-02)
-- [ ] 8 In-memory dispatcher queue + per-service callback namespaces +
+- [x] 8 In-memory dispatcher queue + per-service callback namespaces +
       cancellation (one pending request per service+pool; ephemeral by
-      design; only bites once pools are configured).
+      design; only bites once pools are configured). Built with it: the
+      fulfilment re-check before starting — a walk request starts wherever
+      the ticket sits, a delegation only for its own lane — and the queued
+      delegation that keeps its pair while it waits. (2026-10-02)
 - [ ] 9 Timeout monitor: idle kills, confirms, then frees (an unconfirmed
       kill keeps the slot unavailable); prepare revokes session-less leases.
       One known-instant `setTimeout` per lease, re-armed by activity —

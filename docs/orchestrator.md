@@ -330,6 +330,19 @@ Callers must cancel pending requests when the work becomes invalid. For example,
 
 Queue request IDs and cancellation state may also remain entirely in memory.
 
+**Ruled and built 2026-10-02.** A service registers one callback namespace
+with the dispatcher; a full pool only waits for a service that has
+registered to hear — a lease granted to nobody would be a leak, not a
+queue, so an unregistered service gets the plain `full` refusal. When the
+dispatcher fulfils a waiting request it re-checks the work **before
+starting**: a walk request starts wherever the ticket sits now, a
+delegation only for the lane it was delegated in — a ticket moved while it
+waited is the person's next act, and the walk reads it fresh — and either
+way the lease that does not fit goes straight back. A person's move on a
+queued ticket cancels its request through the follower, and a queued
+delegation keeps its Linear pair while it waits: when the lease lands, the
+run attaches to the session the delegator already spoke in.
+
 ## How work gets picked
 
 Anything that can change available work wakes the orchestrator: tracker events, completed work, and dispatcher callbacks.

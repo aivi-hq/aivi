@@ -22,10 +22,27 @@ export type { DispatcherLease };
  * it is the part that creates and consults OpenCode sessions.
  */
 
-/** Why a request did not get a slot. `full` is ordinary pressure — the
- *  caller queues or moves on; `pool-gone` is a config that outran reality
- *  and says so. */
-export type Refusal = 'full' | 'pool-gone';
+/** Why a request did not get a slot — and did not get a queue place
+ *  either. `full` is ordinary pressure from a service nobody registered
+ *  to hear (an un-waitable refusal); `waiting` says this service already
+ *  holds the pool's one queue place; `pool-gone` is a config that outran
+ *  reality and says so. */
+export type Refusal = 'full' | 'pool-gone' | 'waiting';
+
+/** A lease request waiting in the pool's in-memory queue: not a lease,
+ *  holding no capacity, deliberate to lose — a restart simply lets the
+ *  callers ask again for work that is still relevant. */
+export interface QueuedRequest {
+  id: string;
+  service: string;
+  pool: string;
+  resume?: string;
+}
+
+/** A service's callback namespace: when a waiting request becomes a
+ *  lease, the dispatcher calls its service with the request id and the
+ *  lease. The callback is also the wake: look for more work. */
+export type LeaseCallback = (requestId: string, lease: DispatcherLease) => void;
 
 export interface DispatcherDeps {
   leases: LeaseStore;
@@ -60,6 +77,10 @@ export class Dispatcher {
   /** Milliseconds, parsed once: the same durations the config load accepted. */
   private readonly idleMs: number;
   private readonly prepareMs: number;
+  /** Waiting lease requests per pool, in the order they asked. */
+  private readonly waiting = new Map<string, QueuedRequest[]>();
+  private readonly pending = new Map<string, QueuedRequest>();
+  private readonly callbacks = new Map<string, LeaseCallback>();
 
   constructor(deps: DispatcherDeps) {
     this.deps = deps;
@@ -90,13 +111,22 @@ export class Dispatcher {
    * created in the first pool with room — the fallback grant is for new
    * sessions only. A **resume** (the session is known here) must return to
    * the pool that session was created in: running it elsewhere would change
-   * its model and lose its prefill cache, so a full original pool is a
-   * refusal even when a fallback has room.
+   * its model and lose its prefill cache, so a full original pool waits in
+   * that pool's queue even when a fallback has room.
+   *
+   * A full pool **accepts** the request into its queue — `queued` with the
+   * id that cancels it — because a queued request is the answer to
+   * "give me a slot when one opens". Once a service holds the pool's one
+   * queue place, further requests from that service for the same pool are
+   * refused: the caller stops asking that pool this pass. A service nobody
+   * registered to hear gets the plain `full`: there would be no one to
+   * hand the freed slot to, and a lease nobody was told about is a leak,
+   * not a queue.
    */
   request(
     input: { service: string; pool?: string; resume?: string },
     now = Date.now(),
-  ): { lease: DispatcherLease } | { refused: Refusal; pool: string } {
+  ): { lease: DispatcherLease } | { queued: string } | { refused: Refusal; pool: string } {
     if (!this.moderated)
       return {
         // No capacity check exists to fail: the grant always lands.
@@ -140,7 +170,50 @@ export class Dispatcher {
       if (input.resume) this.leases.record(input.resume, lease.pool, now);
       return { lease };
     }
-    return { refused: 'full', pool: recorded ?? asked };
+    return this.#queue(input.service, recorded ?? asked, input.resume);
+  }
+
+  /** Take the queue place, or say this service holds it already. */
+  #queue(service: string, pool: string, resume?: string): { queued: string } | { refused: Refusal; pool: string } {
+    if (!this.callbacks.has(service)) return { refused: 'full', pool };
+    const waiting = this.waiting.get(pool) ?? [];
+    if (waiting.some(request => request.service === service)) return { refused: 'waiting', pool };
+    const request: QueuedRequest = {
+      id: `req_${randomBytes(5).toString('hex')}`,
+      service,
+      pool,
+      ...(resume ? { resume } : {}),
+    };
+    waiting.push(request);
+    this.waiting.set(pool, waiting);
+    this.pending.set(request.id, request);
+    return { queued: request.id };
+  }
+
+  /**
+   * One callback namespace per service (docs/orchestrator.md): the
+   * orchestrator registers itself and hears when a waiting request of
+   * its own becomes a lease. Registering is also what makes a pool's
+   * fullness waitable at all.
+   */
+  registerCallback(service: string, callback: LeaseCallback): void {
+    this.callbacks.set(service, callback);
+  }
+
+  /**
+   * Lose the queue place and nothing more. A request already granted is
+   * no longer cancellable — its lease is released, not its place — and an
+   * unknown id (a restart's) was already lost: the queue is ephemeral.
+   */
+  cancel(requestId: string): void {
+    const request = this.pending.get(requestId);
+    if (!request) return;
+    this.pending.delete(requestId);
+    const waiting = this.waiting.get(request.pool);
+    if (!waiting) return;
+    const at = waiting.findIndex(request => request.id === requestId);
+    if (at >= 0) waiting.splice(at, 1);
+    if (waiting.length === 0) this.waiting.delete(request.pool);
   }
 
   /** A pool and its fallbacks, in grant order; the load proved chains end. */
@@ -152,6 +225,58 @@ export class Dispatcher {
       at = this.pools[at]!.fallback;
     }
     return names;
+  }
+
+  /** End the lease and open its slot to the queue: the freed capacity goes
+   *  to the next request of this pool, in the order they asked. */
+  #free(lease: DispatcherLease): void {
+    this.leases.release(lease.id);
+    this.#drain(lease.pool);
+  }
+
+  /**
+   * A slot opened: the requests waiting in this pool walk in, in the order
+   * they asked — a resume only into its own pool (the fallback is for new
+   * sessions), a new session down the chain again. Each grant is said to
+   * the service's callback namespace with its request id and its lease;
+   * the callback is also the wake that says *look for more work*. A grant
+   * that finds no capacity leaves everyone waiting: the queue is FIFO and
+   * waits for its own pool, not for whichever request fits best.
+   */
+  #drain(pool: string): void {
+    const waiting = this.waiting.get(pool);
+    if (!waiting) return;
+    while (waiting.length > 0) {
+      const next = waiting[0]!;
+      const targets = next.resume ? [this.leases.sessionPool(next.resume) ?? next.pool] : this.#chain(next.pool);
+      let granted: DispatcherLease | undefined;
+      for (const name of targets) {
+        const lease = this.leases.grant(
+          {
+            kind: 'session',
+            service: next.service,
+            pool: name,
+            capacity: this.pools[name]!.capacity,
+            ...(next.resume ? { sessionId: next.resume } : {}),
+          },
+          () => {},
+        );
+        if (lease) {
+          granted = lease;
+          break;
+        }
+      }
+      if (!granted) return; // full again: the rest of the queue keeps waiting
+      waiting.shift();
+      if (waiting.length === 0) this.waiting.delete(pool);
+      this.pending.delete(next.id);
+      if (next.resume) this.leases.record(next.resume, granted.pool);
+      const callback = this.callbacks.get(next.service);
+      if (!callback) continue; // granted blind: the reconcile pass is its net
+      void Promise.resolve(callback(next.id, granted)).catch(error =>
+        this.log.warn('callback.failed', { service: next.service, request: next.id, error }),
+      );
+    }
   }
 
   /**
@@ -199,9 +324,12 @@ export class Dispatcher {
 
   /** The caller is done with its slot. Ending a lease never deletes the
    *  session — the session outlives turns and leases, and whether it is
-   *  kept is nobody's business here. */
+   *  kept is nobody's business here. The freed slot goes to the queue. */
   release(leaseId: string): void {
+    const lease = this.leases.get(leaseId);
+    if (!lease) throw new Error(`Lease ${leaseId} was already gone`);
     this.leases.release(leaseId);
+    this.#drain(lease.pool);
   }
 
   /**
@@ -219,7 +347,7 @@ export class Dispatcher {
   ): Promise<{ ended: DispatcherLease } | { pending: DispatcherLease }> {
     const lease = this.leases.require(leaseId);
     if (!lease.sessionId) {
-      this.leases.release(leaseId);
+      this.#free(lease);
       this.deps.onEnded?.(lease, reason);
       return { ended: lease };
     }
@@ -231,7 +359,7 @@ export class Dispatcher {
       .catch(error => this.log.warn('expire.interrupt.failed', { lease: leaseId, error }));
     if (await this.#spent(client, lease.sessionId, request)) {
       const held = this.leases.require(leaseId);
-      this.leases.release(leaseId);
+      this.#free(held);
       this.deps.onEnded?.(held, reason);
       return { ended: held };
     }
@@ -283,7 +411,7 @@ export class Dispatcher {
         if (!alive) reason = 'its OpenCode session is gone';
       }
       if (reason) {
-        this.leases.release(lease.id);
+        this.#free(lease);
         ended.push({ lease, reason });
         this.deps.onEnded?.(lease, reason);
       }

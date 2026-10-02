@@ -203,11 +203,11 @@ test('the walk reads the board right to left, the queue bottom last, and moves a
   assert.equal(fake.sessions.size, 3);
 });
 
-test('a refusal stops that pool for the pass, while work drawing on other pools walks on', async () => {
+test('a full pool queues one ticket of its own and stops the pass asking twice, while other pools walk on — and the queue walks in when a slot opens', async () => {
   const fake = fakeOpenCode();
   const feed = boardFeed(fake, { Doing: [{ id: 'd1' }, { id: 'd2' }], Later: [{ id: 'l1' }] });
   const lanes = [lane('Doing', { agent: 'dev', pool: 'a' }), lane('Later', { agent: 'dev', pool: 'b' })];
-  const { dispatcher, orchestrator } = harness(
+  const { ledger, dispatcher, orchestrator } = harness(
     lanes,
     { dispatcher: { pools: { a: { capacity: 1 }, b: { capacity: 1 } } } },
     feed,
@@ -219,9 +219,28 @@ test('a refusal stops that pool for the pass, while work drawing on other pools 
     'l1 (pool b) and d1 (pool a): the second Doing ticket never asks pool a twice',
   );
   const firsts = fake.prompts.map(p => p.text.split('\n')[0]).sort();
-  assert.deepEqual(firsts, ['do d1 in Doing', 'do l1 in Later'], 'd2 waits: pool a heard its refusal this pass');
+  assert.deepEqual(firsts, ['do d1 in Doing', 'do l1 in Later'], 'd2 waits in the queue: one place per pool');
   assert.equal(dispatcher.leases.held('a'), 1);
   assert.equal(dispatcher.leases.held('b'), 1);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(fake.prompts.length, 2, 'd2 holds a queue place, not a slot: it does not start');
+
+  // Pool b's slot opens: nothing to do with d2, which waits for pool a.
+  // (The board retires each stopped ticket first — what the module's
+  // stop-memory does to its own feed.)
+  const l1Run = ledger.activeByTicket('test-tracker', 'l1')!;
+  feed.retire('l1');
+  await orchestrator.stop(l1Run.id, 'the test is done with it');
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(fake.prompts.length, 2, 'd2 waits its own pool, not whichever slot opens');
+
+  // Pool a's slot opens: the queue walks in — no one asks again.
+  const d1Run = ledger.activeByTicket('test-tracker', 'd1')!;
+  feed.retire('d1');
+  await orchestrator.stop(d1Run.id, 'the test is done with it');
+  await until(() => fake.prompts.length === 3, 'the waiting ticket gets the freed slot by itself');
+  assert.match(fake.prompts[2]!.text, /do d2 in Doing/);
+  assert.equal(dispatcher.leases.held('a'), 1, 'the queue place became a lease');
 });
 
 test('blocked tickets wait, and a ticket gone since the listing gives its slot back', async () => {
@@ -247,9 +266,11 @@ test('blocked tickets wait, and a ticket gone since the listing gives its slot b
   assert.equal(dispatcher.leases.held('default'), 0, 'the grant made for the gone ticket is given back');
 });
 
-test('a delegation takes a lease too: a full pool refuses it by name, and the dispatcher ending a lease clears the claim visibly', async () => {
+test('a delegation takes a lease too: a full pool queues it, and the dispatcher ending a lease clears the claim visibly', async () => {
   const fake = fakeOpenCode();
-  const feed = boardFeed(fake, {});
+  // The delegated tickets sit on the board where their delegators put them:
+  // the fulfilment re-check reads the same board the walk would.
+  const feed = boardFeed(fake, { 'In Progress': [{ id: 't-1' }, { id: 't-2' }, { id: 't-3' }] });
   const { ledger, dispatcher, orchestrator } = harness(
     [lane('In Progress', { agent: 'dev' })],
     { dispatcher: { pools: { default: { capacity: 1 } } } },
@@ -272,8 +293,12 @@ test('a delegation takes a lease too: a full pool refuses it by name, and the di
   await until(() => fake.prompts.length === 1, 'the delegated worker starts');
 
   const second = await work('t-2');
-  assert.deepEqual(second, { runId: '', created: false, refused: 'full' }, 'the refusal is said, never silence');
-  assert.equal(ledger.activeByTicket('test-tracker', 't-2'), undefined, 'a refused delegation leaves no run behind');
+  assert.ok(second.queued, 'a full pool queues the delegation: acceptance with a waiting id');
+  assert.equal(ledger.activeByTicket('test-tracker', 't-2'), undefined, 'a queued delegation has no run yet');
+
+  const third = await work('t-3');
+  assert.equal(third.refused, 'waiting', 'one queue place per service per pool: t-3 is refused, never silent');
+  assert.equal(ledger.activeByTicket('test-tracker', 't-3'), undefined);
 
   // The dispatcher ends the lease itself — the idle monitor or a boot
   // reconcile finding the session gone. The claim that mirrored it clears.
@@ -284,10 +309,12 @@ test('a delegation takes a lease too: a full pool refuses it by name, and the di
   const outcome = ledger.get(first.runId)!.outcome!;
   assert.equal(outcome.kind, 'failure', 'the claim clears as a failed run, never silence');
   assert.match('reason' in outcome ? outcome.reason : '', /The dispatcher ended the lease/);
-  assert.equal(dispatcher.leases.held('default'), 0);
 
-  const third = await work('t-2');
-  assert.equal(third.created, true, 'the freed slot admits the next delegation');
+  await until(() => fake.prompts.length === 2, 'the queue walks in when the slot opens');
+  assert.match(fake.prompts[1]!.text, /delegated t-2/, 'the waiting delegation got the freed slot');
+  const secondRun = ledger.activeByTicket('test-tracker', 't-2')!;
+  assert.equal(secondRun.lane, 'In Progress');
+  assert.equal(dispatcher.leases.held('default'), 1);
 });
 
 test('unlimited mode walks the whole board at once — capacity is not moderated without pools', async () => {

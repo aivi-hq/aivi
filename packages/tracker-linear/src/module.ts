@@ -404,7 +404,7 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       const directory = project.directory;
       const { app, session: agentSession } = tracker.parts(conversation);
       links.bind(agentSession, issue.id);
-      const { created, refused } = await services.orchestrator.requestWork({
+      const { created, refused, queued } = await services.orchestrator.requestWork({
         projectId: project.id,
         trackerId: MODULE_ID,
         ticketId: issue.id,
@@ -416,15 +416,30 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
           promptContext ?? issueDossier(issue),
         ].join('\n\n'),
       });
+      if (queued) {
+        // No slot now, but the request holds the pool's queue place and the
+        // pair stays bound: when the lease lands the run attaches here and
+        // the worker speaks in this very session. A progress line for the
+        // wait; the start itself will say more.
+        await say(
+          conversation,
+          `Every slot in the pool behind lane "${issue.state.name}" is working. ${issue.identifier} waits in the queue and I start it the moment one frees.`,
+          'progress',
+        );
+        return log.info('run.queued', { issue: issue.identifier, request: queued, conversation });
+      }
       if (refused) {
-        // No slot, said plainly — silence is not an answer a delegator
-        // gets. The ticket stays in the lane it is in, and the eligibility
-        // walk starts it when a slot frees; the pair goes with the refusal
-        // so that moment arrives as fresh work, not a swallowed replay.
+        // No slot and no queue place either — said plainly, because silence
+        // is not an answer a delegator gets. The ticket stays in the lane
+        // it is in, and the eligibility walk starts it when a slot frees;
+        // the pair goes with the refusal so that moment arrives as fresh
+        // work, not a swallowed replay.
         links.release(agentSession);
         await say(
           conversation,
-          `No slot is free in the pool behind lane "${issue.state.name}" right now. ${issue.identifier} stays where it is and I will start it as soon as a slot frees.`,
+          refused === 'waiting'
+            ? `The pool behind lane "${issue.state.name}" already holds a request of mine, and a pool waits for one at a time. ${issue.identifier} is not started — the walk will take it when a slot frees.`
+            : `No slot is free in the pool behind lane "${issue.state.name}" right now. ${issue.identifier} stays where it is and I will start it as soon as a slot frees.`,
           'answer',
         );
         return log.info('run.refused', { issue: issue.identifier, pool: refused, conversation });
@@ -768,6 +783,7 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       // which is exactly what the walk exists to pick up.
       if (event.changed.includes('state') || event.changed.includes('labels')) {
         stopped.clear(issue.id); // the person's own move answers a stop
+        services.orchestrator.cancelWaiting(MODULE_ID, issue.id); // and their move cancels a waiting request
         void services.orchestrator.wake(routed.project.id);
       }
       if (!config.listener || !event.changed.includes('state') || !lane?.agent || human || pending.length) return;

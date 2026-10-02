@@ -56,6 +56,21 @@ export interface WorkRequest {
   firstMessage: string;
 }
 
+/** What a lease request waiting in a dispatcher queue is for. A walk
+ *  request re-reads its first message when the lease lands (the ticket may
+ *  have moved lanes while it waited); a delegation carries the words the
+ *  person's delegate mutation earned, because no one else composed them. */
+interface WaitingWork {
+  kind: 'walk' | 'delegation';
+  trackerId: string;
+  projectId: string;
+  ticketId: string;
+  /** The worker lane the claim is for: delegations must see it still. */
+  lane: string;
+  firstMessage?: string;
+  directory?: string;
+}
+
 /**
  * A tracker's board, read pull-shaped: what the eligibility walk looks at
  * when it wants work, in neutral words. The `Tracker` seam is conversation-
@@ -129,10 +144,28 @@ export class Orchestrator {
   private readonly listeners = new Set<RunEventListener>();
   private readonly feeds = new Map<string, TicketFeed>();
   private readonly passings = new Map<string, Promise<void>>();
+  /** Work whose lease request waits in a dispatcher queue: the dispatcher's
+   *  request id, then what the lease is for. Deliberately in memory — the
+   *  dispatcher's queue is ephemeral and a restart lets the walk simply ask
+   *  again for work that is still on the board. */
+  private readonly requested = new Map<string, WaitingWork>();
 
   constructor(deps: OrchestratorDeps) {
     this.deps = deps;
     this.budget = deps.nudgeBudget ?? 2;
+    // The dispatcher's callback namespace: when a waiting request of ours
+    // becomes a lease, this hears it with the request id and the lease —
+    // and the callback is also the wake to look for more work.
+    deps.dispatcher.registerCallback('orchestrator', (requestId, lease) => {
+      void this.#fulfill(requestId, lease).catch(error => {
+        this.deps.log.warn('fulfill.failed', { request: requestId, error });
+        try {
+          this.deps.dispatcher.release(lease.id);
+        } catch {
+          // 'already gone': fulfill released it before failing elsewhere.
+        }
+      });
+    });
   }
 
   /**
@@ -192,20 +225,39 @@ export class Orchestrator {
    * work is the tracker's decision, not this method's. A fresh run is
    * prepared in the background — the caller (a webhook handler) must return
    * promptly.
+   *
+   * A full pool **queues** the delegation: `queued` with the id the person's
+   * next move can cancel, no run yet; when the slot opens, the run starts
+   * and the follower's pair picks it up. `refused` is the plain answer —
+   * the pool heard this service's one request already, or worse.
    */
-  async requestWork(request: WorkRequest): Promise<{ runId: string; created: boolean; refused?: string }> {
+  async requestWork(
+    request: WorkRequest,
+  ): Promise<{ runId: string; created: boolean; refused?: string; queued?: string }> {
     const live = this.deps.ledger.activeByTicket(request.trackerId, request.ticketId);
     if (live) return { runId: live.id, created: false };
     // Work cannot start without a lease — not even a delegation, which is
-    // why the slot is taken before the row exists. A full pool creates no
-    // run: the ticket stays in the board's hands, and the walk picks it up
-    // when a slot frees. `refused` says so to the caller, never silence.
+    // why the slot is taken (or its queue place) before the row exists.
+    // `queued` waits for the slot; `refused` says so to the caller, never
+    // silence: the ticket stays in the board's hands.
     const lane = this.deps.lanes(request.projectId).find(l => l.name === request.lane);
     const grant = this.deps.dispatcher.request({
       service: 'orchestrator',
       ...(lane?.pool ? { pool: lane.pool } : {}),
     });
     if ('refused' in grant) return { runId: '', created: false, refused: grant.refused };
+    if ('queued' in grant) {
+      this.requested.set(grant.queued, {
+        kind: 'delegation',
+        trackerId: request.trackerId,
+        projectId: request.projectId,
+        ticketId: request.ticketId,
+        lane: request.lane,
+        firstMessage: request.firstMessage,
+        directory: request.directory,
+      });
+      return { runId: '', created: false, queued: grant.queued };
+    }
     const { run, created } = this.deps.ledger.request({
       projectId: request.projectId,
       trackerId: request.trackerId,
@@ -308,6 +360,19 @@ export class Orchestrator {
           spent.add(grant.pool);
           continue;
         }
+        if ('queued' in grant) {
+          // The pool is full and this ticket holds its one queue place —
+          // the next ticket's `waiting` refusal will stop this pool for the
+          // pass. When a slot opens, #fulfill takes the key for this one.
+          this.requested.set(grant.queued, {
+            kind: 'walk',
+            trackerId,
+            projectId,
+            ticketId: ticket.id,
+            lane: lane.name,
+          });
+          continue;
+        }
         // Still eligible after the awaits — the ledger's guard is the claim:
         // a ticket that took a run while this pass was reading never takes
         // a second worker.
@@ -316,27 +381,129 @@ export class Orchestrator {
           this.deps.dispatcher.release(grant.lease.id);
           continue;
         }
-        const { run, created } = this.deps.ledger.request({
-          projectId,
-          trackerId,
-          ticketId: ticket.id,
-          lane: lane.name,
-          agent: lane.agent,
-        });
-        if (!created) {
-          this.deps.dispatcher.release(grant.lease.id);
-          continue;
-        }
-        this.deps.ledger.setLease(run.id, grant.lease.id);
-        if (ticket.fromQueue) {
-          // Move-then-start: the ticket enters the worker lane before the
-          // worker does, and the webhook this move sends finds a claim for
-          // that very lane waiting — the follower's own redelivery guard
-          // folds it into the claim instead of delegating twice.
-          await feed.moveTo(projectId, ticket.id, lane.name);
-        }
-        void this.#prepare(run.id, first, this.deps.directory(projectId), grant.lease.id);
+        await this.#claimAndStart(trackerId, projectId, ticket.id, lane, ticket.fromQueue, grant.lease.id, first);
       }
+    }
+  }
+
+  /**
+   * Claim, mirror the lease, move a queue pickup, and turn the key: the
+   * shared tail of a direct grant and a queue fulfilment alike. The
+   * ledger's guard is the claim — a ticket that took a run while this pass
+   * was reading gives its lease back unheard.
+   */
+  async #claimAndStart(
+    trackerId: string,
+    projectId: string,
+    ticketId: string,
+    lane: ProjectLane,
+    fromQueue: boolean,
+    leaseId: string,
+    firstMessage: string,
+  ): Promise<void> {
+    const { run, created } = this.deps.ledger.request({
+      projectId,
+      trackerId,
+      ticketId,
+      lane: lane.name,
+      agent: lane.agent!,
+    });
+    if (!created) {
+      this.deps.dispatcher.release(leaseId);
+      return;
+    }
+    this.deps.ledger.setLease(run.id, leaseId);
+    if (fromQueue) {
+      // Move-then-start: the ticket enters the worker lane before the
+      // worker does, and the webhook this move sends finds a claim for
+      // that very lane waiting — the follower's own redelivery guard
+      // folds it into the claim instead of delegating twice.
+      await this.feeds.get(trackerId)!.moveTo(projectId, ticketId, lane.name);
+    }
+    void this.#prepare(run.id, firstMessage, this.deps.directory(projectId), leaseId);
+  }
+
+  /**
+   * A waiting request became a lease: re-check eligibility **before
+   * starting** — moved, blocked, or claimed in the meantime, and the lease
+   * is released, the ticket left for the board to offer again. A walk
+   * request starts wherever the ticket sits now (the person may have moved
+   * it between lanes while it waited); a delegation starts only for the
+   * lane it was delegated in — a moved ticket is the person's next act,
+   * and the walk will read it fresh. Either way the callback ends as the
+   * wake it is documented to be: look for more work.
+   */
+  async #fulfill(requestId: string, lease: DispatcherLease): Promise<void> {
+    const work = this.requested.get(requestId);
+    if (!work) {
+      // Nobody remembers asking. The lease has no work: give the slot back.
+      this.deps.dispatcher.release(lease.id);
+      return;
+    }
+    this.requested.delete(requestId);
+    const feed = this.feeds.get(work.trackerId);
+    const located = feed ? await this.#locate(feed, work.projectId, work.ticketId) : undefined;
+    const fits =
+      located !== undefined &&
+      !located.blocked &&
+      (work.kind === 'walk' || located.lane.name === work.lane) &&
+      !this.deps.ledger.activeByTicket(work.trackerId, work.ticketId);
+    if (!fits) {
+      this.deps.dispatcher.release(lease.id);
+      void this.wake(work.projectId);
+      return;
+    }
+    const lane = located.lane;
+    const first =
+      work.kind === 'delegation' ? work.firstMessage! : await feed!.firstMessage(work.projectId, work.ticketId, lane);
+    if (first === undefined) {
+      // Gone since the re-check: not work, and the wake says so loudly
+      // by looking for what is.
+      this.deps.dispatcher.release(lease.id);
+      void this.wake(work.projectId);
+      return;
+    }
+    await this.#claimAndStart(work.trackerId, work.projectId, work.ticketId, lane, located.fromQueue, lease.id, first);
+    void this.wake(work.projectId);
+  }
+
+  /**
+   * Where the walk would claim a ticket **now**: which worker lane's list
+   * holds it, its queue's bottom included, and whether it is blocked. The
+   * same right-to-left reading as a pass; the fulfilment re-check is its
+   * only reader, and fulfillments are rare enough for the reads to be
+   * honest rather than clever.
+   */
+  async #locate(
+    feed: TicketFeed,
+    projectId: string,
+    ticketId: string,
+  ): Promise<{ lane: ProjectLane; blocked: boolean; fromQueue: boolean } | undefined> {
+    const lanes = this.deps.lanes(projectId);
+    const queueAt = lanes.findIndex(l => l.queue);
+    for (let at = lanes.length - 1; at >= 0; at--) {
+      const lane = lanes[at]!;
+      if (!lane.agent || lane.queue) continue;
+      const inLane = (await feed.tickets(projectId, lane.name)).find(t => t.id === ticketId);
+      if (inLane) return { lane, blocked: inLane.blocked, fromQueue: false };
+      if (queueAt >= 0 && this.#feedsQueue(lanes, queueAt, lane.name)) {
+        const queued = (await feed.tickets(projectId, lanes[queueAt]!.name)).find(t => t.id === ticketId);
+        if (queued) return { lane, blocked: queued.blocked, fromQueue: true };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * A person's move on a ticket gives up any queue place its waiting
+   * request held: cancellation loses the position and nothing more — the
+   * next wake asks fresh for whatever the ticket is now.
+   */
+  cancelWaiting(trackerId: string, ticketId: string): void {
+    for (const [requestId, work] of this.requested) {
+      if (work.trackerId !== trackerId || work.ticketId !== ticketId) continue;
+      this.requested.delete(requestId);
+      this.deps.dispatcher.cancel(requestId);
     }
   }
 

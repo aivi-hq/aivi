@@ -1083,3 +1083,90 @@ test('an ending that arrived while nobody followed is found at boot from the orc
     'the failure move the lane order chose landed too',
   );
 });
+
+test('a delegation into a full pool queues with a word to the delegator, and walks in when the slot opens', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await checkout(root, 'website');
+  const home = join(root, 'home');
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: 'http://placeholder' },
+    dispatcher: { pools: { default: { capacity: 1 } } },
+    plugins: { 'tracker-linear': { agent: 'assistant', primary: 'dev', apps: { dev: {} }, mcp: false } },
+    projects: {
+      website: {
+        'tracker-linear': { teams: ['t'] },
+        lanes: [{ name: 'Backlog' }, { name: 'Todo' }, { name: 'In Progress', agent: 'developer' }, { name: 'Done' }],
+      },
+    },
+  });
+  const opencode = await fakeOpenCode(t, 'The header change touched two files.');
+  config.opencode.url = opencode.url;
+  const loaded: LoadedConfig = {
+    config,
+    path: join(home, 'config.json'),
+    projects: [{ id: 'website', directory: source, lanes: config.projects.website!.lanes! }],
+    sources: [],
+  };
+  const tracker = new FakeTracker(linearBlock(config));
+  tracker.issues.set('eng-1', issue('eng-1'));
+  tracker.issues.set('eng-2', issue('eng-2'));
+  const store = new Store(':memory:');
+  const abort = new AbortController();
+  const services = makeServices(loaded, store, abort);
+  // The board shows what a person has placed in the worker lane: the
+  // queued delegation must still be there when the lease lands.
+  const board: import('@aivi/host').TicketFeed = {
+    projects: () => ['website'],
+    tickets: async () => [{ id: 'eng-2', blocked: false }],
+    moveTo: async () => {},
+    firstMessage: async () => 'never the walk\u2019s turn',
+  };
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  const orchestrator = services.orchestrator;
+  const links = new RunLinks(store);
+
+  const started = (conversation: string, issueId: string) =>
+    tracker.drive({
+      kind: 'started',
+      conversation,
+      issueId,
+      promptContext: `<issue identifier="${issueId.toUpperCase()}"><title>Fix header</title></issue>`,
+    });
+
+  // The first delegation takes the only slot.
+  await started('dev:as-1', 'eng-1');
+  await until(() => opencode.prompts.length === 1, 'the first worker starts at once');
+
+  // The second finds the pool full: it is queued, the delegator hears it,
+  // and no run exists yet — the pair waits with the request.
+  await started('dev:as-2', 'eng-2');
+  await until(
+    () => tracker.comments.some(c => c.text.includes('waits in the queue')),
+    'the delegator is told the delegation waits',
+  );
+  assert.equal(orchestrator.activeRun('tracker-linear', 'eng-2'), undefined, 'a queued delegation has no run');
+
+  // The first worker finishes: the slot opens and the queue walks in —
+  // the run attaches to the pair bound at delegation time.
+  const worker = workerSession(opencode.sessions);
+  await orchestrator.completeTool({
+    sessionId: worker,
+    input: { outcome: 'success', summary: 'Header aligned.' },
+  });
+  await until(() => opencode.prompts.length === 2, 'the queued delegation starts on its own');
+  assert.match(opencode.prompts[1]!.text, /Linear delegated ENG-2/, 'the worker hears its own delegation');
+  const queuedRun = orchestrator.activeRun('tracker-linear', 'eng-2')!;
+  assert.ok(new RunLedger(store).get(queuedRun.id)!.leaseId, 'the fulfilled queue place became the run\u2019s lease');
+  const link = links.byAgentSession('as-2')!;
+  assert.equal(link.opencodeSession, queuedRun.sessionId, 'the run found the pair that waited');
+});
