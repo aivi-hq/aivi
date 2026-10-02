@@ -281,6 +281,19 @@ test('the neutral kinds render as Linear agent-session activities: visible answe
   );
 });
 
+test('progress stream: a running tool is an ephemeral action, anything else an ephemeral thought', async t => {
+  const { client, tracker } = await wired(t);
+  await tracker.progress('dev:as-1', { text: '🔧 reading src/x.ts', tool: { name: 'read', detail: 'src/x.ts' } });
+  await tracker.progress('dev:as-1', { text: '⏳ thinking…' });
+  assert.deepEqual(
+    client.activities.map(a => `${a.content.type}${a.ephemeral ? '~' : ''}`),
+    ['action~', 'thought~'],
+    'both progress kinds are ephemeral: the person sees the current moment, never a trail',
+  );
+  assert.deepEqual(client.activities[0]!.content, { type: 'action', action: 'read', parameter: 'src/x.ts' });
+  assert.deepEqual(client.activities[1]!.content, { type: 'thought', body: '⏳ thinking…' });
+});
+
 test('startSession is the delegate mutation: the pending session in its own answer, or null and unassigned', async t => {
   const { client, tracker } = await wired(t);
   const made = await tracker.startSession('dev', 'eng-7');

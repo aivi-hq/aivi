@@ -39,6 +39,7 @@ import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
 import { RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue } from './projects.ts';
+import { RunProgress } from './runprogress.ts';
 import { createLinearPlatform, LinearPlatform } from './tracker.ts';
 import type { LinearBoard } from './work.ts';
 import { issueDossier, linearBoard } from './work.ts';
@@ -123,6 +124,12 @@ async function startLinear(
   if (collisions.length) throw new Error(`Linear config: ${collisions.join('; ')}`);
   const store = openLinearStore(services.store);
   const links = new RunLinks(services.store);
+  /** One progress follower per run: the worker's OpenCode session mirrored
+   *  into the agent session as ephemeral activities (docs/linear.md). It
+   *  starts with the pair at `ready`, pauses while a question awaits a
+   *  person, resumes when the answer lands, and stops before the closing
+   *  so the closing is the last word. */
+  const runProgress = new Map<string, RunProgress>();
   // The installation's own identity: the primary app when it is named, else
   // the first configured — every app reads the same workspace, so the
   // choice is credentials and nothing more. initWork delegates the ticket to
@@ -149,6 +156,7 @@ async function startLinear(
   let mcp: LinearMcp | undefined;
   const teardown = async () => {
     stop();
+    for (const follower of runProgress.values()) void follower.stop();
     try {
       await engine?.shutdown();
     } finally {
@@ -353,14 +361,37 @@ async function startLinear(
         if (!run.sessionId) return void log.warn('ready.sessionless', { run: run.id });
         // Absent means the pair was already attached: a replay, said never.
         if (!links.attach(run.ticketId, run.sessionId)) log.debug('ready.replayed', { run: run.id });
+        // The progress stream starts with the pair it can speak through:
+        // while the run works, its session is shown as ephemeral activities.
+        // A platform without a progress surface gets no follower at all.
+        if (config.progress === 'silent' || !tracker.progress) return;
+        const follower =
+          runProgress.get(run.id) ??
+          new RunProgress(tracker, conversationOf(run), run.sessionId, {
+            mode: config.progress,
+            events: services.events,
+            log,
+          });
+        runProgress.set(run.id, follower);
+        follower.start();
       },
       question: async (run, question) => {
+        // Parked: nothing happens while a person thinks, and an idle
+        // follower would only refresh a line that stands still. Guarded so
+        // a run that never streamed says nothing a beat later than before.
+        const follower = runProgress.get(run.id);
+        if (follower) await follower.stop();
         await tracker.ask(conversationOf(run), question);
       },
       plan: async (run, plan) => {
         await tracker.plan(conversationOf(run), plan);
       },
       endWork: async run => {
+        // The closing is the run's last word: the progress stream falls
+        // silent before it, never after.
+        const follower = runProgress.get(run.id);
+        if (follower) await follower.stop();
+        runProgress.delete(run.id);
         if (closings.has(run.id)) return; // the stage and the boot pass may race for one run
         closings.set(run.id, run);
         await driveClosing(run.id);
@@ -529,6 +560,8 @@ async function startLinear(
               'I have your answer. No slot is free to wake that worker yet, so it wakes the moment one opens.',
               'progress',
             );
+          // Work resumes (now or when the slot opens): the progress stream resumes with it.
+          runProgress.get(run.id)?.start();
           return log.info('run.answered', { run: run.id, form: form.id, ...outcome });
         }
         try {

@@ -22,6 +22,7 @@ import type {
   TrackerCommentKind,
   TrackerEvent,
   TrackerIssue,
+  TrackerProgressLine,
   TrackerState,
   TrackerUpdate,
 } from '@aivi/plugin/tracker';
@@ -251,6 +252,20 @@ export class LinearPlatform implements Platform {
       agentSessionId: this.sessionOf(conversation),
       content,
       ...(kind === 'progress' ? { ephemeral: true } : {}),
+    });
+  }
+
+  /** The progress stream, in Linear's own activities (docs/linear.md): a
+   *  running tool is an ephemeral `action` naming it, anything else an
+   *  ephemeral `thought`. Ephemeral is Linear's word for *replaced*: the
+   *  person sees the worker's current moment, never a trail of lines. */
+  async progress(conversation: string, line: TrackerProgressLine): Promise<void> {
+    await this.of(conversation).client.createActivity({
+      agentSessionId: this.sessionOf(conversation),
+      content: line.tool
+        ? { type: 'action', action: line.tool.name, parameter: line.tool.detail ?? line.text }
+        : { type: 'thought', body: line.text },
+      ephemeral: true,
     });
   }
 

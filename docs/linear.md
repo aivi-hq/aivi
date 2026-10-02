@@ -79,14 +79,24 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    ending without one is treated as a failure. `startWork` the module says
    nothing for: Linear watches its own agent sessions, and a working session
    shows itself.
-5. **While it runs.** The `plan` tool's checklist is a forwarding: the whole
-   array arrives whenever the worker re-sends it and the `plan` stage has
-   Linear replace the agent session's plan with it. The `ask` tool creates an
-   OpenCode session form — the durable record of the wait — and the
-   `question` stage renders it as an `elicitation` activity in the session
-   `initWork` opened, with the `select` signal when options came with it. A
-   progress stream for the worker (ephemeral `thought`s fed by the OpenCode
-   event stream while it works) is **not built yet**.
+5. **While it runs.** The worker's **progress stream** is live (built
+   2026-10-02, ruled "thoughts and action types, ephemeral"): from `ready`
+   the module follows the run's OpenCode session with the host's own progress
+   reducer and mirrors it into the agent session as **ephemeral** activities —
+   an `action` naming the tool being run (with its short detail), a `thought`
+   for the status line (thinking, writing, the elapsed suffix, the idle
+   notice). Ephemeral is Linear's word for *replaced*: the person sees the
+   worker's current moment, never a trail of lines. The stream pauses while
+   an elicitation awaits a person and resumes when the answer lands;
+   `endWork` falls silent before the closing, so the closing is the last
+   word. `linear.progress` (`silent`/`status`/`tools`, default `tools`)
+   decides what it shows. The `plan` tool's checklist is a forwarding: the
+   whole array arrives whenever the worker re-sends it and the `plan` stage
+   has Linear replace the agent session's plan with it. The `ask` tool
+   creates an OpenCode session form — the durable record of the wait — and
+   the `question` stage renders it as an `elicitation` activity in the
+   session `initWork` opened, with the `select` signal when options came
+   with it.
 6. **Answers and interjections — the tracker posts into the OpenCode
    session itself.** The open form is
    the discriminator, read from OpenCode, never inferred from words. A

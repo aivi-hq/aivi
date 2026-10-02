@@ -174,6 +174,17 @@ export type TrackerUpdate =
   /** Leave a visible comment on the ticket itself. */
   | { kind: 'comment'; text: string };
 
+/** One moment of a worker's progress, in neutral words: the human-readable
+ *  status line as already rendered, and the tool the worker is running when
+ *  there is one. Rendered by the machinery (the same reducer a chat progress
+ *  placeholder reads), delivered the platform's way. */
+export interface TrackerProgressLine {
+  /** The status as text: "🔧 reading src/x.ts", "⏳ thinking…". */
+  text: string;
+  /** The running tool, when there is one and the platform shows tools. */
+  tool?: { name: string; detail?: string };
+}
+
 /**
  * The tracker's **platform**: the ticket system behind a tracker module —
  * Linear, Jira, GitHub Issues — seen as the conversation-keyed translator it
@@ -240,6 +251,17 @@ export interface Platform {
   /** One message into the conversation, rendered the platform's way; the
    *  platform's message id when it names them (the engine may edit by it). */
   comment(conversation: string, text: string, kind: TrackerCommentKind): Promise<string | undefined>;
+  /**
+   * Show what a worker is doing **right now**, replacing whatever was shown
+   * before (ruled 2026-10-02: thoughts and actions, ephemeral — a working
+   * run says what it does without ever spamming the ticket). **Transient by
+   *  contract**: a replaced line must not linger as a permanent record.
+   *  Linear posts an ephemeral `action` activity when a tool runs and an
+   *  ephemeral `thought` otherwise. Absent means the platform has no
+   *  progress surface and hears nothing: a worker there works in silence,
+   *  and the follower never calls it.
+   */
+  progress?(conversation: string, line: TrackerProgressLine): Promise<void>;
   /** Whether this working session has already had its result rendered —
    *  the follower's idempotence question, decided the platform's own way
    *  (Linear: the agent session is ended; another: a result comment exists).
