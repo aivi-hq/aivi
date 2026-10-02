@@ -345,7 +345,11 @@ export class LinearClient {
     const data = await this.graphql<{
       issues: { nodes: RawIssue[]; pageInfo: { hasNextPage: boolean } };
     }>(
-      `query($teamId: String!, $stateId: String!) {
+      // ID! not String!: Linear's id filters are typed ID and answer a
+      // String variable with a 400 (live, 2026-10-02 — the fake board could
+      // never catch this, so the walk met it first). Direct id arguments
+      // (`issue(id: $id)`) do accept String; filter comparisons do not.
+      `query($teamId: ID!, $stateId: ID!) {
          issues(
            filter: { team: { id: { eq: $teamId } }, state: { id: { eq: $stateId } } }
            orderBy: createdAt
