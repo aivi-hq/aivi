@@ -45,7 +45,14 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    module's `initWork` delegates it to the primary (`issueUpdate` with the
    primary as delegate). Becoming the delegate makes Linear create the agent
    session itself, and this mutation's own answer names it (live, 2026-09-26)
-   — nothing opens a session by hand. The pair is recorded **before** anything
+   — nothing opens a session by hand. The walk's read leaves out what Linear
+   reserves for people: archived tickets, the human label, and **tickets that
+   already have a delegate** (ruled 2026-10-02: a delegated ticket is not
+   eligible — re-delegating to the user it already has is a mutation no-op
+   and Linear makes no session for it; that silence was seven failed runs).
+   When a run dies before its session exists there is no conversation to
+   speak in, so `Platform.notify` leaves a **plain comment on the ticket
+   itself** before the run fails — visible, never silence. The pair is recorded **before** anything
    can arrive, "preparing the workspace" is the new session's first word (an
    ephemeral `thought`), and the ticket's dossier — what it is, what it says —
    is what `initWork` returns as the **summary**. A lane move people make is a
@@ -120,9 +127,12 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    then the **closing note** — the same text as a comment on the **issue**
    itself, linked to the agent session, so the ending is readable without
    opening the session (the session id on the ticket is the marker, so retries
-   and boots never post it twice), then the **delegate** — un-taken on a
-   success, left sitting on a failure so the session stays the readable
-   trail. Each step asks Linear's real state first (`resultShown`: is the
+   and boots never post it twice), then the **delegate** — released by
+   **every** ending (ruled 2026-10-02, composed with the eligibility rule):
+   the delegate means *an app is working this issue*, and a finished run
+   works it no more; leaving it sitting on a failure would blacklist the
+   ticket from the walk. The agent session stays on the ticket as the
+   readable trail either way. Each step asks Linear's real state first (`resultShown`: is the
    agent session ended), so a half-landed closing says nothing twice. **Then**
    the orchestrator performs the **move** through the board's idempotent
    `moveTo`, and **lastly** the lease returns.

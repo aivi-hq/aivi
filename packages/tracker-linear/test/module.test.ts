@@ -200,6 +200,11 @@ class FakeTracker implements Platform {
   sessionsCreated: string[] = [];
   moves: { conversation: string; issueId: string; update: TrackerUpdate }[] = [];
   shown = new Set<string>();
+  /** Tickets whose delegate mutation lands and shows no new session:
+   *  Linear's own silence, which the module must make visible on the ticket. */
+  noSessionFor = new Set<string>();
+  /** Plain ticket words left for runs that died before any session existed. */
+  notified: { conversation: string; issueId: string; text: string }[] = [];
   private sessionsByIssue = new Map<string, string[]>();
   private sink: ((event: TrackerEvent) => Promise<void>) | undefined;
 
@@ -232,10 +237,14 @@ class FakeTracker implements Platform {
   }
   async startSession(conversation: string, issueId: string): Promise<string | null> {
     await this.assign(conversation, issueId, this.ownerOf(conversation));
+    if (this.noSessionFor.has(issueId)) return null; // the mutation lands; Linear says no session
     const made = `as-auto-${this.sessionsCreated.length + 1}`;
     this.sessionsCreated.push(issueId);
     this.sessionsByIssue.set(issueId, [...(this.sessionsByIssue.get(issueId) ?? []), made]);
     return made;
+  }
+  async notify(conversation: string, issueId: string, text: string): Promise<void> {
+    this.notified.push({ conversation, issueId, text });
   }
   idFor(sessionId: string): string {
     return `${this.apps[0]}:${sessionId}`;
@@ -333,7 +342,7 @@ const issue = (id: string, extra: Partial<TrackerIssue> = {}): TrackerIssue => (
   state: { id: 's1', name: 'In Progress', type: 'started' },
   teamId: 't',
   labels: [],
-  delegateId: 'app-user-dev',
+  delegateId: 'app-user-dev', // webhook tickets arrive delegated to us: that is how Linear delivers
   assignee: { id: 'u', name: 'Me' },
   archived: false,
   completed: false,
@@ -352,7 +361,8 @@ const emptyBoard: LinearBoard = {
 };
 
 /** The board the walk reads, backed by the fake's issues — the same answers
- *  `linearBoard` gives: eligible means alive, unlabeled and unblocked, and
+ *  `linearBoard` gives: eligible means alive, unlabeled, un-delegated and
+ *  unblocked, and
  *  a move lands on the issue itself so the next read says what Linear was
  *  told. `shownAtMove` records whether the closing words had been posted
  *  when each move was performed: the proof that the tracker speaks first. */
@@ -365,7 +375,9 @@ function fakeBoard(tracker: FakeTracker, projectId: string): LinearBoard & { mov
     projects: () => [projectId],
     tickets: async (p, lane) =>
       [...tracker.issues.values()]
-        .filter(i => !i.archived && i.state.name === lane && !i.labels.some(l => l.name === 'needs-human'))
+        .filter(
+          i => !i.archived && i.state.name === lane && !i.labels.some(l => l.name === 'needs-human') && !i.delegateId, // ruled 2026-10-02: a delegated ticket is not eligible
+        )
         .map(i => ({ id: i.id, blocked: i.blockedBy.some(b => !b.completed) })),
     moveTo: async (p, ticketId, lane) => {
       shownAtMove.push([...tracker.shown].length > 0);
@@ -487,7 +499,7 @@ test('a walk-picked run runs the lane agent; plan, question, answer and interjec
   // person's mark, and arrive in this test through webhooks, as themselves.
   const backlog = { id: 's-bl', name: 'Backlog', type: 'unstarted' as const };
   for (const seeded of [
-    issue('eng-1'),
+    issue('eng-1', { delegateId: null }),
     issue('eng-2', { labels: [{ id: 'l', name: 'needs-human' }] }),
     issue('eng-3', { teamId: 't9', state: backlog }),
     issue('eng-5', { state: { id: 's9', name: 'Deploy', type: 'started' } }),
@@ -739,6 +751,7 @@ test('a worked lane runs its agent in the project checkout; the ending without a
       description: null,
       branchName: 'me/site-1',
       state: { id: 's', name: 'Research', type: 'started' },
+      delegateId: null, // un-delegated: eligible for the walk
     }),
   );
   const store = new Store(':memory:');
@@ -885,13 +898,15 @@ test('a lane move is a wake: the walk starts the ticket it finds, a stop ends th
   assert.deepEqual(opencode.interrupted, [worker], 'the OpenCode session was interrupted');
   assert.equal(orchestrator.activeRun('tracker-linear', 'api-7'), undefined, 'the run is over');
   assert.deepEqual(tracker.moves, [], 'a stop moves nothing');
-  assert.equal(api.delegateId, 'app-user-dev', 'a failure leaves the delegate sitting');
+  await until(
+    () => api.delegateId === null,
+    'even a stopped run releases the delegate: endings release, they do not blacklist',
+  );
 
-  // The ticket comes back to a worked lane with the delegate cleared — and a
-  // stopped run remembers nothing (ruled 2026-10-02): the walk takes the
-  // ticket back as fresh work. Then the HITL label stops the new worker.
+  // A stopped run remembers nothing (ruled 2026-10-02): the ending released
+  // the delegate, the person moves the ticket back to a worked lane, and
+  // the walk takes it as fresh work. Then the HITL label stops the new worker.
   api.state = { id: 'prog', name: 'In Progress', type: 'started' };
-  api.delegateId = null;
   await updated(['state', 'delegate']);
   await until(() => opencode.prompts.length === 2, 'a stop releases the ticket: the walk starts it afresh');
   api.labels = [{ id: 'l', name: 'needs-human' }];
@@ -901,6 +916,75 @@ test('a lane move is a wake: the walk starts the ticket it finds, a stop ends th
     'the label stopped the run',
   );
   assert.equal(orchestrator.activeRun('tracker-linear', 'api-7'), undefined);
+});
+
+test('a run that dies before its session exists leaves a plain word on the ticket, and the walk does not knock twice', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-earlydeath-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await checkout(root, 'api');
+  const opencode = await fakeOpenCode(t, 'Shipped.');
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: opencode.url },
+    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false } },
+    projects: {
+      api: {
+        'tracker-linear': { teams: ['t'] },
+        lanes: [{ name: 'Todo' }, { name: 'In Progress', agent: 'developer' }, { name: 'Done' }],
+      },
+    },
+  });
+  const loaded: LoadedConfig = {
+    config,
+    path: join(root, 'home/config.json'),
+    projects: [{ id: 'api', directory: source, lanes: config.projects.api!.lanes! }],
+    sources: [],
+  };
+  const tracker = new FakeTracker(linearBlock(config));
+  tracker.noSessionFor.add('api-7'); // Linear takes the delegation and answers no session
+  tracker.issues.set(
+    'api-7',
+    issue('api-7', {
+      identifier: 'API-7',
+      title: 'Add rate limits',
+      description: null,
+      branchName: 'me/api-7-rate-limits',
+      state: { id: 'prog', name: 'In Progress', type: 'started' },
+      delegateId: null,
+    }),
+  );
+  const store = new Store(':memory:');
+  const abort = new AbortController();
+  const services = makeServices(loaded, store, abort);
+  const board = fakeBoard(tracker, 'api');
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  const orchestrator = services.orchestrator as Orchestrator;
+
+  // Seven runs died between the delegation and the session and said nothing
+  // anywhere (live, 2026-10-02). Now the ticket itself carries the plain word.
+  await orchestrator.wake('api');
+  await until(() => tracker.notified.length === 1, 'the plain word landed on the ticket');
+  assert.equal(tracker.notified[0]!.conversation, 'dev', 'the app feed speaks — there is no session yet');
+  assert.equal(tracker.notified[0]!.issueId, 'api-7');
+  assert.match(tracker.notified[0]!.text, /^I could not start work on this ticket: Linear made no agent session/);
+  assert.match(tracker.notified[0]!.text, /clear the delegate/, 'the person is told what un-strands it');
+  assert.equal(opencode.prompts.length, 0, 'no worker was prompted for a run that never opened');
+  assert.equal(orchestrator.activeRun('tracker-linear', 'api-7'), undefined, 'the failed run does not stand');
+
+  // The death leaves the delegate sitting, and a delegated ticket is not
+  // eligible: one plain word, not seven silent retries.
+  await orchestrator.wake('api');
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(tracker.notified.length, 1, 'the walk does not knock twice');
+  assert.equal(tracker.sessionsCreated.length, 0, 'and never delegates again');
 });
 
 test('boot reconcile pays a closing Linear missed, and says nothing twice', async t => {
@@ -926,7 +1010,7 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
     sources: [],
   };
   const first = new FakeTracker(linearBlock(config));
-  first.issues.set('api-9', issue('api-9', { identifier: 'API-9', title: 'Ship it' }));
+  first.issues.set('api-9', issue('api-9', { identifier: 'API-9', title: 'Ship it', delegateId: null }));
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
@@ -1050,7 +1134,7 @@ async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
     sources: [],
   };
   const tracker = new FakeTracker(linearBlock(config));
-  tracker.issues.set('eng-1', issue('eng-1'));
+  tracker.issues.set('eng-1', issue('eng-1', { delegateId: null }));
   const board = fakeBoard(tracker, 'website');
   const store = new Store(':memory:');
   const abort = new AbortController();
@@ -1109,8 +1193,7 @@ test('a closing that failed to land is found at boot from the pair we keep — a
   // The module stops — a restart while the host lives — and the worker ends
   // in that gap with Linear unreachable for the closing. The closing fails
   // and says so (the help label rides the ticket); the ticket still moves
-  // where the lane order chose, and failed work is work: the queue lane the
-  // failure moved it to feeds the walked lane, and the walk takes it again.
+  // where the lane order chose.
   tracker.closingDown = true;
   await first.stop();
   const worker = workerSession(opencode.sessions);
@@ -1125,10 +1208,13 @@ test('a closing that failed to land is found at boot from the pair we keep — a
     [{ kind: 'label', label: 'needs-human', on: true }],
     'the failed closing informed a person at once',
   );
-  await until(
-    () => opencode.prompts.length === 2,
-    'the queue lane the failure moved it to feeds the walked lane: the walk takes it',
-  );
+
+  // While the closing is owed the delegate sits, and a delegated ticket is
+  // not eligible: the walk waits — Linear is unreachable for a fresh
+  // delegation anyway (ruled 2026-10-02, composed with eligibility).
+  await orchestrator.wake('website');
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'an unpaid closing keeps the ticket out of the walk');
 
   // The boot pass finds the owed closing from the pair initWork kept —
   // walk-picked work included — and pays it with the installation's own
@@ -1154,6 +1240,12 @@ test('a closing that failed to land is found at boot from the pair we keep — a
     1,
     'and the failure was said in the session that opened it',
   );
+
+  // Failed work is work again: the paid closing released the delegate, and
+  // the walk takes the ticket fresh from the queue lane the failure moved it
+  // to — endings release, they do not blacklist (ruled 2026-10-02).
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 2, 'the closing paid, the failure is work again: the walk takes it');
 });
 
 test('a full pool says nothing on the board, and walks in when the slot opens — like normal humans', async t => {
@@ -1182,8 +1274,8 @@ test('a full pool says nothing on the board, and walks in when the slot opens �
     sources: [],
   };
   const tracker = new FakeTracker(linearBlock(config));
-  tracker.issues.set('eng-1', issue('eng-1'));
-  tracker.issues.set('eng-2', issue('eng-2'));
+  tracker.issues.set('eng-1', issue('eng-1', { delegateId: null }));
+  tracker.issues.set('eng-2', issue('eng-2', { delegateId: null }));
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);

@@ -294,6 +294,15 @@ test('progress stream: a running tool is an ephemeral action, anything else an e
   assert.deepEqual(client.activities[1]!.content, { type: 'thought', body: '⏳ thinking…' });
 });
 
+test('notify is the plain ticket comment: the app feed speaks where no session exists yet', async t => {
+  const { client, tracker } = await wired(t);
+  await tracker.notify('dev', 'eng-9', 'I could not start work on this ticket: nothing landed.');
+  assert.deepEqual(client.posted.at(-1), {
+    issueId: 'eng-9',
+    body: 'I could not start work on this ticket: nothing landed.',
+  });
+});
+
 test('startSession is the delegate mutation: the pending session in its own answer, or null and unassigned', async t => {
   const { client, tracker } = await wired(t);
   const made = await tracker.startSession('dev', 'eng-7');

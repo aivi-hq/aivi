@@ -256,10 +256,13 @@ async function startLinear(
      * Linear's response completes the agent session and stops the "working"
      * state, the human-visible wound — then the **closing note** on the
      * ticket itself (the adapter is idempotent, so a retry never says it
-     * twice), then the **delegate**, which only a success releases; a failure
-     * leaves the app sitting on the ticket so the session stays the readable
-     * trail. The lane move is not here: it is the orchestrator's decision and
-     * its debt, performed through `moveTo` after this returns.
+     * twice), then the **delegate**, which **every ending releases**: the
+     * delegate means "an app is working this issue", and a finished run works
+     * it no more — leaving it sitting would blacklist the ticket from the
+     * walk (composed 2026-10-02 with the eligibility rule), while the agent
+     * session stays on the ticket as the readable trail either way. The lane
+     * move is not here: it is the orchestrator's decision and its debt,
+     * performed through `moveTo` after this returns.
      */
     const driveClosing = async (runId: string): Promise<void> => {
       const entry = closings.get(runId);
@@ -290,8 +293,7 @@ async function startLinear(
           );
           await markForHuman(conversation, entry.ticketId);
         }
-        if (entry.outcome?.kind === 'success')
-          await tracker.unassign(conversation, entry.ticketId).catch(error => log.warn('delegate.undone', { error }));
+        await tracker.unassign(conversation, entry.ticketId).catch(error => log.warn('delegate.undone', { error }));
         closings.delete(runId);
         log.info('run.caughtup', { run: runId, ticket: entry.ticketId });
       } catch (error) {
@@ -351,8 +353,26 @@ async function startLinear(
       initWork: async run => {
         const issue = await board.issue(run.ticketId);
         if (!issue) throw new Error('the ticket is gone from the board (deleted by a person)');
-        const agentSession = await tracker.startSession(readerApp, run.ticketId);
-        if (!agentSession) throw new Error('Linear made no agent session for the delegation');
+        // A run that dies here has no session to speak through, and silence
+        // was seven failures (live, 2026-10-02): the ticket itself gets the
+        // plain word before the run fails. If even the comment cannot land,
+        // the log carries it — never nothing.
+        const visible = async (why: string): Promise<never> => {
+          await tracker
+            .notify(readerApp, run.ticketId, `I could not start work on this ticket: ${why}`)
+            .catch(error => log.warn('initWork.notice.failed', { error }));
+          throw new Error(why);
+        };
+        let agentSession: string | null;
+        try {
+          agentSession = await tracker.startSession(readerApp, run.ticketId);
+        } catch (error) {
+          return visible(`the delegation failed: ${errorMessage(error)}`);
+        }
+        if (!agentSession)
+          return visible(
+            'Linear made no agent session for the delegation. If aivi still holds this ticket as its delegate, clear the delegate — and archive the old session — before asking again.',
+          );
         links.bind(agentSession, run.ticketId);
         await say(tracker.idFor(agentSession), 'Preparing the workspace…', 'progress');
         return issueDossier(issue);

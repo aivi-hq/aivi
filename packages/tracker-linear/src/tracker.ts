@@ -269,6 +269,14 @@ export class LinearPlatform implements Platform {
     });
   }
 
+  /** A death before any session exists has no agent session to speak in:
+   *  this is the plain ticket comment that keeps it visible (ruled
+   *  2026-10-02 after seven silent early failures). The conversation is the
+   *  app's own feed — a bare app id routes to that app's client. */
+  async notify(conversation: string, issueId: string, text: string): Promise<void> {
+    await this.of(conversation).client.createComment(issueId, text);
+  }
+
   /**
    * Linear's way with a question: an `elicitation` activity in the agent
    * session, carrying the `select` signal with the options when there are

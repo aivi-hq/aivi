@@ -262,6 +262,14 @@ export interface Platform {
    *  and the follower never calls it.
    */
   progress?(conversation: string, line: TrackerProgressLine): Promise<void>;
+  /**
+   * A plain notice on the ticket **itself**, for a run that died before it
+   * had a conversation to speak through (ruled 2026-10-02 after seven silent
+   * early failures): silence is not an answer, and the ticket is the only
+   * board a person reads. The `conversation` is the app's own feed — there
+   * is no session yet.
+   */
+  notify(conversation: string, issueId: string, text: string): Promise<void>;
   /** Whether this working session has already had its result rendered —
    *  the follower's idempotence question, decided the platform's own way
    *  (Linear: the agent session is ended; another: a result comment exists).

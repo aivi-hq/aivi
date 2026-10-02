@@ -47,16 +47,29 @@ export interface LinearIssueWords {
  * lanes against change when a person changes them, and a restart is when
  * aivi learns of that.
  *
- * What comes back **is** eligible work: archived tickets and tickets
- * carrying the human-work label are left out here, because those are
- * Linear's words for "a person owns this" and the orchestrator never
- * learns Linear's words. A stop is not remembered here (ruled 2026-10-02):
- * a stopped ticket goes back to the board, and "not that one again" is the
- * HITL label's job, not a memory in somebody's database.
+ * What comes back **is** eligible work: archived tickets, tickets carrying
+ * the human-work label, and tickets that already have a delegate are left
+ * out here, because those are Linear's words for "a person owns this" and
+ * the orchestrator never learns Linear's words. A delegate rules the ticket
+ * out (ruled 2026-10-02): someone already speaks for it, and re-delegating
+ * to the user it already has is a mutation no-op — Linear makes no session
+ * for it, which was seven silent failures; now the walk simply leaves the
+ * ticket alone until a person clears the delegate. A stop is not remembered
+ * here (ruled 2026-10-02): a stopped ticket goes back to the board, and
+ * "not that one again" is the HITL label's job, not a memory in somebody's
+ * database.
+ *
+ * `openClient` is the loader seam the knowledge service also uses: tests
+ * read a fake board with no credentials; production reads the primary app.
  */
-export function linearBoard(config: LinearConfig, services: AiviServices, log: Logger): LinearBoard {
+export function linearBoard(
+  config: LinearConfig,
+  services: Pick<AiviServices, 'loaded'>,
+  log: Logger,
+  openClient: (app: string) => LinearClient = app => clientFor(config, app, log),
+): LinearBoard {
   let reader: LinearClient | undefined;
-  const read = (): LinearClient => (reader ??= clientFor(config, primaryLinearApp(config) ?? '', log));
+  const read = (): LinearClient => (reader ??= openClient(primaryLinearApp(config) ?? ''));
   let board: LinearTeam[] | undefined;
   const teams = async (): Promise<LinearTeam[]> => (board ??= await read().listTeams());
   return {
@@ -75,6 +88,7 @@ export function linearBoard(config: LinearConfig, services: AiviServices, log: L
         for (const issue of page.issues) {
           if (issue.archivedAt) continue; // deleted between the listing and this breath
           if (issue.labels.some(l => l.name === config.humanLabel)) continue; // a person's to work
+          if (issue.delegate) continue; // someone already speaks for it: not eligible, not knocked twice
           out.push({ id: issue.id, blocked: issue.blockedBy.some(b => !isClosed(b.state.type)) });
         }
       }
