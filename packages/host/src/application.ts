@@ -298,7 +298,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       systemIds.add(job.id);
     }
     store.syncJobs(loaded.config.jobs, system);
-    if (loaded.config.search?.indexOnStart) {
+    if (loaded.config.search !== false && loaded.config.search.indexOnStart) {
       const startedAt = Date.now();
       await knowledge.index();
       log.info('knowledge.indexed', { ms: Date.now() - startedAt });

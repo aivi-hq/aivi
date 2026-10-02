@@ -42,7 +42,7 @@ export function registerKnowledge(program: Command): void {
     .option('--resource <pool>', 'the pool the index run takes', 'maintenance')
     .action(async values => {
       const { loaded, poke } = await context();
-      if (!loaded.config.search) throw new Error('Knowledge search is not configured');
+      if (loaded.config.search === false) throw new Error('Knowledge search is disabled in the config');
       if (!(values.resource in loaded.config.scheduler.resources))
         throw new Error('Configure a maintenance resource pool or pass --resource');
       await withStore(loaded, store =>

@@ -683,12 +683,18 @@ const configShape = z.strictObject({
       'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
     ),
   search: z
-    .strictObject({
-      provider: z.literal('qmd'),
-      indexOnStart: z.boolean().default(true),
-      maxPending: z.number().int().min(1).max(100).default(32),
-    })
-    .optional(),
+    .union([
+      z.literal(false),
+      z.strictObject({
+        provider: z.literal('qmd'),
+        indexOnStart: z.boolean().default(true),
+        maxPending: z.number().int().min(1).max(100).default(32),
+      }),
+    ])
+    .default({ provider: 'qmd', indexOnStart: true, maxPending: 32 })
+    .describe(
+      'On by default: knowledge search runs on qmd and indexes at boot. `false` is the only off switch — a missing block means enabled, never a silent no-search install.',
+    ),
   update: z
     .strictObject({
       channel: z
