@@ -399,6 +399,7 @@ function fakeBoard(tracker: FakeTracker, projectId: string): LinearBoard & { mov
         description: found.description,
         teamId: found.teamId,
         stateName: found.state.name,
+        branchName: '', // the fake board names no branch: no lane here is worktree:true
       };
     },
   };
@@ -435,6 +436,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
       signal: abort.signal,
     }),
     forges: new Forges(),
+    identity: async () => ({ name: 't', email: 't@t' }),
     keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
   });
   return {

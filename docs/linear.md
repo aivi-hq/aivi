@@ -76,7 +76,9 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    allows; the walk's own first word inside a new agent session is the
    `thought` "Preparing the workspace…".
 4. **The run.** The orchestrator makes the worker session (the lane's agent,
-   the project's checkout as directory, the agent file's model applied) and
+   the project's checkout as directory — or the lane's own **git worktree**
+   on the ticket's branch where the lane writes, built 2026-10-02 — the
+   agent file's model applied) and
    the `ready` stage attaches that session to the pair `initWork` opened. The
    worker's first prompt is the **orchestrator's composition** (ruled
    2026-10-02): a neutral line naming the project, the lane and the checkout,

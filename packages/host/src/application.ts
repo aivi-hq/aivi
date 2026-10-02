@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { getLogger, parseDuration, systemJobs } from '@aivi/core';
+import { getLogger, gitIdentity, parseDuration, systemJobs } from '@aivi/core';
 import type { AiviModule, AiviServices } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
 import { attachExec } from './api/exec.ts';
@@ -17,6 +17,7 @@ import { ConfigurationError, ModuleSupervisor, type RetryPolicy } from './module
 import { connectOpenCode, restartOpenCode } from './opencode.ts';
 import { RunLedger } from './orchestrator/ledger.ts';
 import { Orchestrator } from './orchestrator/orchestrator.ts';
+import { globalGitConfig } from './orchestrator/worktree.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
@@ -158,6 +159,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     },
     dispatcher,
     forges,
+    // Who a worktree's commits belong to: core's order — identity.github,
+    // the machine's git config, the aivi app.
+    identity: () => gitIdentity(loaded.config.identity, globalGitConfig),
     // The orchestrator's own dial: how long an open elicitation holds a slot.
     keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
   });

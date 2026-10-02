@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
-import type { Logger, ProjectLane, ToolDescriptor } from '@aivi/core';
+import type { GitIdentity, Logger, ProjectLane, ToolDescriptor } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
 import type { Forges } from '@aivi/plugin/forge';
 import type { OpenCodeClient, Orchestrator as OrchestratorApi, SessionEvents, ToolHandler } from '@aivi/plugin/module';
@@ -15,11 +15,12 @@ import type {
   WorkRequest,
 } from '@aivi/plugin/run';
 import { isTerminal } from '@aivi/plugin/run';
-import type { Tracker } from '@aivi/plugin/tracker';
+import type { Tracker, WorkEntry } from '@aivi/plugin/tracker';
 import type { Dispatcher, DispatcherLease } from '../dispatcher/dispatcher.ts';
 import { ToolError } from '../tools.ts';
 import type { Run, RunLedger } from './ledger.ts';
 import { view } from './ledger.ts';
+import { ensureWorktree, worktreePathFor } from './worktree.ts';
 
 /**
  * The orchestrator: the one authority that turns a ticket into a **run**. It
@@ -63,6 +64,7 @@ interface WaitingWork {
    *  summary and directory ride along, and `initWork` is not asked twice. */
   summary?: string;
   directory?: string;
+  branch?: string;
   /** An answer waiting for capacity to resume its run: the run to wake,
    *  the person's words, and the form that recorded the question. */
   runId?: string;
@@ -80,9 +82,12 @@ export interface OrchestratorDeps {
   /** A project's lanes in order, straight from core config: the orchestrator
    *  decides moves from this order and never asks a tracker where to go. */
   lanes: (projectId: string) => ProjectLane[];
-  /** Where a project's workers work: the checkout this version; a worktree
-   *  lane gets one once a forge gives them. */
+  /** Where a project's workers work: the checkout. A `worktree: true` lane
+   *  gets its own git worktree on the ticket's branch, made from this. */
   directory: (projectId: string) => string;
+  /** The identity a worktree's commits carry: core's resolution order —
+   *  `identity.github`, the machine's git config, the aivi app. */
+  identity: () => Promise<GitIdentity>;
   /** The dispatcher is the only part that knows how much capacity is left:
    *  the orchestrator asks it for every slot and never counts one itself. */
   dispatcher: Dispatcher;
@@ -233,6 +238,7 @@ export class Orchestrator implements OrchestratorApi {
         fromQueue: false,
         summary: request.summary,
         directory: request.directory,
+        ...(request.branch ? { branch: request.branch } : {}),
       });
       return { runId: '', created: false, queued: grant.queued };
     }
@@ -387,7 +393,14 @@ export class Orchestrator implements OrchestratorApi {
    * the ticket, the platform that would not open it — fails the run
    * visibly and gives the slot back: never silence, never a half-run.
    */
-  async #startRun(run: Run, leaseId: string, fromQueue: boolean, summary?: string, directory?: string): Promise<void> {
+  async #startRun(
+    run: Run,
+    leaseId: string,
+    fromQueue: boolean,
+    summary?: string,
+    directory?: string,
+    branch?: string,
+  ): Promise<void> {
     const tracker = this.trackers.get(run.trackerId);
     if (!tracker) {
       this.deps.dispatcher.release(leaseId);
@@ -406,15 +419,18 @@ export class Orchestrator implements OrchestratorApi {
     }
     let task = summary;
     if (task === undefined) {
+      let entry: WorkEntry;
       try {
-        task = await tracker.initWork(view(run));
+        entry = await tracker.initWork(view(run));
       } catch (error) {
         this.deps.dispatcher.release(leaseId);
         await this.#fail(run.id, `Could not open the ticket on its platform: ${errorMessage(error)}`);
         return;
       }
+      task = entry.summary;
+      branch = entry.branch;
     }
-    void this.#prepare(run.id, task, dir, leaseId);
+    void this.#prepare(run.id, task, dir, leaseId, branch);
   }
 
   /**
@@ -476,7 +492,7 @@ export class Orchestrator implements OrchestratorApi {
         return;
       }
       this.deps.ledger.setLease(run.id, lease.id);
-      void this.#startRun(run, lease.id, false, work.summary, work.directory);
+      void this.#startRun(run, lease.id, false, work.summary, work.directory, work.branch);
       void this.wake(work.projectId);
       return;
     }
@@ -723,23 +739,45 @@ export class Orchestrator implements OrchestratorApi {
     }
   }
 
-  /** Provide the lease with its session and send the task. The dispatcher
-   *  creates the session and decides its model (the pool's, or the agent
-   *  file's where no pool names one); the orchestrator only ever says agent
-   *  and directory. Any failure fails the run visibly, never silently, and
-   *  gives the slot back. */
-  async #prepare(runId: string, summary: string, directory: string, leaseId: string): Promise<void> {
+  /** Provide the lease with its session and send the task. A `worktree: true`
+   *  lane works in its **own git worktree**, made here on the ticket's branch
+   *  (the tracker names it, the orchestrator never invents one): the crossing
+   *  to `origin` is the forge's, so its `fetchBranch` goes in **injected**
+   *  when a forge owns the remote, and with none the worktree starts from the
+   *  refs the clone already holds. The dispatcher creates the session and
+   *  decides its model (the pool's, or the agent file's where no pool names
+   *  one); the orchestrator only ever says agent and directory. Any failure
+   *  fails the run visibly, never silently, and gives the slot back. */
+  async #prepare(runId: string, summary: string, directory: string, leaseId: string, branch?: string): Promise<void> {
     const log = this.deps.log.with({ run: runId });
     try {
       const run = this.deps.ledger.get(runId);
       if (!run) return;
-      const lease = await this.deps.dispatcher.provide(leaseId, { agent: run.agent, directory });
+      let dir = directory;
+      const lane = this.deps.lanes(run.projectId).find(l => l.name === run.lane);
+      if (lane?.worktree) {
+        if (!branch)
+          throw new Error('this lane works in its own worktree, and the tracker named no branch for the ticket');
+        const source = this.deps.directory(run.projectId);
+        const owned = await this.deps.forges.owner({ id: run.projectId, directory: source });
+        const made = await ensureWorktree({
+          source,
+          path: worktreePathFor(source, runId),
+          branch,
+          identity: await this.deps.identity(),
+          ...(owned ? { fetchBranch: (b: string) => owned.forge.fetchBranch(owned.repo, source, b) } : {}),
+          signal: this.deps.signal,
+        });
+        dir = made.path;
+        log.info('worktree.ready', { branch, base: made.base, ...(owned ? { forge: owned.repo.id } : {}) });
+      }
+      const lease = await this.deps.dispatcher.provide(leaseId, { agent: run.agent, directory: dir });
       const sessionId = lease.sessionId!;
       // Watch before prompting: a live-only stream must not miss the first turn's end.
       this.#watch(sessionId, leaseId);
       const client = await this.deps.opencode();
       const request = { signal: this.deps.signal };
-      const working = this.deps.ledger.attachSession(runId, sessionId, directory);
+      const working = this.deps.ledger.attachSession(runId, sessionId, dir);
       // The tracker attaches the run to the pair it opened at initWork —
       // before the first prompt, so nothing it must render arrives unpaired.
       this.#render(working, t => t.ready(view(working)), 'ready');
@@ -752,9 +790,13 @@ export class Orchestrator implements OrchestratorApi {
           // the tracker's, the tools' rules are the contract below. No
           // tracker writes the worker's first message (ruled 2026-10-02).
           text: [
-            `[aivi started this run for you (project ${working.projectId}, lane "${working.lane}"). You work in the project's checkout ${directory}; the agent file says what you may change.]`,
+            `[aivi started this run for you (project ${working.projectId}, lane "${working.lane}"). You work in ${
+              dir === directory
+                ? `the project's checkout ${dir}`
+                : `a git worktree of the project at ${dir}, on branch ${branch}`
+            }; the agent file says what you may change.]`,
             summary,
-            workerContract(directory),
+            workerContract(dir),
           ].join('\n\n'),
           delivery: 'queue',
         },
@@ -763,7 +805,7 @@ export class Orchestrator implements OrchestratorApi {
       // A platform whose session shows its own life skips startWork; one
       // that must say "working" says it here.
       this.#render(working, t => t.startWork?.(view(working)), 'startWork');
-      log.info('run.started', { session: sessionId, directory });
+      log.info('run.started', { session: sessionId, directory: dir });
     } catch (error) {
       log.error('run.prepare.failed', { error });
       await this.#fail(runId, `Could not start the worker: ${errorMessage(error)}`);

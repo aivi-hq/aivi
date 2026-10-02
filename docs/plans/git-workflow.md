@@ -48,7 +48,7 @@ the worktree when the lane has one.
 
 | Tool | Args | Does | Plain errors |
 | --- | --- | --- | --- |
-| `aivi_push` | – | Move HEAD to the remote branch, as the app. `--force-with-lease` keyed on the local `origin/<branch>` ref, so a rebase re-push is safe and a stale view is refused; the integrate-check below first, so a person's commits are never overwritten. Refuses the default branch and a detached HEAD. | no forge · nothing ahead · `remote moved since your last sync — aivi_sync first` (the lease refusing is exactly this) · `the remote branch has commits you don't have — integrate them first` · default branch · detached HEAD |
+| `aivi_push` | – | Move HEAD to the remote branch, as the app, **unstuck with as little chatter as possible** (ruled 2026-10-02: "Git refuses pushes if the remote has changes… If we can fast forward: fine. If we can safely merge it in: fine. If conflict: well, resolve it. These are worker agents."). One call: fetch the branch fresh through the forge; fast-forward → push; diverged with real remote commits → merge them in locally — clean → push, **conflict → the tool names the files and the worker resolves with plain git** and pushes again; diverged only by the worker's own rewrite (every remote commit patch-equivalent per `git cherry`) → `--force-with-lease` goes through, nothing lost. The lease keys on the fresh fetch and is never said out loud. | no forge · nothing ahead · `conflict resolving these files — resolve and push again` · default branch · detached HEAD |
 | `aivi_pr` | `title` (required), `body` | Open the pull request for the branch: pushes first if there is anything unpushed, then opens. The body is signed `_worker: aivi · <role>_`. | no forge · no title · **PR already open**: not an error — answers with its url and pushes what was pending · merged/closed PR + new commits → **opens a fresh PR** |
 | `aivi_sync` | – | Carry the remote's refs in through the forge (all branches, pruned) and report `behind`/`ahead` for the branch and the default branch. Keeps the push lease honest; a rebase starts here. | no forge |
 | `aivi_review` | – | Fresh read of the pull request: open threads with replies, **plain conversation comments**, approval states, mergeable state. | no forge · no PR known |
@@ -59,17 +59,17 @@ the worktree when the lane has one.
 between PR and PUSH. Make them 2 separate tools."). A checkpoint push asks
 for no title; opening a pull request always does.
 
-**The integrate-check** — the walkthrough's one real find. The lease
-compares *refs*, so when a person pushes a commit to the branch and the
-worker then syncs and rebases onto main, the lease is honest (nobody moved
-the ref since the sync) and the force-push **drops the person's commit**:
-the ref is right, the content is wrong. So `aivi_push` refuses locally,
-before any network: `git cherry` asks whether `origin/<branch>` holds
-commits with no patch-equivalent in HEAD; yes → *"the remote branch has
-commits you don't have — integrate them first (`git merge
-origin/<branch>`)"*. A correct rebase replays patch-equivalents, so it
-passes; a push without a prior sync is already refused by the lease. One
-local check plugs the hole.
+**Patch equivalence is the selector** — the walkthrough's find, put to work
+by the 2026-10-02 ruling. When HEAD and the remote branch have diverged,
+`git cherry` asks whether the remote's commits all have patch-equivalents
+in HEAD. They do → the divergence is the worker's own rewrite (a rebase):
+nothing content-wise would be lost, and the `--force-with-lease` push goes
+through. They don't → the remote holds a person's real work: merge it in
+and let the merge verdict (clean → push; conflict → name the files and
+let the worker resolve) decide. The hole the walkthrough found — a
+rebased re-push dropping a person's commit because the *ref* was honest
+while the *content* was wrong — is plugged by the same check, from the
+other side.
 
 ## The feedback loop
 
@@ -153,19 +153,24 @@ On `@aivi/plugin/forge`, answered by `forge-github`:
 
 ## The worktree gets its caller
 
-Nothing above is exercised live until write lanes actually work in
-worktrees. The orchestrator's prepare does it, local git only:
+**Built 2026-10-02.** The orchestrator's prepare does it, local git only:
 
-- The **branch name comes from the tracker**: the kit's work entry
-  (`initWork`'s answer, `WorkRequest`) grows `branch?: string` — Linear
-  answers with `Issue.branchName`. A `worktree: true` lane whose tracker
-  named no branch is said so, plainly; no invented name.
-- Path: `worktreePathFor(source, sessionId)`; creation: `ensureWorktree`
-  with `fetchBranch` **injected** when a forge owns the remote (built
-  seam), local refs otherwise. Existing worktree holding the branch is
-  reused, uncommitted work intact (built).
-- `markWorktree` gains the two credential settings (the wall above).
-- Identity: `identity.github` (built), the commit plugin's marker (built).
+- The **branch name comes from the tracker**: `initWork` answers with a
+  **`WorkEntry`** — `{ summary, branch? }` (Linear's `Issue.branchName`; the
+  board read already carried it). A `worktree: true` lane whose tracker
+  named no branch fails the run visibly, plainly; no invented name.
+- Path: `worktreePathFor(source, runId)`; creation: `ensureWorktree`
+  with `fetchBranch` **injected** when a forge owns the remote (the
+  registry answers), local refs otherwise. An existing worktree holding
+  the branch is reused, uncommitted work intact — a later run on the same
+  ticket finds it by the branch, not by the path. The session is created
+  **in the worktree**, and the ledger's `worktree` column records it.
+- `markWorktree` writes the wall: five settings now — identity, autonomy,
+  and `credential.helper=""` + `core.sshCommand=false`, so boundary git
+  that slips past the tools has no credential to spend.
+- Identity: `gitIdentity(loaded.config.identity, globalGitConfig)` —
+  core's order, resolved per worktree (the first caller `globalGitConfig`
+  ever had).
 
 ## The redirect hook
 
@@ -241,11 +246,13 @@ commit, and the operator's word to start.
 
 ## Open questions
 
-1. `aivi_pr`'s push-if-needed: when that push's lease fails, does `aivi_pr`
-   refuse naming `aivi_sync` (my lean: yes, one truth per boundary), or
-   sync transparently first?
-2. Does the review agent REQUEST_CHANGES (formal, GitHub shows it) or post
-   COMMENT-state reviews only (quieter, same threads)? Both are `submitReview`;
-   it is a posture default, and belongs to `review-posture.md` either way.
-3. `aivi` CLI for prompts (`aivi prompts install/restore`) or only the
-   setup guide's copy? Small either way; setup-first is my lean.
+None — all three settled with the operator 2026-10-02:
+
+1. **`aivi_pr`'s push-if-needed** reuses `aivi_push`'s machinery whole
+   (the smart push above); a conflict is said in the same words and the
+   PR opens on the next call after the worker resolves.
+2. **Review posture**: `submitReview` carries the state; the guidance
+   default (ruled in the operator's words): *"Request changes for
+   problems. Comments for nits."*
+3. **`prompts/`**: the setup guide installs copies **and** an `aivi
+   prompts` command exists, with help text.

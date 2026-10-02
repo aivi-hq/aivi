@@ -384,7 +384,10 @@ async function startLinear(
           );
         links.bind(agentSession, run.ticketId);
         await say(tracker.idFor(agentSession), 'Preparing the workspace…', 'progress');
-        return issueDossier(issue);
+        // Linear names the ticket's branch (`Issue.branchName`); a worktree
+        // lane checks out exactly this name, and the orchestrator never
+        // invents one. An empty title-derived name says so by being absent.
+        return { summary: issueDossier(issue), ...(issue.branchName ? { branch: issue.branchName } : {}) };
       },
       ready: run => {
         if (!run.sessionId) return void log.warn('ready.sessionless', { run: run.id });

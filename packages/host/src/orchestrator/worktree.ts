@@ -46,14 +46,22 @@ export interface WorktreeInput {
 
 /**
  * Say in the worktree itself that aivi launched it, so every commit in it is the
- * bot's and carries no co-author trailer. Git refuses per-worktree settings
+ * bot's and carries no co-author trailer — and that aivi's worker has **no
+ * credential to spend**, so boundary git that slips past the tools simply
+ * fails at `origin` (ruled 2026-10-02: "Our code failing means the push fails.
+ * Because there are no credentials."). Git refuses per-worktree settings
  * until the repository enables the `worktreeConfig` extension, so that goes on
- * once per checkout first; the three settings then live in this worktree only:
- * the author is the bot (author *and* committer, whatever the shell says) and
+ * once per checkout first; the five settings then live in this worktree only:
+ * the author is the bot (author *and* committer, whatever the shell says),
  * `agent.autonomous` is the marker the commit plugin reads as "nobody was
- * sitting here, add no trailer". Written on every use, so a worktree kept from
- * an earlier session is marked too. Failures throw: an unmarked worker would
- * commit as whoever owns the machine.
+ * sitting here, add no trailer", and the last two starve any crossing: an
+ * empty `credential.helper` value removes every helper the machine configured
+ * (no keychain), and `core.sshCommand=false` sends ssh transports to the
+ * `false` binary. The forge is immune by construction: it names its HTTPS URL
+ * on the command line and passes its token through `GIT_CONFIG_*` env, which
+ * outranks worktree config. Written on every use, so a worktree kept from an
+ * earlier session is marked too. Failures throw: an unmarked worker would
+ * commit as whoever owns the machine — and push as them too.
  */
 async function markWorktree(
   source: string,
@@ -65,11 +73,15 @@ async function markWorktree(
   await gitIn(path, ['config', '--worktree', 'user.name', identity.name], signal);
   await gitIn(path, ['config', '--worktree', 'user.email', identity.email], signal);
   await gitIn(path, ['config', '--worktree', 'agent.autonomous', 'true'], signal);
+  await gitIn(path, ['config', '--worktree', 'credential.helper', ''], signal);
+  await gitIn(path, ['config', '--worktree', 'core.sshCommand', 'false'], signal);
 }
 
-/** Where a worker for an agent session works. */
-export const worktreePathFor = (sourceDirectory: string, agentSession: string) =>
-  join(projectLayout(dirname(sourceDirectory)).worktrees, agentSession.replaceAll(/[^A-Za-z0-9_-]/g, '_'));
+/** Where one run's worker works: `<project>/worktrees/<name>`. The
+ *  orchestrator names it for the run; a worktree an earlier run kept is
+ *  found by the branch it holds, not by this path. */
+export const worktreePathFor = (sourceDirectory: string, name: string) =>
+  join(projectLayout(dirname(sourceDirectory)).worktrees, name.replaceAll(/[^A-Za-z0-9_-]/g, '_'));
 
 /**
  * Make the worktree a worker runs in, on the ticket's branch, starting from

@@ -93,7 +93,8 @@ export interface RunView {
   readonly agent: string;
   readonly state: RunState;
   readonly sessionId?: string;
-  /** The directory the worker works in: the checkout, or a worktree later. */
+  /** The directory the worker works in: the checkout, or the worktree a
+   *  `worktree: true` lane got on the ticket's branch. */
   readonly worktree?: string;
   readonly outcome?: RunOutcome;
   /** The lane the lane order chose for a finished run's ticket: the
@@ -132,9 +133,14 @@ export interface WorkRequest {
   ticketId: string;
   lane: string;
   agent: string;
-  /** Where the worker works: the checkout this version; a worktree when a forge lands. */
+  /** Where the worker works: the checkout, or a worktree the delegator made. */
   directory: string;
   /** The tracker's own summary of the ticket, composed into the worker's
    *  first prompt with the orchestrator's contract around it. */
   summary: string;
+  /** The ticket's branch name, as the platform names it: what a worktree
+   *  lane checks out. The push door did its platform side already, so
+   *  `initWork` is not asked twice; a worktree lane whose request carries
+   *  no branch is refused visibly, never named by guess. */
+  branch?: string;
 }

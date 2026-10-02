@@ -41,6 +41,17 @@ import type { RunPlan, RunQuestion, RunView } from './run.ts';
  * directory and the lane by the orchestrator, which never reads a ticket
  * itself. A tracker that needs nothing answers with the ticket's text alone.
  */
+/** What `initWork` answers with: the words the worker is started with, and
+ *  the ticket's **branch name** where the platform names one. A lane that
+ *  writes (`worktree: true`) gets its worktree on this branch, and the
+ *  orchestrator never invents a name — such a lane whose tracker answers
+ *  without one fails the run visibly. A tracker whose platform has no
+ *  branch answers with the summary alone. */
+export interface WorkEntry {
+  summary: string;
+  branch?: string;
+}
+
 export interface Tracker {
   /** The module id this tracker speaks for (`tracker-linear`): the key
    *  the orchestrator records claims and queue places under. */
@@ -66,12 +77,17 @@ export interface Tracker {
   ticketLane(projectId: string, ticketId: string): Promise<string | undefined>;
 
   /** The dispatcher's slot is in hand and the run is claimed: open the
-   *  ticket to work on the platform and return its summary. Linear's
-   *  delegate mutation creates the agent session and its answer serves
-   *  as the summary; the tracker stores the pair and may already post a
-   *  first word ("preparing the workspace"). Failure fails the run —
-   *  visibly, and the slot goes back. AWAITED. */
-  initWork(run: RunView): Promise<string>;
+   *  ticket to work on the platform and answer with the **work entry**:
+   *  the summary the worker is started with, and the **branch the ticket
+   *  works on** when the platform names one (Linear's `Issue.branchName`).
+   *  A lane that writes gets its worktree on that branch, and the
+   *  orchestrator never invents a name — a worktree lane whose tracker
+   *  answers without one fails the run visibly. Linear's delegate
+   *  mutation creates the agent session and its answer serves as the
+   *  summary; the tracker stores the pair and may already post a first
+   *  word ("preparing the workspace"). Failure fails the run — visibly,
+   *  and the slot goes back. AWAITED. */
+  initWork(run: RunView): Promise<WorkEntry>;
   /** The worker's session exists and its work environment is ready:
    *  where a tracker attaches the run to the pair it opened at
    *  `initWork`. A render. */

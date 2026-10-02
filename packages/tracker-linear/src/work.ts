@@ -31,6 +31,8 @@ export interface LinearIssueWords {
   description: string | null;
   teamId: string;
   stateName: string;
+  /** Linear's branch name for the issue: what a worktree lane checks out. */
+  branchName: string;
 }
 
 /**
@@ -117,6 +119,7 @@ export function linearBoard(
         description: issue.description ?? null,
         teamId: issue.team.id,
         stateName: issue.state.name,
+        branchName: issue.branchName,
       };
     },
   };

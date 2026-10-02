@@ -131,6 +131,11 @@ test('a worker worktree says aivi launched it: the bot authors its commits and n
     /autonomous = true/,
     'they live in the worktree’s own config file, not the repository’s',
   );
+  // The wall (ruled 2026-10-02): a boundary git that slips past the tools
+  // has no credential to spend — no helper chain, and ssh goes to `false`.
+  const marked = await readFile(join(await realpath(source), '.git', 'worktrees', 'as_1', 'config.worktree'), 'utf8');
+  assert.match(marked, /helper =/, 'an empty credential.helper is written');
+  assert.match(marked, /sshCommand = false/, 'ssh transports are sent to the false binary');
   // The checkout stays as it was: a `worktree: false` lane keeps the attended behavior.
   const local = async (key: string) =>
     (await bare(source, 'config', '--local', '--get', key).catch(() => null))?.stdout.trim() ?? '';

@@ -376,11 +376,16 @@ tracks and answers for its platform alone. A tracker module registers ONE
 the stages every run walks through:
 
 1. **`initWork`** — the slot is in hand and the run is claimed: open the
-   ticket on the platform and return its **summary**. Linear's delegate
-   mutation creates the agent session and Linear's own answer serves as
-   the summary; the tracker records the pair and posts a first word
-   ("preparing the workspace"). **Awaited**: failure fails the run visibly
-   and the slot goes back.
+   ticket on the platform and answer with its **work entry**: the
+   **summary** the worker starts with, and the ticket's **branch name**
+   where the platform names one (Linear's `Issue.branchName`). Linear's
+   delegate mutation creates the agent session and Linear's own answer
+   serves as the summary; the tracker records the pair and posts a first
+   word ("preparing the workspace"). A `worktree: true` lane gets its own
+   git worktree on exactly that branch before the session opens — the
+   crossing to `origin` is the forge's, injected; a lane that wants a
+   worktree whose tracker named no branch fails the run visibly.
+   **Awaited**: failure fails the run visibly and the slot goes back.
 2. **`ready`** — the worker's session exists and its environment is
    ready: where the tracker joins the run to the pair `initWork` opened.
    A render.

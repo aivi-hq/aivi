@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -137,7 +137,7 @@ function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boo
     // orchestrator composes the worker's first prompt around it.
     initWork: async run => {
       scripted.stages.push(`init:${run.ticketId}`);
-      return `do ${run.ticketId} in ${run.lane}`;
+      return { summary: `do ${run.ticketId} in ${run.lane}`, branch: `me/${run.ticketId}` };
     },
     ready: run => {
       scripted.stages.push(`ready:${run.sessionId}`);
@@ -168,6 +168,7 @@ function harness(
   fake = fakeOpenCode(),
   abort = new AbortController(),
   forges = new Forges(),
+  directory: (projectId: string) => string = () => '/checkout',
 ) {
   const store = new Store(':memory:');
   const ledger = new RunLedger(store);
@@ -188,7 +189,8 @@ function harness(
     signal: abort.signal,
     lanes: () => lanes,
     keepAliveMs: parseDuration(configSchema.parse({ version: 1, ...written }).orchestrator.elicitationKeepAlive),
-    directory: () => '/checkout',
+    directory,
+    identity: async () => ({ name: 't', email: 't@t' }),
     dispatcher,
     forges,
   });
@@ -203,8 +205,8 @@ const lane = (name: string, extra: Partial<ProjectLane> = {}): ProjectLane => ({
   ...extra,
 });
 
-const until = async (check: () => boolean, what: string) => {
-  for (let i = 0; i < 500 && !check(); i++) await new Promise(r => setTimeout(r, 5));
+const until = async (check: () => boolean, what: string, tries = 500) => {
+  for (let i = 0; i < tries && !check(); i++) await new Promise(r => setTimeout(r, 5));
   assert.ok(check(), what);
 };
 
@@ -321,7 +323,7 @@ test('blocked tickets wait, and a ticket gone by initWork fails its run visibly 
     ticketLane: async (_projectId, ticketId) => (ticketId === 'gone-1' ? undefined : 'In Progress'),
     initWork: async run => {
       if (run.ticketId === 'gone-1') throw new Error('the ticket is gone from the board (deleted by a person)');
-      return 'never asked';
+      return { summary: 'never asked' };
     },
     ready: () => {},
     question: () => {},
@@ -581,4 +583,87 @@ test('aivi_pr routes the worker’s push to the forge that owns the remote, and 
     () => orchestrator.prTool({ sessionId: 'ses_pr', input: { title: 'Widget' } }),
     (error: unknown) => error instanceof ToolError && /default branch/.test(String(error)),
   );
+});
+
+test('a worktree lane gets its own git worktree on the ticket’s branch, crossing to origin only through the injected forge', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-wt-lane-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  await mkdir(source);
+  await writeFile(join(source, 'README.md'), 'one');
+  await git(source, 'init', '-q', '-b', 'main');
+  await git(source, 'add', '.');
+  await git(source, 'commit', '-q', '-m', 'one');
+
+  const fetches: string[] = [];
+  const forges = new Forges();
+  forges.register({
+    async repoFor(project: { id: string }) {
+      return project.id === 'p' ? { id: 'acme/site', remote: 'https://github.com/acme/site' } : undefined;
+    },
+    async fetchBranch(_repo: unknown, _directory: string, branch: string) {
+      fetches.push(branch);
+    },
+  } as never);
+
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Todo: [{ id: 't-1' }] });
+  const lanes = [lane('Todo', { queue: true }), lane('In Progress', { agent: 'dev', worktree: true })];
+  const { ledger, orchestrator } = harness(
+    lanes,
+    { dispatcher: { pools: { default: { capacity: 1 } } } },
+    feed,
+    fake,
+    new AbortController(),
+    forges,
+    () => source,
+  );
+  await orchestrator.wake('p');
+  // A real git fixture on disk: roomier than the in-memory walks' budget.
+  await until(() => fake.prompts.length === 1, 'the queued ticket starts in the worktree lane', 3000);
+
+  const run = ledger.activeByTicket('test-tracker', 't-1')!;
+  assert.ok(run.worktree, 'the run records where the worker works');
+  assert.ok(run.worktree!.startsWith(join(root, 'worktrees') + '/'), run.worktree);
+  assert.equal((await git(run.worktree!, 'symbolic-ref', '--quiet', '--short', 'HEAD')).stdout.trim(), 'me/t-1');
+  assert.equal(await readFile(join(run.worktree!, 'README.md'), 'utf8'), 'one', 'made from the refs the clone holds');
+  assert.deepEqual(fetches, ['me/t-1'], 'the crossing to origin went through the forge, injected');
+  assert.match(fake.prompts[0]!.text, /git worktree of the project at/);
+  assert.ok(
+    [...fake.sessions.values()].some(s => s.directory === run.worktree),
+    'the session was created in the worktree, not the checkout',
+  );
+});
+
+test('a worktree lane whose tracker named no branch fails the run visibly and says so', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-wt-nobran-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fake = fakeOpenCode();
+  const work: Tracker = {
+    id: 'test-tracker',
+    projects: () => ['p'],
+    tickets: async () => [{ id: 't-2', blocked: false }],
+    moveTo: async () => {},
+    ticketLane: async () => 'In Progress',
+    initWork: async () => ({ summary: 'no branch here' }),
+    ready: () => {},
+    question: () => {},
+    endWork: async () => {},
+  };
+  const { ledger, orchestrator } = harness(
+    [lane('In Progress', { agent: 'dev', worktree: true })],
+    { dispatcher: { pools: { default: { capacity: 2 } } } },
+    work,
+    fake,
+    new AbortController(),
+    new Forges(),
+    () => join(root, 'nothing'),
+  );
+  await orchestrator.wake('p');
+  await until(() => ledger.terminalSince('test-tracker', 0).length === 1, 'the run ended visibly');
+  const ended = ledger.terminalSince('test-tracker', 0)[0]!;
+  assert.equal(ended.state, 'failed');
+  assert.equal(ended.outcome?.kind, 'failure');
+  assert.match(ended.outcome?.kind === 'failure' ? ended.outcome.reason : '', /named no branch/);
+  assert.deepEqual(fake.prompts, [], 'the worker was never started in a directory nobody named');
 });
