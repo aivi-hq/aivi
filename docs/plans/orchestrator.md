@@ -68,10 +68,13 @@ close).
       fulfilment re-check before starting — a walk request starts wherever
       the ticket sits, a delegation only for its own lane — and the queued
       delegation that keeps its pair while it waits. (2026-10-02)
-- [ ] 9 Timeout monitor: idle kills, confirms, then frees (an unconfirmed
+- [x] 9 Timeout monitor: idle kills, confirms, then frees (an unconfirmed
       kill keeps the slot unavailable); prepare revokes session-less leases.
       One known-instant `setTimeout` per lease, re-armed by activity —
-      `setInterval` stays banned.
+      `setInterval` stays banned. Built with it: the retry at a known
+      instant for unconfirmed kills, the clocks watching leases in every
+      mode (pools count, they do not gate the watch), and survivors
+      re-armed from stored activity after a boot pass. (2026-10-02)
 - [ ] 10 Elicitation: in-session human input **holds** its slot; after
       `elicitationKeepAlive` the lease releases (the session stays); the
       answer reacquires and **resumes the same session** — fallback never

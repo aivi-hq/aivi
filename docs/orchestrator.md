@@ -318,6 +318,19 @@ Ending a lease does not delete its session.
 
 If the dispatcher ends a lease itself, it notifies the owner. For ticket work, the orchestrator then clears the claim that mirrors it.
 
+**Ruled and built 2026-10-02.** The monitor is one timer per lease, aimed
+at a known instant — the prepare window from the grant, the idle window
+from the last sign of life — and nothing else. Every grant, every session
+and every activity signal re-aims that one timer; there is no interval and
+no poll anywhere in the dispatcher. The timeouts watch leases whether or
+not pools count them: a silent worker dies at its idle clock even in
+unlimited mode, because the timeout is about the work, not the accounting.
+An unconfirmed kill keeps the slot unavailable and the next look is a
+known instant, not a poll: the retry strikes again until the kill
+confirms or a boot pass settles it. After a restart the survivors' clocks
+run from their **stored** activity — a silence that began before the
+restart is timed from where it began.
+
 ### Dispatcher queue
 
 When capacity is unavailable, lease requests can wait in an in-memory queue for the pool.

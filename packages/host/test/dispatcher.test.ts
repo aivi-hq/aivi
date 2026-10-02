@@ -366,3 +366,68 @@ test('a resume waits in its own pool and returns there, never into the fallback 
   assert.equal(leases.held('away'), 1, 'the other lease stands untouched');
   assert.equal(leases.sessionPool(sessionId), 'home', 'the session never changed pools, queue or no queue');
 });
+
+const until = async (check: () => boolean, what: string) => {
+  for (let i = 0; i < 500 && !check(); i++) await new Promise(r => setTimeout(r, 10));
+  assert.ok(check(), what);
+};
+
+test('the idle monitor kills a silent worker, confirms the kill, and frees the slot', async () => {
+  const { dispatcher, ended, fake } = harness({
+    dispatcher: { pools: { default: { capacity: 1 } }, timeouts: { idle: '1s', prepare: '5m' } },
+  });
+  const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
+  const sessionId = dispatcher.leases.require(granted.id).sessionId!;
+  fake.busy.add(sessionId);
+
+  await until(() => ended.length === 1, 'the silence ends the lease at its known instant');
+  assert.match(ended[0]!.reason, /idle timeout/);
+  assert.deepEqual(fake.interrupted, [sessionId], 'the kill went first');
+  assert.equal(dispatcher.leases.held('default'), 0, 'the slot came back once the kill was confirmed');
+});
+
+test('an unconfirmed kill keeps the slot unavailable and tries again at a known instant', async () => {
+  const { dispatcher, ended, fake } = harness({
+    dispatcher: { pools: { default: { capacity: 1 } }, timeouts: { idle: '1s', prepare: '5m' } },
+  });
+  const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
+  const sessionId = dispatcher.leases.require(granted.id).sessionId!;
+  fake.busy.add(sessionId);
+  fake.killWorks.value = false; // the interrupt lands; the session keeps spending
+
+  await until(() => fake.interrupted.length >= 1, 'the monitor struck');
+  assert.equal(dispatcher.leases.held('default'), 1, 'capacity that may still be working is never double-booked');
+  assert.deepEqual(ended, [], 'no ending without confirmation');
+
+  fake.killWorks.value = true; // the worker dies of the first strike, late
+  await until(() => ended.length === 1, 'the retry — a known instant, not a poll — confirms and frees');
+  assert.equal(dispatcher.leases.held('default'), 0);
+});
+
+test('the prepare timeout revokes a lease nobody provided a session for — capacity counted or not', async () => {
+  const { dispatcher, ended, fake } = harness({ dispatcher: { timeouts: { prepare: '1s' } } });
+  const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  await until(() => ended.length === 1, 'the preparation window closes');
+  assert.match(ended[0]!.reason, /prepare timeout/);
+  assert.equal(dispatcher.leases.held(UNLIMITED), 0, 'the slot is given back');
+  assert.deepEqual(fake.interrupted, [], 'nothing to kill: a revoke needs no kill');
+});
+
+test('activity re-arms the clock: a worker that keeps talking never dies of silence', async () => {
+  const { dispatcher, ended, fake } = harness({
+    dispatcher: { pools: { default: { capacity: 1 } }, timeouts: { idle: '1s', prepare: '5m' } },
+  });
+  const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
+  const sessionId = dispatcher.leases.require(granted.id).sessionId!;
+  fake.busy.add(sessionId);
+
+  for (let at = 0; at < 6; at++) {
+    await new Promise(r => setTimeout(r, 300)); // 1.8s: past the idle timeout in total
+    dispatcher.activity(granted.id); // each sign of life restarts the silence clock
+  }
+  assert.deepEqual(ended, [], 'the worker lived through every instant the clock once pointed at');
+  await until(() => ended.length === 1, 'and it strikes once the signs stop');
+});

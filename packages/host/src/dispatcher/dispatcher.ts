@@ -77,6 +77,10 @@ export class Dispatcher {
   /** Milliseconds, parsed once: the same durations the config load accepted. */
   private readonly idleMs: number;
   private readonly prepareMs: number;
+  /** One timer per lease: the known instant its current clock expires,
+   *  re-armed by grants, sessions and signs of life — never a poll, never
+   *  an interval. */
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Waiting lease requests per pool, in the order they asked. */
   private readonly waiting = new Map<string, QueuedRequest[]>();
   private readonly pending = new Map<string, QueuedRequest>();
@@ -91,6 +95,69 @@ export class Dispatcher {
     this.prepareMs = parseDuration(deps.dispatcher.timeouts.prepare);
     // A pool model is checked at startup, not at the grant that would need it.
     for (const pool of Object.values(this.pools)) if (pool.model !== undefined) parseModelSpec(pool.model);
+    // Shutting down: every armed clock goes with it. Nothing fires into a
+    // dispatcher whose host is ending; the boot pass re-arms the survivors.
+    deps.signal?.addEventListener('abort', () => this.#disarmAll(), { once: true });
+  }
+
+  /**
+   * (Re-)set a lease's one timer to its known instant. Any earlier clock
+   * for this lease dies: there is never more than one future for a lease.
+   */
+  #arm(leaseId: string, due: number, now = Date.now()): void {
+    const previous = this.timers.get(leaseId);
+    if (previous) clearTimeout(previous);
+    const handle = setTimeout(
+      () => {
+        this.timers.delete(leaseId);
+        void this.#due(leaseId).catch(error => this.log.warn('monitor.failed', { lease: leaseId, error }));
+      },
+      Math.max(0, due - now),
+    );
+    this.timers.set(leaseId, handle);
+  }
+
+  #disarm(leaseId: string): void {
+    const previous = this.timers.get(leaseId);
+    if (previous) clearTimeout(previous);
+    this.timers.delete(leaseId);
+  }
+
+  #disarmAll(): void {
+    for (const previous of this.timers.values()) clearTimeout(previous);
+    this.timers.clear();
+  }
+
+  /** Arm a lease's clock from its own record: a session-less lease is due
+   *  `prepare` after it was granted — the caller had that long to bring the
+   *  session; an attached one is due `idle` after its last sign of life,
+   *  which after a restart is the stored one, when the silence truly
+   *  started.
+   */
+  #armFrom(lease: DispatcherLease, now = Date.now()): void {
+    if (!lease.sessionId) this.#arm(lease.id, lease.createdAt + this.prepareMs, now);
+    else this.#arm(lease.id, lease.activityAt + this.idleMs, now);
+  }
+
+  /**
+   * The instant arrived. The lease gets its documented ending: a
+   * session-less lease is revoked — nothing was provided to kill; an
+   * attached one is killed and confirmed through the same `expire` every
+   * other ending uses. An **unconfirmed kill keeps the slot unavailable**
+   * — capacity that may still be working is never double-booked — and the
+   * next look is a known instant, not a poll: the retry re-arms the one
+   * timer and interrupts again.
+   */
+  async #due(leaseId: string): Promise<void> {
+    const lease = this.leases.get(leaseId);
+    if (!lease) return; // ended while the clock flew: nothing is due twice
+    const outcome = await this.expire(
+      leaseId,
+      lease.sessionId
+        ? 'its session said nothing for longer than the idle timeout'
+        : 'no session was provided within the prepare timeout',
+    );
+    if ('pending' in outcome) this.#arm(leaseId, Date.now() + this.idleMs);
   }
 
   /** Capacity is moderated only when pools are configured; without them the
@@ -127,20 +194,23 @@ export class Dispatcher {
     input: { service: string; pool?: string; resume?: string },
     now = Date.now(),
   ): { lease: DispatcherLease } | { queued: string } | { refused: Refusal; pool: string } {
-    if (!this.moderated)
-      return {
-        // No capacity check exists to fail: the grant always lands.
-        lease: this.leases.grant(
-          {
-            kind: 'session',
-            service: input.service,
-            pool: UNLIMITED,
-            ...(input.resume ? { sessionId: input.resume } : {}),
-          },
-          () => {},
-          now,
-        )!,
-      };
+    if (!this.moderated) {
+      // No capacity check exists to fail: the grant always lands. The
+      // timeouts still watch — a silent worker dies at its idle clock
+      // whether or not anyone is counting slots.
+      const lease = this.leases.grant(
+        {
+          kind: 'session',
+          service: input.service,
+          pool: UNLIMITED,
+          ...(input.resume ? { sessionId: input.resume } : {}),
+        },
+        () => {},
+        now,
+      )!;
+      this.#armFrom(lease, now);
+      return { lease };
+    }
     // A session's own pool outranks whatever the caller asks for; only when
     // the session is unknown here does the asked-for pool decide, and an
     // unknown *name* is a caller bug said as such, not pressure.
@@ -168,6 +238,7 @@ export class Dispatcher {
       );
       if (!lease) continue;
       if (input.resume) this.leases.record(input.resume, lease.pool, now);
+      this.#armFrom(lease, now);
       return { lease };
     }
     return this.#queue(input.service, recorded ?? asked, input.resume);
@@ -230,6 +301,7 @@ export class Dispatcher {
   /** End the lease and open its slot to the queue: the freed capacity goes
    *  to the next request of this pool, in the order they asked. */
   #free(lease: DispatcherLease): void {
+    this.#disarm(lease.id);
     this.leases.release(lease.id);
     this.#drain(lease.pool);
   }
@@ -263,6 +335,7 @@ export class Dispatcher {
         );
         if (lease) {
           granted = lease;
+          this.#armFrom(lease);
           break;
         }
       }
@@ -313,6 +386,7 @@ export class Dispatcher {
     }
     const attached = this.leases.attach(leaseId, sessionId);
     this.leases.record(sessionId, attached.pool);
+    this.#armFrom(attached); // the idle clock starts where the provide ends
     return attached;
   }
 
@@ -320,6 +394,7 @@ export class Dispatcher {
    *  restarts here, whatever the caller was doing. */
   activity(leaseId: string, now = Date.now()): void {
     this.leases.touch(leaseId, now);
+    if (this.leases.get(leaseId)) this.#arm(leaseId, now + this.idleMs, now);
   }
 
   /** The caller is done with its slot. Ending a lease never deletes the
@@ -328,6 +403,7 @@ export class Dispatcher {
   release(leaseId: string): void {
     const lease = this.leases.get(leaseId);
     if (!lease) throw new Error(`Lease ${leaseId} was already gone`);
+    this.#disarm(leaseId);
     this.leases.release(leaseId);
     this.#drain(lease.pool);
   }
@@ -390,6 +466,9 @@ export class Dispatcher {
     // server that does not answer gets its leases left alone, not a purge.
     if (!(await this.#reachable(client, request))) {
       this.log.warn('reconcile.deferred', { reason: 'OpenCode did not answer; leases stand untouched' });
+      // Untouched means not ended, not unwatched: the clocks arm anyway,
+      // and an expiring lease that cannot confirm its kill keeps waiting.
+      for (const lease of this.leases.all()) this.#armFrom(lease, now);
       return { ended: [], deferred: true };
     }
     for (const lease of this.leases.all()) {
@@ -417,6 +496,10 @@ export class Dispatcher {
       }
     }
     for (const { lease, reason } of ended) this.log.info('lease.reconciled', { lease: lease.id, reason });
+    // The survivors get their clocks re-armed from their stored activity:
+    // a silence that started before the restart is timed from where it
+    // started, not from the boot that read it.
+    for (const lease of this.leases.all()) this.#armFrom(lease, now);
     return { ended, deferred: false };
   }
 
