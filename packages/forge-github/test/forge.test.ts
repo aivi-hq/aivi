@@ -398,15 +398,14 @@ test('a remote without that branch is an answer, not a failure — and a failed 
   );
 });
 
-test('a push moves aivi’s commits to the remote, and no pull request is invented without a message', async () => {
+test('a push moves aivi’s commits to the remote, and the platform’s API is not so much as glanced at', async () => {
   const { origin, source } = await checkout();
-  const api = await forgeWith({ 'GET /repos/acme/widget/pulls': () => ({ status: 200, body: [] }) });
+  const api = await forgeWith({});
   await writeFile(join(source, 'work.md'), 'aivi’s work\n');
   await git(source, 'add', '.');
   await git(source, ...AS, 'commit', '--quiet', '-m', 'worker: the work');
 
-  const pushed = await api.forge.push({ id: 'acme/widget', remote: origin }, source, 'main');
-  assert.equal(pushed, undefined, 'the branch moved and no pull request was asked for');
+  await api.forge.push({ id: 'acme/widget', remote: origin }, source, 'main');
   assert.equal(await git(source, 'rev-parse', 'HEAD'), await git(origin, 'rev-parse', 'refs/heads/main'));
   assert.deepEqual(
     api.seen.filter(call => call.method === 'POST').map(call => `${call.method} ${call.path}`),
@@ -416,12 +415,11 @@ test('a push moves aivi’s commits to the remote, and no pull request is invent
   assert.ok(!(await gitConfig(source)).includes('ghs_token'), 'the credential is left nowhere');
 });
 
-test('a push with a message opens the pull request on the repository’s own default branch, signed by the worker who wrote it', async () => {
+test('openPr opens the pull request on the repository’s own default branch, signed by the worker who wrote it', async () => {
   const { origin, source } = await checkout();
   let created: Record<string, unknown> | undefined;
   const api = await forgeWith({
     'GET /repos/acme/widget': () => ({ status: 200, body: { default_branch: 'trunk', name: 'widget' } }),
-    'GET /repos/acme/widget/pulls': () => ({ status: 200, body: [] }),
     'POST /repos/acme/widget/pulls': call => {
       created = JSON.parse(call.body ?? '{}');
       return { status: 201, body: pull(31, 'feat/retry') };
@@ -429,7 +427,7 @@ test('a push with a message opens the pull request on the repository’s own def
   });
   await git(source, ...AS, 'commit', '--quiet', '--allow-empty', '-m', 'worker: the work');
 
-  const facts = await api.forge.push({ id: 'acme/widget', remote: origin }, source, 'feat/retry', {
+  const facts = await api.forge.openPr({ id: 'acme/widget', remote: origin }, 'feat/retry', {
     author: 'implement',
     title: 'Retry the header',
     body: 'The header now retries.',
@@ -448,23 +446,91 @@ test('a push with a message opens the pull request on the repository’s own def
     'The header now retries.\n\n---\n\n_worker: aivi · implement_',
     'a pull request aivi opened says which worker opened it',
   );
-  assert.equal(await git(origin, 'rev-parse', 'refs/heads/feat/retry'), await git(source, 'rev-parse', 'HEAD'));
 });
 
-test('a branch that already has a pull request gets another commit, not a second pull request', async () => {
+test('a second pull request over a branch is the platform’s refusal to say, not aivi’s to smooth over', async () => {
   const { origin, source } = await checkout();
-  const api = await forgeWith({ 'GET /repos/acme/widget/pulls': () => ({ status: 200, body: [pull()] }) });
-  await git(source, ...AS, 'commit', '--quiet', '--allow-empty', '-m', 'worker: more work');
-  const facts = await api.forge.push({ id: 'acme/widget', remote: origin }, source, 'feat/retry', {
-    author: 'implement',
-    title: 'Retry the header',
-    body: 'Another push to the same branch.',
+  const api = await forgeWith({
+    'GET /repos/acme/widget': () => ({ status: 200, body: { default_branch: 'main', name: 'widget' } }),
+    'POST /repos/acme/widget/pulls': () => ({
+      status: 422,
+      body: { message: 'a pull request is already open for this branch' },
+    }),
   });
-  assert.equal(facts?.id, '12');
-  assert.deepEqual(
-    api.seen.filter(call => call.method === 'POST').map(call => `${call.method} ${call.path}`),
-    ['POST /app/installations/99/access_tokens'],
-    'one pull request over a branch is enough',
+  await assert.rejects(
+    api.forge.openPr({ id: 'acme/widget', remote: origin }, 'feat/retry', {
+      author: 'implement',
+      title: 'Retry the header',
+      body: 'again',
+    }),
+    /already open/,
+  );
+});
+
+test('a rebased branch forces through on its lease, and a stale lease is refused, not swallowed', async () => {
+  const { origin, source } = await checkout();
+  const forge = (await forgeWith({})).forge;
+  const repo: RepoRef = { id: 'acme/widget', remote: origin };
+  // A ticket branch, then the worker rewrites it: a plain push is refused,
+  // a push on the fetched tip goes through.
+  await git(source, ...AS, 'checkout', '-q', '-b', 'feat/retry');
+  await git(source, ...AS, 'commit', '--quiet', '--allow-empty', '-m', 'one');
+  await forge.push(repo, source, 'feat/retry');
+  const tip = await git(origin, 'rev-parse', 'refs/heads/feat/retry');
+  await git(source, ...AS, 'commit', '--quiet', '--amend', '--allow-empty', '-m', 'one, rewritten');
+  await assert.rejects(() => forge.push(repo, source, 'feat/retry'), /pushing feat\/retry to acme\/widget failed/);
+  await forge.push(repo, source, 'feat/retry', { lease: tip });
+  assert.notEqual(await git(origin, 'rev-parse', 'refs/heads/feat/retry'), tip, 'the rewrite stands on the remote');
+
+  // A lease that no longer matches — the remote moved under the caller, as
+  // the worker's own rewrite makes the push non-fast-forward again — is
+  // said with its meaning.
+  await git(source, ...AS, 'commit', '--quiet', '--allow-empty', '-m', 'two');
+  await forge.push(repo, source, 'feat/retry');
+  await git(source, ...AS, 'commit', '--quiet', '--amend', '--allow-empty', '-m', 'two, rewritten');
+  await assert.rejects(() => forge.push(repo, source, 'feat/retry', { lease: tip }), /lease no longer matches/);
+  const fresh = await git(origin, 'rev-parse', 'refs/heads/feat/retry');
+  await forge.push(repo, source, 'feat/retry', { lease: fresh });
+  assert.equal(
+    await git(origin, 'log', '-1', '--format=%s', 'refs/heads/feat/retry'),
+    'two, rewritten',
+    'the second rewrite rides a fresh photo',
+  );
+  assert.ok(!(await gitConfig(source)).includes('ghs_token'), 'and the credential is still left nowhere');
+});
+
+test('fetchRefs brings every branch in, prunes the deleted, and moves no files', async () => {
+  const { root, origin, source } = await checkout();
+  const forge = (await forgeWith({})).forge;
+  const seed = join(root, 'seed');
+  await git(seed, ...AS, 'checkout', '-q', '-b', 'feat/elsewhere');
+  await writeFile(join(seed, 'elsewhere.md'), 'there\n');
+  await git(seed, 'add', '.');
+  await git(seed, ...AS, 'commit', '--quiet', '-m', 'over there');
+  await git(seed, 'push', '--quiet', origin, 'HEAD:refs/heads/feat/elsewhere');
+
+  await forge.fetchRefs({ id: 'acme/widget', remote: origin }, source);
+  assert.ok(
+    await git(source, 'rev-parse', '--verify', 'refs/remotes/origin/feat/elsewhere').then(
+      () => true,
+      () => false,
+    ),
+    'a branch the checkout had never seen arrives as a ref',
+  );
+  assert.equal(await git(source, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'nothing was checked out');
+  await assert.rejects(() => readFile(join(source, 'elsewhere.md'), 'utf8'), 'no files moved');
+
+  // The branch dies upstream; the next sync prunes it away.
+  await git(origin, 'update-ref', '-d', 'refs/heads/feat/elsewhere');
+  await forge.fetchRefs({ id: 'acme/widget', remote: origin }, source);
+  assert.equal(
+    (
+      await run('git', ['-C', source, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feat/elsewhere'], {
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      }).catch(() => null)
+    )?.stdout.trim() ?? '',
+    '',
+    'a deleted branch leaves the checkout’s refs too',
   );
 });
 

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { GitIdentity, Logger, ProjectLane, ToolDescriptor } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
-import type { Forges } from '@aivi/plugin/forge';
+import type { ForgeOwner, Forges } from '@aivi/plugin/forge';
 import type { OpenCodeClient, Orchestrator as OrchestratorApi, SessionEvents, ToolHandler } from '@aivi/plugin/module';
 import type {
   FailureCode,
@@ -114,6 +114,13 @@ const exec = promisify(execFile);
 const localGit = async (cwd: string, ...args: string[]): Promise<string> =>
   (await exec('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 }).catch(() => null))?.stdout.trim() ?? '';
 
+/** A read whose failure must not look like an empty answer: `null` says
+ *  git refused, and the caller says so instead of deciding on a silence. */
+const gitRead = async (cwd: string, ...args: string[]): Promise<string | null> => {
+  const done = await exec('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 }).catch(() => null);
+  return done === null ? null : done.stdout.trim();
+};
+
 /** The rules of the game, sent with the ticket at the start of every run.
  *  The tools are the host's, so their explanation lives here and no tracker
  *  repeats or rewords it; the nudge above is the same contract restated
@@ -126,7 +133,10 @@ const workerContract = (directory: string) =>
   'and options when there are clear choices; they answer on the ticket and the answer reaches you as a follow-up. ' +
   'Before you start, post your plan with aivi_plan \u2014 the whole checklist of steps, each with a status \u2014 and ' +
   'send the full list again whenever a step changes; people watch it while you work. ' +
-  'End your turn right after calling one of the two tools. A turn that ends without either is treated as a failure. ' +
+  'Crossing to the remote is always through aivi\u2019s tools, never git push, fetch or pull: aivi_sync for the ' +
+  'remote\u2019s latest refs, aivi_push to move your commits, aivi_pr for the pull request. ' +
+  'End your turn right after calling aivi_work_complete or aivi_ask; the git tools do not end it. ' +
+  'A turn that ends without either is treated as a failure. ' +
   'Never declare completion in plain text.';
 
 export class Orchestrator implements OrchestratorApi {
@@ -981,41 +991,188 @@ export class Orchestrator implements OrchestratorApi {
   };
 
   /**
-   * The worker wants its branch moved: the commits to `origin`, and a pull
-   * request with the message it wrote. The decision is the worker's, the
-   * credential is the forge's — this checks the run, asks the registry
-   * **who owns this project's remote**, reads locally what there is to
-   * push (a detached head and the default branch are said, not pushed),
-   * and hands the transfer over. No forge, no remote, nothing ahead: the
-   * tool errors plainly. It is served always — the plugin registers at
-   * load, per-session injection is not possible (ruled 2026-10-02) — so
-   * the plain error is the answer a research ticket gets.
+   * The shared opening of the three git tools: a live run, the directory it
+   * works in, and **who owns this project's remote**. Every refusal is
+   * plain and true — a research ticket with no forge gets its plain
+   * answer, and the tools are served always because per-session injection
+   * is not possible (ruled 2026-10-02).
    */
-  readonly prTool: ToolHandler = async call => {
+  async #forgeRun(
+    call: { sessionId: string; input: Record<string, unknown> },
+    tool: string,
+  ): Promise<{ run: Run; directory: string; owned: ForgeOwner }> {
     const run = this.deps.ledger.bySession(call.sessionId);
-    if (!run) throw new ToolError(404, 'This session is not an aivi run; aivi_pr is not available here.');
+    if (!run) throw new ToolError(404, `This session is not an aivi run; ${tool} is not available here.`);
     if (isTerminal(run.state)) throw new ToolError(409, `This run already ended (${run.state}).`);
-    const { title, body } = parsePr(call.input);
     const directory = run.worktree ?? this.deps.directory(run.projectId);
     const owned = await this.deps.forges.owner({ id: run.projectId, directory });
     if (!owned)
-      throw new ToolError(
-        409,
-        `Project ${run.projectId} has no forge for its remote, so aivi cannot push or open a pull request.`,
-      );
+      throw new ToolError(409, `Project ${run.projectId} has no forge for its remote: aivi is the only way across.`);
+    return { run, directory, owned };
+  }
+
+  /** The branch HEAD sits on, refused when it is not a branch a pull
+   *  request could stand for. */
+  async #workerBranch(directory: string): Promise<string> {
     const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
-    if (!branch) throw new ToolError(409, 'This run sits on a detached HEAD; there is no branch to push.');
+    if (!branch) throw new ToolError(409, 'This run sits on a detached HEAD; there is no branch to move.');
     // `--short` says a remote ref as `origin/main`; the guard wants the name.
     const defaultBranch = (
       await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
     ).replace(/^origin\//, '');
     if (defaultBranch && branch === defaultBranch)
-      throw new ToolError(409, `${branch} is the project's default branch: a pull request needs a branch of its own.`);
-    const ahead = await localGit(directory, 'rev-list', '--count', `origin/${branch}..HEAD`);
-    if (ahead === '0') throw new ToolError(409, `Nothing to push: origin/${branch} already has every commit here.`);
-    const pr = await owned.forge.push(owned.repo, directory, branch, { author: run.agent, title, body });
-    this.deps.log.info('run.pushed', { run: run.id, branch, repo: owned.repo.id, pull: pr?.id });
-    return pr ? { pushed: true, pull: pr.url, state: pr.state } : { pushed: true };
+      throw new ToolError(409, `${branch} is the project's default branch: this work needs a branch of its own.`);
+    return branch;
+  }
+
+  /**
+   * The smart push, in the operator's words (ruled 2026-10-02): *"If we can
+   * fast forward: fine. If we can safely merge it in: fine. If conflict:
+   * well, resolve it. These are worker agents."* One fetch through the
+   * forge for the fresh view, then: fast-forward → push; nothing ahead →
+   * say so; diverged only by the worker's own rewrite — every remote commit
+   * patch-equivalent per `git cherry`, nothing content-wise would be lost
+   * → the force goes through, leased on the sha just fetched so a person's
+   * newer commit is never overwritten; diverged by real remote work →
+   * merge it in — clean pushes, a conflict **leaves the merge in progress**
+   * and names the files, because resolving them is git the worker already
+   * knows. The lease is never said out loud; it is plumbing.
+   */
+  async #pushBranch(owned: ForgeOwner, directory: string, branch: string): Promise<'pushed' | 'already'> {
+    await owned.forge.fetchBranch(owned.repo, directory, branch);
+    const remoteRef = `refs/remotes/origin/${branch}`;
+    const remoteSha = await localGit(directory, 'rev-parse', '--verify', '--quiet', remoteRef);
+    if (!remoteSha) {
+      await owned.forge.push(owned.repo, directory, branch);
+      return 'pushed';
+    }
+    const ahead = await gitRead(directory, 'rev-list', '--count', `${remoteRef}..HEAD`);
+    const behind = await gitRead(directory, 'rev-list', '--count', `HEAD..${remoteRef}`);
+    if (ahead === null || behind === null)
+      throw new ToolError(500, `This directory does not read as a git checkout: ${directory}`);
+    if (ahead === '0') return 'already';
+    if (behind === '0') {
+      await owned.forge.push(owned.repo, directory, branch);
+      return 'pushed';
+    }
+    // Diverged. Whose commits are they? `git cherry HEAD <remote>` marks a
+    // remote commit `-` when HEAD carries its patch-equivalent: all `-` is
+    // a rebase, any `+` is a person's work.
+    const cherry = await gitRead(directory, 'cherry', 'HEAD', remoteRef);
+    if (cherry === null || cherry.split('\n').some(line => line.startsWith('+'))) {
+      const merged = await exec('git', ['-C', directory, 'merge', '--no-edit', '--quiet', remoteRef], {
+        maxBuffer: 1024 * 1024,
+      }).then(
+        () => null,
+        (error: unknown) => errorMessage(error),
+      );
+      if (merged !== null) {
+        const files = (await localGit(directory, 'diff', '--name-only', '--diff-filter=U')).split('\n').filter(Boolean);
+        throw new ToolError(
+          409,
+          files.length
+            ? `Merging origin/${branch} conflicts in ${files.join(', ')} — resolve them (git status shows the marks), commit, and call aivi_push again.`
+            : `Could not merge origin/${branch}: ${merged}`,
+        );
+      }
+      await owned.forge.push(owned.repo, directory, branch);
+      return 'pushed';
+    }
+    try {
+      await owned.forge.push(owned.repo, directory, branch, { lease: remoteSha });
+    } catch (error) {
+      throw new ToolError(
+        409,
+        `The remote moved while you worked: ${errorMessage(error)}. Call aivi_sync, integrate, and push again.`,
+      );
+    }
+    return 'pushed';
+  }
+
+  /**
+   * `aivi_push` — move this branch's commits to the remote as aivi's own
+   * app, unstucking with as little chatter as possible: the smart push
+   * above decides how, and the only refusal left is "your work is already
+   * there".
+   */
+  readonly pushTool: ToolHandler = async call => {
+    const { run, directory, owned } = await this.#forgeRun(call, 'aivi_push');
+    const branch = await this.#workerBranch(directory);
+    const moved = await this.#pushBranch(owned, directory, branch);
+    if (moved === 'already') {
+      const behind = await localGit(directory, 'rev-list', '--count', `HEAD..refs/remotes/origin/${branch}`);
+      throw new ToolError(
+        409,
+        `Nothing to push: origin/${branch} already has every commit here${
+          behind && behind !== '0' ? `, and you are behind by ${behind} — aivi_sync brings their work in` : ''
+        }.`,
+      );
+    }
+    this.deps.log.info('run.pushed', { run: run.id, branch, repo: owned.repo.id });
+    return { pushed: true, branch };
+  };
+
+  /**
+   * `aivi_sync` — the remote's latest refs in through the forge (all
+   * branches, pruned, nothing checked out), with the honest numbers: behind
+   * and ahead. The worker looks, then rebases or merges with its own git;
+   * the push's fresh view keeps whatever it decides safe to force.
+   */
+  readonly syncTool: ToolHandler = async call => {
+    const { run, directory, owned } = await this.#forgeRun(call, 'aivi_sync');
+    await owned.forge.fetchRefs(owned.repo, directory);
+    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    if (!branch) return { synced: true, note: 'detached HEAD: refs are fresh, no branch to count against' };
+    const remoteRef = `refs/remotes/origin/${branch}`;
+    const known = await localGit(directory, 'rev-parse', '--verify', '--quiet', remoteRef);
+    // "main moved" is worth knowing before a rebase is even considered.
+    const defaultBranch = (
+      await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
+    ).replace(/^origin\//, '');
+    const defaultBehind =
+      defaultBranch && defaultBranch !== branch
+        ? await localGit(directory, 'rev-list', '--count', `HEAD..refs/remotes/origin/${defaultBranch}`)
+        : '0';
+    this.deps.log.info('run.synced', { run: run.id, branch, repo: owned.repo.id });
+    return {
+      synced: true,
+      branch,
+      ...(known
+        ? {
+            behind: await localGit(directory, 'rev-list', '--count', `HEAD..${remoteRef}`),
+            ahead: await localGit(directory, 'rev-list', '--count', `${remoteRef}..HEAD`),
+          }
+        : { remoteBranch: 'absent' }),
+      ...(defaultBehind && defaultBehind !== '0' ? { defaultBranch, defaultBehind } : {}),
+    };
+  };
+
+  /**
+   * `aivi_pr` — the pull request over this branch: aivi pushes first if
+   * anything is unpushed (the smart push, its refusal said in its own
+   * words), an open pull request is answered with, not doubled, and a
+   * branch whose pull request **merged** with new commits since gets a
+   * fresh one (ruled 2026-10-02). The title is what a pull request always
+   * asks for; a checkpoint push asks for nothing — that is `aivi_push`.
+   */
+  readonly prTool: ToolHandler = async call => {
+    const { run, directory, owned } = await this.#forgeRun(call, 'aivi_pr');
+    const { title, body } = parsePr(call.input);
+    const branch = await this.#workerBranch(directory);
+    const existing = await owned.forge.prForBranch(owned.repo, branch);
+    const moved = await this.#pushBranch(owned, directory, branch);
+    if (existing && existing.state === 'open')
+      return { pull: existing.url, state: 'open', ...(moved === 'pushed' ? { commitsPushed: true } : {}) };
+    if (moved === 'already')
+      throw new ToolError(
+        409,
+        existing
+          ? `Nothing to push: the branch's pull request is ${existing.state} and ${branch} holds no new commits for a fresh one.`
+          : `Nothing to push: origin/${branch} already has every commit here, and no pull request stands for the branch.`,
+      );
+    const opened = await owned.forge.openPr(owned.repo, branch, { author: run.agent, title, body });
+    this.deps.log.info('run.pull.opened', { run: run.id, branch, repo: owned.repo.id, pull: opened.id });
+    return { pushed: true, pull: opened.url, state: opened.state };
   };
 
   /** The worker tools to claim on the host's tool door; the plugin registers them as `aivi_*`. */
@@ -1102,11 +1259,35 @@ export class Orchestrator implements OrchestratorApi {
       {
         descriptor: {
           namespace: 'aivi',
+          name: 'push',
+          description:
+            'Move this branch’s commits to the remote as aivi’s own app — you never run git push, fetch or ' +
+            'pull yourself. aivi fast-forwards, merges in the remote’s work, or (after your rebase) ' +
+            'replaces the remote branch. A merge conflict comes back naming the files: resolve them with ' +
+            'git, commit, and call this again.',
+          input: { type: 'object', properties: {}, additionalProperties: false },
+        },
+        handler: this.pushTool,
+      },
+      {
+        descriptor: {
+          namespace: 'aivi',
+          name: 'sync',
+          description:
+            'Bring the remote’s latest refs in through aivi (instead of git fetch or pull): answers how far ' +
+            'this branch is behind and ahead. Look before you rebase or merge with your own git.',
+          input: { type: 'object', properties: {}, additionalProperties: false },
+        },
+        handler: this.syncTool,
+      },
+      {
+        descriptor: {
+          namespace: 'aivi',
           name: 'pr',
           description:
-            'When your commits are ready, move them to the remote as a pull request: aivi pushes as its ' +
-            'own app — you never run git push yourself — under this title and description. When the ' +
-            'branch already has a pull request, this just brings it the new commits.',
+            'Put a pull request over this branch: aivi pushes first if anything is unpushed — you never run ' +
+            'git push yourself — and opens the pull request under this title and description. When the ' +
+            'branch already has an open pull request, this answers with it and brings it the new commits.',
           input: {
             type: 'object',
             properties: {

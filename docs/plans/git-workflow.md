@@ -133,11 +133,18 @@ person moving the ticket — no wake machinery, no watchers.
 
 ## What the forge interface gains
 
-On `@aivi/plugin/forge`, answered by `forge-github`:
+On `@aivi/plugin/forge`, answered by `forge-github`. **Built 2026-10-02**
+with the push/sync split: `push` is now pure transfer — plain when the
+remote fast-forwards, `--force-with-lease` keyed on the sha the smart push
+just fetched when the divergence is the worker's own rewrite — and opening
+the pull request is its own member, `openPr(repo, branch, { author, title,
+body }): Promise<PrFacts>`, base the repository's default branch, body
+signed `_worker: aivi · <role>_`.
 
-- `fetchRefs(repo, directory): Promise<void>` — fetch **all** branches with
-  prune, refs only, nothing checked out (`aivi_sync`). `fetchBranch` stays
-  as the single-branch fetch the worktree start uses.
+- `fetchRefs(repo, directory): Promise<void>` — **built** — fetch **all**
+  branches with prune, refs only, nothing checked out (`aivi_sync`).
+  `fetchBranch` stays as the single-branch fetch the worktree start and
+  the push's fresh view use.
 - `commentPr(repo, pr, { author, text }): Promise<void>` — a signed plain
   conversation comment.
 - `submitReview(repo, pr, { author, body, state: 'COMMENT' | 'REQUEST_CHANGES', comments?: { path, line?, body }[] })`
@@ -224,11 +231,11 @@ because everything else does.
 Each slice lands with tests at the boundary it moves, docs in the same
 commit, and the operator's word to start.
 
-1. **Worktree gets its caller** — `WorkRequest.branch`, orchestrator
-   prepare creates/reuses the worktree with `fetchBranch` injected, the
-   no-credential mark. Nothing below is live until this.
-2. **Push/sync split** — `aivi_push` (force-with-lease **plus the
-   integrate-check**), `aivi_sync` +
+1. **Worktree gets its caller** — **built 2026-10-02** — `WorkRequest.branch`,
+   orchestrator prepare creates/reuses the worktree with `fetchBranch`
+   injected, the no-credential mark. Nothing below is live until this.
+2. **Push/sync split** — **built 2026-10-02** — `aivi_push` (force-with-lease
+   **plus the integrate-check**), `aivi_sync` +
    `fetchRefs`, `aivi_pr` reduced to *open the PR* (push-if-needed,
    already-open answers, fresh PR after merge), the lease-refusal message
    naming `aivi_sync`.

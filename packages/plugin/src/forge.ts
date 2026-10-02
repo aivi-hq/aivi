@@ -142,20 +142,32 @@ export interface Forge {
    *  absent one. */
   fetchBranch(repo: RepoRef, directory: string, branch: string): Promise<void>;
 
-  /** Move aivi's own commits to `origin`, and open the pull request if this
-   *  branch has none yet and a message came with the push. The orchestrator
-   *  decides *when* (turn end); how the forge authenticates — mint once,
-   *  cache to its TTL, re-mint on a 401 — is the forge's own choice and never
-   *  written into the worktree's `.git/config`. Answers the pull request that
-   *  stands for the branch afterwards: undefined when the branch simply moved
-   *  and no pull request was asked for. `author` names the worker role the
-   *  message came from, and the posted pull request says so — visibly. */
-  push(
-    repo: RepoRef,
-    worktree: string,
-    branch: string,
-    pr?: { author: string; title: string; body: string },
-  ): Promise<PrFacts | undefined>;
+  /** Move aivi's own commits to `origin`, as the app and never as the
+   *  person at the keyboard. The orchestrator's smart push decides *how*:
+   *  plain when the remote fast-forwards (or the branch is new), and with
+   *  `lease` — the commit it just fetched as the branch's tip — when the
+   *  divergence is only the worker's own rewrite, so the force replaces
+   *  exactly what the worker rebased over and nothing a person added
+   *  since. How the forge authenticates — mint once, cache to its TTL,
+   *  re-mint on a 401 — is the forge's own choice and never written into
+   *  the worktree's `.git/config`. A transfer the remote refuses throws
+   *  with git's words; a lease that no longer matches is exactly that. */
+  push(repo: RepoRef, worktree: string, branch: string, options?: { lease?: string }): Promise<void>;
+
+  /** Open the pull request that stands for the branch, against the
+   *  repository's own default branch, and say which worker role asked —
+   *  visibly, in the body a human reads. The orchestrator asks only when
+   *  no open pull request stands for the branch (its `prForBranch` said
+   *  so, or the last one closed); opening a second is the platform's to
+   *  refuse, and its refusal is said, not smoothed over. */
+  openPr(repo: RepoRef, branch: string, pr: { author: string; title: string; body: string }): Promise<PrFacts>;
+
+  /** Bring **all** the remote's refs into the checkout's own remote refs —
+   *  fetch with prune, refs only, nothing checked out (`aivi_sync`: the
+   *  worker looks before it rebases, and the push's fresh view of every
+   *  branch starts here). A failed transfer throws; there is nothing a
+   *  caller could safely do with a stale view. */
+  fetchRefs(repo: RepoRef, directory: string): Promise<void>;
 }
 
 /** The outcome of bringing a checkout up to date, in the forge's own words:

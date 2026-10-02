@@ -323,26 +323,40 @@ export class GitHubForge implements Forge {
 
   /**
    * Move aivi's commits to the remote, as the app and never as the person at
-   * the keyboard, and open the pull request when this branch has none and a
-   * message came with the push. The base is the repository's own default
-   * branch: that is where a pull request belongs unless a person said
-   * otherwise, and aivi has no place to have been told.
+   * the keyboard. Plain when the remote fast-forwards; with a
+   * `--force-with-lease` keyed on the commit the orchestrator just fetched
+   * when the divergence is the worker's own rewrite — the force replaces
+   * exactly that commit and nothing a person added since.
    */
-  async push(
-    repo: RepoRef,
-    worktree: string,
-    branch: string,
-    pr?: { author: string; title: string; body: string },
-  ): Promise<PrFacts | undefined> {
+  async push(repo: RepoRef, worktree: string, branch: string, options: { lease?: string } = {}): Promise<void> {
     const transport = await this.transfer(repo);
-    const pushed = await runGit(worktree, ['push', transport.url, `HEAD:refs/heads/${branch}`], {
-      env: transport.env,
-    });
-    if (!pushed.ok) throw new Error(`forge-github: pushing ${branch} to ${repo.id} failed: ${pushed.message}`);
-    this.log.info('branch.pushed', { repo: repo.id, branch });
-    const existing = await this.prForBranch(repo, branch);
-    if (existing) return existing;
-    if (!pr) return undefined;
+    const pushed = await runGit(
+      worktree,
+      [
+        'push',
+        '--quiet',
+        ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
+        transport.url,
+        `HEAD:refs/heads/${branch}`,
+      ],
+      { env: transport.env },
+    );
+    if (!pushed.ok)
+      throw new Error(
+        `forge-github: pushing ${branch} to ${repo.id} failed${
+          options.lease ? ' (the lease no longer matches: the remote moved since the last fetch)' : ''
+        }: ${pushed.message}`,
+      );
+    this.log.info('branch.pushed', { repo: repo.id, branch, ...(options.lease ? { forced: true } : {}) });
+  }
+
+  /**
+   * Open the pull request that stands for the branch. The base is the
+   * repository's own default branch: that is where a pull request belongs
+   * unless a person said otherwise, and aivi has no place to have been
+   * told.
+   */
+  async openPr(repo: RepoRef, branch: string, pr: { author: string; title: string; body: string }): Promise<PrFacts> {
     const { owner, repo: name } = address(repo);
     const target = await this.app.repository(owner, name);
     if (!target)
@@ -359,6 +373,20 @@ export class GitHubForge implements Forge {
     });
     this.log.info('pull.opened', { repo: repo.id, pull: created.number, worker: pr.author });
     return prFacts(created);
+  }
+
+  /** Every branch, pruned, refs only: the fresh view `aivi_sync` gives the
+   *  worker and the push's lease starts from. Same transfer as every
+   *  other — the URL this forge named, the credential in the environment,
+   *  nothing left in the checkout's config. */
+  async fetchRefs(repo: RepoRef, directory: string): Promise<void> {
+    const transport = await this.transfer(repo);
+    const fetched = await runGit(
+      directory,
+      ['fetch', '--prune', '--quiet', transport.url, '+refs/heads/*:refs/remotes/origin/*'],
+      { env: transport.env },
+    );
+    if (!fetched.ok) throw new Error(`forge-github: fetching ${repo.id} failed: ${fetched.message}`);
   }
 }
 

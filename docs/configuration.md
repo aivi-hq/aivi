@@ -346,9 +346,11 @@ there is no per-project forge section — a forge is asked about a checkout it
 did not create and reads the answer off the checkout. What asks it today is
 the `projects-sync` job (a checkout this forge recognises syncs **through**
 the forge, authenticated as its own installation; the rest stays plain git)
-and the worker's `aivi_pr` call (the forge pushes as its own app and opens
-the pull request when the branch has none). A project with no forge gets
-neither, and `aivi_pr` says so plainly when it is called anyway.
+and the worker's git tools: `aivi_sync` brings the remote's refs in,
+`aivi_push` moves commits (as the forge's own app, fast-forwarding, merging,
+or forcing only a patch-equivalent rewrite), and `aivi_pr` opens the pull
+request when the branch has none. A project with no forge gets none of
+these, and the three tools say so plainly when they are called anyway.
 
 ## Operator commands
 

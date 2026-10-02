@@ -19,6 +19,8 @@ import { ToolError } from '../src/tools.ts';
 const exec = promisify(execFile);
 const git = (cwd: string, ...args: string[]) =>
   exec('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
+/** A git read as its trimmed stdout, for assertions that speak in values. */
+const gitOut = async (cwd: string, ...args: string[]): Promise<string> => (await git(cwd, ...args)).stdout.trim();
 
 /** The walk over a scripted board: real orchestrator, real dispatcher, real
  *  ledger — only OpenCode and the tracker are faked, because the walk's
@@ -509,8 +511,61 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
   assert.equal(dispatcher.leases.held('b'), 0, 'and still nobody moved pools');
 });
 
-test('aivi_pr routes the worker’s push to the forge that owns the remote, and says plainly when there is none', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-pr-'));
+/** A forge backed by real git against a local-path remote: bytes really
+ *  move, so the smart push is tested against real divergence — a fast-
+ *  forward, a person's commit to merge, a conflict to resolve, a rebase to
+ *  force — and not against a scripted opinion of any of them. */
+function localForge(
+  origin: string,
+  seen: { pushes: { branch: string; lease?: string }[]; opens: string[] },
+  prs: Map<string, string>,
+) {
+  return {
+    async repoFor(project: { id: string }) {
+      return project.id === 'site' ? { id: 'acme/site', remote: origin } : undefined;
+    },
+    async fetchBranch(_repo: unknown, directory: string, branch: string) {
+      await exec('git', [
+        '-C',
+        directory,
+        'fetch',
+        '-q',
+        origin,
+        `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
+      ]).catch(() => {});
+    },
+    async fetchRefs(_repo: unknown, directory: string) {
+      await exec('git', ['-C', directory, 'fetch', '-q', '--prune', origin, '+refs/heads/*:refs/remotes/origin/*']);
+    },
+    async push(_repo: unknown, directory: string, branch: string, options?: { lease?: string }) {
+      seen.pushes.push({ branch, ...(options?.lease ? { lease: options.lease } : {}) });
+      await exec('git', [
+        '-C',
+        directory,
+        'push',
+        '-q',
+        ...(options?.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
+        origin,
+        `HEAD:refs/heads/${branch}`,
+      ]);
+    },
+    async prForBranch(_repo: unknown, branch: string) {
+      const state = prs.get(branch);
+      return state
+        ? { id: 'pr-1', url: `https://github.com/acme/site/pull/1`, title: 'Widget', state, branch }
+        : undefined;
+    },
+    async openPr(_repo: unknown, branch: string) {
+      seen.opens.push(branch);
+      prs.set(branch, 'open');
+      return { id: 'pr-1', url: 'https://github.com/acme/site/pull/1', title: 'Widget', state: 'open', branch };
+    },
+  };
+}
+
+/** A project, a run on a ticket branch, and the git tools' registry. */
+async function pushFixture(t: { after: (fn: () => Promise<unknown>) => void }, name: string) {
+  const root = await mkdtemp(join(tmpdir(), `aivi-${name}-`));
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = join(root, 'upstream');
   await mkdir(upstream);
@@ -520,9 +575,12 @@ test('aivi_pr routes the worker’s push to the forge that owns the remote, and 
   await git(upstream, 'commit', '-q', '-m', 'one');
   const source = join(root, 'site');
   await git(root, 'clone', '-q', 'upstream', 'site');
-  // A GitHub clone carries `origin/HEAD` from the remote; say it by hand so
-  // the push tool's default-branch guard has the fact it reads in real life.
+  // A GitHub clone carries `origin/HEAD`; say it by hand, and give the
+  // checkout an identity: a merge commit needs one, as in real life (the
+  // worktree mark or the person's own config).
   await git(source, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(source, 'config', 'user.email', 'dev@example.com');
+  await git(source, 'config', 'user.name', 'Dev');
   await git(source, 'checkout', '-q', '-b', 'me/eng-9-widget');
   await writeFile(join(source, 'widget.md'), 'a widget');
   await git(source, 'add', '.');
@@ -530,7 +588,8 @@ test('aivi_pr routes the worker’s push to the forge that owns the remote, and 
 
   const fake = fakeOpenCode();
   const lanes = [lane('In Progress', { agent: 'dev' })];
-  const { ledger, orchestrator, forges } = harness(lanes, {}, boardFeed(fake, {}), fake);
+  const forges = new Forges();
+  const { ledger, orchestrator } = harness(lanes, {}, boardFeed(fake, {}), fake, new AbortController(), forges);
   const { run } = ledger.request({
     projectId: 'site',
     trackerId: 'linear',
@@ -538,51 +597,193 @@ test('aivi_pr routes the worker’s push to the forge that owns the remote, and 
     lane: 'In Progress',
     agent: 'dev',
   });
-  ledger.attachSession(run.id, 'ses_pr', source);
+  ledger.attachSession(run.id, 'ses_git', source);
+  const call = (input: Record<string, unknown>) => ({ sessionId: 'ses_git', input });
+  return { root, upstream, source, forges, orchestrator, call };
+}
 
-  // No forge is not a failure (ruled 2026-09-29): the tool is served always,
-  // and its answer is a plain error naming what is missing.
-  await assert.rejects(
-    () => orchestrator.prTool({ sessionId: 'ses_pr', input: { title: 'Widget', body: 'Adds the widget.' } }),
-    (error: unknown) => error instanceof ToolError && /no forge for its remote/.test(String(error)),
-    'a research project gets its plain answer',
+test('no forge is a plain answer, not a failure: every git tool says who is missing', async t => {
+  const { orchestrator, call } = await pushFixture(t, 'noforge');
+  for (const [tool, input] of [
+    [orchestrator.pushTool, {}],
+    [orchestrator.syncTool, {}],
+    [orchestrator.prTool, { title: 'Widget' }],
+  ] as const)
+    await assert.rejects(
+      () => tool(call(input)),
+      (error: unknown) => error instanceof ToolError && /no forge for its remote/.test(String(error)),
+      'a research project gets its plain answer',
+    );
+});
+
+test('aivi_push fast-forwards, refuses to repeat itself, merges a person’s work in, and lets a conflict be resolved', async t => {
+  const { root, upstream, source, forges, orchestrator, call } = await pushFixture(t, 'pushflow');
+  const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
+  const prs = new Map<string, string>();
+  forges.register(localForge(join(root, 'upstream'), seen, prs) as never);
+
+  const first = await orchestrator.pushTool(call({}));
+  assert.deepEqual(first, { pushed: true, branch: 'me/eng-9-widget' });
+  assert.equal(
+    await gitOut(upstream, 'rev-parse', 'refs/heads/me/eng-9-widget'),
+    await gitOut(source, 'rev-parse', 'HEAD'),
+    'the fast-forward moved the remote branch',
   );
 
-  const pushes: { branch: string; pr: unknown }[] = [];
-  forges.register({
-    async repoFor(project: { id: string }) {
-      return project.id === 'site' ? { id: 'acme/site', remote: 'https://github.com/acme/site' } : undefined;
-    },
-    async push(_repo: unknown, _worktree: string, branch: string, pr?: unknown) {
-      pushes.push({ branch, pr });
-      return { id: 'pr-1', url: 'https://github.com/acme/site/pull/1', title: 'Widget', state: 'open', branch };
-    },
-  } as never);
-
-  const moved = await orchestrator.prTool({
-    sessionId: 'ses_pr',
-    input: { title: 'Widget', body: 'Adds the widget.' },
-  });
-  assert.deepEqual(
-    pushes,
-    [{ branch: 'me/eng-9-widget', pr: { author: 'dev', title: 'Widget', body: 'Adds the widget.' } }],
-    'the forge does the transfer, named by the worker role that asked',
-  );
-  assert.deepEqual(moved, { pushed: true, pull: 'https://github.com/acme/site/pull/1', state: 'open' });
-
-  // The remote already has every commit: nothing is pushed twice.
-  await git(source, 'push', '-q', 'origin', 'me/eng-9-widget');
   await assert.rejects(
-    () => orchestrator.prTool({ sessionId: 'ses_pr', input: { title: 'Widget' } }),
+    () => orchestrator.pushTool(call({})),
     (error: unknown) => error instanceof ToolError && /Nothing to push/.test(String(error)),
+    'every commit is already there: said, not pushed twice',
   );
 
-  // The project's default branch is not a pull request's branch.
+  // A person pushes to the branch from their own clone, and the worker has
+  // a commit of its own: real divergence, safely mergeable.
+  const person = join(root, 'person');
+  await git(root, 'clone', '-q', 'upstream', 'person');
+  await git(person, 'checkout', '-q', '-b', 'me/eng-9-widget', 'origin/me/eng-9-widget');
+  await writeFile(join(person, 'note.md'), 'the person’s note\n');
+  await git(person, 'add', '.');
+  await git(person, 'commit', '-q', '-m', 'a note from the person');
+  await git(person, 'push', '-q', 'origin', 'me/eng-9-widget');
+  await writeFile(join(source, 'mine.md'), 'mine\n');
+  await git(source, 'add', '.');
+  await git(source, 'commit', '-q', '-m', 'my commit');
+
+  const merged = await orchestrator.pushTool(call({}));
+  assert.deepEqual(merged, { pushed: true, branch: 'me/eng-9-widget' }, 'safely mergeable: merged in and pushed');
+  assert.equal(
+    await gitOut(upstream, 'show', 'me/eng-9-widget:note.md'),
+    'the person’s note',
+    'the person’s work stands on the remote, not overwritten',
+  );
+
+  // And a real conflict: both sides edit the same line. The person pulls
+  // the worker's merge in first, then disagrees.
+  await git(person, 'pull', '-q', '--rebase', 'origin', 'me/eng-9-widget');
+  await writeFile(join(person, 'widget.md'), 'the person’s widget');
+  await git(person, 'commit', '-q', '-am', 'the person disagrees');
+  await git(person, 'push', '-q', 'origin', 'me/eng-9-widget');
+  await writeFile(join(source, 'widget.md'), 'my widget');
+  await git(source, 'commit', '-q', '-am', 'I disagree');
+  await assert.rejects(
+    () => orchestrator.pushTool(call({})),
+    (error: unknown) =>
+      error instanceof ToolError && /conflicts in widget\.md/.test(String(error)) && /resolve them/.test(String(error)),
+    'the conflict is named, with the file',
+  );
+  assert.ok(
+    (await git(source, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD')).stdout.trim(),
+    'the merge stays in progress for the worker to resolve',
+  );
+  await writeFile(join(source, 'widget.md'), 'our widget');
+  await git(source, 'add', '.');
+  await git(source, 'commit', '-q', '--no-edit');
+  const resolved = await orchestrator.pushTool(call({}));
+  assert.deepEqual(resolved, { pushed: true, branch: 'me/eng-9-widget' }, 'resolved, committed, pushed');
+});
+
+test('a rebased branch pushes through: the rewrite is patch-equivalent, so the force goes through quietly', async t => {
+  const { root, upstream, source, forges, orchestrator, call } = await pushFixture(t, 'rebase');
+  const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
+  const prs = new Map<string, string>();
+  forges.register(localForge(join(root, 'upstream'), seen, prs) as never);
+  await orchestrator.pushTool(call({}));
+
+  // main moves under the branch; the worker syncs, then rebases with its
+  // own git.
+  await git(upstream, 'commit', '-q', '--allow-empty', '-m', 'main moved');
+  await orchestrator.syncTool(call({}));
+  await git(source, 'rebase', '-q', 'origin/main');
+
+  const moved = await orchestrator.pushTool(call({}));
+  assert.deepEqual(moved, { pushed: true, branch: 'me/eng-9-widget' }, 'the rebase re-push is not chatter');
+  const rewrite = seen.pushes.at(-1)!;
+  assert.ok(rewrite.lease, 'the force rode a lease keyed on the fetched tip: a person’s newer commit could not burn');
+  assert.equal(
+    await gitOut(upstream, 'log', '-1', '--format=%s', 'me/eng-9-widget'),
+    'the widget',
+    'the rewritten branch stands on the remote',
+  );
+});
+
+test('aivi_sync answers behind and ahead through the forge, and guards name what a pull request cannot stand for', async t => {
+  const { root, upstream, source, forges, orchestrator, call } = await pushFixture(t, 'sync');
+  const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
+  const prs = new Map<string, string>();
+  forges.register(localForge(join(root, 'upstream'), seen, prs) as never);
+
+  const absent = await orchestrator.syncTool(call({}));
+  assert.deepEqual(absent, { synced: true, branch: 'me/eng-9-widget', remoteBranch: 'absent' });
+
+  await orchestrator.pushTool(call({}));
+  const person = join(root, 'person');
+  await git(root, 'clone', '-q', 'upstream', 'person');
+  await git(person, 'checkout', '-q', '-b', 'me/eng-9-widget', 'origin/me/eng-9-widget');
+  await writeFile(join(person, 'their.md'), 'theirs\n');
+  await git(person, 'add', '.');
+  await git(person, 'commit', '-q', '-m', 'their commit');
+  await git(person, 'push', '-q', 'origin', 'me/eng-9-widget');
+  await writeFile(join(source, 'mine.md'), 'mine\n');
+  await git(source, 'add', '.');
+  await git(source, 'commit', '-q', '-m', 'my commit');
+  // And main moved under everyone: worth saying before a rebase is weighed.
+  await git(upstream, 'commit', '-q', '--allow-empty', '-m', 'main moved');
+
+  const counts = await orchestrator.syncTool(call({}));
+  assert.deepEqual(counts, {
+    synced: true,
+    branch: 'me/eng-9-widget',
+    behind: '1',
+    ahead: '1',
+    defaultBranch: 'main',
+    defaultBehind: '1',
+  });
+
+  // The guards the smart push never bargains past.
   await git(source, 'checkout', '-q', 'main');
   await assert.rejects(
-    () => orchestrator.prTool({ sessionId: 'ses_pr', input: { title: 'Widget' } }),
+    () => orchestrator.pushTool(call({})),
     (error: unknown) => error instanceof ToolError && /default branch/.test(String(error)),
   );
+  // Detached HEAD: the same story, git's own words.
+  await git(source, 'checkout', '-q', await gitOut(source, 'rev-parse', 'HEAD'), '--detach');
+  await assert.rejects(
+    () => orchestrator.pushTool(call({})),
+    (error: unknown) => error instanceof ToolError && /detached HEAD/.test(String(error)),
+  );
+});
+
+test('aivi_pr opens the pull request, answers an open one instead of doubling it, and opens fresh after a merge', async t => {
+  const { root, upstream, source, forges, orchestrator, call } = await pushFixture(t, 'prtoll');
+  const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
+  const prs = new Map<string, string>();
+  forges.register(localForge(join(root, 'upstream'), seen, prs) as never);
+
+  const opened = await orchestrator.prTool(call({ title: 'Widget', body: 'Adds the widget.' }));
+  assert.deepEqual(opened, { pushed: true, pull: 'https://github.com/acme/site/pull/1', state: 'open' });
+  assert.deepEqual(seen.opens, ['me/eng-9-widget'], 'the forge opened it, and the push came first');
+
+  await writeFile(join(source, 'more.md'), 'more\n');
+  await git(source, 'add', '.');
+  await git(source, 'commit', '-q', '-m', 'follow-up work');
+  const again = await orchestrator.prTool(call({ title: 'Widget' }));
+  assert.deepEqual(again, { pull: 'https://github.com/acme/site/pull/1', state: 'open', commitsPushed: true });
+  assert.deepEqual(seen.opens, ['me/eng-9-widget'], 'one pull request over a branch is enough');
+
+  // The person merges; the ticket reopens with new work: a fresh pull request.
+  prs.set('me/eng-9-widget', 'merged');
+  await assert.rejects(
+    () => orchestrator.prTool(call({ title: 'Widget' })),
+    (error: unknown) => error instanceof ToolError && /no new commits/.test(String(error)),
+    'nothing new to stand for: said, not doubled',
+  );
+  await writeFile(join(source, 'round-two.md'), 'again\n');
+  await git(source, 'add', '.');
+  await git(source, 'commit', '-q', '-m', 'round two');
+  await orchestrator.prTool(call({ title: 'Widget again', body: 'The second round.' }));
+  assert.equal(prs.get('me/eng-9-widget'), 'open');
+  assert.deepEqual(seen.opens, ['me/eng-9-widget', 'me/eng-9-widget'], 'merged + new commits: a fresh pull request');
+  void upstream;
 });
 
 test('a worktree lane gets its own git worktree on the ticket’s branch, crossing to origin only through the injected forge', async t => {
