@@ -7,7 +7,10 @@ orchestrator extraction in the [v1 rc line](../roadmap.md#next-in-order-of-inten
 no-forge base flow, the forge joins on top as the configurable path it
 is). The contract is **provisional** in the same way the tracker seam
 is: wiring it into the orchestrator is what proves it, and more forges
-will move the details.
+will move the details. The **worker-facing git surface** — the tools a
+worker calls, the feedback gate, the redirect hook, `prompts/` — is
+planned in [git-workflow](git-workflow.md); this document owns the forge
+contract and GitHub's answers to it.
 
 ## What a forge is
 

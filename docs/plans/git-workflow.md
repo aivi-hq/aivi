@@ -1,0 +1,251 @@
+# The worker's git workflow
+
+**Plan of record** for how a worker works on a ticket whose project has a
+repository: commit, push, open a pull request, process review feedback,
+re-push, and close out. The forge owns every crossing of the remote
+boundary ([forge-github](forge-github.md) owns the credential and the
+transfers); this document owns the **worker-facing surface** — the tools,
+the feedback loop, and the guidance that ties them together.
+
+Ruled by the operator 2026-10-02, in his words where quoted. The mechanics
+here are decided; the build order at the bottom awaits his go per slice.
+Walked end to end the same day — ten scenes: the happy path, agreeing and
+disagreeing with review feedback, a conflict against a moved main, a person
+pushing to the branch, a merged PR reopened, a review round, the escalation,
+a research ticket with no forge, and the edges. It held — with **one fix
+found** (the integrate-check under the tool table) and **one rule settled**
+(an answered escalation resets the strike count).
+
+## The boundary rule
+
+- **Local git is the worker's, unrestricted**: status, diff, add, commit,
+  branch, rebase, merge, conflict resolution, stash, hooks. The worktree
+  carries the bot identity, so commits are aivi's (already built).
+- **Every external boundary is crossed by using the forge.** The worker
+  reaches `origin` only through aivi tools; the forge authenticates as its
+  own app. Two independent enforcement halves, ruled by the operator:
+  - **The wall**: the worktree mark gains `credential.helper=""` and
+    `core.sshCommand=false`, so a smuggled `git push` **has no credential
+    to spend and simply fails**. "Our code failing means the push fails.
+    Because there are no credentials." The forge itself is immune: it names
+    the HTTPS URL on the command line and passes its token through
+    `GIT_CONFIG_*` env, which outranks worktree config, and `repoFor`
+    already converts an ssh `origin` to the HTTPS transfer URL — so the
+    tools work however the checkout was cloned.
+  - **The signpost**: an attribution-style `permission.evaluate` hook in
+    **aivi's own OpenCode plugin** (`packages/opencode/src/index.ts`)
+    denies boundary git *in aivi run sessions only* and says what to use
+    instead. The operator's own sessions in the same checkout are never
+    touched. A person's manual clone (ssh or https) needs nothing new: the
+    forge reads the remote and converts.
+
+## The tool surface
+
+All served always (per-session injection is not possible: the plugin
+registers at load); all error plainly when the project has no forge, no
+remote, or nothing to do. Every check runs in the **run's directory** —
+the worktree when the lane has one.
+
+| Tool | Args | Does | Plain errors |
+| --- | --- | --- | --- |
+| `aivi_push` | – | Move HEAD to the remote branch, as the app. `--force-with-lease` keyed on the local `origin/<branch>` ref, so a rebase re-push is safe and a stale view is refused; the integrate-check below first, so a person's commits are never overwritten. Refuses the default branch and a detached HEAD. | no forge · nothing ahead · `remote moved since your last sync — aivi_sync first` (the lease refusing is exactly this) · `the remote branch has commits you don't have — integrate them first` · default branch · detached HEAD |
+| `aivi_pr` | `title` (required), `body` | Open the pull request for the branch: pushes first if there is anything unpushed, then opens. The body is signed `_worker: aivi · <role>_`. | no forge · no title · **PR already open**: not an error — answers with its url and pushes what was pending · merged/closed PR + new commits → **opens a fresh PR** |
+| `aivi_sync` | – | Carry the remote's refs in through the forge (all branches, pruned) and report `behind`/`ahead` for the branch and the default branch. Keeps the push lease honest; a rebase starts here. | no forge |
+| `aivi_review` | – | Fresh read of the pull request: open threads with replies, **plain conversation comments**, approval states, mergeable state. | no forge · no PR known |
+| `aivi_respond_feedback` | `threadId?`, `body` | With a `threadId`: reply to that review thread, signed, and resolve it (agree or disagree — both end resolved). Without: a plain PR comment. | no forge · no PR · thread not open |
+| `aivi_work_complete` | unchanged | Completion, **plus the feedback gate** below. | (existing) |
+
+`aivi_push` and `aivi_pr` are **separate tools** (ruled: "Differentiate
+between PR and PUSH. Make them 2 separate tools."). A checkpoint push asks
+for no title; opening a pull request always does.
+
+**The integrate-check** — the walkthrough's one real find. The lease
+compares *refs*, so when a person pushes a commit to the branch and the
+worker then syncs and rebases onto main, the lease is honest (nobody moved
+the ref since the sync) and the force-push **drops the person's commit**:
+the ref is right, the content is wrong. So `aivi_push` refuses locally,
+before any network: `git cherry` asks whether `origin/<branch>` holds
+commits with no patch-equivalent in HEAD; yes → *"the remote branch has
+commits you don't have — integrate them first (`git merge
+origin/<branch>`)"*. A correct rebase replays patch-equivalents, so it
+passes; a push without a prior sync is already refused by the lease. One
+local check plugs the hole.
+
+## The feedback loop
+
+The core mechanic, ruled by the operator: **"if there is open feedback, we
+keep nudging until there is none"** with **"a max of 3 tries or something
+until HITL"**, and his nuance that a run which *started* without feedback
+must not be chased by feedback that appears mid-run — because a reviewing
+agent would never finish its own review.
+
+1. **Snapshot at start.** When the orchestrator composes the first prompt
+   and the project has a forge and the ticket's branch has an **open** PR,
+   it persists that moment's open review-thread ids on the run row. This
+   is the whole bookkeeping; there is no owed-set choreography.
+2. **Guidance, not enforcement, at start.** If the snapshot is non-empty,
+   the first prompt carries the feedback-loop guidance: *this is returning
+   work with unresolved comments — process each by agreeing (do the work,
+   `aivi_push`) or disagreeing (leave a grounded comment); both end with
+   `aivi_respond_feedback`.* Whether the agent is reviewing or answering a
+   review is the **agent file's** word, not the orchestrator's.
+3. **The gate at completion.** `aivi_work_complete` with outcome `success`
+   re-reads the PR through the forge. **Owed = snapshot ids still open.**
+   Non-empty → the completion fails as a tool error **listing each owed
+   thread** (path, the question, its id) and teaching the loop in the
+   message itself. Empty → the run ends.
+   - Started clean → the snapshot is empty → a review agent posts its
+     findings (new threads, not owed) and completes freely. The nuance
+     holds mechanically, posture-blind.
+   - Feedback arriving mid-run on a clean-start run → not owed (ruled).
+   - A human resolving a thread is authoritative; no reply is owed to a
+     closed question. A human **re-opening** a snapshotted thread makes it
+     owed again at the next read — which is the point.
+   - **Failure completions are exempt**: a worker giving up doesn't have to
+     answer reviewers to hand the ticket back.
+4. **Three tries, then HITL.** Each rejected success-attempt counts on the
+   run row. At the third, the orchestrator creates the **ask form** itself
+   — the same durable OpenCode form `aivi_ask` makes, free-text answers
+   allowed — listing the owed threads and asking the person what to do.
+   The run parks on the answer (existing keep-alive machinery); the answer
+   resumes the session. The escalation is recorded so a second form never
+   doubles it. The person's ways out are all honest ones: answer with
+   instructions, resolve the threads on GitHub themselves, or say "ship
+   it" and let the worker resolve the threads with that reason. **There is
+   no bypass hatch**: past the gate only threads that are actually resolved.
+   An **answered escalation resets the count** (ruled in the walkthrough):
+   the person said "try again with these instructions", not "fail after
+   three more".
+5. **Plain PR comments are context, never gate items.** GitHub gives the
+   PR's conversation comments no resolved state; they ride the first
+   prompt and `aivi_review`, and the agent file's guidance says to answer
+   them. Only review threads can be owed.
+
+**The review agent's voice** (GitHub's fiat, not taste): every PR aivi
+pushes is **authored by the app**, and GitHub refuses an author's own
+approval — so the approve button stays human, forever. What the review
+agent *can* do, and v1 gives it: read everything (`aivi_review`), post
+inline findings as a **review** (`submitReview` below — COMMENT or
+REQUEST_CHANGES; those become review threads, which is what makes agent
+feedback gate-owed on the next round), plain comments, and the ticket
+report. Its run ends when its findings are delivered; the next round is a
+person moving the ticket — no wake machinery, no watchers.
+
+## What the forge interface gains
+
+On `@aivi/plugin/forge`, answered by `forge-github`:
+
+- `fetchRefs(repo, directory): Promise<void>` — fetch **all** branches with
+  prune, refs only, nothing checked out (`aivi_sync`). `fetchBranch` stays
+  as the single-branch fetch the worktree start uses.
+- `commentPr(repo, pr, { author, text }): Promise<void>` — a signed plain
+  conversation comment.
+- `submitReview(repo, pr, { author, body, state: 'COMMENT' | 'REQUEST_CHANGES', comments?: { path, line?, body }[] })`
+  — the review agent's teeth. APPROVE is not offered: the author cannot
+  approve (GitHub), and offering a member that always throws is noise.
+- `ReviewFacts` grows `comments: { author; body; createdAt }[]` — the PR's
+  plain conversation comments, oldest first, capped (~100, like the thread
+  reads). The gather grows until "all review and regular comments" is
+  literally true.
+- `PrFacts` grows `mergeable?: 'clean' | 'dirty' | 'unknown'` — so "main
+  moved, you conflict" is in the first prompt, not a surprise at push
+  time. Where the answer isn't computed yet (REST list reads), `unknown`.
+
+## The worktree gets its caller
+
+Nothing above is exercised live until write lanes actually work in
+worktrees. The orchestrator's prepare does it, local git only:
+
+- The **branch name comes from the tracker**: the kit's work entry
+  (`initWork`'s answer, `WorkRequest`) grows `branch?: string` — Linear
+  answers with `Issue.branchName`. A `worktree: true` lane whose tracker
+  named no branch is said so, plainly; no invented name.
+- Path: `worktreePathFor(source, sessionId)`; creation: `ensureWorktree`
+  with `fetchBranch` **injected** when a forge owns the remote (built
+  seam), local refs otherwise. Existing worktree holding the branch is
+  reused, uncommitted work intact (built).
+- `markWorktree` gains the two credential settings (the wall above).
+- Identity: `identity.github` (built), the commit plugin's marker (built).
+
+## The redirect hook
+
+`packages/opencode/src/index.ts` adds a `permission.evaluate` hook, the
+attribution plugin's shape: normalise the shell resource, match `git
+push|fetch|pull|clone|ls-remote|remote` (any flags/`-c` prefixes), deny
+with a redirect message — `git push is disabled in aivi runs — use
+aivi_push (and aivi_sync first if the remote moved)`. Scoped by the one
+fact the plugin has: `sessionID`. The plugin asks the host once per
+session — a membership endpoint on the host's own API, answered from the
+run ledger — and caches the answer; persons' sessions never get the deny.
+Honest edges, said rather than hidden: a **checkout lane** (`worktree:
+false`) has no worktree mark, so there the hook is guardrail without the
+wall; and a boundary git that slips past both has no credential to spend
+anyway — the wall is the safety, the hook is courtesy.
+
+## `prompts/` — the guidance the operator can edit
+
+Automated prompts don't fit in an agent file without making a mess, and
+"this is entirely up to the operator. They want to break their server,
+they can. … 'fixing it' is just removing their messed up version."
+
+- **Defaults live in core code**, tested, single source. The set:
+  `worker-contract`, `nudge`, `feedback-loop`, `review-posture`,
+  `pr-body`, `escalation` (the HITL form text), `job-result` (the re-entry
+  line). Grows only by ruling.
+- **Setup installs a copy** into `<home>/prompts/<name>.md`, never
+  overwrites an existing file, and each installed file opens with a
+  warning header: edit freely; delete this file to get the built-in back.
+- **Read at use**, so an edit lands on the next run and a delete is
+  instant restoration. Missing or unreadable file → the built-in default.
+- **Composition stays code.** Templates fill the *guidance slots* of the
+  orchestrator's first prompt; ticket data, tool mechanics and the state
+  machine are not template material. A custom `worker-contract.md` that
+  drops the completion sentence breaks the run — allowed, warned, and one
+  `rm` from fixed.
+- The **agent file** carries the per-lane posture line (the operator's:
+  "if this is returning work, with unresolved comments, process feedback by
+  either agreeing (do the work) or disagreeing (leave a grounded comment);
+  both use aivi_respond_feedback"), copyable from `docs/plans/templates`.
+
+## Ledger
+
+One migration adds the loop's state to `orchestrator_runs`: a `feedback`
+JSON — `{ openThreadIds: string[], attempts: number, escalated: boolean }`
+— written at start, counted at each rejected completion. Survives restarts
+because everything else does.
+
+## Build order
+
+Each slice lands with tests at the boundary it moves, docs in the same
+commit, and the operator's word to start.
+
+1. **Worktree gets its caller** — `WorkRequest.branch`, orchestrator
+   prepare creates/reuses the worktree with `fetchBranch` injected, the
+   no-credential mark. Nothing below is live until this.
+2. **Push/sync split** — `aivi_push` (force-with-lease **plus the
+   integrate-check**), `aivi_sync` +
+   `fetchRefs`, `aivi_pr` reduced to *open the PR* (push-if-needed,
+   already-open answers, fresh PR after merge), the lease-refusal message
+   naming `aivi_sync`.
+3. **The feedback loop** — `ReviewFacts.comments`, `PrFacts.mergeable`,
+   `commentPr`, `submitReview`, the start snapshot (migration included),
+   first-prompt composition, `aivi_review`, `aivi_respond_feedback`, the
+   completion gate with the 3-strike escalation form (an answer resets the
+   strikes).
+4. **The hook + `prompts/`** — session-scoped deny in aivi's plugin, the
+   host membership endpoint, core defaults + setup-installed copies +
+   read-at-use loader, templates doc for agent files.
+5. **Live gate** — one real round trip on a real repository: push → PR →
+   human review comment → ticket back → agree → push → disagree → respond
+   → complete → review round → gate nudge → escalation answered → done.
+
+## Open questions
+
+1. `aivi_pr`'s push-if-needed: when that push's lease fails, does `aivi_pr`
+   refuse naming `aivi_sync` (my lean: yes, one truth per boundary), or
+   sync transparently first?
+2. Does the review agent REQUEST_CHANGES (formal, GitHub shows it) or post
+   COMMENT-state reviews only (quieter, same threads)? Both are `submitReview`;
+   it is a posture default, and belongs to `review-posture.md` either way.
+3. `aivi` CLI for prompts (`aivi prompts install/restore`) or only the
+   setup guide's copy? Small either way; setup-first is my lean.
