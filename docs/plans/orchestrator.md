@@ -83,9 +83,12 @@ close).
       kill; a full pool queues the reacquisition and a refusal is said;
       a stop reaches a parked run; a wait that survived a restart re-arms
       its clock from the boot. (2026-10-02)
-- [ ] 11 Wizard: after **all** lanes are configured, one question — a select
+- [x] 11 Wizard: after **all** lanes are configured, one question — a select
       of the configured lanes (or `-- None --`) picking the queue lane. Not
-      per lane.
+      per lane. Options are limited to lanes that could legally hold the
+      queue (a lane whose next works nobody is no option), and choosing a
+      lane that just chose an agent gives the agent up — said out loud.
+      (2026-10-02)
 - [ ] 12 Live round with real pools (capacity 1–2): ordering, refusal, queue
       pickup, elicitation timeout + resume, restart reconcile. Then commits,
       changesets, and the single v1 rc tag.

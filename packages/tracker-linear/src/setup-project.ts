@@ -31,6 +31,35 @@ export function openStates(states: LinearTeam['states']): LinearTeam['states'] {
   });
 }
 
+/** The lanes the queue question may offer (ruled 2026-10-02): **one**
+ *  question after all lanes are configured, and its candidates are the
+ *  lanes that could legally hold the queue — a queue lane must feed a
+ *  worker lane, so a lane whose next works nobody is no candidate, and the
+ *  last lane feeds nothing at all. Offering anything else would write a
+ *  config that refuses to load. Exported pure, like the closed-state
+ *  ruling above it, so the wizard's rules are testable apart from prompts. */
+export function queueCandidates(lanes: ProjectLaneInput[]): ProjectLaneInput[] {
+  return lanes.filter((_, at) => lanes[at + 1]?.agent !== undefined);
+}
+
+/** Mark the chosen queue lane. The queue answer is the wizard's later
+ *  word, so a lane that just chose an agent gives it up — and says so out
+ *  loud, because a lane silently losing its worker is not a wizard. The
+ *  returned lines are what the caller logs; the marking itself follows
+ *  core's load rules: a queue lane works none and writes nothing. */
+export function markQueue(lanes: ProjectLaneInput[], chosen: string): string[] {
+  const lane = lanes.find(l => l.name === chosen);
+  if (!lane) return [];
+  const said: string[] = [];
+  if (lane.agent !== undefined) {
+    delete lane.agent;
+    said.push(`"${chosen}" works nobody then — it waits work instead`);
+  }
+  delete lane.worktree;
+  lane.queue = true;
+  return said;
+}
+
 const contributor: ProjectContributor = {
   role: 'tracker',
   async setup(ctx) {
@@ -115,6 +144,26 @@ const contributor: ProjectContributor = {
       }
       lanes.push({ name: state.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
     }
+    // The queue: ONE question for the whole workflow (ruled 2026-10-02,
+    // after every lane is configured — never a per-lane ask). "-- None --"
+    // leaves the workflow without a queue lane, which is the old shape.
+    const candidates = queueCandidates(lanes);
+    if (candidates.length) {
+      const answer = await ctx.prompts.select({
+        message: 'Which lane waits with work while the working lanes are full (the queue)?',
+        options: [
+          ...candidates.map(lane => ({ value: lane.name, label: lane.name })),
+          { value: '', label: '-- None --' },
+        ],
+      });
+      if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
+      const chosen = String(answer).trim();
+      for (const line of chosen ? markQueue(lanes, chosen) : []) await ctx.prompts.log.message(line);
+    } else if (lanes.length)
+      await ctx.prompts.log.message(
+        'no lane sits before a working lane, so nothing can wait for a slot — a queue lane comes later with a worker lane',
+      );
+
     if (!lanes.length)
       await ctx.prompts.log.message(
         'these teams have no workflow states yet — lanes get written once the board has some',

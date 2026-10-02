@@ -6,8 +6,9 @@
  *  (client.test.ts), `openStates` filters — together they are the board. */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { ProjectLaneInput } from '@aivi/core';
 import type { LinearTeam } from '../src/client.ts';
-import { openStates } from '../src/setup-project.ts';
+import { markQueue, openStates, queueCandidates } from '../src/setup-project.ts';
 
 const states: LinearTeam['states'] = [
   // A team's states as listTeams returns them: board order already.
@@ -37,4 +38,35 @@ test('openStates dedupes a shared state name across teams, keeping the first', (
     openStates(twice).map(s => s.name),
     ['Backlog', 'Todo', 'In Progress', 'In Review', 'Triage'],
   );
+});
+
+test('the queue question is one question over the lanes that could legally wait work', () => {
+  const lanes: ProjectLaneInput[] = [
+    { name: 'Backlog' },
+    { name: 'Todo' },
+    { name: 'In Progress', agent: 'developer' },
+    { name: 'In Review', agent: 'reviewer' },
+  ];
+  // Backlog's next works nobody; the last lane feeds nothing. Everything
+  // else sits before a worker and could hold the queue.
+  assert.deepEqual(
+    queueCandidates(lanes).map(l => l.name),
+    ['Todo', 'In Progress'],
+  );
+
+  const said = markQueue(lanes, 'In Progress');
+  assert.deepEqual(said, ['"In Progress" works nobody then — it waits work instead'], 'the loss is said');
+  assert.deepEqual(lanes[2], { name: 'In Progress', queue: true }, 'the later word wins: the queue lane works none');
+  assert.equal(
+    lanes.findIndex(l => l.queue),
+    2,
+  );
+});
+
+test('a workflow with no worker lane asks no queue question — and none was ruled a valid answer', () => {
+  const lanes = [{ name: 'Backlog' }, { name: 'Todo' }];
+  assert.deepEqual(queueCandidates(lanes), [], 'nothing could legally wait work yet');
+  // The wizard offers '-- None --': marking nobody changes nothing.
+  markQueue(lanes, '');
+  assert.deepEqual(lanes, [{ name: 'Backlog' }, { name: 'Todo' }]);
 });

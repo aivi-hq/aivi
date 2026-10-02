@@ -224,9 +224,15 @@ recording.
    array `projects.<id>.lanes`, in board order (type group, then position);
    **closed states (Done, Canceled, Duplicate) are never written** — the
    tracker recognizes them by type, and a run ending in the last configured
-   lane moves nowhere: a person closes the ticket. No lanes means nothing is
-   picked up for the project and its tickets are silent; the assistant still
-   answers pings. A hand delegation a lane cannot run gets the fixed answer,
+   lane moves nowhere: a person closes the ticket. After **all** lanes are
+   configured comes the queue: **one** question (ruled 2026-10-02, never a
+   per-lane ask) — which lane waits with work while the working lanes are
+   full, `-- None --` included. Its options are only the lanes that could
+   legally hold the queue — a lane whose next works nobody is no option, and
+   the last lane feeds nothing — and choosing a lane that just got an agent
+   gives that agent up out loud: the queue answer is the later word. No
+   lanes means nothing is picked up for the project and its tickets are
+   silent; the assistant still answers pings. A hand delegation a lane cannot run gets the fixed answer,
    not the assistant. With no forge installed the project is repo-less
    (memory and knowledge, no checkout).
 5. Later, only if a second face in Linear's UI is wanted: another app, its
