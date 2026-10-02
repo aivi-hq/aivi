@@ -30,10 +30,17 @@ export interface WorktreeInput {
   source: string;
   /** Where the worktree goes; conventionally `<project>/worktrees/<agent session id>`. */
   path: string;
-  /** Linear's branch name for the issue (`Issue.branchName`). */
+  /** The branch the worker works on: what the tracker names the issue's
+   *  branch (Linear's `Issue.branchName`). */
   branch: string;
   /** Who aivi is when it commits here: written into the worktree, see `markWorktree`. */
   identity: GitIdentity;
+  /** The boundary crossing, when the project has a forge: the caller injects
+   *  that forge's `fetchBranch` for this project's remote (ruled 2026-10-02:
+   *  every external boundary is crossed by using the forge). Without it the
+   *  worktree starts from refs the clone already holds — this code never
+   *  reaches `origin` itself. */
+  fetchBranch?: (branch: string) => Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -65,8 +72,9 @@ export const worktreePathFor = (sourceDirectory: string, agentSession: string) =
   join(projectLayout(dirname(sourceDirectory)).worktrees, agentSession.replaceAll(/[^A-Za-z0-9_-]/g, '_'));
 
 /**
- * Make the worktree a worker runs in, on Linear's branch for the issue,
- * starting from the remote tip so a stale `source/` never matters:
+ * Make the worktree a worker runs in, on the ticket's branch, starting from
+ * the remote tip — which arrives only through the injected forge fetch, so a
+ * stale `source/` never matters where a forge owns the remote:
  * `origin/<branch>` when the branch already exists upstream (a second worker
  * on the same issue continues it), the local branch when only that exists,
  * else a new branch from the remote default branch. An existing worktree at
@@ -90,15 +98,15 @@ export async function ensureWorktree(input: WorktreeInput): Promise<{ path: stri
   // this issue holds the branch and its uncommitted work: the new session continues there.
   const holder = worktreeHolding(await git('worktree', 'list', '--porcelain'), input.branch);
   if (holder) return { path: await ready(holder), branch: input.branch, base: 'existing worktree' };
-  // The one fetch in the orchestrator's local-only git, and it is caught: the
-  // worktree starts from the remote tip so a stale `source/` never matters,
-  // and a machine without credentials has no origin to reach. By the
-  // remote/local boundary (docs/plans/forge-github.md) this transfer belongs
-  // to the forge — whether its sync should keep `origin` refs fresh (it
-  // fetches only the checked-out branch today) or the worktree should start
-  // from refs already in the clone waits for the build that gives the
-  // worktree its caller; nothing in production asks yet (ruled open 2026-10-02).
-  await git('fetch', '--quiet', '--prune', 'origin').catch(() => {});
+  // The worktree starts from the remote tip so a stale `source/` never
+  // matters — and when a forge owns the remote, that fetch is the forge's:
+  // the caller injects it here, because every external boundary is crossed
+  // by using the forge (ruled 2026-10-02; the raw fetch that used to sit on
+  // this line was the orchestrator reaching `origin` itself, and it is
+  // gone). With no forge injected this stays local git: the refs the clone
+  // already holds decide, and a fetch failure is the forge's to say, not a
+  // truth this code swallows.
+  if (input.fetchBranch) await input.fetchBranch(input.branch);
   const exists = (ref: string) =>
     git('rev-parse', '--verify', '--quiet', ref).then(
       () => true,

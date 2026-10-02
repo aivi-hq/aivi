@@ -298,6 +298,30 @@ export class GitHubForge implements Forge {
   }
 
   /**
+   * The one fetch the worktree machinery needs, and it is the forge's: the
+   * refspec names the branch, the URL is the one this forge named when it
+   * claimed the project, and the credential rides the environment — the
+   * checkout's config stays untouched, as with every other transfer. A
+   * remote without that branch answers "couldn't find remote ref", which is
+   * the ordinary news of a ticket branch never pushed: said quietly, no
+   * ref left behind. Anything else is a failed transfer, and it throws.
+   */
+  async fetchBranch(repo: RepoRef, directory: string, branch: string): Promise<void> {
+    const transport = await this.transfer(repo);
+    const fetched = await runGit(
+      directory,
+      ['fetch', '--quiet', transport.url, `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
+      { env: transport.env },
+    );
+    if (fetched.ok) return;
+    if (/couldn't find remote ref/i.test(fetched.message)) {
+      this.log.debug('branch.absent', { repo: repo.id, branch });
+      return;
+    }
+    throw new Error(`forge-github: fetching ${branch} from ${repo.id} failed: ${fetched.message}`);
+  }
+
+  /**
    * Move aivi's commits to the remote, as the app and never as the person at
    * the keyboard, and open the pull request when this branch has none and a
    * message came with the push. The base is the repository's own default

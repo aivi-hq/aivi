@@ -115,8 +115,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   const tasks = new TaskRegistry();
   const tools = new ToolRegistry();
   // The forge registry: modules register their forges at start; the projects-sync
-  // task asks who owns a remote before fetching it, and the push and the review
-  // wake will ask the same question when they come.
+  // task asks who owns a remote before fetching it, and `aivi_pr` asks the
+  // same question before pushing; the review gather will ask it too.
   const forges = new Forges();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
@@ -157,6 +157,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       return project.directory;
     },
     dispatcher,
+    forges,
     // The orchestrator's own dial: how long an open elicitation holds a slot.
     keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
   });

@@ -30,6 +30,15 @@ async function checkout(root: string) {
 const config = async (cwd: string, key: string) =>
   (await bare(cwd, 'config', '--get', key).catch(() => null))?.stdout.trim() ?? '';
 
+/** The forge's fetch, stood in for: the fixture's origin is a local path,
+ *  so the crossing itself is plain git — what the test watches is that the
+ *  worktree code hands it over instead of reaching `origin` itself. */
+const forgeFetch =
+  (source: string) =>
+  async (_branch: string): Promise<void> => {
+    await git(source, 'fetch', '-q', '--prune', 'origin');
+  };
+
 test('a worker worktree starts from the remote tip on Linear’s branch, continues an upstream branch, and is reused', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-worktree-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -40,7 +49,13 @@ test('a worker worktree starts from the remote tip on Linear’s branch, continu
 
   const path = worktreePathFor(source, 'as_1');
   assert.equal(path, join(root, 'projects/site/worktrees/as_1'));
-  const made = await ensureWorktree({ source, path, branch: 'me/eng-1-fix', identity: BOT });
+  const made = await ensureWorktree({
+    source,
+    path,
+    branch: 'me/eng-1-fix',
+    identity: BOT,
+    fetchBranch: forgeFetch(source),
+  });
   assert.deepEqual(made, { path, branch: 'me/eng-1-fix', base: 'origin/main' });
   assert.equal(
     await readFile(join(path, 'README.md'), 'utf8'),
@@ -76,9 +91,26 @@ test('a worker worktree starts from the remote tip on Linear’s branch, continu
     path: worktreePathFor(source, 'as_2'),
     branch: 'me/eng-1-fix',
     identity: BOT,
+    fetchBranch: forgeFetch(source),
   });
   assert.equal(second.base, 'origin/me/eng-1-fix');
   assert.equal(await readFile(join(second.path, 'work.md'), 'utf8'), 'progress');
+});
+
+test('without the forge fetch the worktree starts from refs the clone already holds — a broken origin never matters', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-worktree-local-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { upstream, source } = await checkout(root);
+  // Upstream moves on, then stops existing: the only way to prove this code
+  // reads refs and never reaches the remote itself (ruled 2026-10-02).
+  await writeFile(join(upstream, 'README.md'), 'two');
+  await git(upstream, 'commit', '-q', '-am', 'two');
+  await rm(upstream, { recursive: true, force: true });
+
+  const path = worktreePathFor(source, 'as_1');
+  const made = await ensureWorktree({ source, path, branch: 'me/eng-1-fix', identity: BOT });
+  assert.equal(made.base, 'origin/main', 'the ref the clone holds decides the base');
+  assert.equal(await readFile(join(path, 'README.md'), 'utf8'), 'one', 'no bytes crossed: stale is honest');
 });
 
 test('a worker worktree says aivi launched it: the bot authors its commits and no co-author trailer follows', async t => {

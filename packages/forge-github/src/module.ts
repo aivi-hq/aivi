@@ -7,8 +7,9 @@
  *  is waiting on. The registry question — *"who owns this project's
  *  remote?"* — is asked now (built 2026-10-02): the projects-sync task was
  *  the first, and a checkout whose `origin` this app recognises syncs
- *  through this forge, authenticated as its own installation. The push and
- *  the review wake will ask the same question when they come.
+ *  through this forge, authenticated as its own installation. The push asks
+ *  it today — the worker's `aivi_pr` call ends here — and the review gather
+ *  will ask it when it comes.
  */
 import type { AiviModule, AiviServices } from '@aivi/plugin';
 import type { ForgeGithubConfig } from './config.ts';

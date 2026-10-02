@@ -1,6 +1,9 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { promisify } from 'node:util';
 import type { Logger, ProjectLane, ToolDescriptor } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
+import type { Forges } from '@aivi/plugin/forge';
 import type { OpenCodeClient, Orchestrator as OrchestratorApi, SessionEvents, ToolHandler } from '@aivi/plugin/module';
 import type {
   FailureCode,
@@ -83,6 +86,9 @@ export interface OrchestratorDeps {
   /** The dispatcher is the only part that knows how much capacity is left:
    *  the orchestrator asks it for every slot and never counts one itself. */
   dispatcher: Dispatcher;
+  /** Who owns a project's remote: `aivi_pr` asks before it pushes, and an
+   *  unowned remote means the tool says so plainly. */
+  forges: Forges;
   /** How long an open elicitation holds its slot. The orchestrator's own
    *  dial (docs/orchestrator.md, "When a worker needs human input"). */
   keepAliveMs: number;
@@ -94,6 +100,14 @@ const NUDGE =
   'Your turn ended without reporting. If you are finished, call the aivi_work_complete tool ' +
   '(outcome "success" or "failure") with a one-line summary. If you are blocked or need a ' +
   'decision from a person, call the aivi_ask tool with your question. Do not just reply in text.';
+
+const exec = promisify(execFile);
+
+/** Local git reads for the push tool: trimmed stdout, `''` when git has no
+ *  answer. Nothing here reaches a remote — crossing the boundary is the
+ *  forge's, and `aivi_pr` hands the transfer over below. */
+const localGit = async (cwd: string, ...args: string[]): Promise<string> =>
+  (await exec('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 }).catch(() => null))?.stdout.trim() ?? '';
 
 /** The rules of the game, sent with the ticket at the start of every run.
  *  The tools are the host's, so their explanation lives here and no tracker
@@ -924,6 +938,44 @@ export class Orchestrator implements OrchestratorApi {
     return { recorded: true, steps: plan.steps.length };
   };
 
+  /**
+   * The worker wants its branch moved: the commits to `origin`, and a pull
+   * request with the message it wrote. The decision is the worker's, the
+   * credential is the forge's — this checks the run, asks the registry
+   * **who owns this project's remote**, reads locally what there is to
+   * push (a detached head and the default branch are said, not pushed),
+   * and hands the transfer over. No forge, no remote, nothing ahead: the
+   * tool errors plainly. It is served always — the plugin registers at
+   * load, per-session injection is not possible (ruled 2026-10-02) — so
+   * the plain error is the answer a research ticket gets.
+   */
+  readonly prTool: ToolHandler = async call => {
+    const run = this.deps.ledger.bySession(call.sessionId);
+    if (!run) throw new ToolError(404, 'This session is not an aivi run; aivi_pr is not available here.');
+    if (isTerminal(run.state)) throw new ToolError(409, `This run already ended (${run.state}).`);
+    const { title, body } = parsePr(call.input);
+    const directory = run.worktree ?? this.deps.directory(run.projectId);
+    const owned = await this.deps.forges.owner({ id: run.projectId, directory });
+    if (!owned)
+      throw new ToolError(
+        409,
+        `Project ${run.projectId} has no forge for its remote, so aivi cannot push or open a pull request.`,
+      );
+    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    if (!branch) throw new ToolError(409, 'This run sits on a detached HEAD; there is no branch to push.');
+    // `--short` says a remote ref as `origin/main`; the guard wants the name.
+    const defaultBranch = (
+      await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
+    ).replace(/^origin\//, '');
+    if (defaultBranch && branch === defaultBranch)
+      throw new ToolError(409, `${branch} is the project's default branch: a pull request needs a branch of its own.`);
+    const ahead = await localGit(directory, 'rev-list', '--count', `origin/${branch}..HEAD`);
+    if (ahead === '0') throw new ToolError(409, `Nothing to push: origin/${branch} already has every commit here.`);
+    const pr = await owned.forge.push(owned.repo, directory, branch, { author: run.agent, title, body });
+    this.deps.log.info('run.pushed', { run: run.id, branch, repo: owned.repo.id, pull: pr?.id });
+    return pr ? { pushed: true, pull: pr.url, state: pr.state } : { pushed: true };
+  };
+
   /** The worker tools to claim on the host's tool door; the plugin registers them as `aivi_*`. */
   tools(): { descriptor: ToolDescriptor; handler: ToolHandler }[] {
     return [
@@ -1005,6 +1057,26 @@ export class Orchestrator implements OrchestratorApi {
         },
         handler: this.planTool,
       },
+      {
+        descriptor: {
+          namespace: 'aivi',
+          name: 'pr',
+          description:
+            'When your commits are ready, move them to the remote as a pull request: aivi pushes as its ' +
+            'own app — you never run git push yourself — under this title and description. When the ' +
+            'branch already has a pull request, this just brings it the new commits.',
+          input: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'The pull request title.' },
+              body: { type: 'string', description: 'What this pull request does, for a human reviewer.' },
+            },
+            required: ['title'],
+            additionalProperties: false,
+          },
+        },
+        handler: this.prTool,
+      },
     ];
   }
 
@@ -1073,4 +1145,11 @@ function parsePlan(input: Record<string, unknown>): RunPlan {
   }
   if (!steps.length) throw new ToolError(400, 'steps must hold at least one step.');
   return { steps };
+}
+
+function parsePr(input: Record<string, unknown>): { title: string; body: string } {
+  const title = typeof input.title === 'string' ? input.title.trim() : '';
+  if (!title) throw new ToolError(400, 'title is required.');
+  const body = typeof input.body === 'string' ? input.body : '';
+  return { title, body };
 }

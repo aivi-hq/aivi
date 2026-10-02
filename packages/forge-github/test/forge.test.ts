@@ -356,6 +356,48 @@ test('a directory that is not a checkout is held with that reason, not a git com
   ]);
 });
 
+test('fetchBranch carries one branch’s remote tip into the checkout’s refs and moves nothing else', async () => {
+  const { root, origin, source } = await checkout();
+  const forge = (await forgeWith({})).forge;
+  // A person pushes a ticket branch from elsewhere.
+  const seed = join(root, 'seed');
+  await writeFile(join(seed, 'ticket.md'), 'the work\n');
+  await git(seed, 'add', '.');
+  await git(seed, ...AS, 'commit', '--quiet', '-m', 'ticket work');
+  await git(seed, 'push', '--quiet', origin, 'HEAD:refs/heads/me/eng-7-fix');
+  const tip = await git(origin, 'rev-parse', 'refs/heads/me/eng-7-fix');
+
+  await forge.fetchBranch({ id: 'acme/widget', remote: origin }, source, 'me/eng-7-fix');
+  assert.equal(await git(source, 'rev-parse', '--verify', 'refs/remotes/origin/me/eng-7-fix'), tip);
+  assert.equal(await git(source, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'the checkout stays on its branch');
+  await assert.rejects(
+    () => readFile(join(source, 'ticket.md'), 'utf8'),
+    'no files move: the ref is the only thing that arrives',
+  );
+  const written = await gitConfig(source);
+  assert.ok(!written.includes('ghs_token'), written);
+});
+
+test('a remote without that branch is an answer, not a failure — and a failed fetch is said', async () => {
+  const { root, origin, source } = await checkout();
+  const forge = (await forgeWith({})).forge;
+  await forge.fetchBranch({ id: 'acme/widget', remote: origin }, source, 'me/eng-8-never');
+  assert.equal(
+    (
+      await run('git', ['-C', source, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/me/eng-8-never'], {
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      }).catch(() => null)
+    )?.stdout.trim() ?? '',
+    '',
+    'no ref left behind for a branch that never was',
+  );
+  await assert.rejects(
+    () => forge.fetchBranch({ id: 'acme/widget', remote: join(root, 'gone.git') }, source, 'me/eng-7'),
+    /fetching me\/eng-7 from acme\/widget failed/,
+    'the caller cannot tell a stale tip from an absent one, so this failure is not swallowed',
+  );
+});
+
 test('a push moves aivi’s commits to the remote, and no pull request is invented without a message', async () => {
   const { origin, source } = await checkout();
   const api = await forgeWith({ 'GET /repos/acme/widget/pulls': () => ({ status: 200, body: [] }) });

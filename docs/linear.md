@@ -83,7 +83,11 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    the ticket's summary as `initWork` returned it, and the **worker contract**:
    the ticket ends only through `aivi_work_complete`, a person's decision
    only through `aivi_ask`, the checklist through `aivi_plan`, and a turn
-   ending without one is treated as a failure. `startWork` the module says
+   ending without one is treated as a failure. `aivi_pr` belongs to no
+   turn-ending: it is the worker's word that the branch is ready, and the
+   forge — the project's own, if it has one — pushes as its app and opens
+   the pull request (the worker's git stays local; the `git push` deny in
+   the worker's agent file is the operator's own, never aivi's). `startWork` the module says
    nothing for: Linear watches its own agent sessions, and a working session
    shows itself.
 5. **While it runs.** The worker's **progress stream** is live (built

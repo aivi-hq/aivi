@@ -434,6 +434,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
       opencode,
       signal: abort.signal,
     }),
+    forges: new Forges(),
     keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
   });
   return {

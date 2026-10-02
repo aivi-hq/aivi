@@ -1,13 +1,24 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 import { configSchema, type Logger, type ProjectLane, parseDuration } from '@aivi/core';
 import type { Tracker } from '@aivi/plugin';
 import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
+import { Forges } from '../src/forges.ts';
 import { RunLedger } from '../src/orchestrator/ledger.ts';
 import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
 import { Store } from '../src/store.ts';
+import { ToolError } from '../src/tools.ts';
+
+const exec = promisify(execFile);
+const git = (cwd: string, ...args: string[]) =>
+  exec('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
 
 /** The walk over a scripted board: real orchestrator, real dispatcher, real
  *  ledger — only OpenCode and the tracker are faked, because the walk's
@@ -156,6 +167,7 @@ function harness(
   work: Tracker,
   fake = fakeOpenCode(),
   abort = new AbortController(),
+  forges = new Forges(),
 ) {
   const store = new Store(':memory:');
   const ledger = new RunLedger(store);
@@ -178,9 +190,10 @@ function harness(
     keepAliveMs: parseDuration(configSchema.parse({ version: 1, ...written }).orchestrator.elicitationKeepAlive),
     directory: () => '/checkout',
     dispatcher,
+    forges,
   });
   orchestrator.addTracker(work);
-  return { ledger, dispatcher, orchestrator, fake };
+  return { ledger, dispatcher, orchestrator, fake, forges };
 }
 
 const lane = (name: string, extra: Partial<ProjectLane> = {}): ProjectLane => ({
@@ -492,4 +505,80 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
   assert.equal(dispatcher.leases.require(ledger.get(first.runId)!.leaseId!).pool, 'a');
   assert.match(fake.prompts.at(-1)!.text, /The person answered your question: the deep one/);
   assert.equal(dispatcher.leases.held('b'), 0, 'and still nobody moved pools');
+});
+
+test('aivi_pr routes the worker’s push to the forge that owns the remote, and says plainly when there is none', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-pr-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = join(root, 'upstream');
+  await mkdir(upstream);
+  await writeFile(join(upstream, 'README.md'), 'one');
+  await git(upstream, 'init', '-q', '-b', 'main');
+  await git(upstream, 'add', '.');
+  await git(upstream, 'commit', '-q', '-m', 'one');
+  const source = join(root, 'site');
+  await git(root, 'clone', '-q', 'upstream', 'site');
+  // A GitHub clone carries `origin/HEAD` from the remote; say it by hand so
+  // the push tool's default-branch guard has the fact it reads in real life.
+  await git(source, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(source, 'checkout', '-q', '-b', 'me/eng-9-widget');
+  await writeFile(join(source, 'widget.md'), 'a widget');
+  await git(source, 'add', '.');
+  await git(source, 'commit', '-q', '-m', 'the widget');
+
+  const fake = fakeOpenCode();
+  const lanes = [lane('In Progress', { agent: 'dev' })];
+  const { ledger, orchestrator, forges } = harness(lanes, {}, boardFeed(fake, {}), fake);
+  const { run } = ledger.request({
+    projectId: 'site',
+    trackerId: 'linear',
+    ticketId: 't-pr',
+    lane: 'In Progress',
+    agent: 'dev',
+  });
+  ledger.attachSession(run.id, 'ses_pr', source);
+
+  // No forge is not a failure (ruled 2026-09-29): the tool is served always,
+  // and its answer is a plain error naming what is missing.
+  await assert.rejects(
+    () => orchestrator.prTool({ sessionId: 'ses_pr', input: { title: 'Widget', body: 'Adds the widget.' } }),
+    (error: unknown) => error instanceof ToolError && /no forge for its remote/.test(String(error)),
+    'a research project gets its plain answer',
+  );
+
+  const pushes: { branch: string; pr: unknown }[] = [];
+  forges.register({
+    async repoFor(project: { id: string }) {
+      return project.id === 'site' ? { id: 'acme/site', remote: 'https://github.com/acme/site' } : undefined;
+    },
+    async push(_repo: unknown, _worktree: string, branch: string, pr?: unknown) {
+      pushes.push({ branch, pr });
+      return { id: 'pr-1', url: 'https://github.com/acme/site/pull/1', title: 'Widget', state: 'open', branch };
+    },
+  } as never);
+
+  const moved = await orchestrator.prTool({
+    sessionId: 'ses_pr',
+    input: { title: 'Widget', body: 'Adds the widget.' },
+  });
+  assert.deepEqual(
+    pushes,
+    [{ branch: 'me/eng-9-widget', pr: { author: 'dev', title: 'Widget', body: 'Adds the widget.' } }],
+    'the forge does the transfer, named by the worker role that asked',
+  );
+  assert.deepEqual(moved, { pushed: true, pull: 'https://github.com/acme/site/pull/1', state: 'open' });
+
+  // The remote already has every commit: nothing is pushed twice.
+  await git(source, 'push', '-q', 'origin', 'me/eng-9-widget');
+  await assert.rejects(
+    () => orchestrator.prTool({ sessionId: 'ses_pr', input: { title: 'Widget' } }),
+    (error: unknown) => error instanceof ToolError && /Nothing to push/.test(String(error)),
+  );
+
+  // The project's default branch is not a pull request's branch.
+  await git(source, 'checkout', '-q', 'main');
+  await assert.rejects(
+    () => orchestrator.prTool({ sessionId: 'ses_pr', input: { title: 'Widget' } }),
+    (error: unknown) => error instanceof ToolError && /default branch/.test(String(error)),
+  );
 });

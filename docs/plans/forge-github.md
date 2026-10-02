@@ -67,12 +67,17 @@ authenticated as its own installation; no forge, or a remote no forge
 recognises, stays plain git naming no plugin (the configurable path). The
 worktree git moved too: `tracker-linear/src/worktree.ts` is now
 `host/src/orchestrator/worktree.ts` — a tracker answers tickets, worktree
-git is the orchestrator's. **One open question moved with it** (ruled open
-2026-10-02): `ensureWorktree` still fetches `origin` (caught) so a worktree
-starts from the remote tip, which is the remote/local boundary's — resolving
-it (the forge's sync keeps `origin` refs fresh, or the worktree starts from
-refs already in the clone) waits for the build that gives the worktree its
-caller; nothing in production calls it yet.
+git is the orchestrator's. **The question that moved with it was ruled the
+same day**: *"every single external boundary is crossed by using the
+forge."* The fetch therefore moved onto the `Forge` interface as
+`fetchBranch` — GitHub answers it with a refspec naming the branch and the
+credential in the environment (nothing in `.git/config`, as always); a
+remote without that branch is an answer, not a failure, and it returns
+quietly, while a failed fetch throws, because the caller cannot tell a
+stale tip from an absent one. `ensureWorktree` takes that fetch **injected**
+when a forge owns the remote; with none injected the worktree starts from
+refs the clone already holds. The raw fetch is gone and the orchestrator's
+git is local-only in fact, not only in the table.
 
 **No shared `@aivi/git` package now** (ruled 2026-09-29): the orchestrator
 keeps its raw local git, a forge carries its own remote git; whether a
@@ -494,23 +499,27 @@ flow detail stays proposed until worked examples are walked.
       field of `AIVI_AGENT_BOT` (2026-09-30, the operator's call: there is no
       installed config to break, no backwards compatibility to hold). Core keeps
       the commit pair — name and email — and no GitHub fact at all.
-- [ ] Q1's other half: the worker's `git push` deny in its own agent file, and
-      the push on the orchestrator's word. The transfer side is built above;
-      the word to give it is the orchestrator's. **Ruled 2026-10-02: the PR
-      message rides a separate `aivi_pr` tool** — "that's a separate tool
-      signaling something else", not the completion tool — served always and
-      erroring plainly when the project has no forge, no remote or nothing to
-      push (per-session tool injection is not possible: the plugin registers
-      at load, and calls are already per-session).
+- [x] Built Q1's other half (2026-10-02): the `aivi_pr` tool. The worker
+      calls it with the pull-request title and description; the orchestrator
+      checks the run, asks the registry who owns the remote, reads *locally*
+      what there is to push (a detached head, the project's default branch
+      and a branch the remote already has in full are each said, not
+      pushed), and hands the transfer over: the forge pushes as its own app
+      and opens the pull request only when the branch has none. Served
+      always and erroring plainly (per-session tool injection is not
+      possible: the plugin registers at load, and calls are already
+      per-session). The half that remains is the person's: the `git push`
+      deny lives in the worker's own agent file — aivi never writes a deny
+      (AGENTS.md) — so until that file carries it, the worker's git is
+      local-only by tool design, not by enforcement.
 - [x] Took the misplaced remote git out of its current package (2026-10-02):
       `projects.sync` asks the forge registry before fetching — an owned
       remote syncs through the forge's `syncSource` (the rewrite), an
       unowned one and a host with no forge stay plain generic git naming no
       plugin — and the worktree git moved from `tracker-linear/src/worktree.ts`
-      to `host/src/orchestrator/worktree.ts`. Open question that moved with
-      it: `ensureWorktree`'s caught `git fetch origin` (remote tip start) vs
-      the orchestrator's local-only git — see the boundary section; nothing
-      in production calls it yet.
+      to `host/src/orchestrator/worktree.ts`. The open question that moved
+      with it was ruled the same day — the fetch is `Forge.fetchBranch` now,
+      injected where a forge owns the remote; see the boundary section.
 - [ ] Docs: configuration.md (the block, the secret) and CONTEXT.md's package
       list and vocabulary travelled with this build; operations.md waits until
       the forge has a part in the worker story, which it gets with the

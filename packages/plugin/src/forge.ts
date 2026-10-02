@@ -131,6 +131,17 @@ export interface Forge {
    *  the checkout aivi indexes is not a working directory. */
   syncSource(repo: RepoRef, directory: string): Promise<ForgeSync>;
 
+  /** Carry one branch's remote tip into the checkout's own remote refs
+   *  (`refs/remotes/origin/<branch>`) so the orchestrator can start a
+   *  worktree from it **without ever touching the remote itself** — every
+   *  external boundary is crossed by using the forge (ruled 2026-10-02),
+   *  and what aivi does with the ref afterwards is local git. A remote
+   *  without that branch — a ticket branch never pushed — says so, and
+   *  that is an answer, not a failure: it returns quietly. A transfer that
+   *  failed throws, because the caller cannot tell a stale tip from an
+   *  absent one. */
+  fetchBranch(repo: RepoRef, directory: string, branch: string): Promise<void>;
+
   /** Move aivi's own commits to `origin`, and open the pull request if this
    *  branch has none yet and a message came with the push. The orchestrator
    *  decides *when* (turn end); how the forge authenticates — mint once,
