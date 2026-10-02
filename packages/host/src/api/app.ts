@@ -20,6 +20,7 @@ import { registerJobs } from './routes/jobs.ts';
 import { registerKnowledge } from './routes/knowledge.ts';
 import { registerLinks } from './routes/links.ts';
 import { registerPeople } from './routes/people.ts';
+import { registerRun } from './routes/run.ts';
 import { registerStatus } from './routes/status.ts';
 import { registerTools } from './routes/tools.ts';
 import { registerWake } from './routes/wake.ts';
@@ -37,6 +38,9 @@ export interface HostApiOptions {
   health?: (() => ModuleHealth[]) | undefined;
   /** `GET /context?session=`: describe an OpenCode session for the agent running in it; absent without OpenCode. */
   context?: ((sessionID: string, signal: AbortSignal) => Promise<string>) | undefined;
+  /** `GET /run?session=`: is this session one of aivi's runs? Answered from
+   *  the run ledger; the redirect hook asks it once per session. */
+  runMembership?: ((sessionID: string) => boolean) | undefined;
   /** Module webhooks, outside the version gate and bearer auth; absent from the CLI. */
   routes?: PublicRoutes | undefined;
   /** The channel modules that can consume a link code, with their redemption hints; absent from the CLI. */
@@ -71,6 +75,7 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
     wake,
     health,
     context,
+    runMembership,
     routes,
     linkable,
     tools,
@@ -104,6 +109,7 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
   registerStatus(app, { store, loaded, health });
   registerKnowledge(app, { loaded, knowledge, log });
   registerContext(app, { context, log });
+  registerRun(app, { runMembership, log });
   registerWake(app, { wake });
   registerLinks(app, { store, linkable });
   registerPeople(app, { store });

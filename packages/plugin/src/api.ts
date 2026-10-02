@@ -107,6 +107,8 @@ export function createHostClient(baseUrl: string, options: HostClientOptions = {
       });
     },
     health: () => request<{ ok: true }>('/health', { timeoutMs: 3_000 }),
+    runMembership: sessionId =>
+      request<{ run: boolean }>(`/run?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 3_000 }),
     context: sessionId =>
       request<{ text: string }>(`/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
     wake: () => request<{ woken: boolean }>('/wake', { method: 'POST', timeoutMs: 3_000 }),

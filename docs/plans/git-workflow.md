@@ -191,14 +191,17 @@ branch, body signed `_worker: aivi · <role>_`.
 
 ## The redirect hook
 
-`packages/opencode/src/index.ts` adds a `permission.evaluate` hook, the
-attribution plugin's shape: normalise the shell resource, match `git
-push|fetch|pull|clone|ls-remote|remote` (any flags/`-c` prefixes), deny
+**Built 2026-10-02.** `packages/opencode/src/index.ts` added a
+`permission.evaluate` hook, the attribution plugin's shape: pure logic in
+`redirect.ts` (normalise the shell resource, match `git
+push|fetch|pull|clone|ls-remote|remote` — any flags/`-c` prefixes), deny
 with a redirect message — `git push is disabled in aivi runs — use
 aivi_push (and aivi_sync first if the remote moved)`. Scoped by the one
 fact the plugin has: `sessionID`. The plugin asks the host once per
-session — a membership endpoint on the host's own API, answered from the
-run ledger — and caches the answer; persons' sessions never get the deny.
+session — `GET /run?session=`, answered from the run ledger — and caches
+the answer; persons' sessions never get the deny, and a host that cannot
+answer fails **open**, retried at the next boundary command: the wall is
+the safety, the hook is courtesy.
 Honest edges, said rather than hidden: a **checkout lane** (`worktree:
 false`) has no worktree mark, so there the hook is guardrail without the
 wall; and a boundary git that slips past both has no credential to spend

@@ -6,6 +6,7 @@ import { createHostClient } from '@aivi/plugin/api';
 import { createApp, serveApp } from '../src/api/app.ts';
 import { PublicRoutes } from '../src/api/public.ts';
 import { JobRefused } from '../src/jobs.ts';
+import { RunLedger } from '../src/orchestrator/ledger.ts';
 import { Store } from '../src/store.ts';
 import { hostVersion } from '../src/version.ts';
 
@@ -449,4 +450,67 @@ test('the gate as plumbing: exempt paths answer, the shipped client passes, sile
   // honest 404/405 to a silent caller, not a refusal naming a version.
   assert.equal((await fetch(`${base}/nope`)).status, 404, 'an unknown path is not a stale client');
   assert.equal((await fetch(`${base}/nope`, { method: 'POST' })).status, 405, 'alike for a POST');
+});
+
+test('GET /run answers the redirect hook from the run ledger, and only from it', async t => {
+  const store = new Store(':memory:');
+  const loaded: LoadedConfig = {
+    path: '/config.json',
+    config: configSchema.parse({ version: 1 }),
+    projects: [{ id: 'app', directory: '/app' }],
+    sources: [],
+  };
+  const ledger = new RunLedger(store);
+  const { run } = ledger.request({
+    projectId: 'app',
+    trackerId: 'linear',
+    ticketId: 't-1',
+    lane: 'In Progress',
+    agent: 'dev',
+  });
+  ledger.attachSession(run.id, 'ses_worker', '/app');
+  const server = serveApp(
+    createApp({ store, loaded, runMembership: sessionID => ledger.bySession(sessionID) !== undefined }),
+  );
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  const client = createHostClient(base);
+
+  assert.deepEqual(await client.runMembership('ses_worker'), { run: true }, 'a run’s session is a run');
+  assert.deepEqual(await client.runMembership('ses_person'), { run: false }, 'a person’s session is not');
+  assert.equal((await fetch(`${base}/run`, { headers: api })).status, 400, 'the question needs its session');
+  assert.equal((await fetch(`${base}/run?session=ses_worker`, { method: 'POST', headers: api })).status, 405);
+  assert.equal(
+    (await fetch(`${base}/run?session=ses_worker`)).status,
+    403,
+    'the gate binds this core endpoint like every other',
+  );
+});
+
+test('a host without the run ledger says the membership is unavailable, not "no"', async t => {
+  const store = new Store(':memory:');
+  const loaded: LoadedConfig = {
+    path: '/config.json',
+    config: configSchema.parse({ version: 1 }),
+    projects: [],
+    sources: [],
+  };
+  const server = serveApp(createApp({ store, loaded }));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  await assert.rejects(
+    createHostClient(`http://127.0.0.1:${address.port}`).runMembership('ses_any'),
+    /unavailable|not reachable/i,
+  );
 });

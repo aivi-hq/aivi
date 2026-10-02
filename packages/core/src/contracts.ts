@@ -280,6 +280,10 @@ export interface HostClient {
   ): Promise<unknown>;
   /** Liveness only: succeeds when the host answers HTTP, whatever it thinks of the caller. */
   health(): Promise<{ ok: true }>;
+  /** Is this OpenCode session one of aivi's runs? The redirect hook's one
+   *  question, answered from the run ledger: a person's session is never an
+   *  aivi run and never denied. */
+  runMembership(sessionId: string): Promise<{ run: boolean }>;
   /** The person the bearer names; the one endpoint a request cannot make anonymously. */
   whoami(): Promise<Whoami>;
   /** Operator people management; ungated until the api-only session enforces roles. */

@@ -33,6 +33,15 @@ action, which OpenCode's default policy already allows. There is **no per-agent
 tool allowlist in v2** — availability is location-scoped registration, and you
 grant or withhold each tool with `permissions`.
 
+Besides its tools the plugin registers **one permission hook**: an
+`evaluate` hook that denies boundary git (`push`, `fetch`, `pull`, `clone`,
+`ls-remote`, `remote`) **in aivi's runs only** and says which aivi tool
+does it instead. Membership is the host's fact — `GET /run?session=`,
+answered from the run ledger — asked once per session and cached; a
+person's sessions are never denied, and a host that cannot answer fails
+open (the no-credential worktree mark is the safety, the hook is the
+signpost). See [git workflow](plans/git-workflow.md#the-redirect-hook).
+
 | Tool | Permission action | What it does | Permissions notes |
 | --- | --- | --- | --- |
 | `aivi_connection` | `aivi_connection` | Whether the host answers this process, its version, and which tools were loaded at startup | Read-only; probes `/health` and `/status`. The only tool when the host was down at load. |

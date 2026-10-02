@@ -190,6 +190,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         linkable: () => channels.linkable(),
         tools,
         context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
+        // The redirect hook's one question, answered from the run ledger:
+        // the ledger is the only fact of who is an aivi run.
+        runMembership: sessionID => ledger.bySession(sessionID) !== undefined,
         log,
       }),
     );

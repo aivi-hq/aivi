@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ServedTool } from '@aivi/core';
 import plugin from '../src/index.ts';
+import type { EvaluationLike } from '../src/redirect.ts';
 
 type Editor = { namespace(ns: unknown): void; add(tool: RegisteredTool): void };
 type RegisteredTool = {
@@ -53,15 +54,32 @@ function rebuild(fake: ReturnType<typeof fakeAgentDomain>, system = 'x') {
   return fresh.get('fresh')!.system;
 }
 
+/** A fake permission domain: records the evaluate hook so tests can fire
+ *  evaluations through it like OpenCode does. */
+function fakePermission() {
+  const evaluates: ((event: never) => Promise<void> | void)[] = [];
+  return {
+    evaluates,
+    domain: {
+      hook: async (_name: string, callback: (event: never) => Promise<void> | void) => {
+        evaluates.push(callback);
+        return { dispose: async () => {} };
+      },
+    },
+  };
+}
+
 function setupWith(
   options: Record<string, unknown>,
   onAdd: (tool: RegisteredTool) => void,
   onDispose = () => {},
   agent?: ReturnType<typeof fakeAgentDomain>['domain'],
+  permission?: ReturnType<typeof fakePermission>['domain'],
 ) {
   return plugin.setup({
     options,
     agent,
+    permission: permission ?? fakePermission().domain,
     tool: {
       transform: async (callback: (editor: Editor) => void) => {
         callback({ namespace() {}, add: onAdd });
@@ -99,6 +117,8 @@ async function hermeticXdg(t: { after(fn: () => void): void }) {
 type Route = (request: {
   body: unknown;
   headers: Record<string, string | undefined>;
+  /** Path and query, for endpoints that answer on a query parameter. */
+  url: string;
 }) => { status?: number; json: unknown } | Promise<{ status?: number; json: unknown }>;
 async function hostServing(t: { after(fn: () => void): void }, routes: Record<string, Route>): Promise<string> {
   const respond: RequestListener = async (request, response) => {
@@ -116,7 +136,11 @@ async function hostServing(t: { after(fn: () => void): void }, routes: Record<st
       response.end('{"error":"Not found"}');
       return;
     }
-    const answer = await route({ body, headers: request.headers as Record<string, string | undefined> });
+    const answer = await route({
+      body,
+      headers: request.headers as Record<string, string | undefined>,
+      url: `${url.pathname}${url.search}`,
+    });
     response.statusCode = answer.status ?? 200;
     response.end(JSON.stringify(answer.json));
   };
@@ -462,4 +486,49 @@ test('the persona name is said from config.json, watched like the soul, and read
   // A half-written file costs the name line and nothing else.
   await writeFile(join(root, 'config.json'), 'half-written {');
   assert.equal(rebuild(fake), 'x\n\nI route rather than do.', 'the soul lands even when the config cannot be read');
+});
+
+test('the redirect hook denies boundary git for aivi’s runs only, asking the host once per session', async t => {
+  await hermeticXdg(t);
+  const asked: string[] = [];
+  const base = await hostServing(t, {
+    ...toolsRoute(),
+    'GET /run': request => {
+      asked.push(new URL(`http://x${request.url}`).searchParams.get('session') ?? '');
+      return { json: { run: asked.length === 1 } };
+    },
+  });
+  const permission = fakePermission();
+  await setupWith(
+    { url: base },
+    () => {},
+    () => {},
+    undefined,
+    permission.domain,
+  );
+  assert.equal(permission.evaluates.length, 1, 'the plugin registers one evaluate hook');
+  const evaluate = permission.evaluates[0]! as unknown as (event: EvaluationLike) => Promise<void>;
+
+  const call = (sessionID: string, command: string): EvaluationLike => ({
+    sessionID,
+    action: 'shell',
+    resources: [command],
+    effect: 'allow',
+  });
+
+  const first = call('ses_run', 'git push origin');
+  await evaluate(first);
+  assert.equal(first.effect, 'deny', 'the run’s push is refused');
+  assert.match(first.message ?? '', /aivi_push/);
+
+  const second = call('ses_run', 'git fetch');
+  await evaluate(second);
+  assert.equal(second.effect, 'deny', 'and its fetch too');
+  assert.deepEqual(asked, ['ses_run'], 'once per session: the answer is cached');
+
+  // A person's session (the host answers run: false for it) is never denied.
+  const person = call('ses_person', 'git push origin');
+  await evaluate(person);
+  assert.equal(person.effect, 'allow', 'the person next door pushes freely');
+  assert.deepEqual(asked, ['ses_run', 'ses_person']);
 });
