@@ -60,6 +60,15 @@ when they are planned. Record any partial findings in
 
 ## Open build items
 
+- **The lane cache (ruled 2026-10-02: later, functionality first).** The
+  walk asks `tickets()` fresh every wake: one live `issuesIn` per mapped
+  team per lane per pass. Linear's webhooks already carry the changes —
+  an issue's lane, labels and blockers arrive on `updated` — so the board
+  can be a cache this module maintains from the webhooks it already
+  receives, refreshed at boot (Linear does not retry failed webhooks, so
+  a boot read is the reconciliation) and on any uncertainty. The cost of
+  today's freshness is one query per lane per wake; the walk is
+  event-driven, so it is overhead, not a spin — but it is overhead.
 - The installer's browser-install step is built (2026-09-26, live-confirmed): a
   one-shot loopback listener bound *before* the instructions print, so
   the human registers its exact callback URL in the app's Redirect URIs
