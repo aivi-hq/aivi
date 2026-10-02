@@ -3,7 +3,8 @@
 `@aivi/channel-slack` is an optional module inside the host application. It
 connects to Slack over **Socket Mode** (no public URL) with `@slack/socket-mode`
 and `@slack/web-api`, and implements the [channel module contract](channels.md)
-with the module id `slack`; the inbox, session bindings, engine, turn runner,
+with the platform id `slack` (the
+module id, the `plugins` key and the `/status` id, is `channel-slack`); the inbox, session bindings, engine, turn runner,
 recovery and feedback described there are the host's. This page has what is
 Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 
@@ -52,13 +53,13 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   prefix (`commandPrefix`, default `aivi`), one per entry of the shared
   command table ([channels](channels.md#chat-commands)): `/<prefix>-new`,
   `/<prefix>-status`, `/<prefix>-context`, `/<prefix>-search QUERY [project]`,
-  `/<prefix>-model [model]`, `/<prefix>-stop`, `/<prefix>-steer TEXT`,
+  `/<prefix>-model [model]`, `/<prefix>-stop`, `/<prefix>-queue TEXT`,
   `/<prefix>-jobs`, `/<prefix>-help`; replies are ephemeral through the
   command's `response_url`. Slack commands
   carry no thread, so in a `threads` channel they speak for the channel:
   `-new` says that every new top-level message already starts a fresh
   conversation, `-status` counts the pending turns of all its threads, and
-  `-context`, `-model`, `-stop` and `-steer` say they cannot tell which
+  `-context`, `-model`, `-stop` and `-queue` say they cannot tell which
   thread is meant (Slack itself refuses slash commands inside threads; ask the
   agent for the context there). In a DM or a `channel`-mode channel they
   behave like Discord's commands ([discord](discord.md#behavior)).
@@ -75,10 +76,10 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
 
 ## Setup
 
-The short way: `aivi install slack`. It prints the app manifest itself, asks
-for the two tokens, verifies each against Slack, writes the `modules.slack`
+The short way: `aivi add slack`. It prints the app manifest itself, asks
+for the two tokens, verifies each against Slack, writes the `plugins.channel-slack`
 block and both secrets, and restarts aivi
-([operations](operations.md#plugins-aivi-install)). The manual path:
+([operations](operations.md#plugins-aivi-add-and-aivi-remove)). The manual path:
 
 The fastest path: `aivi slack manifest [--prefix PREFIX]` prints the whole
 app manifest as JSON, generated from the shared command table (the prefix
@@ -116,8 +117,8 @@ features:
     - command: /{prefix}-stop
       description: Stop the turn running in this conversation
       should_escape: false
-    - command: /{prefix}-steer
-      description: Tell the agent something while it works on this conversation
+    - command: /{prefix}-queue
+      description: Send this behind the running turn instead of interjecting into it
       usage_hint: TEXT
       should_escape: false
     - command: /{prefix}-jobs
@@ -165,19 +166,20 @@ should listen in. Collect the channel ids (channel details → bottom of the
 About tab). DM channel ids are not configured; a linked person may DM from
 anywhere ([people](people.md#link-codes-discord-slack)).
 
-The short way is `aivi install slack` ([operations](operations.md#plugins-aivi-install)):
+The short way is `aivi add slack` ([operations](operations.md#plugins-aivi-add-and-aivi-remove)):
 it runs this package's own setup, which prints the manifest to paste into
 Slack's app setup, asks for the two tokens, verifies each against Slack, and
-writes the `modules.slack` block into `<home>/config.json` and the tokens
-into `.env` itself. By hand, enable Slack with a `modules.slack` block in
+writes the `plugins.channel-slack` block into `<home>/config.json` and the tokens
+into `.env` itself. By hand, put a `plugins.channel-slack` block in
 `<home>/config.json`, filled with
-your ids. The block is the whole module setup, and its presence enables the
-module (`false` is an explicit off):
+your ids, and put `@aivi/channel-slack` in the `aivi-plugins` list in
+`app/package.json` — the list is what enables the module, the block is its
+whole setup:
 
 ```json
 {
-  "modules": {
-    "slack": {
+  "plugins": {
+    "channel-slack": {
       "agent": "assistant",
       "commandPrefix": "aivi",
       "access": {
@@ -234,8 +236,8 @@ multi-workspace (org) installs.
 Tests mirror Discord's: routing and access with Slack ids, the manifest snippet above against the shared command table, and the
 module against a fake connection and the real OpenCode client
 on a mock server (mention → thread reply, dedupe, files, report thread
-adoption, re-entry, slash commands including `-model`, `-stop` and `-steer`
-against a running turn, waiting reaction, not-started turns, the
+adoption, re-entry, interjection into a running turn (the default),
+`-queue` behind it, `-model` and `-stop` against it, waiting reaction, not-started turns, the
 progress placeholder through `chat.update`/`chat.delete`). The
 Socket Mode client itself is only exercised live.
 

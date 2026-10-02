@@ -3,8 +3,18 @@
   "version": "0.8.1",
   "type": "module",
   "exports": {
-    ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
-    "./client": { "development": "./src/client.ts", "default": "./dist/client.js" }
+    ".": {
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./cli": {
+      "development": "./src/cli.ts",
+      "default": "./dist/cli.js"
+    },
+    "./server": {
+      "development": "./src/server.ts",
+      "default": "./dist/server.js"
+    }
   },
   "files": [
     "dist"
@@ -22,14 +32,20 @@
     "access": "public"
   },
   "scripts": {
-    "prepack": "tsc -b tsconfig.build.json"
+    "prepack": "tsc -b tsconfig.build.json tsconfig.cli.build.json"
   },
   "dependencies": {
     "@aivi/core": "^0.7.1",
+    "@aivi/knowledge": "^0.1.7",
+    "@aivi/plugin": "^0.1.0",
+    "@clack/prompts": "1.8.1",
     "@hono/node-server": "2.1.1",
     "@hono/zod-validator": "0.9.1",
     "@opencode/client": "2.0.18",
+    "commander": "15.0.0",
     "hono": "4.13.9",
+    "node-pty": "1.1.0",
+    "ws": "8.22.0",
     "zod": "4.1.13"
   }
 }

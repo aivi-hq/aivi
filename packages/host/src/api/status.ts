@@ -1,6 +1,6 @@
 import type { LoadedConfig, ModuleHealth, Status } from '@aivi/core';
 import { printedBaseUrl, taskLabel } from '@aivi/core';
-import type { Store } from '../store.ts';
+import type { Store } from '@aivi/plugin/module';
 import { hostVersion } from '../version.ts';
 
 /**

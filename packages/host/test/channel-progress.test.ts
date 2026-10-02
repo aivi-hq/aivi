@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import type { ChannelPlatform } from '../src/channel/contract.ts';
+import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/plugin/module';
 import { ChannelEngine } from '../src/channel/engine.ts';
 import {
   DEFAULT_CLOCK,
@@ -14,7 +15,6 @@ import {
   startProgress,
 } from '../src/channel/progress.ts';
 import { ConversationStore } from '../src/channel/store.ts';
-import type { SessionEvent, SessionEventListener, SessionEvents } from '../src/events.ts';
 import { Store } from '../src/store.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };

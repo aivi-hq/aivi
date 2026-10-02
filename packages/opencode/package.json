@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@aivi/core": "^0.7.1",
-    "@aivi/host": "^0.8.1"
+    "@aivi/plugin": "^0.1.0"
   },
   "peerDependencies": {
     "@opencode/plugin": "2.0.18"

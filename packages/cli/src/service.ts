@@ -1,16 +1,17 @@
 /** Background operation: a per-user LaunchAgent on macOS, a systemd user unit
- *  on Linux. The unit runs the same Node-plus-server command the foreground
- *  `aivi serve` runs, so an update is a stop, an install and a start no matter
- *  who started the server. Hand-rolled on purpose — OpenClaw and Hermes do the
- *  same and there is no maintained library for it; the plist XML comes from the
- *  `plist` package so paths are escaped properly.
+ *  on Linux. The unit runs the server's boot file directly — the same boot the
+ *  foreground `aivi serve` reaches — with no CLI and no arguments to parse, so
+ *  an update is a stop, an install and a start no matter who started the
+ *  server. Hand-rolled on purpose — OpenClaw and Hermes do the same and there
+ *  is no maintained library for it; the plist XML comes from the `plist`
+ *  package so paths are escaped properly.
  *
  *  LaunchAgent lessons learned from OpenClaw's launchd issues, baked in here:
  *  ProcessType=Interactive (without it launchd cold-start stalls for minutes),
  *  an explicit WorkingDirectory, and owner-only 0600 on the plist. */
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { build as buildPlistXml } from 'plist';
@@ -26,8 +27,10 @@ export interface ServiceOptions {
   nodePath: string;
 }
 
-function appCli(appDir: string): string {
-  return join(appDir, 'node_modules', '@aivi', 'app', 'dist', 'cli.js');
+/** The server's boot file: what the unit runs, no argv, no CLI in the path.
+ *  It reaches the same `runHost` the CLI's `serve` command calls in-process. */
+function hostServer(appDir: string): string {
+  return join(appDir, 'node_modules', '@aivi', 'host', 'dist', 'server.js');
 }
 
 function launchdPlistPath(): string {
@@ -51,7 +54,7 @@ export function serviceUnitPath(): string | undefined {
 export function launchdPlist(options: ServiceOptions): string {
   return buildPlistXml({
     Label: SERVICE_LABEL,
-    ProgramArguments: [options.nodePath, appCli(options.appDir), 'serve'],
+    ProgramArguments: [options.nodePath, hostServer(options.appDir)],
     KeepAlive: true,
     RunAtLoad: true,
     ProcessType: 'Interactive',
@@ -69,7 +72,7 @@ export function systemdUnit(options: ServiceOptions): string {
     'After=network-online.target',
     '',
     '[Service]',
-    `ExecStart=${options.nodePath} ${appCli(options.appDir)} serve`,
+    `ExecStart=${options.nodePath} ${hostServer(options.appDir)}`,
     `Environment=AIVI_HOME=${options.home}`,
     `WorkingDirectory=${options.appDir}`,
     'Restart=on-failure',
@@ -149,15 +152,44 @@ export function serviceStart(): void {
   else throw new Error(`aivi service is not supported on ${process.platform}.`);
 }
 
+/** Announce first, then do the disconnecting thing — in the one place the
+ *  host actually dies: a command
+ *  about to disconnect a session says so first, to stdout, in plain bytes —
+ *  `server restarting…` reaches the client before the host behind it does.
+ *  The write is synchronous (`writeSync`, not console.log): the disconnecting
+ *  call below blocks this process in a spawnSync, and a queued async write
+ *  could strand in the event loop while the exec relay's server is already
+ *  dying. Best effort: a closed stdout has nobody to tell and must not abort
+ *  the thing the person asked for. */
+function announce(text: string): void {
+  try {
+    writeSync(1, `${text}\n`);
+  } catch {
+    // nowhere left to announce; the action proceeds
+  }
+}
+
 export function serviceStop(): void {
+  if (!serviceInstalled()) throw new Error('not running as a service');
+  announce('server stopping…');
   if (process.platform === 'darwin') runOrThrow('launchctl', ['bootout', `gui/${uid()}/${SERVICE_LABEL}`], true);
   else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'stop', 'aivi.service']);
   else throw new Error(`aivi service is not supported on ${process.platform}.`);
 }
 
 export function serviceRestart(): void {
-  if (process.platform === 'darwin') runOrThrow('launchctl', ['kickstart', '-k', `gui/${uid()}/${SERVICE_LABEL}`]);
-  else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'restart', 'aivi.service']);
+  if (!serviceInstalled()) throw new Error('not running as a service');
+  announce('server restarting…');
+  if (process.platform === 'darwin') {
+    try {
+      runOrThrow('launchctl', ['kickstart', '-k', `gui/${uid()}/${SERVICE_LABEL}`]);
+    } catch {
+      // Nothing to kick: the service was booted out (`aivi service stop`)
+      // after its plist was written. The start path boots it fresh —
+      // `systemctl restart` does that in one call on Linux.
+      serviceStart();
+    }
+  } else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'restart', 'aivi.service']);
   else throw new Error(`aivi service is not supported on ${process.platform}.`);
 }
 

@@ -1,17 +1,13 @@
 /**
- * The setup `aivi install browser` runs: there is no platform account and no
+ * The setup `aivi add browser` runs: there is no platform account and no
  * secret — the whole decision is which Chrome aivi drives. The flow explains
  * the modes, writes the `browser` block into config.json, and never clobbers
  * a block that exists. Until this block exists the aivi browser is off: the
  * plugin never sees an `aivi_browser` tool.
  */
-import {
-  browserConfigSchema,
-  type PluginSetup,
-  PluginSetupCancelled,
-  type PluginSetupContext,
-  type PluginSetupResult,
-} from '@aivi/core';
+
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
+import { browserConfigSchema } from './config.ts';
 
 /** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
  *  nothing — neither is an answer. The flow stops with
@@ -25,10 +21,10 @@ function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNullable<T>,
 const LAUNCH_BLOCK = { connection: { mode: 'launch', userDataDir: 'state/chrome' } } as const;
 
 const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
-  const existing = ctx.config.browser;
-  if (existing !== undefined && existing !== false)
+  const existing = (ctx.config.plugins as Record<string, unknown> | undefined)?.browser;
+  if (existing !== undefined)
     throw new Error(
-      'The browser is already configured (the browser block in config.json). Edit that block; install configures a capability that is not configured yet.',
+      'The browser is already configured (the plugins.browser block in config.json). Edit that block; aivi add configures a plugin that is not configured yet.',
     );
   ctx.prompts.note(
     [
@@ -56,7 +52,7 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   const block = LAUNCH_BLOCK;
   const parsed = browserConfigSchema.safeParse(block);
   if (!parsed.success) throw new Error('The launch block aivi writes does not load its own schema; this is a bug.');
-  await ctx.writeConfigBlock(['browser'], block);
+  await ctx.writeConfigBlock(['plugins', 'browser'], block);
   return {
     module: 'browser',
     summary: 'Browser is configured: aivi launches its own Chrome under state/chrome on the first browser call.',

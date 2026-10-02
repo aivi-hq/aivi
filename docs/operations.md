@@ -15,7 +15,7 @@ shared services, reconciles the job definitions it owns (`jobs[]` from
 `host.bind:host.port`, then starts modules in order and announces readiness
 once each has had its first attempt. From then on the loop sleeps until the
 next due instant and wakes early when something changes the queue
-(`HostServices.wake`, `POST /wake` from the CLI, a run or turn releasing
+(`AiviServices.wake`, `POST /wake` from the CLI, a run or turn releasing
 capacity). Nothing periodic exists; the serving host is the only executor of
 work.
 
@@ -54,7 +54,8 @@ purple, `aivi·host·slack` cyan, `aivi·host·linear` indigo, `aivi·host·brow
 orange, `aivi·host·scheduler` deep pink, `aivi·knowledge` amber; the CLI root and dreaming keep the muted
 gray. Message text uses the terminal's own foreground; the log file stays
 colorless JSON.
-`--log-level debug` shows job materialization.
+`aivi serve --log-level debug` shows job materialization (the logging flags
+belong to serve, the command that logs).
 stdout is reserved for command output: `aivi serve` writes its raw JSON ready
 line to stdout only when stdout is not a terminal (scripts and smoke parse it);
 a human on a terminal sees the pretty `host.listening` record instead, which
@@ -112,6 +113,15 @@ browser/MCP and QMD close, and ownership is released. A grace period that lets
 work finish first is a design choice not yet made
 ([shutdown-hooks](backlog/shutdown-hooks.md)).
 
+The first `SIGINT`/`SIGTERM` logs `host.stopping` before any of this, because
+the drains can take seconds (idle keep-alive sockets expire on their own) and
+silence reads to the operator as a hung terminal (measured on the dev home
+2026-09-28: the first Ctrl+C looked stuck for ~5 s). A second signal ends the
+process at once. Once the Slack module starts its own teardown, the SDK's pong
+watchdog warnings are dropped — the socket is closing on purpose, and the
+watchdog would only be complaining about our drains starving its event loop;
+SDK errors still travel.
+
 A conversation turn interrupted by the shutdown is the one exception to
 "blocked": its only external effect is the reply, so it is discarded and the
 person is told aivi is going offline and to send the message again; waiting
@@ -162,16 +172,20 @@ no sign-in it asks what the machine should be:
   `--name TEXT` (or `--connect --url URL --token TOKEN`) to skip the
   prompts. A re-run on a home that has people refuses identity minting;
   re-running `aivi setup` signed-in just verifies and refreshes the cached
-  person. The installed app still answers `server create` as the identity
-  step behind setup — hidden plumbing, never a person-facing command.
+  person. The installed server's own code still answers `server create` as
+  the identity step behind setup — in-process plumbing (`@aivi/host/cli`),
+  never a person-facing command.
 
 People, tokens and the client config are owned by [people](people.md).
 
-## Plugins: `aivi install`
+## Plugins: `aivi add` and `aivi remove`
 
-`aivi install browser` (or `discord`, `slack`, or any npm package name) adds a
+`aivi add browser` (or `discord`, `slack`, or any npm package name) adds a
 plugin to
-the server home and lets the plugin configure itself. Three steps, in order:
+the server home and lets the plugin configure itself. The command writes
+three facts — the npm dependency, the `plugins.<module_id>` block, and the
+`aivi-plugins` list entry in `app/package.json` that is what actually enables
+the module — in this order:
 
 1. The package is npm-installed into `<home>/app` with `--save-exact`, so
    `aivi update` carries it along; an already-installed package is not
@@ -179,32 +193,52 @@ the server home and lets the plugin configure itself. Three steps, in order:
 2. The plugin's own `./setup` entry runs. Everything platform-specific lives
    in the plugin: it prints how to create the platform app, asks for the
    secrets (hidden), verifies each against the platform before anything is
-   written, and writes its `modules.*` block into `config.json` and its
-   tokens into `<home>/.env` (0600, never echoed). A write that leaves
+   written, and writes its `plugins.<module_id>` block into `config.json` and
+   its tokens into `<home>/.env` (0600, never echoed). A write that leaves
    `config.json` unloadable is restored to the old bytes; an already
    configured module is never clobbered. Behind the command sits
    `aivi plugin setup SPEC`, not a person-facing command, and it needs an
    interactive terminal.
-3. Aivi is restarted (when it runs as a service) and the command ends only
-   in a verified truth: the module's own state — "Discord is running." A
-   degraded module fails the command with the retry going on; without the
-   service the command says how aivi comes back, and never restarts a
-   foreground server itself.
+3. Only after the setup has spoken does the package name join the
+   `aivi-plugins` list, and the editor schema
+   (`<state>/cache/schema.json`, config.json's `$schema`) is rebuilt from
+   the composed shape. A stopped flow — a cancelled prompt, a failed
+   verification — leaves the package installed but inert: no list entry, so
+   the server never imports it.
+4. Aivi is restarted (when it runs as a service) and the command ends only
+   in a verified truth: the module's own state — "Discord is running." The
+   module id is the one the plugin's `./config` declaration carries, which
+   is also its `plugins.<id>` config key; the list entry is the npm package
+   name. A degraded module fails the command with the retry going on;
+   without the service the command says how aivi comes back, and never
+   restarts a foreground server itself.
 
-The contract is one subpath: a package that exports `./setup` with a
-default function is installable this way, whatever its publisher. A package
-without one is still installed, and the command says it has no setup.
+The contract is three subpaths: a package that exports `./config` (the module
+id, the block's schema, the lazy module) with a `./setup` default function
+is addable this way, whatever its publisher. A package without a setup is
+still listed, and the command says it has none.
 `browser` is the no-platform case of the same flow: its setup asks no secret,
-verifies no platform call, and writes only the `browser` block in
-`config.json` that composes the module; the install then ends in the same
-verified truth as any other — "Browser is running."
+verifies no platform call, and writes only the `plugins.browser` block in
+`config.json`; the add then ends in the same verified truth as any other —
+"Browser is running."
+
+`aivi remove <plugin>` takes the same facts back out, in the safe order: the
+module id is asked from the package's `./config` while it is still
+installed, its `plugins.<id>` block is dropped, the list entry leaves, npm
+uninstalls the package, the editor schema is rebuilt, and aivi comes back
+without the module. A failing npm leaves the package on disk but inert.
+This is the plugin's own leaving; `aivi uninstall` is the one that takes
+aivi off the machine.
 
 A package can also add operator commands to this CLI: a `./cli` subpath that
-default-exports a `PluginCliCommand` ([architecture](architecture.md#one-application-contained-modules))
-is mounted into the CLI whenever the package is installed — `aivi discord`,
-`aivi slack` and `aivi linear` are exactly that, from their own packages. A
-package without one adds nothing; the built-in commands keep their names, so
-a plugin can never shadow `jobs` or `serve`.
+default-exports a command factory `(ctx) => Command` (the `PluginCliContext`
+comes from `@aivi/plugin`; the package declares `commander` itself —
+[architecture](architecture.md#one-application-contained-modules))
+is mounted into the CLI whenever the package stands in the plugin list —
+`aivi discord`, `aivi slack` and `aivi linear` are exactly that, from their
+own packages. A package without one adds nothing, and a disabled entry still
+mounts its commands: standing down is `serve`'s business. The built-in
+commands keep their names, so a plugin can never shadow `jobs` or `serve`.
 
 ## Jobs and runs from the command line
 
@@ -252,11 +286,58 @@ says so and the change takes effect at the next dispatch.
 `aivi service install` writes a per-user LaunchAgent (macOS,
 `~/Library/LaunchAgents/ai.aivi.server.plist`, `ProcessType=Interactive`,
 `KeepAlive`, logs under `<home>/state/logs/`) or a systemd user unit (Linux,
-`~/.config/systemd/user/aivi.service`), then starts it. The unit runs the same
-command as foreground `aivi serve`, so nothing about the server changes —
-`aivi service start|stop|restart|status` control it, `service logs` follows the
-log, `service uninstall` removes it. A headless Linux machine needs
-`loginctl enable-linger` or the service stops with the session.
+`~/.config/systemd/user/aivi.service`), then starts it. The unit runs the
+server's boot file (`@aivi/host/server`) directly — no CLI, no arguments to
+parse — reaching the same boot foreground `aivi serve` runs in-process, so
+nothing about the server changes. `aivi service start|stop|restart|status`
+control it, `service logs` follows the log, `service uninstall` removes it.
+A stop or a restart says so first — `server stopping…`, `server restarting…`
+printed before the host goes down, so a session driven over the exec relay
+reads the line before the drop — and where no unit is installed both answer
+`not running as a service`. `add` and `remove` restart the host through the
+same announced, atomic restart. A
+headless Linux machine needs `loginctl enable-linger` or the service stops
+with the session.
+
+## Running remotely
+
+`aivi -r <command>` types the command on the machine the host runs on.
+The transport is a websocket upgrade on the host's own port (`/exec`):
+the client presents the bearer from its client config, sends the argv,
+and the host runs the same `aivi` as a child process — on a real PTY
+when the caller sits at a terminal (raw mode, window resizes travel), on
+pipes when its output is a pipe — relaying bytes both ways. The wire
+carries terminal bytes, not JSON operations: the CLI is the protocol, so
+the payload is version-independent by construction. The child's
+environment is closed: PATH, HOME, the home, the terminal, and the
+bearer this connection presented (as `AIVI_OPERATOR_BEARER`) — none of
+the host's secrets travel ([configuration](configuration.md#secrets)).
+
+Opening the channel requires a bearer whose person carries the
+`operator` role, and every arrival — accepted or refused — writes one
+diary line: person, argv, address, exit code
+([people](people.md#auth-commands-are-open-roles-gate-people-management),
+[the request diary](#the-request-diary)). A refusal reaches the person
+as the server's own words, printed verbatim.
+
+What a driven session may run is the commands' own decision, answered at
+invocation — never by hiding anything:
+
+| Command | Over `--remote` |
+| --- | --- |
+| `setup`, `upgrade`, `configure` | refused: `this acts on the machine you type on` — they act where the CLI process sits, and the relay does not move that |
+| `serve`, `uninstall` | refused: the server is the thing being driven; `uninstall` deletes the home this session drives |
+| `-r` itself | refused: remote exec does not chain a second hop |
+| everything else — `status`, `jobs`, `runs`, `people`, `projects`, `knowledge`, `link`, `add`, `update`, `service` … | runs on the server's home |
+
+The answer says whose machine it came from: a driven session's banner
+carries `(remote)` after the version and its lettermark draws in caution
+amber, so `aivi -r --help` streams the server's own page and nobody
+mistakes it for their laptop's. When a relayed command ends the host —
+`service stop`, `service restart`, `update`, `add`, `remove` — the
+notice (`server stopping…`, `server restarting…`) arrives before the
+drop; there is no resume, gone is gone, and the next command discovers
+whether the host came back.
 
 ## The request diary
 
@@ -278,13 +359,17 @@ many went; the duration is the same shape `--at` takes (`30m|2h|1d|30d`).
 `aivi update` brings the installed server and plugins to their newest releases.
 The channel comes from `config.json` (`update.channel`, default `stable`). The
 command resolves the target version, checks its Node requirement (provisioning
-`<home>/runtime/` first when the machine's Node is unsuitable), stops the
-server, installs with npm, restarts and probes `/health` before calling it
-done. npm is the compatibility resolver: a plugin whose `@aivi/host` peer range
+`<home>/runtime/` first when the machine's Node is unsuitable), installs with
+npm while the server keeps answering, and ends with the announced restart
+(`server restarting…`) and a `/health` probe before calling it done — the one
+disconnect comes last, never before the slow part. npm is the compatibility
+resolver: a plugin whose `@aivi/host` peer range
 excludes the new host fails the install, is pinned at its current version —
 logged as **disabled: no compatible release** — and is re-checked on every
 future update. There is no rollback; sessions resume because state is SQLite
-and OpenCode's own. `aivi upgrade` updates the CLI itself through its install
+and OpenCode's own. The `aivi-plugins` list survives the update untouched —
+npm rewrites dependencies only — and the editor schema is rebuilt from the
+new code. `aivi upgrade` updates the CLI itself through its install
 method (npm today) — the same install-method table `aivi uninstall` reads, so
 the two can never disagree about what is installed.
 
@@ -293,9 +378,9 @@ A client that is ahead of its host never mis-talks silently: the API answers
 client expects features this host cannot give. A client behind the host's
 major answers 403 `client_version_unsupported` — run `aivi upgrade`; a
 client behind within the same major is served, using fewer features than
-the host has. `@aivi/cli` and `@aivi/host` share one version through a
-changesets `fixed` group, so the CLI's own number is the API version it
-speaks. The negotiation binds the core API surface only: an unknown path
+the host has. `@aivi/cli`, `@aivi/host` and `@aivi/plugin` share one version
+through a changesets `fixed` group, so the CLI's own number is the API version
+it speaks. The negotiation binds the core API surface only: an unknown path
 answers 404 (or 405) whoever asks, so a browser or a mispointed webhook
 sees a missing path, not a version refusal. The negotiation itself is an
 [architecture decision](architecture.md); `GET /version` answers what a

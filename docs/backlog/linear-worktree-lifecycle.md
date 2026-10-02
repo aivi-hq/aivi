@@ -29,7 +29,7 @@ the sweep.)
   `linear.worktreeRetentionDays` (default 7) the sweep force-removes and
   notes it. Stop / HITL / lane-change keep everything: stop ≠ done.
 - The sweep is its own operation `linear.sweep`, claimed by the linear
-  module and seeded as a **daily system job** through `HostModule.jobs`.
+  module and seeded as a **daily system job** through `AiviModule.jobs`.
   (Plan v3 had it ride the hourly `projects.sync`; the owner chose its own
   invocation so its frequency is configurable like any system job and it
   shows up uniformly in the future desktop job list. No new timers either
@@ -60,7 +60,9 @@ the sweep.)
 
 ## Open live gates from the lane work this builds on
 
-- Interactive `aivi projects create` against a real repo, and a real
-  `--lane`/`--unlane` write (from `59b33fd`).
+- Interactive `aivi projects add` running Linear's project-setup contributor
+  against a real team set — the teams-and-lanes write, once done by
+  `projects create` and `--lane`/`--unlane` (from `59b33fd`, the flags gone
+  with the role-driven redo).
 - Vessel repo (tiny, disposable) as the first dogfood; example's config gains
   a triage app + lane when this lands.

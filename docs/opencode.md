@@ -130,7 +130,7 @@ Walkthrough in [getting started](getting-started.md#the-assistant-in-opencode).
 The home is the OpenCode location, so knowledge, memory and
 project directories inside it need no `external_directory` rules; sources elsewhere get
 those rules from aivi per session. The OpenCode service caches
-`@aivi/host/client`, so restart it after every change to the plugin or client
+`@aivi/plugin/api`, so restart it after every change to the plugin or client
 (`opencode.lifecycle: "own"` does this at `aivi serve` startup).
 
 ## Host submission
@@ -153,7 +153,10 @@ npm run aivi -- runs list
 ```
 
 `aivi setup` seeds the home's `.opencode/agents/` (`assistant.md`,
-`dreamer.md`) from `packages/cli/templates/agents/`.
+`dreamer.md`) from `packages/cli/templates/agents/`. Both seeded agents deny
+the `question` tool: no channel client can answer one yet, so a question asked
+in an unattended turn would only hang waiting for an answer
+([discord-polish](backlog/discord-polish.md) is the way it lands).
 
 The running host dispatches queued runs through the session driver
 (`packages/host/src/session.ts`): create the session with a client-chosen id,
@@ -208,4 +211,4 @@ The `browser` module claims the descriptor for `aivi_browser` (permission
 action `aivi_browser`) and the host serves that claim only while the module is
 composed; a host without it serves no such tool and no agent sees it.
 Ownership comes from the native tool context, not tool arguments. Install and
-configure it with `aivi install browser`; see [browser setup](browser.md).
+configure it with `aivi add browser`; see [browser setup](browser.md).

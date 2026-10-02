@@ -3,10 +3,10 @@ import { createRequire } from 'node:module';
 /**
  * The version of this `@aivi/host` installation — read from its own
  * `package.json` at runtime, so the number can never drift from the package
- * that carries it. The same file answers on both sides of the wire: the
- * server gates on it, and `createHostClient` (which lives in this package)
- * sends it. `@aivi/cli` is versioned in lockstep with this package by the
- * changesets `fixed` group, so the thin CLI's own version is comparable
- * here; the gate's rules are in `api/gate.ts`.
+ * that carries it. The server gates on it; clients name themselves with the
+ * kit's version (`@aivi/plugin/api` reads its own `package.json`), and the
+ * changesets `fixed` group keeps `@aivi/cli`, `@aivi/host` and `@aivi/plugin`
+ * in lockstep, so the two sides of the wire agree. The gate's rules are in
+ * `api/gate.ts`.
  */
 export const hostVersion: string = (createRequire(import.meta.url)('../package.json') as { version: string }).version;

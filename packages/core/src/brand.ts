@@ -11,6 +11,11 @@ export const BRAND = {
   primary: '#3B82FF',
   /** The one muted gray: help titles, secondary lines, the dreaming category. */
   muted: '#767676',
+  /** Caution amber: the wordmark on a remotely driven banner. Chosen over
+   *  brand purple (#7C3AED) on 2026-09-28: the marker's job is to say "this
+   *  answer comes from another machine", purple reads as another brand
+   *  accent and sits too near discord's violet to warn. */
+  remote: '#F59E0B',
   discord: '#a371f7',
   slack: '#36c5f0',
   linear: '#5e6ad2',
@@ -52,22 +57,30 @@ export interface BannerLine {
  * The banner: the wordmark left, the caller's lines right, so `aivi --help`
  * opens with a face instead of a wall. On a stream without color the mark is
  * decoration only and goes — pipes and NO_COLOR terminals get plain text.
+ * `remote` draws the lettermark in caution amber: the banner says so when
+ * this process answers someone else's typed command (the exec door's child
+ * carries the machine fact; the title's `(remote)` word is the caller's own
+ * text, so it survives even where color cannot).
  */
-export function brandBanner(lines: readonly BannerLine[], stream?: NodeJS.WritableStream): string {
+export function brandBanner(
+  lines: readonly BannerLine[],
+  stream?: NodeJS.WritableStream,
+  options: { remote?: boolean } = {},
+): string {
   // One styled probe tells whether this stream wants color at all: a styled
   // empty-ish marker comes back unchanged when it does not.
   const colored = brandStyle(BRAND.primary, '·', stream) !== '·';
   if (!colored) return lines.map(line => line.text).join('\n');
   const width = Math.max(...WORDMARK.map(row => row.length));
+  const mark = options.remote === true ? 'remote' : 'primary';
   const out: string[] = [];
   for (let i = 0; i < Math.max(WORDMARK.length, lines.length); i++) {
-    const mark =
-      i < WORDMARK.length ? brandStyle(BRAND.primary, WORDMARK[i]!.padEnd(width), stream) : ' '.repeat(width);
+    const glyph = i < WORDMARK.length ? brandStyle(mark, WORDMARK[i]!.padEnd(width), stream) : ' '.repeat(width);
     const line = lines[i];
     if (!line && i >= WORDMARK.length) continue;
     const text =
       line === undefined ? '' : i === 0 || !line.muted ? line.text : brandStyle(BRAND.muted, line.text, stream);
-    out.push(`  ${mark}      ${text}`.trimEnd());
+    out.push(`  ${glyph}      ${text}`.trimEnd());
   }
   return out.filter(row => row !== '').join('\n');
 }

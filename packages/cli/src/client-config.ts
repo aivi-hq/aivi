@@ -38,13 +38,27 @@ export function clientConfigPath(): string {
   return resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
 }
 
+/** The record as every command that takes *hints* from it wants it — a
+ *  preferred Node, an app dir, the install-method line: a file that does
+ *  not load reads as none, so a broken record never bricks a command
+ *  around it. `aivi configure` repairs the file; `aivi setup` signs in
+ *  again. The two sites whose bytes are load-bearing read them themselves,
+ *  strictly: the exec relay signs with the record, and saveClientConfig
+ *  refuses to overwrite bytes it cannot rescue. */
 export function loadClientConfig(): ClientConfig | undefined {
   const path = clientConfigPath();
   if (!existsSync(path)) return undefined;
-  return clientConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+  try {
+    return clientConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')) as unknown);
+  } catch {
+    return undefined;
+  }
 }
 
-/** Merge-save: unknown fields and the signed-in person survive; 0600 stays 0600. */
+/** Merge-save: unknown fields and the signed-in person survive; 0600 stays
+ *  0600. A record that does not load is refused, not overwritten — those
+ *  bytes are audit evidence, and `aivi configure` is the command that
+ *  rewrites them knowing which survivors to keep. */
 export function saveClientConfig(update: Partial<ClientConfig>): ClientConfig {
   const path = clientConfigPath();
   mkdirSync(dirname(path), { recursive: true });

@@ -9,13 +9,16 @@ agent-profile system is introduced.
 
 The host application runs separately from the native OpenCode plugin. Its own modules share one process. Loading a plugin must never
 start another scheduler, create a daemon per session, or load embedding models.
-The plugin uses `@aivi/host/client`, a fetch-only client. Future native
+The plugin uses `createHostClient` from `@aivi/plugin/api`, a fetch-only
+client that ships in the kit, not in the host. Future native
 plugins can reuse that client without importing the SQLite store.
 
-`@aivi/app` is the composition root: it loads configured modules and launches
-`runHost`. The host owns the shared store, scheduler, native client, knowledge
+`@aivi/host` is the composition root: its server entry (`./server`) loads
+configured modules and launches `runHost`; its `./cli` command surface is what
+the `@aivi/cli` bin collects. The host owns the shared store,
+scheduler, native client, knowledge
 service, API listener, startup, and shutdown. Discord receives those services in
-its `start` method. Linear will be another in-process module with webhook routes
+its `start` method. Linear is another in-process module with webhook routes
 on the same listener, not another application server.
 
 There is no general-purpose plugin registry, decorator system, or service locator.
@@ -30,7 +33,8 @@ boundaries; a future Linear module will receive webhooks through the same host
 listener and use the same services. Only a configured module loads its SDK, and
 only enabled search loads QMD.
 
-Modules receive a `HostServices` object containing the loaded installation
+Modules receive an `AiviServices` object (declared by the host, which
+implements it; exported to plugin authors as `@aivi/plugin`) containing the loaded installation
 config, store, knowledge service, an `opencode()` client factory, a structured
 logger, the shutdown signal, the `channels`
 registry where chat modules register ([channels](channels.md)), `routes`
@@ -69,17 +73,20 @@ channels' search commands and scheduled indexing jobs; `aivi_jobs` reaches the
 same store the CLI edits.
 
 A package can also extend the operator CLI: where `./setup`
-([operations](operations.md#plugins)) is the install-time subpath, `./cli` is
-the runtime one. A package that default-exports a `PluginCliCommand` from
-`@aivi/host` has its command mounted into the server CLI under Channels
-whenever the package is installed — the command is data (`name`,
-`description`, `subcommands` with their options and `run`), the app's
-commander owns parsing and help, and `run` receives a `PluginCliContext`
+([operations](operations.md#plugins-aivi-add-and-aivi-remove)) is the add-time
+subpath, `./cli` is
+the runtime one. A package that default-exports a factory `(ctx) => Command`
+has its command subtree mounted into the server CLI
+whenever the package stands in the `aivi-plugins` list (a disabled entry
+mounts too: standing down is `serve`'s business) — the factory builds real
+commander (the
+package declares `commander` itself; parsing, help and variadics are
+commander's own), and `ctx` is a `PluginCliContext` from `@aivi/plugin`
 (the loaded config, the store bracket, the shared JSON stdout, the host
-poke, one prompt), so a plugin never imports app code. Discovery is
-bounded and config-driven: the app knows the fixed module→package mapping
-and asks only the enabled ones; nothing scans `node_modules`, and a package
-without a `./cli` export is simply absent from the help.
+poke, the runner's own clack), so a plugin never imports host code. Discovery is
+bounded and list-driven: the `aivi-plugins` array in `app/package.json` is
+the whole mapping — no fixed table, nothing scans `node_modules` — and a
+package without a `./cli` export is simply absent from the help.
 
 What happens at startup, on each wake, and at shutdown, and how runs end, is
 described for operators in [operations](operations.md).
@@ -155,10 +162,15 @@ run in order within one thread, continue that thread's session, reply into the
 thread, and must start within seconds. Folding them into the job table would
 teach the scheduler what a conversation is. What the two share is capacity:
 every turn takes a resource lease from the same pools as jobs
-(`Store.acquireLease`), so the `local-model` limit holds across both.
+(`Store.acquireLease`), so the `local-model` limit holds across both. These
+pools are the follower-era interim: they become the dispatcher's
+`dispatcher.pools` with the work-pull-flow build
+([orchestrator](orchestrator.md)).
 
 Linear workers are conversations of the same machinery, one per
-agent session, each in its own git worktree; a stop ends the worker and
+agent session, working in the project's checkout (a lane that says
+`worktree: true` gets its own git worktree once a forge gives them);
+a stop ends the worker and
 releases the issue, and only an unverifiable stop is `blocked`
 ([plans/linear.md](plans/linear.md)).
 
@@ -184,7 +196,7 @@ The API listens on `host.bind` (loopback by default; a tailnet or LAN address
 for a shared knowledge server) and exposes status, source discovery, scoped
 knowledge search, optional permission-gated browser operations, and one job
 mutation: `POST /jobs`, the back end of the `aivi_jobs` tool.
-`/health` and module webhook routes (`HostServices.routes`, verified by the
+`/health` and module webhook routes (`AiviServices.routes`, verified by the
 platform's own signature) are public; everything else is open too — a bearer
 token only identifies the caller for association, it never locks a route. The jobs route is a deliberate revision of the
 earlier "no job mutations over the API" rule (2026-09-15): it is limited to what
@@ -197,10 +209,11 @@ listener.
 
 The API version lives in a header, not in paths: every first-party client
 sends `x-aivi-client` naming the version it speaks, read at runtime from its
-own `package.json` — the server's is `@aivi/host`'s, and the host's own
-`createHostClient` reads the same file. `@aivi/cli` and `@aivi/host` are a
-changesets `fixed` group: releases keep the two packages at one version, so
-the thin CLI's number is comparable without any synced file. The major is
+own `package.json` — the server's is `@aivi/host`'s, and `createHostClient`
+(in `@aivi/plugin/api`) names `@aivi/plugin`'s own. `@aivi/cli`,
+`@aivi/host` and `@aivi/plugin` are a changesets `fixed` group: releases
+keep the three packages at one version, so the CLI's and the kit's
+numbers are comparable without any synced file. The major is
 the contract, the minor is features: a client at or behind the host is
 served (a newer server's minors are features the client never touches),
 while a client whose major.minor is ahead of the host is refused with 403 —
@@ -247,7 +260,7 @@ built until someone asks twice:
   reading a re-entered result *is* the silence mechanism).
 - Natural-language time parsing in aivi (the model translates; the tool
   echoes the next occurrences).
-- Structured confirmation widgets in Discord ([discord-widgets](backlog/discord-widgets.md)).
+- Structured confirmation widgets in Discord ([discord-polish](backlog/discord-polish.md)).
 - Per-user ownership of agent-created jobs: today every agent-created job is
   visible to and mutable by every caller the access policy admits; the owner
   accepted "jobs are the admin's responsibility" for now.

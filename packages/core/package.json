@@ -25,7 +25,6 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@clack/prompts": "1.8.1",
     "@logtape/file": "2.3.6",
     "@logtape/logtape": "2.3.6",
     "@logtape/pretty": "2.3.6",

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { browserConfigSchema, type PluginSetupContext } from '@aivi/core';
+import type { PluginSetupContext } from '@aivi/plugin';
 import * as prompts from '@clack/prompts';
+import { browserConfigSchema } from '../src/config.ts';
 import setup from '../src/setup.ts';
 
 /** A context that answers confirms from a script and records writes. Nothing touches disk.
@@ -17,6 +18,9 @@ function harness(answers: string[], config: Record<string, unknown>) {
     identityName: 'Clawd',
     config,
     print: () => {},
+    withStore: async () => {
+      throw new Error('the setup flow reads no store');
+    },
     prompts: {
       ...prompts,
       note: (lines = '', title = '') => {
@@ -56,7 +60,7 @@ test('browser setup writes the launch block and says what happens on the first c
   const result = await setup(h.ctx);
   assert.equal(result.module, 'browser');
   assert.match(result.summary, /launches its own Chrome/);
-  assert.deepEqual(h.blocks[0]!.path, ['browser']);
+  assert.deepEqual(h.blocks[0]!.path, ['plugins', 'browser']);
   assert.deepEqual(browserConfigSchema.parse(h.blocks[0]!.value).connection, {
     mode: 'launch',
     userDataDir: 'state/chrome',
@@ -68,7 +72,7 @@ test('browser setup writes the launch block and says what happens on the first c
 test('a configured browser is never clobbered, and declining writes nothing', async () => {
   const configured = harness([], {
     version: 1,
-    browser: { connection: { mode: 'existing', userDataDir: 'my-chrome' } },
+    plugins: { browser: { connection: { mode: 'existing', userDataDir: 'my-chrome' } } },
   });
   await assert.rejects(setup(configured.ctx), /already configured/);
   assert.deepEqual(configured.blocks, []);
@@ -78,8 +82,11 @@ test('a configured browser is never clobbered, and declining writes nothing', as
   assert.deepEqual(declined.blocks, []);
 });
 
-test('an explicit false is not a block: installing re-enables by writing the launch block', async () => {
-  const h = harness(['yes'], { version: 1, browser: false });
-  await setup(h.ctx);
-  assert.equal(h.blocks.length, 1, 'the explicit off is what install turns on');
+test('a leftover false is no longer a legal block: the guard names it as configured', async () => {
+  // `false` meant “off” in the old shape; the plugin list’s [name, false]
+  // tuple is the only off-switch now, and any block value — even an invalid
+  // one — stops the flow before anything is overwritten.
+  const stale = harness(['yes'], { version: 1, plugins: { browser: false } });
+  await assert.rejects(setup(stale.ctx), /already configured/);
+  assert.equal(stale.blocks.length, 0, 'nothing is written over a block that must be edited by hand');
 });

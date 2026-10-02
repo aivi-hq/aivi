@@ -30,7 +30,7 @@ Mock tests do not establish these; each has its own command.
   (`🔧 …`, `✍️ writing the answer`) and disappears when the answer is posted;
   with `"tools"` the tool calls are listed beneath; a failing turn leaves the
   notice in the placeholder's place. Not yet seen live: `/model` (autocomplete
-  and a pinned answer), `/stop` on a running turn, `/steer`, `/jobs`, `/help`.
+  and a pinned answer), `/stop` on a running turn, interjection and `/queue`, `/jobs`, `/help`.
 - Linear: not yet run live; the gates are listed in [plans/linear.md](plans/linear.md#live-gates).
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
@@ -50,14 +50,42 @@ pool as the capacity — there is no per-project lock; running maintenance
 only when idle stays an idea
 ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 
-1. Next channels once the research lands
-   ([backlog/research-channels.md](backlog/research-channels.md)); Signal and
-   Telegram will test the "conversation without threads" case.
+1. **The v1 rc line** (ruled 2026-09-29, reordered the same day): the CLI
+   refactor (built, unmerged) → **compose-projects fix** (config first:
+   plugins contribute project-section schemas; `linear.lanes` leaves
+   core's `projectSchema`; direction: **project config is a core
+   concept** — projects are core like the host and the orchestrator —
+   a project can be configured with a forge type, a lane can be
+   configured to use the forge, which is what makes the worktree stuff
+   happen) → **tracker extraction** (Linear speaks through the adapter
+   seam — **built 2026-09-29**: `@aivi/plugin/tracker` is the contract,
+   `tracker-linear/src/tracker.ts` is Linear's translator, and the
+   module's decision code knows only the neutral vocabulary; the
+   machinery itself moves to the host with the next step) →
+   **orchestrator extraction** (the machinery moves out of the
+   tracker into the host, built and proven on the **base flow**:
+   ticket → conversational agent → tracker update, no worktree, no
+   forge) → **forge-github** (added on top of the proven orchestrator,
+   as the configurable path it is; [plan](plans/forge-github.md)) →
+   **knowledge as a plugin** → **a last look at jobs** → tag v1 rc. The
+   reversal: forge had been moved in front so review facts would exist
+   for the orchestrator; the operator ruled it the other way —
+   pre-designing the forge-carved system is harder than building,
+   failing and solving as we go, and the forge path cannot be tested
+   before the no-forge base flow exists. Most assistant work in tickets
+   is skills, tools and MCPs on an agent (email included — not a new
+   capability); the forge is the exception that earns core ceremony.
+   The [templates program](plans/templates/index.md) owns the design;
+   the sequence lives there too.
 2. Installation and updates for other machines; the home layout it must
    produce is now fixed.
-3. Remote access hardening (per-device tokens, SSO via reverse proxy), then
-   the Linear live gate (the module is built; what to exercise is in
-   [plans/linear.md](plans/linear.md#live-gates)).
+
+Channels are decided (2026-09-29): discord and slack stay; **email** and
+**calendar** (joining Google Meet) come later; the Signal/Telegram research
+([backlog/research-channels.md](backlog/research-channels.md)) stands as
+research, not a queue. Remote-access hardening is decided as enough for
+now (2026-09-29): the bearer token is the account story; per-device tokens
+and SSO come when asked for.
 
 ## Decisions to make early, and decisions to defer
 

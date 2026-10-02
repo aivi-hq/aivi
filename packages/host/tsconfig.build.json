@@ -5,6 +5,8 @@
     "rootDir": "src",
     "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo"
   },
+  "//": "The engine: it references the kit's contracts (the shared vocabulary is declared there and followed here) and core's facts. The command surface (src/cli.ts, src/cli) and the server boot (src/server.ts) build as tsconfig.cli.build.json, because they dynamically import the plugin packages while those packages import this one — one project would be a reference cycle.",
   "include": ["src"],
-  "references": [{ "path": "../core/tsconfig.build.json" }]
+  "exclude": ["src/cli.ts", "src/cli", "src/server.ts"],
+  "references": [{ "path": "../core/tsconfig.build.json" }, { "path": "../plugin/tsconfig.build.json" }]
 }

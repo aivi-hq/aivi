@@ -170,7 +170,7 @@ their channel identity to their person.
    (0600, configVersion), HTTP client + bearer, light types — used by the
    plugin and the CLI package. How its `.ts` sources land inside the
    published JS CLI (bundle vs publish-as-JS) is decided inside the build
-   box. Consolidating `@aivi/host/client` onto it is follow-up.
+   box. Consolidating `@aivi/plugin/api` onto it is follow-up.
 
 ## Open decisions (operator owns these; not schedulable work yet)
 

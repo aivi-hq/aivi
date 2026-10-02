@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { createServer, type ServerResponse } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import { EventStream, type SessionEvent } from '../src/events.ts';
+import type { SessionEvent } from '@aivi/plugin/module';
+import { EventStream } from '../src/events.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 
 const until = async (check: () => boolean, what: string) => {

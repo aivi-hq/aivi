@@ -1,16 +1,24 @@
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { DreamingArgs, KnowledgeService, LoadedConfig, Logger, Run, Task } from '@aivi/core';
+import type {
+  DreamingArgs,
+  ExecutionContext,
+  ExecutionResult,
+  KnowledgeService,
+  LoadedConfig,
+  Logger,
+  Run,
+  Task,
+} from '@aivi/core';
 import { dreamingArgsSchema, errorMessage, getLogger, MEMORY_SOURCE_ID, runsPruneArgsSchema } from '@aivi/core';
+import type { OpenCodeClient, SessionEvents, TaskHandler } from '@aivi/plugin/module';
 import { dream } from './dreaming.ts';
-import type { SessionEvents } from './events.ts';
-import type { OpenCodeClient } from './opencode.ts';
 import { syncProjects } from './projects.ts';
-import type { Execute, ExecutionContext, ExecutionResult } from './scheduler.ts';
+import type { Execute } from './scheduler.ts';
 import { connectForTurn, PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
-import type { TaskHandler, TaskRegistry } from './tasks.ts';
+import type { TaskRegistry } from './tasks.ts';
 
 export interface ExecutorDeps {
   store: Store;
@@ -34,6 +42,11 @@ export const SECRET_ENV = [
   'SLACK_APP_TOKEN',
   'OPENCODE_USERNAME',
   'OPENCODE_PASSWORD',
+  // The bearer a driven exec session's human presented: the door
+  // stamps it into that session's closed env, and it is scrubbed here so an
+  // operator's credential never reaches a task script, however it entered
+  // the environment.
+  'AIVI_OPERATOR_BEARER',
 ];
 
 /**

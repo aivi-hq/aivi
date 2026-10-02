@@ -337,9 +337,14 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
 
 test('shell tasks inherit the host environment minus aivi secrets and .env keys; task env is merged on top', async t => {
   const store = new Store(':memory:');
-  const previous = { AIVI_TOKEN: process.env.AIVI_TOKEN, FROM_DOTENV: process.env.FROM_DOTENV };
+  const previous = {
+    AIVI_TOKEN: process.env.AIVI_TOKEN,
+    FROM_DOTENV: process.env.FROM_DOTENV,
+    AIVI_OPERATOR_BEARER: process.env.AIVI_OPERATOR_BEARER,
+  };
   process.env.AIVI_TOKEN = 'not-aivis-secret-anymore';
   process.env.FROM_DOTENV = 'dotenv-secret';
+  process.env.AIVI_OPERATOR_BEARER = 'driven-human';
   t.after(() => {
     store.close();
     for (const [name, value] of Object.entries(previous)) {
@@ -354,7 +359,7 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
       command: [
         process.execPath,
         '-e',
-        'const e=process.env; console.log(JSON.stringify({token:e.AIVI_TOKEN??null,dotenv:e.FROM_DOTENV??null,path:typeof e.PATH,extra:e.EXTRA}))',
+        'const e=process.env; console.log(JSON.stringify({token:e.AIVI_TOKEN??null,bearer:e.AIVI_OPERATOR_BEARER??null,dotenv:e.FROM_DOTENV??null,path:typeof e.PATH,extra:e.EXTRA}))',
       ],
       env: { EXTRA: 'from-task' },
     }),
@@ -388,6 +393,9 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
   assert.equal(done.state, 'succeeded');
   assert.deepEqual(JSON.parse((done.result as { stdout: string }).stdout), {
     token: 'not-aivis-secret-anymore',
+    // The remote driver's own credential (D15): a fixed name, gone like the
+    // rest of aivi's secrets, even though it sits in the host's environment.
+    bearer: null,
     dotenv: null,
     path: 'string',
     extra: 'from-task',

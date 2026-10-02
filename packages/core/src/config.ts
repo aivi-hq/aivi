@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import { z } from 'zod';
-import { browserConfigSchema } from './browser.ts';
+import { parseDuration } from './clock.ts';
 import type { ProjectSummary } from './contracts.ts';
 import type { KnowledgeKind } from './kinds.ts';
 import { knowledgeKindHelp, knowledgeKindNames } from './kinds.ts';
@@ -185,33 +185,118 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
   { id: 'adr', path: 'docs/adr', kind: 'decision' },
 ] as const satisfies readonly z.input<typeof source>[];
 /**
- * A written lane binding: the OpenCode agent that works issues entering the
- * lane, `null` for a lane humans work, or an object naming an agent that runs
- * without a worktree — in the project's `source/` checkout on main, where
- * only the agent file's own permissions say what it may not do.
+ * One lane of a project's tracker workflow. Lanes are **core's** concept —
+ * the orchestrator decides moves from the order, and no tracker is asked
+ * where a ticket goes next; the tracker only performs a move in its
+ * platform's words. The names are the tracker platform's own state names.
+ * Closed states (Linear's Done, Canceled, Duplicate) are **never written**:
+ * the tracker recognizes them by type, they are not places in the workflow.
  */
-export const laneValueSchema = z.union([
-  z.string().min(1).nullable(),
-  z.strictObject({ agent: z.string().min(1), worktree: z.literal(false).optional() }),
-]);
-export type LaneValue = z.infer<typeof laneValueSchema>;
-/** A lane binding as routing sees it: the agent and whether it gets a worktree. */
-export interface LaneBinding {
-  agent: string;
-  worktree: boolean;
-}
-/** Normalise a written lane value (`agent | null | { agent, worktree }`); null for human lanes. */
-export function laneBinding(value: LaneValue): LaneBinding | null {
-  if (value === null) return null;
-  if (typeof value === 'string') return { agent: value, worktree: true };
-  return { agent: value.agent, worktree: value.worktree !== false };
-}
+export const projectLaneSchema = z.strictObject({
+  name: z.string().min(1).describe('The lane, spelled as the tracker platform spells its workflow state.'),
+  agent: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('The OpenCode agent that works tickets entering this lane; absent: humans work the lane.'),
+  queue: z
+    .boolean()
+    .default(false)
+    .describe(
+      'true: a queue lane — fresh work waits here for capacity, and the orchestrator treats it as the bottom of its next worker lane’s list. A queue lane has no agent and moves tickets, it works none.',
+    ),
+  pool: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'The dispatcher pool this lane’s work draws capacity from (the dispatcher names it; lanes that name none draw from the default pool). Inert until the dispatcher is built.',
+    ),
+  worktree: z
+    .boolean()
+    .default(false)
+    .describe(
+      'true: the agent gets its own git worktree, so its writes cannot touch the shared checkout. Default false: it works in the project checkout itself. Matters once a forge gives worktrees.',
+    ),
+  next: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Where a ticket goes when the run succeeds. Default: the next lane in the array. The configured exception.',
+    ),
+  previous: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Where a ticket goes when the run fails. Default: the previous lane in the array. A stop never moves.'),
+});
+export type ProjectLane = z.infer<typeof projectLaneSchema>;
+/** What a lane-setup offers before core's defaults land: the written shape
+ *  of a lane, which the config load completes into a `ProjectLane`. */
+export type ProjectLaneInput = z.input<typeof projectLaneSchema>;
+/** The lane configured for a state name, if the project maps it. Absent means
+ *  the state is **ignored**: nothing is picked up there, and a ticket a run
+ *  is working there goes silent — no move, no updates. */
+export const laneOf = (project: Project, name: string): ProjectLane | undefined =>
+  project.lanes?.find(lane => lane.name === name);
+/** The written lane array: names unique; every `next`/`previous` names a
+ *  lane of this very array (a typo is a load error, never a surprise mid-run
+ *  with a ticket in hand); and the queue lane's rules — at most one per
+ *  workflow, never with an agent of its own, and its next lane (by override
+ *  or by order) must be a worker lane. All loud, all at load. */
+export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes, ctx) => {
+  const names = new Set<string>();
+  for (const lane of lanes) {
+    if (names.has(lane.name)) ctx.addIssue({ code: 'custom', message: `lane "${lane.name}" is configured twice` });
+    names.add(lane.name);
+  }
+  for (const lane of lanes)
+    for (const [field, target] of [
+      ['next', lane.next],
+      ['previous', lane.previous],
+    ] as const)
+      if (target !== undefined && !names.has(target))
+        ctx.addIssue({
+          code: 'custom',
+          message: `lane "${lane.name}" names ${field} "${target}", which is not a lane of this project`,
+        });
+  const queues = lanes.filter(lane => lane.queue);
+  if (queues.length > 1)
+    ctx.addIssue({
+      code: 'custom',
+      message: `${queues.length} lanes are marked queue; a workflow has at most one queue lane`,
+    });
+  for (const [at, lane] of lanes.entries()) {
+    if (!lane.queue) continue;
+    if (lane.agent !== undefined)
+      ctx.addIssue({
+        code: 'custom',
+        message: `queue lane "${lane.name}" also names agent "${lane.agent}"; a queue lane holds work, it works none`,
+      });
+    const target = lane.next !== undefined ? lanes.find(other => other.name === lane.next) : lanes[at + 1];
+    if (!target)
+      ctx.addIssue({
+        code: 'custom',
+        message: `queue lane "${lane.name}" has no next lane; the queue feeds a worker lane and must name one (by order or by next)`,
+      });
+    else if (!target.agent)
+      ctx.addIssue({
+        code: 'custom',
+        message: `queue lane "${lane.name}" feeds "${target.name}", which no agent works; the queue's next lane must be a worker lane`,
+      });
+  }
+});
+
 /**
  * One project: a clean git checkout at `<home>/projects/<id>`, discovered from
  * that directory. An entry here is only needed to override: `knowledge`
  * replaces `projectDefaults.knowledge` for a repository laid out differently
  * (paths relative to the checkout), `enabled: false` hides a checkout from
- * indexing and memory, `linear.lanes` is validated ahead of the module.
+ * indexing and memory. Anything else a project carries is a plugin's own
+ * section — keyed by module id, contributed through the registry
+ * (`AiviPlugin.projectSchema`) and validated by the plugin's schema, never
+ * by core.
  */
 export const projectSchema = z.strictObject({
   enabled: z.boolean().default(true).describe('false: the checkout stays but aivi ignores it.'),
@@ -219,119 +304,25 @@ export const projectSchema = z.strictObject({
     .array(source)
     .optional()
     .describe('Replaces projectDefaults.knowledge for this project; paths relative to the checkout.'),
-  linear: z
-    .strictObject({
-      workspaceId: z
-        .string()
-        .min(1)
-        .optional()
-        .describe('Linear organization id; only needed with more than one workspace.'),
-      teams: z
-        .array(z.string().min(1))
-        .min(1)
-        .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
-      lanes: z
-        .record(z.string().min(1), laneValueSchema)
-        .default({})
-        .describe(
-          'Workflow state name → the OpenCode agent that works issues entering that state. `null` marks a human lane. `{ agent, worktree: false }` runs the agent in the project checkout on main, without a worktree. Empty by default: the listener delegates nothing until you map a lane.',
-        ),
-    })
-    .optional(),
+  lanes: projectLanesSchema
+    .optional()
+    .describe(
+      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to the `next` lane, failure to the `previous` one — neighbours by default, overridden per lane; a stop moves nothing. `queue: true` marks the workflow’s one queue lane, waiting fresh work for the worker lane it feeds; `pool` names the dispatcher pool the lane draws from (inert until the dispatcher is built). Closed states are never written: the tracker recognizes them by type.',
+    ),
 });
 type ProjectEntry = z.infer<typeof projectSchema>;
 /**
- * The Linear module. One app does the work: it carries the workspace's
- * **Issues** data feed on its webhook route, receives every agent-session
- * event, and its token authorises the Linear MCP. Extra apps are *faces* — a
- * name and icon in Linear's UI, their own credentials (`LINEAR_<APP>_*`) and
- * webhook route, no routing meaning. Lanes in `projects.<id>.linear.lanes`
- * name OpenCode agents directly. Presence of this block enables the module.
+ * The **roles** a project is set up against, in the order the setup walks
+ * them: a forge first (it owns the checkout — it clones), a tracker second
+ * (it maps issues to the project). These are the *systems* core knows about;
+ * core never names which plugin plays a role. A plugin declares the role it
+ * serves at its `./setupProject` subpath (`ProjectContributor` in
+ * `@aivi/plugin`), and `aivi projects add` offers the configured plugin of
+ * each role. A project may have neither — then it has no source host and the
+ * setup leaves an untracked checkout directory.
  */
-export const linearSchema = z.strictObject({
-  agent: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      'The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the assistant. Default: the aivi name.',
-    ),
-  primary: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      'The app that carries the workspace data feed, signs the bare LINEAR_* secrets and authorises the Linear MCP; default the one app. Required once several apps are configured.',
-    ),
-  apps: z
-    .record(
-      id,
-      z
-        .strictObject({})
-        .describe(
-          'Empty today: credentials come from the environment; the id is the app identity and its webhook route.',
-        ),
-    )
-    .describe(
-      'Linear apps by id. The primary (see `primary`) carries the data feed; every other app is a face — a name and icon in Linear’s UI with its own credentials, no routing meaning.',
-    ),
-  logMisroutes: z
-    .boolean()
-    .default(true)
-    .describe(
-      'Log at warn a webhook delivered to the wrong endpoint (a data change on a face’s route); it is dropped either way.',
-    ),
-  listener: z
-    .boolean()
-    .default(false)
-    .describe(
-      'React to issue lane changes by delegating eligible issues to the lane’s app. Off: only delegations and mentions made in Linear start a worker.',
-    ),
-  humanLabel: z
-    .string()
-    .min(1)
-    .default('needs-human')
-    .describe(
-      'Issues carrying this label are never worked automatically; a hand delegation is refused with an explanation.',
-    ),
-  resource: id.default('local-model').describe('Pool a worker turn takes a slot in.'),
-  mcp: z
-    .union([
-      z.strictObject({
-        port: z.number().int().min(0).max(65535).default(4101),
-      }),
-      z.literal(false),
-    ])
-    .default({ port: 4101 })
-    .describe(
-      "On by default: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app; OpenCode connects as a remote MCP at http://127.0.0.1:<port>/mcp. `false` disables it. Loopback only.",
-    ),
-  progress: z
-    .enum(['silent', 'status', 'tools'])
-    .default('tools')
-    .describe('What the ephemeral activities in the agent session show while a worker runs.'),
-  turnTimeoutMs: z
-    .number()
-    .int()
-    .min(60_000)
-    .max(24 * 3_600_000)
-    .default(2 * 3_600_000)
-    .describe('A worker turn longer than this is interrupted and ends stopped.'),
-});
-export type LinearConfig = z.infer<typeof linearSchema>;
-/**
- * Environment variable names for one app's credentials. The **primary** app
- * uses the bare `linearPrimarySecretNames`; this prefixed convention is for
- * every other app (a face) — `<APP>` = the id upper-cased, `-` → `_`.
- */
-export const linearSecretNames = (app: string) => {
-  const key = app.toUpperCase().replaceAll('-', '_');
-  return {
-    clientId: `LINEAR_${key}_CLIENT_ID`,
-    clientSecret: `LINEAR_${key}_CLIENT_SECRET`,
-    webhookSecret: `LINEAR_${key}_WEBHOOK_SECRET`,
-  };
-};
+export const projectRoles = ['forge', 'tracker'] as const;
+export type ProjectRole = (typeof projectRoles)[number];
 /**
  * Where the host API listens. `bind` defaults to loopback; use a LAN/tailnet
  * address or `0.0.0.0` to let remote clients reach the API. Commands are open:
@@ -471,90 +462,18 @@ export function accessReaches(policy: AccessPolicy, route: AccessRoute): boolean
   if (route.isDM) return true;
   return accessEntry(policy, route) !== undefined;
 }
-const snowflake = z.string().regex(/^\d{17,20}$/);
-/**
- * The Discord module: gateway, access policy and reply behaviour. Presence of
- * this block enables the module; `false` is an explicit off. Its one secret,
- * `DISCORD_BOT_TOKEN`, comes from the environment.
- */
-export const discordConfigSchema = z
-  .strictObject({
-    applicationId: snowflake.describe('The Discord application the bot token belongs to.'),
-    agent: z.string().default('assistant'),
-    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
-    directory: z.string().min(1).default('.'),
-    resource: z.string().default('local-model'),
-    /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
-    access: accessPolicySchema,
-    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "discord" }`). Empty: never post proactively. */
-    reportChannels: z.array(snowflake).default([]),
-    /** Requires the Message Content intent in the developer portal; needed for any trigger other than "mention". */
-    messageContent: z.boolean().default(false),
-    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
-    progress: z.enum(['silent', 'status', 'tools']).default('status'),
-    maxConcurrent: z.number().int().min(1).max(32).default(1),
-    maxPending: z.number().int().min(1).max(1000).default(100),
-    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
-  })
-  .superRefine((config, ctx) => {
-    if (!config.messageContent && config.access.channels.some(c => c.trigger !== 'mention')) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['messageContent'],
-        message:
-          'triggers other than "mention" need messageContent: true (Discord only delivers unmentioned message text with that intent)',
-      });
-    }
-  });
-export type DiscordConfig = z.infer<typeof discordConfigSchema>;
-/** Slack ids: channels `C…`/`G…`, DM channels `D…`, users `U…`/`W…`. */
-export const isChannelId = (id: string) => /^[CG][A-Z0-9]{8,}$/.test(id);
-export const isDMChannelId = (id: string) => /^D[A-Z0-9]{8,}$/.test(id);
-export const isUserId = (id: string) => /^[UW][A-Z0-9]{8,}$/.test(id);
-const channelId = z.string().refine(isChannelId, 'Expected a Slack channel id (C… or G…)');
-/**
- * The Slack module: access policy, command prefix and reply behaviour.
- * Presence of this block enables the module; `false` is an explicit off. Its
- * secrets, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, come from the environment.
- */
-export const slackConfigSchema = z
-  .strictObject({
-    agent: z.string().default('assistant'),
-    /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
-    directory: z.string().min(1).default('.'),
-    /** Slash commands are `/<prefix>-new`, `/<prefix>-status`, `/<prefix>-search`, defined in the Slack app manifest. */
-    commandPrefix: z
-      .string()
-      .regex(/^[a-z][a-z0-9_-]*$/)
-      .max(24)
-      .default('aivi'),
-    resource: z.string().default('local-model'),
-    /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
-    access: accessPolicySchema,
-    /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "slack" }`). Empty: never post proactively. */
-    reportChannels: z.array(channelId).default([]),
-    /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
-    progress: z.enum(['silent', 'status', 'tools']).default('status'),
-    maxConcurrent: z.number().int().min(1).max(32).default(1),
-    maxPending: z.number().int().min(1).max(1000).default(100),
-    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
-  })
-  .superRefine((config, ctx) => {
-    for (const [i, channel] of config.access.channels.entries())
-      if (!isChannelId(channel.id))
-        ctx.addIssue({ code: 'custom', path: ['access', 'channels', i, 'id'], message: 'Expected a Slack channel id' });
-  });
-export type SlackConfig = z.infer<typeof slackConfigSchema>;
 /**
  * The aivi GitHub App, created 2026-09-20. The last resort for the git identity
  * and the only identity that works unattended: GitHub resolves a bot commit's
  * avatar and link from the email **inside the commit**, never from who pushed,
- * so this needs no token and no installation.
+ * so this needs no token and no installation. What is here is a commit
+ * identity and nothing else: the app's *id* belongs to whichever plugin mints a
+ * token as the app — `plugins.forge-github.app` — because core names systems,
+ * not GitHub.
  */
 export const AIVI_AGENT_BOT = {
   user: 'aivi-agent[bot]',
   email: '331678708+aivi-agent[bot]@users.noreply.github.com',
-  app: 5011508,
 } as const;
 /**
  * Who aivi is. `name` is the persona every platform shows; `github` is who aivi
@@ -586,14 +505,6 @@ export const identitySchema = z
           .optional()
           .describe(
             'The git author email, same order as `user`. GitHub links the commit from this email, so the default is the app’s noreply address.',
-          ),
-        app: z
-          .number()
-          .int()
-          .min(1)
-          .optional()
-          .describe(
-            'The GitHub App id. Nothing reads it yet; whoever mints an installation token to act on GitHub as the app signs a JWT issued to this.',
           ),
       })
       .optional()
@@ -633,6 +544,125 @@ export async function gitIdentity(identity: Identity, read: ReadGitConfig): Prom
   if (written?.name && written.email) return { name: written.name, email: written.email };
   return { name: AIVI_AGENT_BOT.user, email: AIVI_AGENT_BOT.email };
 }
+/** The core shape of `projectDefaults`: the company-wide convention every project
+ *  inherits unless it writes its own. A registered plugin's own sections are layered
+ *  onto this by `composeConfigSchema`, keyed by module id — the same closure the
+ *  `plugins` record gets, one level down. The default is applied where the schema
+ *  is used, so the object stays extendable. */
+export const projectDefaultsSchema = z.strictObject({
+  knowledge: z
+    .array(source)
+    .default([...DEFAULT_PROJECT_KNOWLEDGE])
+    .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
+});
+
+const projectDefaultsDefault = () => ({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] });
+
+/** A duration string as the dispatcher and orchestrator read it: counts
+ *  with s, m, h or d, added by spaces (`30m`, `2h`, `1h 30m`). The one
+ *  reader is parseDuration; the schema only says it at load. */
+const durationString = z
+  .string()
+  .min(1)
+  .superRefine((value, ctx) => {
+    try {
+      parseDuration(value);
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Not a duration: "${value}". Use counts with s, m, h or d, added by spaces (30m, 2h, 1h 30m)`,
+      });
+    }
+  });
+
+/** One capacity pool of the dispatcher: fixed slots, an optional model the
+ *  pool decides when a session is created, an optional fallback pool. The
+ *  design and every ruling: docs/orchestrator.md. */
+export const dispatcherPoolSchema = z.strictObject({
+  model: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'provider/model. The pool decides the model at session create; an agent file names a model only in a pool that names none (ruled 2026-10-02).',
+    ),
+  capacity: z.number().int().min(1).max(64).describe('Slots; one active lease occupies one.'),
+  fallback: z
+    .string()
+    .optional()
+    .describe('Pool to grant from when this one is full — new sessions only; a session keeps its pool for life.'),
+});
+export type DispatcherPool = z.infer<typeof dispatcherPoolSchema>;
+
+/** The dispatcher: capacity pools and the timeouts that watch leases. It is
+ *  the only part that knows how much capacity is left; every service draws
+ *  from the same pools. **No pools means capacity is not moderated** —
+ *  unlimited, the intended default (docs/orchestrator.md). */
+const dispatcherSchema = z
+  .strictObject({
+    pools: z
+      .record(id, dispatcherPoolSchema)
+      .optional()
+      .describe('Absent or empty: unlimited. Pools belong to the installation, never to a project.'),
+    timeouts: z
+      .strictObject({
+        idle: durationString
+          .default('180m')
+          .describe(
+            'Silence on an attached session before the dispatcher treats the lease as abandoned: kill it, confirm, take the slot back. An unconfirmed kill leaves the slot unavailable. It measures silence, not total duration.',
+          ),
+        prepare: durationString
+          .default('5m')
+          .describe('How long a lease without a session may take to be provided with one before being revoked.'),
+      })
+      .default({ idle: '180m', prepare: '5m' })
+      .describe('Watches on leases; durations add by spaces (1h 30m).'),
+    killAttempts: z
+      .number()
+      .int()
+      .min(1)
+      .default(3)
+      .describe(
+        'How hard the dispatcher strikes a session that will not die on a timeout kill. After this many attempts it gives up: the slot is taken back, the lease ends with a machine-readable kill-unconfirmed reason, and the tracker that owns the ticket says so loudly — help is on the way.',
+      ),
+  })
+  .superRefine((dispatcher, ctx) => {
+    const pools = dispatcher.pools ?? {};
+    for (const [name, pool] of Object.entries(pools))
+      if (pool.fallback !== undefined && !(pool.fallback in pools))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['pools', name, 'fallback'],
+          message: `pool "${name}" falls back to "${pool.fallback}", which is not a configured pool`,
+        });
+    for (const start of Object.keys(pools)) {
+      const seen = new Set<string>();
+      let at: string | undefined = start;
+      while (at !== undefined && at in pools) {
+        if (seen.has(at)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['pools', start, 'fallback'],
+            message: `pool "${start}" has a fallback chain that cycles through "${at}"; chains must end`,
+          });
+          break;
+        }
+        seen.add(at);
+        at = pools[at]!.fallback;
+      }
+    }
+  });
+
+/** The orchestrator's own dials. Its territory, not the dispatcher's:
+ *  docs/orchestrator.md, "When a worker needs human input". */
+const orchestratorSchema = z.strictObject({
+  elicitationKeepAlive: durationString
+    .default('5m')
+    .describe(
+      'How long an open elicitation holds its slot (an in-session question to a person, like Linear elicitation). After it the lease releases and the ticket waits; the answer reacquires capacity and resumes the same session — fallback never applies to a resume.',
+    ),
+});
+
 const configShape = z.strictObject({
   $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
   version: z.literal(1),
@@ -643,30 +673,8 @@ const configShape = z.strictObject({
     .array(source)
     .default([])
     .describe('Core sources; `<home>/memory` is added as the core `memory` source automatically.'),
-  projectDefaults: z
-    .strictObject({
-      knowledge: z
-        .array(source)
-        .default([...DEFAULT_PROJECT_KNOWLEDGE])
-        .describe('Sources every project gets unless it lists its own; paths relative to the checkout.'),
-      linear: z
-        .strictObject({
-          lanes: z
-            .record(z.string().min(1), laneValueSchema)
-            .default({})
-            .describe(
-              'The lane convention every Linear project gets unless it maps the lane itself: workflow state name → agent, or null for a lane humans work.',
-            ),
-          workspaceId: z
-            .string()
-            .min(1)
-            .optional()
-            .describe('Linear organization id every project gets unless it names its own.'),
-        })
-        .optional()
-        .describe('The lane convention for projects that do not map the lane themselves.'),
-    })
-    .default({ knowledge: [...DEFAULT_PROJECT_KNOWLEDGE] })
+  projectDefaults: projectDefaultsSchema
+    .default(projectDefaultsDefault)
     .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
   projects: z
     .record(id, projectSchema)
@@ -674,32 +682,19 @@ const configShape = z.strictObject({
     .describe(
       'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
     ),
-  modules: z
-    .strictObject({
-      discord: z
-        .union([discordConfigSchema, z.literal(false)])
-        .optional()
-        .describe('Presence of this block enables the Discord module; `false` is an explicit off.'),
-      slack: z
-        .union([slackConfigSchema, z.literal(false)])
-        .optional()
-        .describe('Presence of this block enables the Slack module; `false` is an explicit off.'),
-    })
-    .default({}),
-  browser: z
-    .union([browserConfigSchema, z.literal(false)])
-    .optional()
-    .describe(
-      'Presence of this block enables browser control and builds the service at serve; `false` is an explicit off. `aivi install browser` writes a launch default.',
-    ),
   search: z
-    .strictObject({
-      provider: z.literal('qmd'),
-      indexOnStart: z.boolean().default(true),
-      maxPending: z.number().int().min(1).max(100).default(32),
-    })
-    .optional(),
-  linear: linearSchema.optional(),
+    .union([
+      z.literal(false),
+      z.strictObject({
+        provider: z.literal('qmd'),
+        indexOnStart: z.boolean().default(true),
+        maxPending: z.number().int().min(1).max(100).default(32),
+      }),
+    ])
+    .default({ provider: 'qmd', indexOnStart: true, maxPending: 32 })
+    .describe(
+      'On by default: knowledge search runs on qmd and indexes at boot. `false` is the only off switch — a missing block means enabled, never a silent no-search install.',
+    ),
   update: z
     .strictObject({
       channel: z
@@ -788,7 +783,21 @@ const configShape = z.strictObject({
       retention: { cron: '0 4 * * *', olderThanDays: 30 },
       projectsSync: { cron: '0 * * * *' },
     }),
+  dispatcher: dispatcherSchema
+    .prefault({})
+    .describe(
+      'Capacity pools every service draws from — the orchestrator, chat turns, jobs, the dreamer — and the timeouts that watch leases. No pools: unlimited, today’s behavior.',
+    ),
+  orchestrator: orchestratorSchema
+    .prefault({})
+    .describe('The ticket orchestrator’s own dials; capacity is not among them — that is the dispatcher’s.'),
   jobs: z.array(jobSchema).default([]),
+  plugins: z
+    .record(id, z.unknown())
+    .default({})
+    .describe(
+      'One block per plugin, keyed by the plugin’s own module id. Core validates the keys; each block validates against the schema of the plugin that wrote it, composed by the server — see the aivi-plugins list in <home>/app/package.json.',
+    ),
 });
 
 export type Config = z.infer<typeof configShape>;
@@ -827,43 +836,18 @@ function memoryIsReserved(config: Config, report: AddIssue): void {
         report([...path, i, 'id'], 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically');
 }
 
-/** Several apps need a named primary, and the primary must be one of the configured apps. */
-function primaryIsSound(config: Config, report: AddIssue): void {
-  const appIds = Object.keys(config.linear?.apps ?? {});
-  if (config.linear && appIds.length > 1 && !config.linear.primary)
-    report(
-      ['linear', 'primary'],
-      'Required once several apps are configured: which app carries the data feed and the bare LINEAR_* secrets',
-    );
-  if (config.linear?.primary && !appIds.includes(config.linear.primary))
-    report(['linear', 'primary'], 'Not a configured app');
-}
-
-/** An issue lands in one checkout, so a Linear team may belong to exactly one project. */
-function teamsHaveOneProject(config: Config, report: AddIssue): void {
-  const owners = new Map<string, string>();
-  for (const [project, entry] of Object.entries(config.projects))
-    for (const [i, team] of entry.linear?.teams.entries() ?? []) {
-      const owner = owners.get(team);
-      if (owner && owner !== project)
-        report(['projects', project, 'linear', 'teams', i], `This Linear team is already mapped to project ${owner}`);
-      owners.set(team, project);
-    }
-}
-
-/** The pools configured on linear and the channel modules must exist in the scheduler. */
-function modulePoolsAreNamed(config: Config, report: AddIssue): void {
+/** A plugin block that names a capacity pool must name one that exists. Generic on
+ *  purpose: core never learns what a module is, only that a block may carry `resource`. */
+function pluginPoolsAreNamed(config: Config, report: AddIssue): void {
   const resources = config.scheduler.resources;
-  if (config.linear && !(config.linear.resource in resources)) report(['linear', 'resource'], 'Unknown resource pool');
-  for (const [name, module] of [
-    ['discord', config.modules.discord],
-    ['slack', config.modules.slack],
-  ] as const)
-    if (module && !(module.resource in resources))
+  for (const [moduleId, block] of Object.entries(config.plugins)) {
+    const resource = (block as { resource?: unknown } | undefined)?.resource;
+    if (typeof resource === 'string' && !(resource in resources))
       report(
-        ['modules', name, 'resource'],
-        `Unknown resource pool; name one of scheduler.resources or set modules.${name} to false`,
+        ['plugins', moduleId, 'resource'],
+        `Unknown resource pool; name one of scheduler.resources or remove the plugins.${moduleId} block`,
       );
+  }
 }
 
 /** A job's pool must exist, and no job may take a system job's reserved id. */
@@ -913,37 +897,93 @@ function schedulerKnobsAreSound(config: Config, report: AddIssue): void {
   }
 }
 
-/** The cross-field rules the shape cannot express: unique and reserved ids, named pools,
- *  crons that parse. The order the rules run is the order issues surface. */
-export const configSchema = configShape.superRefine((config, ctx) => {
-  const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+/** The cross-field rules the shape cannot express: unique and reserved ids, pools that
+ *  exist, crons that parse. Rules about a module's own fields (a Linear primary, a Discord
+ *  intent) live in that module's schema; these are core's fields plus the one generic
+ *  block rule. The order the rules run is the order issues surface. */
+function crossFieldRules(config: Config, report: AddIssue): void {
   idsAreUnique(config, report);
   memoryIsReserved(config, report);
-  primaryIsSound(config, report);
-  teamsHaveOneProject(config, report);
-  modulePoolsAreNamed(config, report);
+  pluginPoolsAreNamed(config, report);
   jobsObeyTheirPools(config, report);
   schedulerKnobsAreSound(config, report);
-});
-
-/** The environment names of the one app: the primary's credentials, no app segment. */
-export const linearPrimarySecretNames = {
-  clientId: 'LINEAR_CLIENT_ID',
-  clientSecret: 'LINEAR_CLIENT_SECRET',
-  webhookSecret: 'LINEAR_WEBHOOK_SECRET',
-} as const;
-
-/** The app that carries the workspace data feed and the bare secrets: `linear.primary`, else the one configured app. */
-export function primaryLinearApp(linear: LinearConfig | undefined): string | undefined {
-  if (!linear) return undefined;
-  if (linear.primary) return linear.primary;
-  const ids = Object.keys(linear.apps);
-  return ids.length === 1 ? ids[0] : undefined;
 }
 
-/** The assistant's agent name: `linear.agent`, else the one assistant everyone gets. */
-export function assistantAgent(config: Config): string {
-  return config.linear?.agent ?? 'assistant';
+/** The core schema with plugin blocks as an open record: what `loadConfig` parses when
+ *  nothing is composed in — the thin installer's path, tests, and the write-then-validate
+ *  guarantee of `writeConfigBlock`. Core's own fields keep every rule; a `plugins` block
+ *  passes through as written, its contents the business of the plugin that owns it — and
+ *  a plugin's sections under `projects` and `projectDefaults` pass through the same way,
+ *  which is what lets a plugin's own write-then-validate check them with its own schema.
+ *  The server and the operator CLI load the composed, closed schema instead. */
+export const configSchema = configShape
+  .catchall(z.unknown())
+  .extend({
+    projects: z.record(id, projectSchema.catchall(z.unknown())).default({}),
+    projectDefaults: projectDefaultsSchema.catchall(z.unknown()).default(projectDefaultsDefault),
+  })
+  .superRefine((config, ctx) => {
+    const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+    crossFieldRules(config, report);
+  });
+
+/** Plugin blocks as the registered plugins bring them: module id → the plugin's own schema. */
+export type PluginConfigSchemas = Record<string, z.ZodType>;
+
+/** A registered plugin's own project-section schemas: `project` is the shape under
+ *  `projects.<id>.<moduleId>`, `defaults` the shape under `projectDefaults.<moduleId>`.
+ *  A project key is valid because core defines it or a registered plugin brings it —
+ *  the closure rule of the `plugins` record, one level down. */
+export interface PluginProjectSections {
+  project?: z.ZodType;
+  defaults?: z.ZodType;
+}
+export type PluginProjectSectionsMap = Record<string, PluginProjectSections>;
+
+/** The closed, complete config schema: core's shape with the `plugins` record specialized
+ *  to one known key per registered plugin, each block validated by the schema of the
+ *  plugin that wrote it. A block for an unregistered plugin fails as an unrecognized key
+ *  and an editor says so too; a registered plugin with no block gets its own defaults
+ *  (or its own "enabled but unconfigured" complaint — the plugin's schema decides).
+ *  Disabled plugins belong here as well: the list says which plugins exist and stay valid,
+ *  only `serve` honors enabled.
+ *
+ *  `projectSections` is the same machinery one level down: each contributing plugin's
+ *  schema becomes a known optional key under every project entry and under
+ *  `projectDefaults`; a project section no plugin contributes is an unrecognized key. */
+export function composeConfigSchema(
+  pluginSchemas: PluginConfigSchemas,
+  projectSections: PluginProjectSectionsMap = {},
+): z.ZodType<Config> {
+  const blocks = Object.fromEntries(
+    Object.entries(pluginSchemas).map(([moduleId, schema]) => [moduleId, schema.optional()]),
+  ) as z.ZodRawShape;
+  const entrySections: Record<string, z.ZodType> = {};
+  const defaultsSections: Record<string, z.ZodType> = {};
+  for (const [moduleId, sections] of Object.entries(projectSections)) {
+    if (sections.project) entrySections[moduleId] = sections.project.optional();
+    if (sections.defaults) defaultsSections[moduleId] = sections.defaults.optional();
+  }
+  const composed = configShape.extend({
+    plugins: z.strictObject(blocks).default({}),
+    projects: z
+      .record(id, projectSchema.extend(entrySections as z.ZodRawShape))
+      .default({})
+      .describe(
+        'Overrides per project id. Projects are discovered as the directories of <home>/projects; each gets <home>/memory/<id> as its memory source.',
+      ),
+    projectDefaults: projectDefaultsSchema
+      .extend(defaultsSections as z.ZodRawShape)
+      .default(projectDefaultsDefault)
+      .describe('The company-wide repository convention. Default: docs/ as doc, docs/adr as decision.'),
+  });
+  // Core cannot statically type what plugins contribute: the contributed sections
+  // widen the parsed shape beyond `Config`, and plugins read them back with a cast
+  // — the `plugins.<id>` pattern, one level down. The closure is at runtime.
+  return composed.superRefine((config, ctx) => {
+    const report: AddIssue = (path, message) => ctx.addIssue({ code: 'custom', path, message });
+    crossFieldRules(config as Config, report);
+  }) as unknown as z.ZodType<Config>;
 }
 
 /** Id of the job the host seeds from `scheduler.retention`. */
@@ -1004,21 +1044,20 @@ export interface KnowledgeSource {
   scope: 'core' | 'project';
   projectId?: string;
 }
-/** The project's Linear routing as it takes effect: `lanes` is the merge of
- * `projectDefaults.linear.lanes` and the entry's own, entry winning one key at
- * a time, with the human lanes (`null`) filtered out — those live in the file. */
-export interface ProjectLinear {
-  workspaceId?: string;
-  teams: string[];
-  lanes: Record<string, LaneBinding>;
-}
+/** The project's routing view: id, the clean checkout, and the memory marker.
+ *  Plugin-owned sections of the config entry are not core's business; the plugin
+ *  reads them from `loaded.config.projects` with its own schema (see
+ *  `AiviPlugin.projectSchema`). */
 export interface Project {
   id: string;
   /** The clean checkout: `<home>/projects/<id>/source`; absent on disk when `removed`. `projectLayout(dirname(directory))` names the rest. */
   directory: string;
+  /** The tracker workflow in order, as configured; absent means the project
+   *  maps no lanes: nothing is picked up for it and its tickets are silent.
+   *  The orchestrator decides moves from this order; a tracker only performs. */
+  lanes?: ProjectLane[];
   /** The checkout is gone but `memory/` remains: still listed and searchable until purged. */
   removed?: true;
-  linear?: ProjectLinear;
 }
 export interface LoadedConfig {
   config: Config;
@@ -1028,6 +1067,10 @@ export interface LoadedConfig {
 }
 
 const absolute = (base: string, value: string): string => (isAbsolute(value) ? value : resolve(base, value));
+/** One path written relative to a base (a home, a checkout) resolved to absolute; an
+ *  absolute value passes through. Plugins absolutize their own config paths with it —
+ *  core never learns which fields of a plugin block are paths. */
+export const absolutePath = absolute;
 
 /** Sub-directories of `root` (following symlinks), sorted, skipping dotfiles; `[]` when `root` is absent. */
 async function subdirectories(root: string): Promise<string[]> {
@@ -1082,37 +1125,10 @@ async function discoverProjects(
   return found;
 }
 
-/** A config shape aivi has moved past: a clear error saying where the contents live now,
- *  rather than a schema complaint about unknown keys. */
-function rejectRetiredShapes(raw: unknown, path: string): void {
-  // Module settings are inline now; a `config` pointer is the old shape, so say where its contents belong.
-  for (const name of ['discord', 'slack'] as const) {
-    const pointer = (raw as { modules?: Record<string, unknown> }).modules?.[name];
-    const file = (pointer as { config?: unknown } | undefined)?.config;
-    if (typeof file === 'string')
-      throw new Error(
-        `modules.${name}.config is gone: the ${name} settings live inline in ${path}. Move the contents of ${file} into that block, without its "version".`,
-      );
-  }
-  const persona = (raw as { name?: unknown }).name;
-  if (persona !== undefined)
-    throw new Error(
-      `name is gone: the persona lives in identity.name in ${path}. Write "identity": { "name": ${JSON.stringify(String(persona))} } there.`,
-    );
-}
-
 /** Rewrites every path the config holds relative to itself into an absolute one, based on
  *  the config file's directory. */
 function absolutizePaths(config: Config, base: string): void {
   config.stateDirectory = absolute(base, config.stateDirectory);
-  if (config.modules.discord) config.modules.discord.directory = absolute(base, config.modules.discord.directory);
-  if (config.modules.slack) config.modules.slack.directory = absolute(base, config.modules.slack.directory);
-  const browser = config.browser ? config.browser.connection : undefined;
-  if (browser && browser.mode !== 'attach') {
-    browser.userDataDir = absolute(base, browser.userDataDir);
-    if (browser.mode === 'launch' && browser.executablePath)
-      browser.executablePath = absolute(base, browser.executablePath);
-  }
   for (const job of config.jobs) {
     const task = job.task;
     if (task.kind === 'prompt') task.directory = absolute(base, task.directory);
@@ -1122,28 +1138,10 @@ function absolutizePaths(config: Config, base: string): void {
   }
 }
 
-/** The lanes the listener consults: the projectDefaults base merged with the entry's own,
- *  with `null` lanes — human-worked — dropped. */
-function projectLinearBinding(config: Config, entry: ProjectEntry): ProjectLinear | undefined {
-  if (!entry.linear) return undefined;
-  // Lanes merge per lane — the convention is the base and the entry wins one
-  // key at a time — and `null` means a human works the lane, so it is absent
-  // from the map the listener consults while it stays written in the file.
-  const merged = { ...(config.projectDefaults.linear?.lanes ?? {}), ...entry.linear.lanes };
-  const lanes: Record<string, LaneBinding> = {};
-  for (const [lane, value] of Object.entries(merged)) {
-    const binding = laneBinding(value);
-    if (binding) lanes[lane] = binding;
-  }
-  const workspaceId = entry.linear.workspaceId ?? config.projectDefaults.linear?.workspaceId;
-  return { teams: entry.linear.teams, lanes, ...(workspaceId ? { workspaceId } : {}) };
-}
-
-export async function loadConfig(path: string): Promise<LoadedConfig> {
+export async function loadConfig(path: string, schema: z.ZodType<Config> = configSchema): Promise<LoadedConfig> {
   path = resolve(path);
   const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
-  rejectRetiredShapes(raw, path);
-  const config = configSchema.parse(raw);
+  const config = schema.parse(raw);
   const base = dirname(path);
   absolutizePaths(config, base);
   const sources: KnowledgeSource[] = [
@@ -1161,12 +1159,11 @@ export async function loadConfig(path: string): Promise<LoadedConfig> {
       for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
         sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
     sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
-    const linear = projectLinearBinding(config, entry);
     projects.push({
       id: projectId,
       directory: layout.source,
+      ...(entry.lanes ? { lanes: entry.lanes } : {}),
       ...(removed ? { removed: true } : {}),
-      ...(linear ? { linear } : {}),
     });
   }
   return { config, path, sources, projects };

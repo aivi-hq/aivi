@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import type { SessionEvent, SessionEventListener, SessionEvents } from '../src/events.ts';
+import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/plugin/module';
 import { connectOpenCode } from '../src/opencode.ts';
 import { finalAnswer, PermissionRequired, runTurn } from '../src/session.ts';
 
@@ -42,7 +42,7 @@ test('only the matching completed final answer is returned, without reasoning or
   const failed = structuredClone(messages);
   (failed.at(-1) as { outcome: string }).outcome = 'failed';
   assert.throws(() => finalAnswer(failed, 'msg_one', 'assistant'), /No confirmed/);
-  // A /steer into this turn is a user message that belongs to it; any other user message means the session moved on.
+  // An interjection steered into this turn is a user message that belongs to it; any other user message means the session moved on.
   const steered = structuredClone(messages);
   steered.splice(3, 0, {
     type: 'user',

@@ -1,6 +1,6 @@
 import type { Logger } from '@aivi/core';
-import type { SessionEvents } from '../events.ts';
-import type { ChannelDelivery } from './contract.ts';
+import type { ChannelDelivery } from '@aivi/plugin/channel';
+import type { SessionEvents } from '@aivi/plugin/module';
 import {
   DEFAULT_CLOCK,
   nextRenderChange,

@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { discordConfigSchema } from '@aivi/core';
 import { CHAT_COMMANDS } from '@aivi/host';
 import { ApplicationCommandOptionType } from 'discord.js';
-import { authorized, reaches } from '../src/config.ts';
+import { authorized, discordConfigSchema, reaches } from '../src/config.ts';
 import { DISCORD, discordCommands } from '../src/module.ts';
 
 const config = discordConfigSchema.parse({
@@ -127,9 +126,9 @@ test('slash commands are the shared table, so a command cannot exist without a h
     [model.name, model.required, (model as { autocomplete?: boolean }).autocomplete],
     ['model', false, true],
   );
-  const steer = byName.get('steer')!.options![0]!;
+  const queue = byName.get('queue')!.options![0]!;
   assert.deepEqual(
-    [steer.name, steer.required, (steer as { autocomplete?: boolean }).autocomplete],
+    [queue.name, queue.required, (queue as { autocomplete?: boolean }).autocomplete],
     ['text', true, false],
   );
   assert.ok(commands.every(c => c.description.length <= 100));

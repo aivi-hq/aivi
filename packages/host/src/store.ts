@@ -2,25 +2,27 @@ import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Job, JobSource, JobState, Person, PersonToken, Report, Run, RunState, Task } from '@aivi/core';
+import type {
+  AddJobOptions,
+  AuditEntry,
+  Job,
+  JobEntry,
+  JobSource,
+  JobState,
+  Lease,
+  Person,
+  PersonToken,
+  Report,
+  RequestLogEntry,
+  Run,
+  RunFilter,
+  RunState,
+  Task,
+} from '@aivi/core';
 import { formatInstant, jobSchema, nextOccurrence } from '@aivi/core';
+import type { Store as StoreContract } from '@aivi/plugin/module';
 
 type Row = Record<string, unknown>;
-export interface Lease {
-  id: string;
-  owner: string;
-  resource: string;
-  state: 'running' | 'blocked';
-  createdAt: number;
-  reason: string | null;
-}
-export interface AuditEntry {
-  seq: number;
-  runId: string;
-  at: number;
-  action: string;
-  reason: string;
-}
 const lease = (r: Row): Lease => ({
   id: String(r.id),
   owner: String(r.owner),
@@ -60,16 +62,6 @@ const run = (r: Row): Run => ({
  *  in and what was answered, with credentials in the headers redacted by
  *  the middleware itself. `truncated` says the body was larger than the cap
  *  and only its first bytes were stored. */
-export interface RequestLogEntry {
-  id: number;
-  at: number;
-  method: string;
-  path: string;
-  status: number;
-  body: string | null;
-  truncated: boolean;
-  headers: Record<string, string>;
-}
 
 const request = (r: Row): RequestLogEntry => ({
   id: Number(r.id),
@@ -94,16 +86,6 @@ function migrateReport(raw: unknown): Report | null {
   return { to: 'channel', module: old.to, channel: old.channel, on: old.on ?? 'always' };
 }
 
-export interface JobEntry {
-  spec: Job;
-  source: JobSource;
-  state: JobState;
-  /** The next occurrence to materialize; null once a one-off has fired or when nothing is left. */
-  nextAt: number | null;
-  createdAt: number;
-  /** Idempotency key of a job created outside config.json (a tool message id, a CLI `--key`). */
-  dedupeKey: string | null;
-}
 const jobEntry = (r: Row): JobEntry => ({
   spec: JSON.parse(String(r.spec)) as Job,
   source: r.source as JobSource,
@@ -125,18 +107,6 @@ const token = (r: Row): PersonToken => ({
   label: String(r.label),
   createdAt: Number(r.created_at),
 });
-export interface AddJobOptions {
-  /** Identical requests with the same key create one job; a different task under the same key is refused. */
-  dedupeKey?: string;
-  /** Audit reason for the first run's `enqueued` entry; default `job:<id>`. */
-  reason?: string;
-}
-export interface RunFilter {
-  jobId?: string;
-  state?: RunState;
-  /** Keep only the newest `limit` runs. */
-  limit?: number;
-}
 const oneOffId = (source: JobSource) => `${source === 'agent' ? 'agent' : 'job'}-${randomUUID().slice(0, 8)}`;
 /** What makes two one-off requests "the same": everything but the generated id and the instant. */
 const requestFingerprint = ({ id: _id, at: _at, ...rest }: Job) => hash(rest);
@@ -147,7 +117,7 @@ const requestFingerprint = ({ id: _id, at: _at, ...rest }: Job) => hash(rest);
  * may own their own namespaced tables in the same database: declare them with
  * `migrate()` and access them through `db`, never host tables.
  */
-export class Store {
+export class Store implements StoreContract {
   readonly db: DatabaseSync;
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

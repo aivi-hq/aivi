@@ -3,11 +3,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Config, Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import { OpenCode } from '@opencode/client';
 import type { DiscoverOptions, EnsureOptions } from '@opencode/client/service';
 import { Service } from '@opencode/client/service';
-
-export type OpenCodeClient = ReturnType<typeof OpenCode.make>;
 
 export type OpenCodeEnv = Record<string, string | undefined>;
 /** A background service aivi found and considers alive, whatever its version. */

@@ -1,0 +1,41 @@
+{
+  "name": "@aivi/plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./api": { "development": "./src/api.ts", "default": "./dist/api.js" },
+    "./channel": { "development": "./src/channel.ts", "default": "./dist/channel.js" },
+    "./module": { "development": "./src/module.ts", "default": "./dist/module.js" },
+    "./run": { "development": "./src/run.ts", "default": "./dist/run.js" },
+    "./tracker": { "development": "./src/tracker.ts", "default": "./dist/tracker.js" },
+    "./forge": { "development": "./src/forge.ts", "default": "./dist/forge.js" }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=26.1.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/plugin"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "tsc -b tsconfig.build.json"
+  },
+  "dependencies": {
+    "@aivi/core": "^0.7.1",
+    "@clack/prompts": "1.8.1",
+    "@opencode/client": "2.0.18",
+    "zod": "4.1.13"
+  },
+  "devDependencies": {
+    "commander": "15.0.0"
+  }
+}

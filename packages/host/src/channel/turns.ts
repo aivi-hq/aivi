@@ -1,12 +1,10 @@
 import { realpath, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LoadedConfig, Logger } from '@aivi/core';
-import type { SessionEvents } from '../events.ts';
-import type { OpenCodeClient } from '../opencode.ts';
+import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { OpenCodeClient, SessionEvents, Store } from '@aivi/plugin/module';
 import { reentryPrompt } from '../reports.ts';
 import { connectForTurn, runTurn } from '../session.ts';
-import type { Store } from '../store.ts';
-import type { ChannelPlatform } from './contract.ts';
 import type { Ask } from './engine.ts';
 
 /** Native message id for a turn; only `[A-Za-z0-9_]` survive so any platform id fits. */

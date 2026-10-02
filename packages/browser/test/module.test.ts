@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { BrowserConfig } from '@aivi/core';
-import { browserConfigSchema, getLogger } from '@aivi/core';
-import type { HostServices } from '@aivi/host';
+
+import { getLogger } from '@aivi/core';
 import { ToolError, ToolRegistry } from '@aivi/host';
+import type { AiviServices } from '@aivi/plugin';
+import type { BrowserConfig } from '../src/config.ts';
+import { browserConfigSchema } from '../src/config.ts';
 import type { BrowserTransport } from '../src/index.ts';
 import { createBrowserModule } from '../src/index.ts';
 
@@ -32,7 +34,7 @@ test('the browser module claims aivi_browser at its own door; stop releases it a
   const services = {
     tools: registry.forModule('browser'),
     log: getLogger(['aivi', 'host']),
-  } as unknown as HostServices;
+  } as unknown as AiviServices;
   const running = await createBrowserModule(config(), fake.transport).start(services);
 
   const served = registry.list();

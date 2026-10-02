@@ -1,5 +1,5 @@
 /**
- * The setup `aivi install discord` runs: everything Discord-specific lives in
+ * The setup `aivi add discord` runs: everything Discord-specific lives in
  * this file — how to create the application, which secret to ask for and how
  * to verify it, what to write into config.json and .env. The CLI runs it
  * blind: it installs the package, hands it a context, and brings aivi back
@@ -9,7 +9,8 @@
  * every id matches the platform's shape, and a config.json that no longer
  * loads is restored to its old bytes.
  */
-import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/core';
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
+import { MODULE_ID } from './config.ts';
 
 /** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
  *  nothing — neither is an answer. The flow stops with
@@ -60,10 +61,10 @@ async function collectIds(ctx: PluginSetupContext, first: string, again: string)
 }
 
 const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
-  const existing = (ctx.config.modules as Record<string, unknown> | undefined)?.discord;
-  if (existing !== undefined && existing !== false)
+  const existing = (ctx.config.plugins as Record<string, unknown> | undefined)?.[MODULE_ID];
+  if (existing !== undefined)
     throw new Error(
-      'Discord is already configured (the modules.discord block in config.json). Edit that block; install configures a module that is not configured yet.',
+      'Discord is already configured (the plugins.channel-discord block in config.json). Edit that block; aivi add configures a module that is not configured yet.',
     );
   ctx.prompts.note(
     [
@@ -126,9 +127,9 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     ...(intent ? { messageContent: true } : {}),
   };
   await ctx.writeSecret('DISCORD_BOT_TOKEN', token);
-  await ctx.writeConfigBlock(['modules', 'discord'], block);
+  await ctx.writeConfigBlock(['plugins', MODULE_ID], block);
   return {
-    module: 'discord',
+    module: MODULE_ID,
     summary: [
       `Discord is configured for @${bot.username} (application ${bot.id}).`,
       channelIds.length ? '' : 'No shared channels: aivi will answer DMs only.',

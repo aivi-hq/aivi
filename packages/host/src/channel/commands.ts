@@ -1,27 +1,9 @@
-import type { OpenCodeClient } from '../opencode.ts';
-import type { Store } from '../store.ts';
-import type { ChannelPlatform } from './contract.ts';
+import type { ChannelPlatform, ChatCommand, ChatCommandName } from '@aivi/plugin/channel';
+import type { OpenCodeClient, Store } from '@aivi/plugin/module';
 import type { ChannelEngine } from './engine.ts';
 import { formatDuration } from './progress.ts';
 import type { ConversationStore } from './store.ts';
 import { messageIdFor, speakerLine } from './turns.ts';
-
-export interface ChatCommandArgument {
-  name: string;
-  description: string;
-  required: boolean;
-  /** Discord offers choices for this argument from the named catalogue. */
-  autocomplete?: 'model';
-}
-/** One chat command, the same on every platform; the adapters translate names and arguments. */
-export interface ChatCommand {
-  name: string;
-  /** Under 100 characters: Discord's limit for a command description. */
-  description: string;
-  /** Acts on one conversation: refused where a slash command cannot name one (a threads-mode channel). */
-  conversation: boolean;
-  arguments: ChatCommandArgument[];
-}
 
 /**
  * The one list of chat commands. Discord registers it, Slack checks it against
@@ -60,8 +42,8 @@ export const CHAT_COMMANDS = [
   },
   { name: 'stop', description: 'Stop the turn running in this conversation', conversation: true, arguments: [] },
   {
-    name: 'steer',
-    description: 'Tell the agent something while it works on this conversation',
+    name: 'queue',
+    description: 'Send this behind the running turn instead of interjecting into it',
     conversation: true,
     arguments: [{ name: 'text', description: 'What to say', required: true }],
   },
@@ -73,8 +55,7 @@ export const CHAT_COMMANDS = [
     arguments: [{ name: 'code', description: 'The 5-digit code shown by aivi link', required: true }],
   },
   { name: 'help', description: 'List aivi’s commands', conversation: false, arguments: [] },
-] as const satisfies readonly ChatCommand[];
-export type ChatCommandName = (typeof CHAT_COMMANDS)[number]['name'];
+] as const satisfies readonly (ChatCommand & { name: ChatCommandName })[];
 
 export const isChatCommand = (name: string): name is ChatCommandName => CHAT_COMMANDS.some(c => c.name === name);
 export const chatCommand = (name: ChatCommandName): ChatCommand => CHAT_COMMANDS.find(c => c.name === name)!;
@@ -174,15 +155,23 @@ export async function stopTurn(
   }
 }
 
+/** The ack a steered interjection earns: the running turn will speak for it. */
+export const INTERJECTED = 'Passed on to the agent mid-turn.';
+
 /**
- * `/steer`: put words into the running turn instead of behind it (`delivery: "steer"`).
- * The message carries `metadata.aivi.steer = <running turn's native message id>` so the
- * turn's verification counts it as part of that turn. Nothing is queued when no turn runs.
- * These words end up in the session like the turn's own, so a linked account speaks as
- * its person here too: the prompt line and `metadata.aivi.person` follow the same rule
+ * Interject: put words into the running turn (`delivery: "steer"`). This is
+ * the **default** for a message that arrives while the conversation's turn
+ * runs (ruled 2026-10-02: "Default will be steer"; `/steer` died and
+ * `/queue` took its place for going behind). The message carries
+ * `metadata.aivi.steer = <running turn's native message id>` so the turn's
+ * verification counts it as part of that turn. `steered: false` with no
+ * error means no turn runs — the caller queues the message instead, which
+ * is also what `/queue` asks for unconditionally. These words end up in the
+ * session like the turn's own, so a linked account speaks as its person
+ * here too: the prompt line and `metadata.aivi.person` follow the same rule
  * the turn runner uses.
  */
-export async function steerTurn(
+export async function interject(
   people: Store,
   store: ConversationStore,
   platform: ChannelPlatform,
@@ -191,9 +180,9 @@ export async function steerTurn(
   speaker: { name: string; user: string },
   text: string,
   signal: AbortSignal = AbortSignal.timeout(10_000),
-): Promise<{ text: string; steered: boolean; error?: unknown }> {
+): Promise<{ steered: boolean; error?: unknown }> {
   const turn = store.running(channel);
-  if (!turn?.ready) return { text: `${NOTHING_RUNNING} Send it as a message instead.`, steered: false };
+  if (!turn?.ready) return { steered: false };
   const who = people.identityFor(platform.id, speaker.user);
   try {
     const client = await opencode();
@@ -214,8 +203,8 @@ export async function steerTurn(
       },
       { signal },
     );
-    return { text: 'Passed on to the agent mid-turn.', steered: true };
+    return { steered: true };
   } catch (error) {
-    return { text: 'I could not reach the running turn; send it as a message instead.', steered: false, error };
+    return { steered: false, error };
   }
 }

@@ -5,8 +5,10 @@
 aivi reads one directory, the **home**: `~/.aivi` by default, or `AIVI_HOME`
 (leading over the `home` field in the client config; `AIVI_CONFIG` moves that
 file itself, which is how the development home stays separate). It holds
-`config.json`, `.env`, and `state/` (SQLite, the search index, dreaming
-transcripts). The live `config.json` is the
+`config.json`, `.env`, `app/package.json` (the installed server and the
+`aivi-plugins` list), and `state/` (SQLite, the search index, the editor
+schema cache, dreaming transcripts). The live
+`config.json` is the
 file
 you and aivi edit, so it never goes under version control; a home that lives
 in a git repository starts empty (`{ version: 1 }`) and grows only what you
@@ -24,9 +26,12 @@ back to another project or resource pool.
 Two more directories live in the home, owned by the CLI rather than aivi:
 
 - `app/` — the installed packages: one `package.json` and lockfile whose
-  dependencies are the server (`@aivi/host`) and the enabled channel plugins.
-  `config.json` records what is *desired*; `app/package.json` records what is
-  *installed*.
+  dependencies are the server (`@aivi/host`) and the installed plugins. Its
+  `aivi-plugins` array is the enablement fact: package names, a
+  `[name, false]` tuple for a plugin that stands down. `aivi add` and
+  `aivi remove` write it, and the server composes `config.json`'s closed
+  schema from exactly those packages. `config.json` records what each plugin
+  is *configured as*; `app/package.json` records which plugins *exist and run*.
 - `runtime/` — a managed Node installation, only when the machine's Node does
   not satisfy the server's requirement.
 
@@ -59,7 +64,6 @@ containing facts is the wrong file growing.
 | `version` | Required; `1` |
 | `identity.name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Nothing derives agent names from it (the assistant is `assistant` unless a module says otherwise); the display name stays free-form. The plugin says it to every agent (`Your name is aivi.`) ahead of the soul, so `soul.md` never repeats it. aivi cannot set names on the platforms: the operator uses this name in each console |
 | `identity.github` | Who a **worker aivi launched** commits as, as a `{user, email}` pair: name the pair or neither, never half. Default: `opencode.coauthor` in the machine's git config, else the aivi app `aivi-agent[bot] <331678708+aivi-agent[bot]@users.noreply.github.com>`. GitHub resolves a bot commit's avatar and link from the email *inside the commit*, never from who pushed, so no token and no app installation is involved ([linear](linear.md)) |
-| `identity.github.app` | The GitHub App id. Nothing reads it yet: whoever mints an installation token to act on GitHub as the app signs a JWT issued to this |
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
@@ -68,12 +72,10 @@ containing facts is the wrong file growing.
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (set this in any home tests and smoke checks read, so they never touch a developer's OpenCode). Ignored with `opencode.url` |
 | `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
 | `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](projects.md)) |
-| `projectDefaults.linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
+| `projectDefaults.tracker-linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](linear.md)) |
 | `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a project that is neither checked out nor remembered fails. `<home>/projects/<id>/memory` is each project's `memory` source |
-| `modules.discord` | Presence enables the Discord module; the block is its whole setup, `false` is an explicit off ([discord](discord.md)) |
-| `modules.slack` | Presence enables the Slack module; the block is its whole setup, `false` is an explicit off ([slack](slack.md)) |
-| `browser` | On by default: aivi launches its own Chrome with a profile in `state/chrome` on first use. `false` disables it; an object selects another mode or limits; see [browser setup](browser.md) |
-| `search` | Optional `{provider: "qmd", indexOnStart: true, maxPending: 32}` |
+| `plugins` | One block per plugin, keyed by the plugin's own **module id**, which is the package's short name: `plugins.channel-discord`, `plugins.channel-slack`, `plugins.tracker-linear`, `plugins.forge-github`, `plugins.browser`. A person writes the word they typed into `aivi add`, never one they have to find in a source file — the rule holds for every plugin that can be installed (ruled 2026-09-30). What stays the platform's short name is anything naming the platform rather than the package — the table prefixes and session ids (`discord_turns`, `ses_linear_…`) and the `aivi discord`/`aivi linear` commands — because renaming a prefix orphans the conversations already bound to it. The block is the plugin's whole setup and is validated by the plugin's own schema; what *enables* a module is the `aivi-plugins` list in `app/package.json`, not the block — a listed plugin with no block takes its defaults or its own clear complaint, and a block for a plugin nobody listed fails validation. Each plugin's doc owns its block: [discord](discord.md), [slack](slack.md), [linear](linear.md), [browser](browser.md) |
+| `search` | On by default: `{provider: "qmd", indexOnStart: true, maxPending: 32}`; `false` disables search entirely |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked runs |
 | `scheduler.resources` | `{"local-model": 1}`; named pool limits |
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
@@ -81,6 +83,10 @@ containing facts is the wrong file growing.
 | `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. The default (its own `maintenance`-style pool) is written out in [operations](operations.md#how-runs-end) |
 | `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that fast-forwards every project's `source/` to its upstream and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
 | `scheduler.timezone` | Host-wide default for derived schedules (`retention`, `projects-sync`); default the host's own timezone. A schedule's own `timezone` wins over it |
+| `dispatcher.pools` | Absent: **unlimited** — capacity is not moderated, today's behavior (the intended default). Present: named pools of `{model?, capacity, fallback?}` every service draws from — the orchestrator, chat turns, jobs, the dreamer — configured once for the installation, never per project. The pool decides the model at session create; a lane's `pool` names one. Fallback grants are for new sessions only and chains must exist and end. [orchestrator](orchestrator.md) owns the design |
+| `dispatcher.timeouts` | `{ idle: "180m", prepare: "5m" }`: silence on an attached session before the dispatcher reclaims the slot (kill, confirm, free; an unconfirmed kill keeps the slot unavailable until a strike confirms or the cap gives up); and how long a lease without a session may take to be provided one. Durations add by spaces (`1h 30m`) |
+| `dispatcher.killAttempts` | `3`: how many kill strikes an unconfirmed session gets before the dispatcher gives up on it — **not** on the slot: the capacity returns and the ending carries the `kill-unconfirmed` code, which the tracker says loudly on its platform ([orchestrator](orchestrator.md#ending-a-lease)) |
+| `orchestrator.elicitationKeepAlive` | `5m`: how long an open in-session elicitation (a worker waiting on a person, like Linear elicitation) holds its slot. After it the lease releases; the answer reacquires capacity and resumes the same session — fallback never applies to a resume |
 | `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). A bare operation name is shorthand for its invocation: `"task": "system.check"` is `{ "kind": "invocation", "name": "system.check" }`; use the explicit shape when the operation takes `args`. The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
 
 ## Tasks
@@ -224,80 +230,86 @@ list` shows them beside the configured ones.
 
 ## Linear
 
-Presence of `linear` enables the module ([linear](linear.md)).
+The `plugins.tracker-linear` block is the Linear module's whole setup; the
+module runs when `@aivi/tracker-linear` stands in the `aivi-plugins` list
+([linear](linear.md)). The key is the package name; the database's prefix, the
+webhook URL Linear's dashboard holds and the `aivi linear` command keep the
+platform's short name, since those say who a conversation is on rather than
+which package speaks for it.
 
 ```json
 {
-  "linear": {
-    "agent": "aivi",
-    "primary": "aivi",
-    "apps": { "aivi": {}, "reviewer": {} },
-    "logMisroutes": true,
-    "listener": false,
-    "humanLabel": "needs-human",
-    "resource": "local-model",
-    "progress": "tools",
-    "turnTimeoutMs": 7200000
+  "plugins": {
+    "tracker-linear": {
+      "agent": "aivi",
+      "primary": "aivi",
+      "apps": { "aivi": {}, "reviewer": {} },
+      "logMisroutes": true,
+      "humanLabel": "needs-human",
+      "resource": "local-model",
+      "progress": "tools",
+      "turnTimeoutMs": 7200000
+    }
   }
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `agent` | The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the **assistant**. Default: `assistant` |
+| `agent` | The OpenCode agent that answers people on Linear — comment mentions above all: the **assistant**. A hand delegation is never its to answer: those get the fixed refusal. Default: `assistant` |
 | `primary` | The app that carries the workspace's data feed, signs the bare `LINEAR_*` secrets and authorises the Linear MCP. Default: the one app; required once several apps are configured |
 | `apps.<id>` | A Linear OAuth application acting as an app user. The primary does the receiving; every other app is a **face** — a name and icon in Linear's UI with its own credentials, no routing meaning |
 | `logMisroutes` | `true`: log at warn a webhook delivered to the wrong endpoint — a data change on a face's route. It is dropped either way |
-| `listener` | `false`: only delegations and mentions made in Linear start a worker. `true`: an issue entering a mapped lane is delegated by aivi (on the primary) and its worker starts |
-| `humanLabel` | Issues with this label are never worked automatically; a hand delegation is refused with an explanation in the agent session |
+| `humanLabel` | Issues with this label are never worked automatically — the only "not that one again" there is (a stop remembers nothing); a session created on one is refused with an explanation, and a failed closing or an unkillable worker marks the ticket with it |
 | `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
 | `mcp` | On by default: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app; `false` disables it ([linear](linear.md#the-linear-mcp)) |
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
 | `turnTimeoutMs` | A worker turn longer than this is interrupted and ends `stopped` (default two hours) |
 
-The project entry routes by Linear **team** and selects agents by lane (a lane
-is a team workflow state, by name):
+The project entry routes by Linear **team** (a repository may list several
+teams — one checkout, several teams; a team belongs to at most one project;
+Linear *projects* (epics) play no routing part). The workflow itself is not a
+Linear field: it is **core's** lane array on the project,
+`projects.<id>.lanes` — left to right, the order **is** the priority:
 
 ```json
 {
-  "projectDefaults": {
-    "linear": { "lanes": { "Dev": "dev", "Review": "dev", "Triage": null } }
-  },
   "projects": {
     "website": {
-      "linear": {
-        "teams": ["linear-team-id"],
-        "lanes": { "Review": { "agent": "reviewer", "worktree": false }, "Shipped": null }
-      }
+      "tracker-linear": { "teams": ["linear-team-id"] },
+      "lanes": [
+        { "name": "Todo", "queue": true },
+        { "name": "In Progress", "agent": "dev", "pool": "worker", "worktree": true },
+        { "name": "Review", "agent": "reviewer" },
+        { "name": "Release" }
+      ]
     }
   }
 }
 ```
 
-A repository may list several teams (one checkout, several teams); a team
-belongs to at most one project. Linear *projects* (epics) play no routing
-part. `lanes` defaults to empty: the listener delegates nothing until you map
-a lane, while hand delegation always works. A lane names an **OpenCode agent**
-directly; several lanes may name the same agent; `null` marks a lane humans
-work. A lane may be an object `{ agent, worktree: false }`: the agent runs in
-the project's clean checkout on main without a worktree — aivi builds no
-enforcement there, the agent file's own `edit` deny is the only guard, and the
-checkout is never worked in by a lane that does not say so. Lanes merge one
-key at a time over `projectDefaults.linear.lanes` (where `knowledge`
-replaces: a lane map is a lookup table, not a list), so a project whose site
-works `Dev` with `dev` as the convention says, `Review` with `reviewer` in the
-checkout because the entry outvotes the convention, and leaves `Triage` and
-`Shipped` to people. `teams` is never defaulted: a team belongs to one
-project. `workspaceId` is optional and only needed when the installation spans
-Linear workspaces; `projectDefaults.linear.workspaceId` supplies it to every
-project that omits its own.
-`aivi projects add <git-url> --linear PEC` and `aivi projects create` write
-`teams` for you, resolving the team key Linear's URLs show to its id;
-`--lane "Dev:dev"` (shorthand `--lane "Dev,Review:dev"`) and
-`--unlane "Backlog"` write the lanes along with them. The mapped agent is
-resolved by OpenCode's ordinary discovery for the session's directory; an
-unknown agent file is OpenCode's own error at session start, not a config
-error.
+A lane naming an `agent` is worked; one naming none is worked by humans; a
+tracker state named nowhere in the array is silence. `next` and `previous`
+override where a success and a failure move the ticket — neighbours by
+default, and a stop never moves. `queue: true` marks the workflow's **one**
+queue lane: fresh work waiting for capacity, an extension of the worker lane
+it feeds; the load says so loudly for two queue lanes, a queue lane naming
+an agent, or a queue whose next lane (by order or by `next`) works nothing.
+`pool` names the dispatcher pool the lane's work draws capacity from — inert
+until the dispatcher is built; lanes naming none draw from the default pool.
+`worktree: true` gives the worker its own git worktree; default false works
+the project checkout itself, where the agent file's own `edit` deny is the
+only guard. **Closed states (Done, Canceled, Duplicate) are never written**:
+the tracker recognizes them by type, and a run ending in the last configured
+lane moves nowhere. [orchestrator.md](orchestrator.md) owns the vocabulary.
+`aivi projects add` writes the array for you — names, agents, worktrees; the
+wizard's queue-lane question lands with the dispatcher build. `teams` is
+never defaulted. `workspaceId` is optional and only needed when the
+installation spans Linear workspaces;
+`projectDefaults.tracker-linear.workspaceId` supplies it to every project
+that omits its own. The mapped agent is resolved by OpenCode's ordinary
+discovery for the session's directory; an unknown agent file is OpenCode's own
+error at session start, not a config error.
 
 Credentials are never in JSON. The **primary** app reads the bare
 `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and `LINEAR_WEBHOOK_SECRET` — the
@@ -309,6 +321,30 @@ enabled (`linear.mcp`), is served by the module itself on loopback and
 authorised with the primary's app-actor token
 ([linear](linear.md#the-linear-mcp)).
 
+## GitHub forge
+
+`plugins.forge-github` is the GitHub forge's whole setup, and it is one number:
+the app's id — the `App ID` on the app's settings page, not its name. The
+module runs when `@aivi/forge-github` stands in the `aivi-plugins` list
+([the forge](plans/forge-github.md)).
+
+```json
+{ "plugins": { "forge-github": { "app": 12345 } } }
+```
+
+The private key is a secret and so is not here: `GITHUB_APP_PRIVATE_KEY` in
+`<home>/.env`, the PEM file GitHub handed out when the app was created. The
+app must also be **installed** — an installation is the grant from the account
+holding the repositories to the app — and aivi speaks through exactly one:
+none is an error carrying the install link, several is an error naming the
+grants and saying which to revoke.
+
+Nothing in this block names a repository. Which repository a project is comes
+from that project's own `origin`, and a checkout whose remote is not a GitHub
+repository simply has no forge: no error, and no pull-request facts. Likewise
+there is no per-project forge section — a forge is asked about a checkout it
+did not create and reads the answer off the checkout.
+
 ## Operator commands
 
 `npm run aivi -- --help` lists them; what each does and when to use it is in
@@ -319,9 +355,9 @@ authorised with the primary's app-actor token
 `update.channel` picks what `aivi update` resolves. `stable` (the npm `latest`
 dist-tag) is the only channel: a nightly would mean releasing from main, which
 is not wanted. The enum exists so a future channel is a schema change, not a
-redesign. There is no rollback: `aivi update` stops the server, installs,
-restarts and probes `/health`; sessions resume because state is SQLite and
-OpenCode's own.
+redesign. There is no rollback: `aivi update` installs while the server
+answers, then makes one announced restart and probes `/health`; sessions
+resume because state is SQLite and OpenCode's own.
 
 ## Secrets
 
@@ -329,10 +365,17 @@ Secrets never live in JSON files. They come from the process environment, and
 the CLI loads dotenv-style files without overriding variables that are already
 set: `<home>/.env`. `fnox exec` works the same way. Variables: `DISCORD_BOT_TOKEN`,
 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` (Slack's bot and app-level tokens),
-`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), and for
+`OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), for
 Linear the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
 `LINEAR_WEBHOOK_SECRET` (the primary app) plus `LINEAR_<APP>_…` per extra app
-([Linear](#linear)).
+([Linear](#linear)), and `GITHUB_APP_PRIVATE_KEY` — the GitHub App's PEM
+private key, which is many lines, so the setup writes it as one quoted line and
+Node's loader gives it back with its newlines
+([the forge](plans/forge-github.md)). `AIVI_OPERATOR_BEARER` is the one name in that list no
+one sets: the exec door stamps it with the bearer this connection presented
+into a driven session's closed child environment, so commands typed
+remotely attribute to the human who typed them, not to the server's own
+token.
 
 The host API itself takes no token: auth is `none`, commands are open. A bearer
 token only *identifies* the caller (whose job, whose link, whose memory — a
@@ -348,16 +391,20 @@ basic-auth password never appear in aivi configuration.
 
 Shell tasks never inherit these secrets: the child process gets the host
 environment minus the fixed names above and minus every key defined in
-`<home>/.env`. Everything else (PATH, HOME, the operator's shell variables)
+`<home>/.env` — `AIVI_OPERATOR_BEARER` among the fixed names, so a driven
+operator's credential cannot leak into a task script however it entered the
+environment. Everything else (PATH, HOME, the operator's shell variables)
 passes through, and a task's own `env` map is merged on top.
 
-One JSON schema covers the whole file; it is generated into
-`schemas/aivi.schema.json` by `npm run schema`, and `npm run check` fails when
-it is stale. Point your editor at it for autocompletion and field
-descriptions: `"$schema": "../schemas/aivi.schema.json"` (relative to the
-config file) in `config.json`. Runtime validation additionally checks cron
+One JSON schema covers the whole file, composed at runtime: core's fields
+plus the block of every plugin in the home's `aivi-plugins` list. The CLI
+writes it to `<state>/cache/schema.json` and points config.json's
+`"$schema"` at it after `setup`, `add`, `remove` and `update` — the events
+that change what is valid — so your editor has autocompletion and field descriptions with
+nothing to generate by hand. The cache is disposable; the list and the plugin
+packages are the truth. Runtime validation additionally checks cron
 expressions, timezones, uniqueness, that every project override has a
-checkout, that every enabled module and system job names an existing resource
+checkout, that every plugin block and system job names an existing resource
 pool, and Linear app references.
 
 `aivi serve` is the single application command. See [operations](operations.md)

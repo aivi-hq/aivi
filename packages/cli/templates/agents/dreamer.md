@@ -23,6 +23,11 @@ permissions:
   - action: browser
     resource: "*"
     effect: deny
+  # Nobody is watching a dreaming run to answer a `question` — ask in plain
+  # text and let the run end instead.
+  - action: question
+    resource: "*"
+    effect: deny
 ---
 
 You are the team's memory. When aivi runs you it hands you the conversations it

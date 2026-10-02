@@ -46,20 +46,22 @@ tail of that install, and of `aivi setup`.
    config.json". **No diffs** — the operator knows what to look for, and can
    later ask the assistant instead ([self-knowledge.md](self-knowledge.md)).
 
-The lane map itself lands in `config.json` (`projectDefaults.linear.lanes` /
-`projects.<id>.linear.lanes`), owned per platform by the operator — the
-template only proposes. Today the lane-proposing flow already exists, hidden in
-`aivi projects add --linear` / `aivi projects create`
-(`packages/app/src/commands/projects.ts`): it shows the convention and asks
-only for lanes it leaves open. The template flow is that machinery, generalized
-and better advertised.
+The lane map itself lands in `config.json` (`projectDefaults.tracker-linear.lanes` /
+`projects.<id>.tracker-linear.lanes`), owned per platform by the operator — the
+template only proposes. The lane-proposing flow is now **role-driven and
+names no plugin** (built 2026-09-29): `aivi projects add` walks core's systems
+(forge, then tracker), runs each configured plugin's `./setupProject`, and
+writes what each hands back — the Linear flow shows the convention and asks
+only for lanes it leaves open, exactly as before but without `--linear`. The
+template flow is that machinery, generalized and better advertised.
 
 ## Captured requirements
 
-- `aivi projects add` should detect **which ticket systems are installed** —
-  read the `aivi-plugins` list in `<home>/app/package.json`, the install and
-  enablement record (D8/D9) — and offer per-system configuration, instead of
-  `--linear` being baked in.
+- `aivi projects add` **detects which systems are installed** — it walks the
+  roles against the `aivi-plugins` list (D8/D9) and the configured
+  `./setupProject` contributors, offering per-system configuration instead of
+  a baked-in `--linear` (built 2026-09-29; see
+  [forge-github.md](../forge-github.md) for the contributor contract).
 - Project-level `.opencode/agents/` overrides keep working throughout.
 - Template files ship with `@aivi/cli` (the only bin), in the spirit of its
   `templates/agents/`; the tracker plugin may separately ship optional ticket

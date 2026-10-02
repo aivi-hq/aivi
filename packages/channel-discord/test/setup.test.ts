@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PluginSetupContext } from '@aivi/core';
-import { PluginSetupCancelled } from '@aivi/core';
+import { PluginSetupCancelled, type PluginSetupContext } from '@aivi/plugin';
 import * as prompts from '@clack/prompts';
 import setup from '../src/setup.ts';
 
@@ -39,8 +38,11 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
     home: '/home',
     configPath: '/home/config.json',
     identityName: 'Clawd',
-    config: { version: 1, modules: {} },
+    config: { version: 1, plugins: {} },
     print: () => {},
+    withStore: async () => {
+      throw new Error('the setup flow reads no store');
+    },
     prompts: {
       ...prompts,
       note: (lines = '', title = '') => {
@@ -78,7 +80,7 @@ const BOT_OK = { match: /users\/@me/, status: 200, body: { id: '1000000000000000
 test('discord setup verifies the token, derives the application id and writes both files', async () => {
   const h = harness(['tok', 'yes', '30000000000000003', '', 'yes', 'yes', '40000000000000004', ''], [BOT_OK]);
   const result = await setup(h.ctx);
-  assert.equal(result.module, 'discord');
+  assert.equal(result.module, 'channel-discord');
   assert.match(result.summary, /@clawd/);
   assert.match(result.summary, /aivi link discord/, 'the summary says how to talk to the bot');
   assert.equal(h.secrets.get('DISCORD_BOT_TOKEN'), 'tok');
@@ -97,7 +99,7 @@ test('discord setup verifies the token, derives the application id and writes bo
   assert.equal(block.access.channels[0]!.trigger, undefined, 'with the intent, the default trigger stands');
   assert.deepEqual(block.reportChannels, ['40000000000000004']);
   assert.equal(block.messageContent, true);
-  assert.deepEqual(h.blocks[0]!.path, ['modules', 'discord']);
+  assert.deepEqual(h.blocks[0]!.path, ['plugins', 'channel-discord']);
   assert.ok(h.notes.join('\n').includes('discord.com/developers'), 'the app-creation instructions print');
 });
 
@@ -120,7 +122,10 @@ test('discord setup with no channels configures a DM-only bot', async () => {
 
 test('discord setup refuses an already configured module', async () => {
   const h = harness([], [BOT_OK]);
-  h.ctx.config = { version: 1, modules: { discord: { applicationId: '10000000000000001', access: { channels: [] } } } };
+  h.ctx.config = {
+    version: 1,
+    plugins: { 'channel-discord': { applicationId: '10000000000000001', access: { channels: [] } } },
+  };
   await assert.rejects(setup(h.ctx), /already configured/);
   assert.equal(h.blocks.length, 0);
 });

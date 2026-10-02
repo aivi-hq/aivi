@@ -12,15 +12,22 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { satisfies } from 'semver';
 import { saveClientConfig } from './client-config.ts';
+import { importApp } from './mount.ts';
 import { ensureNode } from './runtime.ts';
-import { serviceInstalled, serviceStart, serviceStop } from './service.ts';
+import { serviceInstalled, serviceRestart } from './service.ts';
 
 export interface UpdateIo {
   npmView(spec: string, field: string): Promise<string>;
   install(specs: string[], appDir: string): { status: number; stderr: string };
+  /** Rebuild `<state>/cache/schema.json` and config.json's `$schema` line, in
+   *  the installed app's code; called after the peers are updated. */
+  rebuildSchema(home: string, appDir: string): Promise<void>;
   log(message: string): void;
   healthProbe(url: string): Promise<boolean>;
-  service: { installed(): boolean; stop(): void; start(): void };
+  /** The managed host keeps answering through the install; the one
+   *  disconnect is the final restart, and its announce rides inside
+   *  serviceRestart: announce first, then do the disconnecting thing. */
+  service: { installed(): boolean; restart(): void };
 }
 
 const defaultIo: UpdateIo = {
@@ -33,6 +40,14 @@ const defaultIo: UpdateIo = {
     const result = spawnNpm(['install', '--save-exact', '--no-fund', ...specs], appDir);
     return { status: result.status ?? 1, stderr: result.stderr?.toString() ?? '' };
   },
+  async rebuildSchema(home, appDir) {
+    const { writeEditorSchema } = await importApp<{ writeEditorSchema: (home: string) => Promise<string> }>(
+      appDir,
+      home,
+      'dist/cli/schema-cache.js',
+    );
+    await writeEditorSchema(home);
+  },
   log: message => console.log(message),
   async healthProbe(url) {
     try {
@@ -42,7 +57,7 @@ const defaultIo: UpdateIo = {
       return false;
     }
   },
-  service: { installed: serviceInstalled, stop: serviceStop, start: serviceStart },
+  service: { installed: serviceInstalled, restart: serviceRestart },
 };
 
 function spawnNpm(args: string[], cwd?: string) {
@@ -84,14 +99,14 @@ function installedDependencies(appDir: string): Record<string, string> {
  *  A plugin whose peer range excludes the new host is pinned where it is and excluded
  *  from this and future retries until its range catches up. */
 function installPeers(io: UpdateIo, appDir: string, installed: Record<string, string>, targetVersion: string): void {
-  const plugins = Object.entries(installed).filter(([name]) => name !== '@aivi/app');
+  const plugins = Object.entries(installed).filter(([name]) => name !== '@aivi/host');
   const excluded = new Set<string>();
-  let specs = [`@aivi/app@${targetVersion}`, ...plugins.map(([name]) => `${name}@latest`)];
+  let specs = [`@aivi/host@${targetVersion}`, ...plugins.map(([name]) => `${name}@latest`)];
   for (;;) {
     const attempt = io.install(specs, appDir);
     if (attempt.status === 0) return;
     const conflict = attempt.stderr.match(/While resolving: (@aivi\/[a-z-]+)@/)?.[1];
-    if (!conflict || conflict === '@aivi/app' || excluded.has(conflict))
+    if (!conflict || conflict === '@aivi/host' || excluded.has(conflict))
       throw new Error(`npm install failed:\n${attempt.stderr}`);
     excluded.add(conflict);
     const kept = installed[conflict];
@@ -117,7 +132,7 @@ export async function waitHealthy(
 
 /** Restart the managed service and wait for it to answer. */
 async function restartAndWait(io: UpdateIo, url: string): Promise<void> {
-  io.service.start();
+  io.service.restart();
   await waitHealthy(
     io,
     url,
@@ -129,7 +144,7 @@ async function restartAndWait(io: UpdateIo, url: string): Promise<void> {
 /** The target's engines gate the update before anything is stopped. An unsuitable
  *  Node provisions the managed runtime first, recorded for the service's benefit. */
 async function provisionNode(io: UpdateIo, home: string, targetVersion: string, nodePath: string): Promise<void> {
-  const engines = await io.npmView(`@aivi/app@${targetVersion}`, 'engines.node').catch(() => '');
+  const engines = await io.npmView(`@aivi/host@${targetVersion}`, 'engines.node').catch(() => '');
   if (!engines || satisfies(nodeVersion(nodePath), engines)) return;
   io.log(`The target needs Node ${engines}; provisioning the managed runtime.`);
   saveClientConfig({ nodePath: await ensureNode(home, engines) });
@@ -144,28 +159,45 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
   if (!CHANNELS.includes(channel as (typeof CHANNELS)[number])) throw new Error(`Unknown update channel: ${channel}`);
 
   const installed = installedDependencies(appDir);
-  if (!installed['@aivi/app']) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi setup\`.`);
+  if (!installed['@aivi/host']) throw new Error(`No aivi server installed at ${appDir}. Run \`aivi setup\`.`);
   const currentVersion = JSON.parse(
-    readFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), 'utf8'),
+    readFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), 'utf8'),
   ) as { version: string };
 
-  const targetVersion = await io.npmView(`@aivi/app@${channel === 'stable' ? 'latest' : channel}`, 'version');
+  const targetVersion = await io.npmView(`@aivi/host@${channel === 'stable' ? 'latest' : channel}`, 'version');
   if (targetVersion === currentVersion.version) {
-    io.log(`Already up to date: @aivi/app ${targetVersion}.`);
+    io.log(`Already up to date: @aivi/host ${targetVersion}.`);
     return;
   }
 
   await provisionNode(io, home, targetVersion, options.nodePath);
 
+  // A foreground host is the person's own process to stop and files cannot
+  // be swapped safely under it — refuse before touching anything. A managed
+  // host keeps answering through the install: an exec session driving this
+  // command is the host's own child, and the one disconnect comes last,
+  // announced — stopping first would kill the updater mid-npm.
   const url = await healthUrl(home);
   const managed = io.service.installed();
-  if (managed) io.service.stop();
-  else if (await io.healthProbe(url))
+  if (!managed && (await io.healthProbe(url)))
     throw new Error('aivi is running in the foreground; stop it (Ctrl+C) and re-run `aivi update`.');
 
   installPeers(io, appDir, installed, targetVersion);
 
-  io.log(`Updated @aivi/app: ${currentVersion.version} → ${targetVersion}.`);
+  // The `aivi-plugins` list and every other field of app/package.json are
+  // invisible to these installs: npm rewrites dependencies only, so the list
+  // — the enablement fact — survives the update untouched. The editor schema
+  // is rebuilt from the new code; a cache that cannot rebuild is a warning,
+  // the same rule as `aivi add`.
+  try {
+    await io.rebuildSchema(home, appDir);
+  } catch (error) {
+    io.log(
+      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); \`aivi add\` or a later \`aivi update\` rebuilds it once config.json loads again.`,
+    );
+  }
+
+  io.log(`Updated @aivi/host: ${currentVersion.version} → ${targetVersion}.`);
   if (managed) await restartAndWait(io, url);
   else io.log('Done. Start the server with `aivi serve`.');
 }
