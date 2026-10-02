@@ -198,14 +198,18 @@ test('a prompted webhook carries its message and signal; a data change narrows t
     type: 'Issue',
     action: 'update',
     data: { id: 'eng-1', identifier: 'ENG-1' },
-    updatedFrom: { title: 'old', stateId: 'todo', delegateId: null },
+    updatedFrom: { title: 'old', stateId: 'todo', delegateId: null, archivedAt: null },
   });
-  assert.deepEqual(seen.at(-1), {
-    kind: 'updated',
-    conversation: 'dev',
-    issueId: 'eng-1',
-    changed: ['state', 'delegate'],
-  });
+  assert.deepEqual(
+    seen.at(-1),
+    {
+      kind: 'updated',
+      conversation: 'dev',
+      issueId: 'eng-1',
+      changed: ['state', 'delegate', 'archive'],
+    },
+    'archivedAt is a routing-relevant change: a deleted ticket stops what works it',
+  );
 });
 
 test('a data change on a face route is a misroute: acknowledged, dropped; an unknown route is refused', async t => {

@@ -371,7 +371,8 @@ package that **declares** it; the host imports the contract from the kit and
 follows it — the flip of 2026-10-02): the orchestrator
 orchestrates and never learns what a ticket platform is; the tracker
 tracks and answers for its platform alone. A tracker module registers ONE
-`Tracker` — the board the walk reads (`projects`, `tickets`, `moveTo`) and
+`Tracker` — the board the walk reads (`projects`, `tickets`, `moveTo`,
+`ticketLane`) and
 the stages every run walks through:
 
 1. **`initWork`** — the slot is in hand and the run is claimed: open the
@@ -389,6 +390,11 @@ the stages every run walks through:
 4. **`question`** — the worker asked a person and parked. Required of
    every tracker: the OpenCode form is the durable record of the wait,
    but only the tracker knows what a question looks like on its platform.
+   Options are **suggestions**: the form's field takes free text too
+   (`custom`, live 2026-10-02 — a person typed "IMAGINATION" where the
+   worker had listed map/globe/painting, and a strict field refused the
+   reply and stood unsettled), so the record closes with the person's
+   own words.
    A render.
 5. **`plan`** — optional: the working plan, whole as it stands. A render.
 6. **`endWork`** — the run ended: say so where people read, in the shape
@@ -396,6 +402,14 @@ the stages every run walks through:
    **not** hold the ticket — the tracker marks it for a human in its
    platform's words (help is on the way), and the orchestrator moves and
    releases anyway.
+
+Before the ending move the orchestrator asks the board where the ticket
+sits (`ticketLane`, ruled 2026-10-02). If it is gone from the board, or
+sits somewhere that is neither the lane the run worked nor the target, a
+person moved it — normally while the webhook that would have ended the run
+was missed — and **their move wins**: the owed move is spent, never undone,
+and the log says so plainly. The walk's claim move asks nothing first: the
+claim read the board a breath ago.
 
 The lifecycle stages (`initWork`, `endWork`) are awaited — their failure
 is the run's failure, said visibly; the renders (`ready`, `startWork`,

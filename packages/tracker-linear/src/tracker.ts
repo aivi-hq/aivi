@@ -380,6 +380,7 @@ export class LinearPlatform implements Platform {
           ['stateId', 'state'],
           ['labelIds', 'labels'],
           ['delegateId', 'delegate'],
+          ['archivedAt', 'archive'],
         ] as const)
           if (payload.updatedFrom && field in payload.updatedFrom) changed.push(change);
         // A data change always arrives on the primary: its route carries

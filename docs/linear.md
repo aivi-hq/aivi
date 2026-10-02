@@ -134,8 +134,12 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    ticket from the walk. The agent session stays on the ticket as the
    readable trail either way. Each step asks Linear's real state first (`resultShown`: is the
    agent session ended), so a half-landed closing says nothing twice. **Then**
-   the orchestrator performs the **move** through the board's idempotent
-   `moveTo`, and **lastly** the lease returns.
+   the orchestrator asks the board where the ticket sits (`ticketLane`,
+   ruled 2026-10-02: the missed-webhook backstop): if a person moved it out
+   from under the run — anywhere but where the run worked or the target —
+   **their move wins**, the owed move is spent and the log says so; the
+   move only lands through the board's idempotent `moveTo` when the ticket
+   is still where the run left it. **Lastly** the lease returns.
    A closing that fails does **not** hold the ticket: the person is told the
    moment it fails — the human label rides the ticket and the session says
    why — the move lands and the slot comes back anyway, and the closing stays
@@ -154,7 +158,9 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    blocking).
 9. **Issue changes** (the **Issues** data-change category, on the primary's
    route). When an issue with a **live run** gains the HITL label, moves to a
-   lane that names another agent (or no agent), or loses the app as delegate,
+   lane that names another agent (or no agent), loses the app as delegate,
+   **or is deleted** (Linear's archive arrives as an `archive` change; ruled
+   2026-10-02: the webhook is the trigger to end the job gracefully),
    the orchestrator interrupts the worker and ends the run cancelled; the
    `endWork` stage says the reason as an `error` activity — and a stop moves
    nothing, because the person who stopped it left the ticket where they

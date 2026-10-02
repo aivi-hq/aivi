@@ -38,7 +38,7 @@ import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
 import { RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
-import { linearTeamCollisions, projectForIssue } from './projects.ts';
+import { linearTeamCollisions, projectForIssue, projectLinear } from './projects.ts';
 import { RunProgress } from './runprogress.ts';
 import { createLinearPlatform, LinearPlatform } from './tracker.ts';
 import type { LinearBoard } from './work.ts';
@@ -343,6 +343,15 @@ async function startLinear(
       projects: board.projects,
       tickets: board.tickets,
       moveTo: board.moveTo,
+      /** Where the ticket sits right now, in the walk's own read: gone means
+       *  deleted or on a team this project does not map. The orchestrator
+       *  asks before every ending move (ruled 2026-10-02). */
+      ticketLane: async (projectId, ticketId) => {
+        const words = await board.issue(ticketId);
+        if (!words) return undefined;
+        const teams = projectLinear(services.loaded, projectId)?.teams ?? [];
+        return teams.includes(words.teamId) ? words.stateName : undefined;
+      },
       /** The delegation is the whole opening: making the app the delegate
        *  makes Linear create the agent session itself and hand it back in the
        *  mutation's own answer (live, 2026-09-26) — nothing opens a session by
@@ -644,7 +653,9 @@ async function startLinear(
     ) => {
       for (const conversation of pending) {
         const workerAgent = store.sessionOf(conversation)?.agent;
-        if (human && changed.includes('labels'))
+        if (issue.archived && changed.includes('archive'))
+          await stopAssistant(conversation, `Stopped: ${issue.identifier} was deleted; there is no work to do.`);
+        else if (human && changed.includes('labels'))
           await stopAssistant(
             conversation,
             `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
@@ -671,7 +682,9 @@ async function startLinear(
       const run = services.orchestrator.activeRun(MODULE_ID, issue.id);
       if (!run) return;
       const link = run.sessionId ? links.byOpencodeSession(run.sessionId) : undefined;
-      if (human && changed.includes('labels'))
+      if (issue.archived && changed.includes('archive'))
+        await services.orchestrator.stop(run.id, `Stopped: ${issue.identifier} was deleted; there is no work.`);
+      else if (human && changed.includes('labels'))
         await services.orchestrator.stop(
           run.id,
           `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,

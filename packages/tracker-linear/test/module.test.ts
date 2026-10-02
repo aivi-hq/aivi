@@ -77,6 +77,9 @@ interface FakeForm {
   sessionID: string;
   title: string;
   answered: boolean;
+  /** The field definitions as the orchestrator sent them: the proof that
+   *  an options question stays open to the person's own words. */
+  fields: unknown[];
 }
 
 /**
@@ -142,6 +145,7 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
         sessionID,
         title: String(body.title ?? ''),
         answered: false,
+        fields: Array.isArray(body.fields) ? body.fields : [],
       };
       forms.push(form);
       return void res.end(JSON.stringify({ data: { id: form.id, sessionID, title: form.title, fields: [] } }));
@@ -579,6 +583,15 @@ test('a walk-picked run runs the lane agent; plan, question, answer and interjec
       question: { question: 'Which blue?', options: [{ label: 'Teal', value: 'teal' }], formId: opencode.forms[0]!.id },
     },
   ]);
+  assert.deepEqual(
+    (opencode.forms[0]!.fields as { key: string; options?: unknown[]; custom?: boolean }[]).map(f => ({
+      key: f.key,
+      suggestions: f.options !== undefined,
+      freeText: f.custom === true,
+    })),
+    [{ key: 'answer', suggestions: true, freeText: true }],
+    'the options are suggestions: a person who types their own answer can close the form',
+  );
   assert.equal(
     opencode.forms.filter(f => !f.answered && f.sessionID === worker).length,
     1,
@@ -1246,6 +1259,69 @@ test('a closing that failed to land is found at boot from the pair we keep — a
   // to — endings release, they do not blacklist (ruled 2026-10-02).
   await orchestrator.wake('website');
   await until(() => opencode.prompts.length === 2, 'the closing paid, the failure is work again: the walk takes it');
+});
+
+test('a deleted ticket ends the run that still works it: a graceful stop, said where people read', async t => {
+  const { tracker, config, store, services, board, opencode, orchestrator } = await walkHarness(t);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+
+  // A person deletes the ticket under the live run (Linear's archive) and
+  // the webhook says so: the slot stays occupied until the run is properly
+  // disposed of — interrupt, closing, release — and never after.
+  tracker.issues.get('eng-1')!.archived = true;
+  await tracker.drive({ kind: 'updated', conversation: 'dev', issueId: 'eng-1', changed: ['archive'] });
+  await until(
+    () => tracker.ofKind('outcome').some(c => /was deleted; there is no work/.test(c.text)),
+    'the stop is said in the session',
+  );
+  assert.equal(orchestrator.activeRun('tracker-linear', 'eng-1'), undefined, 'the run is over');
+  assert.equal(opencode.interrupted.length, 1, 'the worker was interrupted');
+  assert.deepEqual(board.moves, [], 'a deletion moves nothing');
+  assert.ok(
+    tracker.closingNotes.some(n => n.issueId === 'eng-1' && /was deleted/.test(n.text)),
+    'and the ticket heard its ending',
+  );
+  await tracker.drive({ kind: 'updated', conversation: 'dev', issueId: 'eng-1', changed: ['archive'] });
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'a deleted ticket is never work again');
+});
+
+test('the ending move asks where the ticket sits first: a person moved it, the move is theirs', async t => {
+  const { tracker, config, store, services, board, opencode, orchestrator } = await walkHarness(t);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+
+  // A person drags the ticket back to the Backlog while the worker works —
+  // and the webhook never arrives (the missed delivery of the ruling): the
+  // ending must not drag their ticket forward to prove a move was owed.
+  tracker.issues.get('eng-1')!.state = { id: 'back', name: 'Backlog', type: 'unstarted' };
+  await orchestrator.completeTool({
+    sessionId: workerSession(opencode.sessions),
+    input: { outcome: 'success', summary: 'Header aligned.' },
+  });
+  await until(() => tracker.ofKind('answer').some(c => c.text === 'Header aligned.'), 'the closing words landed');
+  assert.deepEqual(board.moves, [], 'the owed move is spent, not undone: nothing drags the ticket to Done');
+  assert.equal(orchestrator.activeRun('tracker-linear', 'eng-1'), undefined, 'the run ended');
+  await until(() => tracker.delegated.at(-1)?.[1] === null, 'and the ending released the delegate as always');
 });
 
 test('a full pool says nothing on the board, and walks in when the slot opens — like normal humans', async t => {

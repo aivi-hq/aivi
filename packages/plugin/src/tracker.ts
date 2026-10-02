@@ -57,6 +57,13 @@ export interface Tracker {
    *  worker starts, an ending moves the ticket where the lane order put
    *  it. The orchestrator's decision; the tracker performs it. */
   moveTo(projectId: string, ticketId: string, lane: string): Promise<void>;
+  /** Which lane the ticket sits in **right now**, by name; undefined when it
+   *  is gone from this board — deleted, or on a team the project does not
+   *  map. The orchestrator's validity check before an ending move (ruled
+   *  2026-10-02): a person may have moved the ticket out from under a live
+   *  run while a webhook was missed; their move wins, and the owed move is
+   *  spent rather than undone. */
+  ticketLane(projectId: string, ticketId: string): Promise<string | undefined>;
 
   /** The dispatcher's slot is in hand and the run is claimed: open the
    *  ticket to work on the platform and return its summary. Linear's
@@ -133,10 +140,11 @@ export interface TrackerIssue {
   blockedBy: { id: string; completed: boolean }[];
 }
 
-/** What changed on a ticket, in neutral words: only the three things
- *  routing keys on. Anything else a platform reports is the adapter's to
- *  notice and drop. */
-export type TrackerChange = 'state' | 'labels' | 'delegate';
+/** What changed on a ticket, in neutral words: only the things routing
+ *  keys on. `archive` is the platform's word for *deleted* — the ticket is
+ *  gone as work, which stops whatever still works it. Anything else a
+ *  platform reports is the adapter's to notice and drop. */
+export type TrackerChange = 'state' | 'labels' | 'delegate' | 'archive';
 
 /**
  * The normalized signals everything downstream keys off — never raw

@@ -118,6 +118,10 @@ function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boo
       entering.push({ id: ticketId });
       lanes.set(state, entering);
     },
+    ticketLane: async (_projectId, ticketId) => {
+      for (const [lane, tickets] of lanes) if (tickets.some(t => t.id === ticketId)) return lane;
+      return undefined; // retired by a person: gone from the walked board
+    },
     // The platform-side opening: the summary is the ticket's words, and the
     // orchestrator composes the worker's first prompt around it.
     initWork: async run => {
@@ -301,6 +305,7 @@ test('blocked tickets wait, and a ticket gone by initWork fails its run visibly 
       { id: 'gone-1', blocked: false },
     ],
     moveTo: async () => {},
+    ticketLane: async (_projectId, ticketId) => (ticketId === 'gone-1' ? undefined : 'In Progress'),
     initWork: async run => {
       if (run.ticketId === 'gone-1') throw new Error('the ticket is gone from the board (deleted by a person)');
       return 'never asked';

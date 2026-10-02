@@ -667,13 +667,14 @@ export class Orchestrator implements OrchestratorApi {
    *  poll. Three strikes and the log says it plainly; the debt stays in
    *  the run's row, so the next wake and the next boot drive it again. */
   async #move(run: Run): Promise<void> {
-    await this.#moveAttempt(run.trackerId, run.projectId, run.ticketId, run.targetLane!, run.id, 1);
+    await this.#moveAttempt(run.trackerId, run.projectId, run.ticketId, run.lane, run.targetLane!, run.id, 1);
   }
 
   async #moveAttempt(
     trackerId: string,
     projectId: string,
     ticketId: string,
+    from: string,
     target: string,
     runId: string,
     attempt: number,
@@ -681,6 +682,22 @@ export class Orchestrator implements OrchestratorApi {
     const tracker = this.trackers.get(trackerId);
     if (!tracker) return void this.deps.log.warn('move.no-tracker', { run: runId, tracker: trackerId });
     try {
+      // Validity before the move (ruled 2026-10-02): the webhook is what
+      // normally ends a run whose ticket a person moves out from under it,
+      // and a missed delivery must not end as the orchestrator dragging
+      // their ticket back. If it sits somewhere else now, the move is
+      // theirs; the debt is spent, never undone. Gone from the board —
+      // deleted — is the same answer in other words.
+      const current = await tracker.ticketLane(projectId, ticketId);
+      if (current === undefined || (current !== from && current !== target)) {
+        this.deps.ledger.moveLanded(runId);
+        return void this.deps.log.info('move.canceled', {
+          run: runId,
+          ticket: ticketId,
+          to: target,
+          where: current ?? 'gone from the board',
+        });
+      }
       await tracker.moveTo(projectId, ticketId, target);
       this.deps.ledger.moveLanded(runId);
     } catch (error) {
@@ -688,7 +705,7 @@ export class Orchestrator implements OrchestratorApi {
         return void this.deps.log.error('move.failed', { run: runId, ticket: ticketId, to: target, error });
       this.deps.log.warn('move.retrying', { run: runId, ticket: ticketId, to: target, attempt, error });
       await new Promise(resolve => setTimeout(resolve, 5_000 * attempt));
-      await this.#moveAttempt(trackerId, projectId, ticketId, target, runId, attempt + 1);
+      await this.#moveAttempt(trackerId, projectId, ticketId, from, target, runId, attempt + 1);
     }
   }
 
@@ -870,6 +887,12 @@ export class Orchestrator implements OrchestratorApi {
               title: question.question,
               required: true,
               options: question.options.map(o => ({ value: o.value, label: o.label })),
+              // The options are suggestions, not a cage (live, 2026-10-02:
+              // a person *typed* "IMAGINATION" where the worker listed
+              // map/globe/painting, and the form refused the reply and stood
+              // unsettled). Free text is a valid human answer; the form
+              // closes with the person's own words as the record.
+              custom: true,
             }
           : { key: 'answer', type: 'string', title: question.question, required: true },
       ],
