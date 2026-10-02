@@ -6,8 +6,14 @@ the [templates program](index.md). The 2026-09-30 revision reworks completion
 and questions after studying a worked agent-workflow example and the Linear
 and OpenCode 2 documentation first-hand; the 2026-10-01 revision moves
 **delivery out of the core entirely** — the orchestrator emits typed run
-events and cannot know a tracker exists; trackers follow. Superseded rulings
-are marked where they stood. Sequence: forge-github first, then tracker
+events and cannot know a tracker exists; trackers follow. **Superseded
+2026-10-02 (the stage rulings, with the operator):** the events are dead —
+a tracker answers **stages** (`initWork`, `ready`, `startWork`, `question`,
+`plan`, `endWork`) on one `Tracker` interface, the orchestrator composes the
+worker's first prompt, and the ending order is closing words → move → lease.
+The built contract is [orchestrator.md](../orchestrator.md#the-trackers-stages);
+"run events" and "subscribes" below are the superseded wording, marked where
+they carried weight. Superseded rulings are marked where they stood. Sequence: forge-github first, then tracker
 extraction, then this extraction; the extraction landed on the base flow and
 the forge steps stay ahead.
 Parent: [index.md](index.md).
@@ -53,22 +59,23 @@ starts a worker, and the orchestrator never reads a raw webhook.
   dialect: Linear `Cancelled`, GitHub `Closed`, Jira Done-with-reason.
 - `events` — normalized signals: issue entered lane, label changed, delegate
   changed. Everything downstream keys off these, never off raw webhooks.
-- run events out, tracker-side realization in: each tracker renders the run's
-  story in its own vocabulary (Linear's agent-session activities; a result
-  comment elsewhere). This is **the tracker's own listener on a fact**, not a
-  core path — see The completion contract.
+- stage calls out (ruled 2026-10-02, superseding run events), tracker-side
+  realization in: each tracker renders the run's story in its own vocabulary
+  (Linear's agent-session activities; a result comment elsewhere). The
+  renders are fire-and-forget; the lifecycle stages are awaited — see
+  The completion contract.
 
 **Built 2026-09-29** as the `@aivi/plugin/tracker` subpath, seeded from what
 the running Linear module actually asks: `issue`, `laneStates`, `assign`,
 `unassign`, `startSession`, `comment` in four neutral kinds, `idFor`/`parts`,
 and `events` carrying `started`/`prompted`/`updated`. **Revised 2026-09-30:**
 `started`/`prompted` are Linear's agent-session shapes, not the neutral
-vocabulary. **Built 2026-10-01 as the follower design:** the machinery never
-sends commands *out* — it emits typed run events (`started`, `question`,
-`plan`, `ended`) and a tracker subscribes; a person's message into a worker's
-session is posted by the follower straight into the OpenCode session (an
-answer through the open form, a steer otherwise), never routed through the
-orchestrator. `createStates`, `candidates` and the pull-shaped questions are
+vocabulary. **Built 2026-10-01 as the follower design:** *(superseded
+2026-10-02: no events, no subscribing — the machinery calls the
+`Tracker`'s stages and awaits the lifecycle ones)*; a person's message into a
+worker's session is posted by the tracker straight into the OpenCode session
+(an answer through the open form, a steer otherwise), never routed through
+the orchestrator. `createStates`, `candidates` and the pull-shaped questions are
 implemented with the dispatcher, when the machinery starts asking them.
 
 Deliberately **not** on the adapter: weights, ordering, capacity, worktrees,
@@ -94,8 +101,8 @@ before package; the kinds get their first content from these extractions).
 The machinery itself ships **in the host** — confirmed 2026-09-29: the host
 is the core, and no install has the host without it — in one clean
 directory; a name is open. The tracker plugin is enabled the registry
-way — listed in `aivi-plugins` (D9) — and at module start it **subscribes**
-to the orchestrator's events; the orchestrator itself has no list entry:
+way — listed in `aivi-plugins` (D9) — and at module start it **registers its
+`Tracker`** with the orchestrator; the orchestrator itself has no list entry:
 there is nothing to disable until a tracker is installed, because an
 unwired orchestrator does nothing.
 
@@ -176,14 +183,18 @@ final answer.
   pending ones only, verified live 2026-10-01), never mirrored in the ledger.
   Budget spent: the run fails visibly — failure treatment below. Never
   silence.
-- **Completion is a fact with many listeners.** The orchestrator ends the run
-  and **emits `ended`** — outcome and the target lane its lane order chose —
-  and forgets who listens (ruled 2026-10-01: it may not know a tracker
-  exists). The ceremony is each follower's: the **result**, the **closing
-  note** on the ticket, and the **move**, driven in that order (the result is
+- **Completion calls the tracker, once, and awaits.** *(Revised 2026-10-02:
+  one `endWork` stage, awaited, replaces the emitted `ended` and its
+  listeners — still no listener list, still no knowing who answers.)* The
+  ceremony inside `endWork` is the tracker's, in its own order — Linear's is
+  the **result**, then the **closing note** on the ticket (the result is
   what the human waits for — Linear's
   response completes the agent session and stops the "working" state; a moved
-  ticket without an answer explains nothing). The tracker renders the result
+  ticket without an answer explains nothing). **The move is not in the
+  ceremony** (ruled 2026-10-02, P7): after `endWork` returns the orchestrator
+  performs the move through the board's idempotent `moveTo`, and the lease
+  returns last; a failed closing marks the ticket for a human and never
+  holds the ticket or the slot. The tracker renders the result
   in its own vocabulary: Linear emits the `response` activity, which
   completes the agent session automatically (verified in Linear's docs), and
   clears the delegate explicitly, which Linear does not do for us; GitHub
@@ -194,8 +205,9 @@ final answer.
   activity in the session (the marker itself is not put there by the
   follower: a person or a triage agent applies it). The session stays
   readable for the operator, and
-  **the delegate stays** — the next lane change re-triggers through the
-  ordinary path. A **stop** is not a failure: it moves nothing and says so.
+  **the delegate stays**. *(The old "the next lane change re-triggers" motive
+  died with the listener, 2026-10-02: lane changes are wakes now.)* A **stop**
+  is not a failure: it moves nothing and says so.
 - Declaration and realization can diverge (the tool call lands, the Linear
   API is down): the declaration is durable first — the **run row**, which
   holds the outcome and the target lane; the ceremony is the **follower's**
@@ -232,8 +244,8 @@ awaiting input": we do not invent it, it is a server-side row.
   unhandled. Linear presents in the agent session (an `elicitation`
   activity, its `select`/`auth` signals for structured answers); Jira
   flags; GitHub Issues comments. The orchestrator's entire part: create the
-  form, emit `question`, and read the open form back from OpenCode at turn
-  end. Wait.
+  form, call the `question` stage, and read the open form back from OpenCode
+  at turn end. Wait.
 - **The tracker is the place that decides what needs-human looks like on
   its platform** (a Linear label, a Jira flag) **and how incoming human
   requests route** — answer-to-open-form versus interjection. The
@@ -251,8 +263,8 @@ awaiting input": we do not invent it, it is a server-side row.
   never an inference.
 - **The mapping is stored — by the follower**: the platform's session ↔
   OpenCode session ↔ ticket pair is a durable record in the **tracker's own
-  namespaced table**, written before the work is requested and attached when
-  the `started` event names the session. The orchestrator's row knows ticket
+  namespaced table**, written by `initWork` before the work is requested and
+  attached by the `ready` stage when the worker's session exists. The orchestrator's row knows ticket
   ↔ OpenCode session and never a tracker's conversation: a conversation is
   not an orchestrator fact. Every routing decision after a restart reads the
   pair, not memory.

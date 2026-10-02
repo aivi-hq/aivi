@@ -71,11 +71,10 @@ export type { DiscoveredEndpoint, OpenCodeClient } from './opencode.ts';
 export { connectOpenCode, discoverTolerant } from './opencode.ts';
 export type { Run, RunRequest } from './orchestrator/ledger.ts';
 export { RunLedger, view } from './orchestrator/ledger.ts';
-export type { OrchestratorDeps, TicketFeed, WorkRequest } from './orchestrator/orchestrator.ts';
+export type { OrchestratorDeps, WorkRequest } from './orchestrator/orchestrator.ts';
 export { Orchestrator } from './orchestrator/orchestrator.ts';
 export type {
-  RunEvent,
-  RunEventListener,
+  FailureCode,
   RunOption,
   RunOutcome,
   RunPlan,
@@ -85,6 +84,7 @@ export type {
   RunView,
 } from './orchestrator/vocabulary.ts';
 export { isTerminal } from './orchestrator/vocabulary.ts';
+export type { Tracker } from './orchestrator/work.ts';
 export { describeOutcome, reentryPrompt, reportTarget, SESSION_DESTINATION, shouldReport } from './reports.ts';
 export type { ExecutorDeps } from './runtime.ts';
 export { createExecutor, SECRET_ENV, shellEnvironment } from './runtime.ts';

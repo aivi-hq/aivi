@@ -4,12 +4,16 @@ The design and every ruling that shaped it live in
 [../orchestrator.md](../orchestrator.md); this page is only the build
 checklist, shrinking as steps land. `[x]` carries one line of truth.
 
-Built and live-tested already (2026-10-02): the **follower design** — the
-orchestrator emits typed run events and knows no tracker; Linear follows the
-run, keeps its own pairs, and pays its ceremony (result → closing note →
-move → unassign) idempotently, healed from its own pairs at boot. The live
-test passed end to end on the operator's host (question round, answer,
-close).
+Built already (2026-10-02): the dispatcher, the walk, and — after the
+operator's **stage rulings** (P1–P12, owned by
+[../orchestrator.md](../orchestrator.md#the-trackers-stages)) — the
+`Tracker` interface itself: the orchestrator walks every run through the
+tracker's stages (initWork → ready → … → endWork → move → lease), composes
+the worker's first prompt, remembers no stops, re-checks nothing at
+fulfilment, and gives up on an unkillable session at a capped strike count
+saying so in code. Linear answers all of it; hand delegations get one fixed
+refusal. The earlier live test (question round, answer, close) predates the
+stages; the round below is the one that counts.
 
 - [x] 0 Docs restructure: [../orchestrator.md](../orchestrator.md) owns the
       work-pull flow with the conversation's rulings folded in; this page is
@@ -56,18 +60,17 @@ close).
 - [x] 7 Orchestrator onto leases: the eligibility walk (lanes right→left,
       tickets top→bottom), a queue lane is the bottom of its worker lane's
       list, move-then-start with the self-webhook folded into the claim, a
-      refusal stops that pool for the pass, claims mirror leases. Built
-      with it: the stop-memory (a person's stop holds the walk off the
-      ticket until their next move) and the sessionless ceremonies —
-      picked-up endings said with the installation's own app, questions as
-      ticket comments, missed endings rendered at boot from the
-      orchestrator's record through the follower's watermark. (2026-10-02)
+      refusal stops that pool for the pass, claims mirror leases. (The
+      stop-memory and the sessionless ceremonies built with it were
+      superseded the same day by the stage rulings: a stop releases the
+      ticket, `initWork` gives every run its agent session.) (2026-10-02)
 - [x] 8 In-memory dispatcher queue + per-service callback namespaces +
       cancellation (one pending request per service+pool; ephemeral by
       design; only bites once pools are configured). Built with it: the
-      fulfilment re-check before starting — a walk request starts wherever
-      the ticket sits, a delegation only for its own lane — and the queued
-      delegation that keeps its pair while it waits. (2026-10-02)
+      queued entry carrying its own plan — a walk entry its lane, a push
+      entry its summary and directory. (The fulfilment re-check built with
+      it died the same day: cancel-on-move is the mechanism now.)
+      (2026-10-02)
 - [x] 9 Timeout monitor: idle kills, confirms, then frees (an unconfirmed
       kill keeps the slot unavailable); prepare revokes session-less leases.
       One known-instant `setTimeout` per lease, re-armed by activity —
@@ -86,9 +89,10 @@ close).
 - [x] 11 Wizard: after **all** lanes are configured, one question — a select
       of the configured lanes (or `-- None --`) picking the queue lane. Not
       per lane. Options are limited to lanes that could legally hold the
-      queue (a lane whose next works nobody is no option), and choosing a
-      lane that just chose an agent gives the agent up — said out loud.
-      (2026-10-02)
+      queue (a lane whose next works nobody is no option, and — amended by
+      P4 the same day — a lane that names an agent is never an option), and
+      choosing a lane that just chose an agent gives the agent up — said
+      out loud. (2026-10-02)
 - [ ] 12 Live round with real pools (capacity 1–2): ordering, refusal, queue
       pickup, elicitation timeout + resume, restart reconcile. Then commits,
       changesets, and the single v1 rc tag.

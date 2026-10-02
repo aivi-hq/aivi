@@ -1,24 +1,28 @@
 /**
- * The Linear module: the platform's listener, adapter and **follower**.
+ * The Linear module: the platform's listener, adapter and **tracker**.
  * Everything Linear-shaped — webhooks, GraphQL, activity types, the apps and
  * their credentials — lives behind `./tracker.ts`. The host's **orchestrator**
  * owns a run: its durable record, its OpenCode session, the worker tools and
- * the rule that only a tool call ends it — and it never calls us. We
- * **subscribe** to its typed events and catch Linear up: the pair (agent
- * session ↔ OpenCode session ↔ ticket) lives in our own store; a run's ending
- * is rendered in our order — the result first, because Linear's response is
- * what stops the "working" state, then the lane move the orchestrator's lane
- * order chose, then taking the delegate back. Our failures stay ours: they
- * retry on the next wake and at boot, decided against Linear's real state,
- * never a flag in somebody else's database. A person's message into a worker's
- * session never passes through the orchestrator either: we post it straight
- * into the OpenCode session — an answer when a form is open, a steer
- * otherwise. What stays ours besides all that is the assistant — the
+ * the rule that only a tool call ends it. We answer for the **stages**
+ * (`@aivi/plugin`, work): `initWork` delegates the ticket to our own app and
+ * Linear's answer carries the agent session, which we record and answer with
+ * the ticket's **summary**; `ready` joins the OpenCode session to that pair;
+ * `question` and `plan` render as they arrive; `endWork` says the closing
+ * words in our order — the result first, because Linear's response is what
+ * stops the "working" state — and only after we speak does the orchestrator
+ * move the ticket and return the lease. Our failures stay ours: the closing
+ * retries on the next wake and at boot, decided against Linear's real state,
+ * never a flag in somebody else's database, and a person hears of a failed
+ * closing the moment it fails — the human label rides the ticket, help is on
+ * the way. A person's message into a worker's session never passes through
+ * the orchestrator either: we post it straight into the OpenCode session — an
+ * answer when a form is open, a steer otherwise. A hand **delegation** gets
+ * one fixed answer: work reaches us through the board, not through a
+ * delegation. What stays ours besides all that is the assistant — the
  * conversation a person brings us directly, which still rides the channel
  * machinery until the channels reform.
  */
 import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
-import type { TicketFeed } from '@aivi/host';
 import {
   ChannelEngine,
   ConfigurationError,
@@ -27,19 +31,23 @@ import {
   isTerminal,
   stopTurn as stopRunningTurn,
 } from '@aivi/host';
-import type { AiviModule, AiviServices, RunEvent, Store } from '@aivi/plugin';
+import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
-import type { Tracker, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
-import type { LinearClient } from './client.ts';
+import type {
+  PlatformAdapter,
+  TrackerChange,
+  TrackerCommentKind,
+  TrackerEvent,
+  TrackerIssue,
+} from '@aivi/plugin/tracker';
 import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
-import { issueDossier, linearFeed } from './feed.ts';
-import { type RunLink, RunLinks } from './links.ts';
+import { RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue } from './projects.ts';
-import { StoppedTickets } from './stopped.ts';
-import { clientFor, createLinearTracker, LinearTracker } from './tracker.ts';
-import { WalkWatermark } from './watermark.ts';
+import { createLinearTracker, LinearTracker } from './tracker.ts';
+import type { LinearBoard } from './work.ts';
+import { issueDossier, linearBoard } from './work.ts';
 
 /**
  * The platform: an agent session is a conversation. Its id is `<app>:<agent session id>`
@@ -84,7 +92,7 @@ export function openLinearStore(store: Store): ConversationStore {
 
 /** Where the module's tracker comes from: Linear's adapter by default, a
  *  fake tracker in a test of the decisions below. */
-type MakeTracker = (services: AiviServices) => Promise<Tracker>;
+type MakeTracker = (services: AiviServices) => Promise<PlatformAdapter>;
 
 /**
  * The module, built on a tracker. What lives here is routing and Linear's
@@ -95,9 +103,9 @@ type MakeTracker = (services: AiviServices) => Promise<Tracker>;
  */
 /** The board, pull-shaped, for the orchestrator's walk; a test hands its own
  *  lanes the way it hands its own tracker. */
-type MakeFeed = (services: AiviServices) => TicketFeed;
+type MakeBoard = (services: AiviServices) => LinearBoard;
 
-export function createLinearModule(config: LinearConfig, makeTracker?: MakeTracker, makeFeed?: MakeFeed): AiviModule {
+export function createLinearModule(config: LinearConfig, makeTracker?: MakeTracker, makeBoard?: MakeBoard): AiviModule {
   return {
     id: MODULE_ID,
     start: services =>
@@ -105,35 +113,37 @@ export function createLinearModule(config: LinearConfig, makeTracker?: MakeTrack
         config,
         services,
         makeTracker ?? (({ routes, log }) => createLinearTracker(config, routes, undefined, log.getChild(MODULE_ID))),
-        makeFeed ?? (s => linearFeed(config, s, s.log.getChild(MODULE_ID))),
+        makeBoard ?? (s => linearBoard(config, s, s.log.getChild(MODULE_ID))),
       ),
   };
 }
 
-async function startLinear(config: LinearConfig, services: AiviServices, makeTracker: MakeTracker, makeFeed: MakeFeed) {
+async function startLinear(
+  config: LinearConfig,
+  services: AiviServices,
+  makeTracker: MakeTracker,
+  makeBoard: MakeBoard,
+) {
   const log = services.log.getChild(MODULE_ID);
   const collisions = linearTeamCollisions(services.loaded);
   if (collisions.length) throw new Error(`Linear config: ${collisions.join('; ')}`);
   const store = openLinearStore(services.store);
   const links = new RunLinks(services.store);
-  // The installation's own reader: the primary app when it is named, else
+  // The installation's own identity: the primary app when it is named, else
   // the first configured — every app reads the same workspace, so the
-  // choice is credentials and nothing more. Picked-up work has no agent
-  // session to speak through; what its ticket is owed is said with these.
+  // choice is credentials and nothing more. initWork delegates the ticket to
+  // this app, and the agent session Linear hands back is the one we speak in.
   const readerApp = primaryLinearApp(config) ?? Object.keys(config.apps)[0]!;
-  let reader: LinearClient | undefined;
-  const read = () => (reader ??= clientFor(config, readerApp, log));
-  const stopped = new StoppedTickets(services.store);
-  const watermark = new WalkWatermark(services.store);
   const interrupted = store.recover();
   if (interrupted.length) log.warn('turns.interrupted', { blocked: interrupted.length });
 
   // The adapter takes the whole platform in: apps, credentials, endpoints.
   const tracker = await makeTracker(services);
-  // The eligibility walk reads the board through this feed: which projects
-  // this installation speaks for, what sits in a lane, how a ticket enters
-  // one. Webhooks keep pushing delegations; the walk needs none of them.
-  services.orchestrator.addFeed(MODULE_ID, makeFeed(services));
+  // The board the eligibility walk reads: which projects this installation
+  // speaks for, what sits in a lane, how a ticket enters one. The stages
+  // that speak through the adapter join it below; webhooks keep pushing
+  // conversations, and the walk needs none of them.
+  const board = makeBoard(services);
 
   const abort = new AbortController();
   let engine: ChannelEngine | undefined;
@@ -217,243 +227,152 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
     };
 
     /**
-     * The follower's catch-up: make Linear say what the run says, in our
-     * order. The **result first** — Linear's response completes the agent
-     * session and stops the "working" state, the human-visible wound — then
-     * the **closing note** on the ticket (a forwarding of the same text, so
-     * the ending is readable without opening the session), then the
-     * **move** the orchestrator's lane order chose (a follower performs a
-     * decision, it never makes one), then the **delegate**, which Linear
-     * leaves sitting. Each step asks Linear's real state before acting
-     * (`resultShown`, the issue's current state, the current delegate), so a
-     * half-landed ceremony re-drives without saying anything twice. A failure
-     * keeps the run owed in memory; the next wake tries again, and the boot
-     * pass re-derives the list from our own pairs — no outbox lives in the
-     * orchestrator's record, because delivery is ours.
+     * The closings we owe Linear: every ended run whose closing has not
+     * landed. A failed closing informs a person the moment it fails — the
+     * human label rides the ticket and the session says why — and stays owed
+     * to the next wake and the next boot; the label stands until a person
+     * removes it. Nothing here lives in the orchestrator's record: delivery
+     * is ours, so the outbox is ours too.
      */
-    const owed = new Map<string, { event: Extract<RunEvent, { type: 'ended' }>; link: RunLink }>();
+    const closings = new Map<string, RunView>();
+    /** Runs whose failure a person has already been told about: the help is
+     *  on the way once, never repeated on every failed retry. */
+    const helped = new Set<string>();
 
-    const drive = async (runId: string): Promise<void> => {
-      const entry = owed.get(runId);
+    /** Our platform's word for "a person, please": the human label. */
+    const markForHuman = async (conversation: string, ticketId: string): Promise<void> => {
+      if (!tracker.apply) return void log.warn('help.unavailable', { ticket: ticketId });
+      try {
+        await tracker.apply(conversation, ticketId, { kind: 'label', label: config.humanLabel, on: true });
+      } catch (error) {
+        log.warn('help.label.failed', { ticket: ticketId, error });
+      }
+    };
+
+    /**
+     * One closing, driven against Linear's real state: the **result first** —
+     * Linear's response completes the agent session and stops the "working"
+     * state, the human-visible wound — then the **closing note** on the
+     * ticket itself (the adapter is idempotent, so a retry never says it
+     * twice), then the **delegate**, which only a success releases; a failure
+     * leaves the app sitting on the ticket so the session stays the readable
+     * trail. The lane move is not here: it is the orchestrator's decision and
+     * its debt, performed through `moveTo` after this returns.
+     */
+    const driveClosing = async (runId: string): Promise<void> => {
+      const entry = closings.get(runId);
       if (!entry) return;
-      const { event, link } = entry;
+      const link = entry.sessionId ? links.byOpencodeSession(entry.sessionId) : undefined;
+      if (!link) {
+        closings.delete(runId);
+        return void log.error('closing.unpaired', { run: runId, ticket: entry.ticketId });
+      }
       const conversation = tracker.idFor(link.agentSession);
+      const words =
+        entry.outcome?.kind === 'success'
+          ? entry.outcome.summary
+          : (entry.outcome?.reason ?? 'The run ended without an outcome.');
       try {
-        if (!(await tracker.resultShown(conversation))) {
-          if (event.outcome.kind === 'success') await tracker.comment(conversation, event.outcome.summary, 'answer');
-          else await tracker.comment(conversation, event.outcome.reason, 'outcome');
-        }
-        // The ending readable on the ticket itself, not only inside the
-        // session (ruled 2026-10-02). The adapter is idempotent, so this
-        // rides every retry without ever saying it twice.
-        if (tracker.closingNote)
-          await tracker.closingNote(
+        if (!(await tracker.resultShown(conversation)))
+          await tracker.comment(conversation, words, entry.outcome?.kind === 'success' ? 'answer' : 'outcome');
+        if (tracker.closingNote) await tracker.closingNote(conversation, entry.ticketId, words);
+        // A worker the dispatcher could not kill (ruled 2026-10-02): the
+        // ticket carries the human label and says plainly that one may still
+        // be loose — help is on the way, and a person goes looking.
+        if (entry.outcome?.kind === 'failure' && entry.outcome.code === 'kill-unconfirmed' && !helped.has(runId)) {
+          helped.add(runId);
+          await tracker.comment(
             conversation,
-            event.run.ticketId,
-            event.outcome.kind === 'success' ? event.outcome.summary : event.outcome.reason,
+            'The dispatcher could not stop my worker session, so one may still be loose. I have marked this issue for a person.',
+            'outcome',
           );
-        if (event.targetLane) {
-          const issue = await tracker.issue(conversation, event.run.ticketId);
-          if (issue.state.name !== event.targetLane) {
-            if (!tracker.apply) throw new Error('Linear cannot apply a move');
-            await tracker.apply(conversation, event.run.ticketId, { kind: 'move', lane: event.targetLane });
-          }
+          await markForHuman(conversation, entry.ticketId);
         }
-        // Only a success releases the ticket from the app's hands; a failure
-        // leaves the delegate sitting so the session stays the readable trail
-        // and the next lane change re-triggers through the ordinary path.
-        if (event.outcome.kind === 'success')
-          await tracker
-            .unassign(conversation, event.run.ticketId)
-            .catch(error => log.warn('delegate.undone', { error }));
-        owed.delete(runId);
-        log.info('run.caughtup', { run: runId, ticket: event.run.ticketId });
+        if (entry.outcome?.kind === 'success')
+          await tracker.unassign(conversation, entry.ticketId).catch(error => log.warn('delegate.undone', { error }));
+        closings.delete(runId);
+        log.info('run.caughtup', { run: runId, ticket: entry.ticketId });
       } catch (error) {
-        // Ours to retry, not the run's to carry: it stays owed and the next
-        // wake or boot tries again. Never silence — the log says it plainly.
-        log.warn('catchup.failed', { run: runId, error });
+        // The closing failed: the person hears it NOW — the operator must be
+        // informed — and the closing stays owed: the next wake and the next
+        // boot try again, and each step asks Linear's real state first so a
+        // half-landed ceremony finishes without saying anything twice.
+        if (!helped.has(runId)) {
+          helped.add(runId);
+          log.error('closing.failed', { run: runId, ticket: entry.ticketId, error });
+          await say(
+            conversation,
+            `I could not finish reporting this run: ${errorMessage(error)}. The issue is marked for a person — help is on the way.`,
+            'outcome',
+          );
+          await markForHuman(conversation, entry.ticketId);
+        } else log.warn('closing.retry.failed', { run: runId, error });
+        throw error;
       }
     };
 
-    const catchUp = async (event: Extract<RunEvent, { type: 'ended' }>, link: RunLink): Promise<void> => {
-      if (owed.has(event.run.id)) return; // the event and the boot pass may race for one run
-      owed.set(event.run.id, { event, link });
-      await drive(event.run.id);
+    const retryClosings = async (): Promise<void> => {
+      for (const runId of [...closings.keys()]) await driveClosing(runId).catch(() => {});
+    };
+
+    /** The session a stage speaks through: the pair `initWork` opened and
+     *  `ready` attached. A stage that cannot find it says so — the render is
+     *  lost, the log is not, and the tracker's own retries answer. */
+    const conversationOf = (run: RunView): string => {
+      const link = run.sessionId ? links.byOpencodeSession(run.sessionId) : undefined;
+      if (!link) throw new Error(`run ${run.id} has no agent-session pair to speak through`);
+      return tracker.idFor(link.agentSession);
     };
 
     /**
-     * A picked-up run's ending, owed to the ticket without an agent session:
-     * the **closing note** on the ticket, then the **move** the lane order
-     * chose — both ask Linear's real state first, so the live event and the
-     * boot pass can both try without ever saying anything twice. There is no
-     * result step (no session to complete) and no delegate to release (the
-     * app never sat on this ticket as its worker). A failure keeps the run
-     * owed: the next wake tries again, and the boot pass re-derives the list
-     * from the orchestrator's record through the watermark.
+     * Linear as the orchestrator knows it: one `Tracker` — the board the walk
+     * reads and the stages every run of ours walks through
+     * (docs/orchestrator.md). The lifecycle stages the orchestrator awaits
+     * (`initWork`, `endWork`) fail visibly; the renders it fires and forgets
+     * (`ready`, `question`, `plan`) throw into its log and are retried, if
+     * they matter, by us. `startWork` we answer with silence on purpose:
+     * Linear watches its own agent sessions, and a working session shows
+     * itself.
      */
-    const walkOwed = new Map<string, Extract<RunEvent, { type: 'ended' }>>();
-
-    const walkEnding = async (event: Extract<RunEvent, { type: 'ended' }>): Promise<void> => {
-      // The stop's memory rides the ending even when the ending arrives
-      // after a restart: the event fired while nobody listened, but the
-      // person said stop and that stands.
-      if (event.run.state === 'cancelled') stopped.mark(event.run.ticketId);
-      const text = event.outcome.kind === 'success' ? event.outcome.summary : event.outcome.reason;
-      if (tracker.closingNote) await tracker.closingNote(readerApp, event.run.ticketId, text);
-      if (event.targetLane) {
-        const issue = await tracker.issue(readerApp, event.run.ticketId);
-        if (issue.state.name !== event.targetLane) {
-          if (!tracker.apply) throw new Error('Linear cannot apply a move');
-          await tracker.apply(readerApp, event.run.ticketId, { kind: 'move', lane: event.targetLane });
-        }
-      }
-      watermark.advanceTo(event.run.updatedAt);
-      log.info('walk.caught-up', { run: event.run.id, ticket: event.run.ticketId });
+    const work: Tracker = {
+      id: MODULE_ID,
+      projects: board.projects,
+      tickets: board.tickets,
+      moveTo: board.moveTo,
+      /** The delegation is the whole opening: making the app the delegate
+       *  makes Linear create the agent session itself and hand it back in the
+       *  mutation's own answer (live, 2026-09-26) — nothing opens a session by
+       *  hand. The pair is recorded **before** anything can arrive: Linear's
+       *  webhook for this very delegation is a redelivery the run's own guard
+       *  folds away, and "preparing the workspace" is the first word inside
+       *  the new session. The answer doubles as the ticket's summary. */
+      initWork: async run => {
+        const issue = await board.issue(run.ticketId);
+        if (!issue) throw new Error('the ticket is gone from the board (deleted by a person)');
+        const agentSession = await tracker.startSession(readerApp, run.ticketId);
+        if (!agentSession) throw new Error('Linear made no agent session for the delegation');
+        links.bind(agentSession, run.ticketId);
+        await say(tracker.idFor(agentSession), 'Preparing the workspace…', 'progress');
+        return issueDossier(issue);
+      },
+      ready: run => {
+        if (!run.sessionId) return void log.warn('ready.sessionless', { run: run.id });
+        // Absent means the pair was already attached: a replay, said never.
+        if (!links.attach(run.ticketId, run.sessionId)) log.debug('ready.replayed', { run: run.id });
+      },
+      question: async (run, question) => {
+        await tracker.ask(conversationOf(run), question);
+      },
+      plan: async (run, plan) => {
+        await tracker.plan(conversationOf(run), plan.steps);
+      },
+      endWork: async run => {
+        if (closings.has(run.id)) return; // the stage and the boot pass may race for one run
+        closings.set(run.id, run);
+        await driveClosing(run.id);
+      },
     };
-
-    const driveWalk = async (runId: string, event?: Extract<RunEvent, { type: 'ended' }>): Promise<void> => {
-      if (event) walkOwed.set(runId, event);
-      const ending = walkOwed.get(runId);
-      if (!ending) return;
-      try {
-        await walkEnding(ending);
-        walkOwed.delete(runId);
-      } catch (error) {
-        log.warn('walk.catchup.failed', { run: runId, error }); // owed to the next wake and to the boot pass
-      }
-    };
-
-    /** The wait made visible where the ticket lives: picked-up work has no
-     *  agent session to carry a `select`, so the question arrives as a
-     *  ticket comment while the OpenCode form stays the durable record of
-     *  the wait — the answer reaches the worker through the form, and the
-     *  elicitation keep-alive holds the slot meanwhile (docs/orchestrator.md). */
-    const walkQuestion = async (event: Extract<RunEvent, { type: 'question' }>): Promise<void> => {
-      const options = event.question.options?.length
-        ? `\n\n${event.question.options.map(o => `- ${o.label}`).join('\n')}`
-        : '';
-      await read().createComment(
-        event.run.ticketId,
-        `The worker on this ticket needs an answer:\n\n> ${event.question.question}${options}\n\nAnswer in the worker's session and it reaches them there; the ticket keeps its slot until the elicitation keep-alive says otherwise.`,
-      );
-    };
-
-    const retryOwed = async (): Promise<void> => {
-      for (const runId of [...owed.keys()]) await drive(runId);
-      for (const runId of [...walkOwed.keys()]) await driveWalk(runId);
-    };
-
-    /** The pair store's other half: `started` attaches the OpenCode session
-     *  to the delegation we recorded; question and plan render as they
-     *  arrive; `ended` starts the catch-up. A listener's failure is said in
-     *  the log — the orchestrator never waits on us. */
-    const unsubscribeRuns = services.orchestrator.subscribe(async (event): Promise<void> => {
-      if (abort.signal.aborted || event.run.trackerId !== MODULE_ID) return;
-      // The stop and its answer are recorded in the same synchronous breath
-      // the events arrive: the walk wakes off the very ending, and a pass
-      // starting one microtask later must never read a board not yet told.
-      if (event.type === 'ended' && event.run.state === 'cancelled') stopped.mark(event.run.ticketId);
-      if (event.type === 'started') stopped.clear(event.run.ticketId); // a fresh run answers the stop
-      try {
-        if (event.type === 'started') {
-          if (event.run.sessionId) links.attach(event.run.ticketId, event.run.sessionId);
-          return;
-        }
-        const link = event.run.sessionId ? links.byOpencodeSession(event.run.sessionId) : undefined;
-        if (!link) {
-          // A run the eligibility walk picked up: no delegation, so no agent
-          // session — and the ticket is owed its ceremony all the same, with
-          // the installation's own credentials. The question gets the ticket
-          // as its comment, because the person who must answer watches the
-          // ticket; the plan is the one thing a sessionless run cannot show,
-          // and the lane it moves in says enough.
-          if (event.type === 'ended') return void (await driveWalk(event.run.id, event));
-          if (event.type === 'question') return void (await walkQuestion(event));
-          if (event.type === 'plan') return log.info('plan.sessionless', { run: event.run.id });
-          // Today every event has its sessionless answer above; an event
-          // type added later says so here, loudly, instead of going quiet.
-          return void log.warn('event.sessionless.unrendered');
-        }
-        const conversation = tracker.idFor(link.agentSession);
-        if (event.type === 'question') return void (await tracker.ask(conversation, event.question));
-        if (event.type === 'plan') return void (await tracker.plan(conversation, event.plan.steps));
-        await catchUp(event, link);
-      } catch (error) {
-        log.warn('run.event.failed', { error });
-      }
-    });
-
-    /**
-     * A delegated issue a lane claims is handed to the orchestrator. The pair
-     * is recorded **before** the request — the `started` event arrives from
-     * the background preparation and must find its agent session waiting.
-     * The work environment is the project's checkout: ruled 2026-09-30,
-     * forge → the forge's worktree, no forge → the source dir — and no forge
-     * is wired yet. The ledger's guard answers a redelivery with the live
-     * run, so one ticket never gets two workers at a time.
-     */
-    const handWork = async (
-      issue: TrackerIssue,
-      project: Project,
-      lane: ProjectLane,
-      conversation: string,
-      promptContext?: string,
-    ): Promise<void> => {
-      const agent = lane.agent;
-      if (!agent) return log.warn('lane.without.agent', { issue: issue.identifier, lane: issue.state.name });
-      const directory = project.directory;
-      const { app, session: agentSession } = tracker.parts(conversation);
-      links.bind(agentSession, issue.id);
-      const { created, refused, queued } = await services.orchestrator.requestWork({
-        projectId: project.id,
-        trackerId: MODULE_ID,
-        ticketId: issue.id,
-        lane: issue.state.name,
-        agent,
-        directory,
-        firstMessage: [
-          `[Linear delegated ${issue.identifier} "${issue.title}" to you (app ${app}) in project ${project.id}, lane "${issue.state.name}". You work in the project's checkout ${directory}; the agent file says what you may change.]`,
-          promptContext ?? issueDossier(issue),
-        ].join('\n\n'),
-      });
-      if (queued) {
-        // No slot now, but the request holds the pool's queue place and the
-        // pair stays bound: when the lease lands the run attaches here and
-        // the worker speaks in this very session. A progress line for the
-        // wait; the start itself will say more.
-        await say(
-          conversation,
-          `Every slot in the pool behind lane "${issue.state.name}" is working. ${issue.identifier} waits in the queue and I start it the moment one frees.`,
-          'progress',
-        );
-        return log.info('run.queued', { issue: issue.identifier, request: queued, conversation });
-      }
-      if (refused) {
-        // No slot and no queue place either — said plainly, because silence
-        // is not an answer a delegator gets. The ticket stays in the lane
-        // it is in, and the eligibility walk starts it when a slot frees;
-        // the pair goes with the refusal so that moment arrives as fresh
-        // work, not a swallowed replay.
-        links.release(agentSession);
-        await say(
-          conversation,
-          refused === 'waiting'
-            ? `The pool behind lane "${issue.state.name}" already holds a request of mine, and a pool waits for one at a time. ${issue.identifier} is not started — the walk will take it when a slot frees.`
-            : `No slot is free in the pool behind lane "${issue.state.name}" right now. ${issue.identifier} stays where it is and I will start it as soon as a slot frees.`,
-          'answer',
-        );
-        return log.info('run.refused', { issue: issue.identifier, pool: refused, conversation });
-      }
-      if (!created) return log.info('run.deduped', { issue: issue.identifier, conversation });
-      // The first activity inside the session's first seconds: Linear marks a
-      // silent new session unresponsive. The orchestrator's own progress
-      // stream (the ephemeral thought) comes with the session observer later.
-      await say(
-        conversation,
-        `Starting as \`${lane.agent}\` in project ${project.id}, working in the project checkout.`,
-        'progress',
-      );
-    };
+    services.orchestrator.addTracker(work);
 
     /**
      * The assistant: who people reach directly. A delegation nothing claims
@@ -505,12 +424,13 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
      * a redelivery finds the pair we recorded, the live run, or the bound
      * conversation and stops; a deleted ticket gets nothing at all; the HITL
      * label refuses for any agent — the tracker decides what needs-human looks
-     * like on its platform; a delegation whose lane maps an agent is handed to
-     * the orchestrator; a delegation no lane can run gets its delegate
-     * un-taken and one plain fixed answer saying why; and what a person brings
-     * us any other way — a comment mention above all — lands on the assistant.
-     * The face is never a routing input: a delegation into a mapped lane runs
-     * the lane's agent whatever app the session lives on.
+     * like on its platform; a **delegation** gets one fixed refusal — work
+     * reaches me through the board, not through a delegation, and the only
+     * delegation not refused is my own `initWork`'s, whose webhook the pair
+     * and the live run already fold into the run they belong to; and what a
+     * person brings us any other way — a comment mention above all — lands
+     * on the assistant, the project's configured assistant, in the fixed
+     * context of a project (ruled 2026-10-02).
      */
     const onStarted = async (conversation: string, issueId: string, promptContext?: string) => {
       const { session: agentSession } = tracker.parts(conversation);
@@ -537,29 +457,18 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       });
       const lane = routed && laneOf(routed.project, issue.state.name);
       if (issue.delegateId === tracker.ownerOf(conversation)) {
-        // The app was named to work: a lane that claims it hands the ticket to
-        // the orchestrator; a delegation nothing can run is answered plainly,
-        // and no agent is left behind to improvise.
+        // A delegation not initiated by us (ruled 2026-10-02): our own
+        // initWork delegation was folded away by the redelivery guard above,
+        // so whoever named us here did it by hand. One fixed refusal — the
+        // delegate un-taken, the answer plain — whatever the lane maps:
+        // work reaches me through the board, and the walk starts it there.
         if (issue.completed)
           return refuse(conversation, `${issue.identifier} is already finished as far as work goes; nothing to start.`);
-        if (routed && lane?.agent) {
-          await handWork(issue, routed.project, lane, conversation, promptContext);
-        } else if (!routed) {
-          await unclaimed(issue, conversation, 'its team is not connected to an aivi project.');
-        } else if (lane) {
-          await unclaimed(
-            issue,
-            conversation,
-            `the "${issue.state.name}" lane is worked by humans — it names no agent.`,
-          );
-        } else {
-          await unclaimed(
-            issue,
-            conversation,
-            `"${issue.state.name}" is not a lane of project ${routed?.project.id ?? 'this'} — it names no place in the workflow.`,
-          );
-        }
-        return;
+        return void (await unclaimed(
+          issue,
+          conversation,
+          'work reaches me through the board, not through a delegation: I start a worker myself once the ticket sits in a lane I work.',
+        ));
       }
       // A person addressing us is a conversation the assistant holds,
       // mapped lanes or not.
@@ -733,38 +642,6 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
         await services.orchestrator.stop(run.id, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
     };
 
-    /** The listener's pickup: an issue entering a mapped lane with nobody on
-     *  it. The delegation is the whole start: making the app the delegate
-     *  makes Linear create the agent session itself and hand it back in the
-     *  mutation's own answer (live, 2026-09-26) — nothing opens a session by
-     *  hand, and the `created` webhook that follows is a redelivery the
-     *  pair record folds into the run already made. */
-    const listenerPickup = async (issue: TrackerIssue, lane: ProjectLane, project: Project, conversation: string) => {
-      if (issue.delegateId) return;
-      // Linear's native blocking: an issue blocked by unfinished issues is not picked up.
-      if (issue.blockedBy.some(b => !b.completed)) {
-        log.info('listener.blocked', { issue: issue.identifier });
-        return;
-      }
-      const sessionId = await tracker.startSession(conversation, issue.id);
-      if (!sessionId) {
-        // Linear made no session, so there is nothing to start. The route
-        // acknowledged the delivery already — nothing will retry this — so
-        // the failure is loud, and the delegation is undone: the issue must
-        // not sit in the lane wearing the app as if a worker were coming.
-        await tracker.unassign(conversation, issue.id).catch(error => log.warn('delegate.undone', { error }));
-        log.error('listener.no-session', { issue: issue.identifier, lane: issue.state.name });
-        return;
-      }
-      log.info('listener.delegated', {
-        issue: issue.identifier,
-        lane: issue.state.name,
-        agent: lane.agent,
-        agentSession: sessionId,
-      });
-      await handWork(issue, project, lane, tracker.idFor(sessionId));
-    };
-
     const onIssue = async (event: Extract<TrackerEvent, { kind: 'updated' }>) => {
       if (!event.changed.length) return;
       const issue = await tracker.issue(event.conversation, event.issueId);
@@ -783,13 +660,9 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       // walk — including moves no lane claims (a queue lane has no agent),
       // which is exactly what the walk exists to pick up.
       if (event.changed.includes('state') || event.changed.includes('labels')) {
-        stopped.clear(issue.id); // the person's own move answers a stop
-        services.orchestrator.cancelWaiting(MODULE_ID, issue.id); // and their move cancels a waiting request
-        void services.orchestrator.wake(routed.project.id);
+        services.orchestrator.cancelWaiting(MODULE_ID, issue.id); // a person's move cancels a waiting request
+        void services.orchestrator.wake(routed.project.id); // and a lane move is a wake and nothing more
       }
-      if (!config.listener || !event.changed.includes('state') || !lane?.agent || human || pending.length) return;
-      if (services.orchestrator.activeRun(MODULE_ID, issue.id)) return; // one worker per ticket
-      await listenerPickup(issue, lane, routed.project, event.conversation);
     };
 
     /** Everything downstream keys off the adapter's normalized events — the
@@ -816,34 +689,18 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
       );
 
     // Our boot pass, ours alone: every pair whose run has ended owes Linear
-    // its ceremony — the result may have died in an outage, the move may
-    // never have landed. Each step asks Linear's real state first, so a
-    // catch-up that already happened says nothing twice.
+    // its closing — the result may have died in an outage. Each step asks
+    // Linear's real state first, so a catch-up that already happened says
+    // nothing twice. Walk-picked work has a pair too now (initWork delegates
+    // for every run), so the pairs are the whole list; the lane moves are the
+    // orchestrator's own debt and its boot pass re-drives them.
     for (const link of links.attached()) {
       const run = services.orchestrator.runBySession(link.opencodeSession!);
-      if (run && run.state === 'cancelled') stopped.mark(link.ticketId); // stop survives the restart
-      if (run && isTerminal(run.state) && run.outcome)
-        await catchUp(
-          { type: 'ended', run, outcome: run.outcome, ...(run.targetLane ? { targetLane: run.targetLane } : {}) },
-          link,
-        );
+      if (run && isTerminal(run.state)) {
+        closings.set(run.id, run);
+        await driveClosing(run.id).catch(() => {});
+      }
     }
-
-    // Picked-up work has no pair to boot from: its endings live in the
-    // orchestrator's record, and the watermark is where this module left
-    // off reading it. Delegated endings above are the pairs' own business;
-    // seeing them again here costs a local check and no word to Linear.
-    for (const run of services.orchestrator.endedSince(MODULE_ID, watermark.since())) {
-      if (run.sessionId && links.byOpencodeSession(run.sessionId)) continue;
-      if (run.outcome)
-        walkOwed.set(run.id, {
-          type: 'ended',
-          run,
-          outcome: run.outcome,
-          ...(run.targetLane ? { targetLane: run.targetLane } : {}),
-        });
-    }
-    for (const runId of [...walkOwed.keys()]) await driveWalk(runId);
 
     const unregister = services.channels.register({
       id: LINEAR.id,
@@ -860,15 +717,14 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
     });
     const unsubscribeWake = services.onWake(() => {
       engine!.tick();
-      void retryOwed();
+      void retryClosings();
     });
     engine.tick();
-    log.info('ready', { apps: Object.keys(config.apps), listener: config.listener });
+    log.info('ready', { apps: Object.keys(config.apps) });
 
     return {
       async stop() {
         unsubscribeEvents();
-        unsubscribeRuns();
         unregister();
         unsubscribeWake();
         await teardown();

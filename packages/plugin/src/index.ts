@@ -28,6 +28,6 @@ export type {
 } from '@aivi/host';
 export * from './cli.ts';
 export * from './plugin.ts';
-export * from './run-events.ts';
 export * from './setup.ts';
 export * from './setup-project.ts';
+export * from './work.ts';

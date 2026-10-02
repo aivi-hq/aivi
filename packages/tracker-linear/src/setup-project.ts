@@ -35,11 +35,15 @@ export function openStates(states: LinearTeam['states']): LinearTeam['states'] {
  *  question after all lanes are configured, and its candidates are the
  *  lanes that could legally hold the queue — a queue lane must feed a
  *  worker lane, so a lane whose next works nobody is no candidate, and the
- *  last lane feeds nothing at all. Offering anything else would write a
- *  config that refuses to load. Exported pure, like the closed-state
- *  ruling above it, so the wizard's rules are testable apart from prompts. */
+ *  last lane feeds nothing at all. And a lane that has an agent is **never**
+ *  an option (ruled 2026-10-02): a queue is where people wait for a worker,
+ *  not a worker lane itself — the queue runs between the human lanes and
+ *  the working ones, like a real board's waiting column. Offering anything
+ *  else would write a config the operator did not mean. Exported pure, like
+ *  the closed-state ruling above it, so the wizard's rules are testable
+ *  apart from prompts. */
 export function queueCandidates(lanes: ProjectLaneInput[]): ProjectLaneInput[] {
-  return lanes.filter((_, at) => lanes[at + 1]?.agent !== undefined);
+  return lanes.filter(lane => lane.agent === undefined && lanes[lanes.indexOf(lane) + 1]?.agent !== undefined);
 }
 
 /** Mark the chosen queue lane. The queue answer is the wizard's later

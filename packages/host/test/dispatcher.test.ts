@@ -68,12 +68,12 @@ const dispatcherConfig = (written: Record<string, unknown>): Config['dispatcher'
 
 function harness(written: Record<string, unknown>, fake = fakeOpenCode()) {
   const leases = new LeaseStore(new Store(':memory:'));
-  const ended: { id: string; reason: string }[] = [];
+  const ended: { id: string; reason: string; code?: string }[] = [];
   const dispatcher = new Dispatcher({
     leases,
     dispatcher: dispatcherConfig(written),
     opencode: async () => fake.client,
-    onEnded: (lease, reason) => ended.push({ id: lease.id, reason }),
+    onEnded: (lease, reason, code) => ended.push({ id: lease.id, reason, ...(code ? { code } : {}) }),
   });
   return { leases, dispatcher, ended, fake };
 }
@@ -404,6 +404,27 @@ test('an unconfirmed kill keeps the slot unavailable and tries again at a known 
   fake.killWorks.value = true; // the worker dies of the first strike, late
   await until(() => ended.length === 1, 'the retry — a known instant, not a poll — confirms and frees');
   assert.equal(dispatcher.leases.held('default'), 0);
+});
+
+test('a session that will not die is given up on at the configured strikes — and the ending says so in machine-readable words', async () => {
+  const { dispatcher, ended, fake } = harness({
+    dispatcher: {
+      pools: { default: { capacity: 1 } },
+      timeouts: { idle: '1s', prepare: '5m' },
+      killAttempts: 2,
+    },
+  });
+  const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
+  const sessionId = dispatcher.leases.require(granted.id).sessionId!;
+  fake.busy.add(sessionId);
+  fake.killWorks.value = false; // every strike misses: the session will not die
+
+  await until(() => ended.length === 1, 'the last strike gives up on the session, not on the slot');
+  assert.equal(fake.interrupted.length, 2, 'it was struck exactly as hard as configured');
+  assert.match(ended[0]!.reason, /did not stop after 2 kill attempts/);
+  assert.equal(ended[0]!.code, 'kill-unconfirmed', 'the tracker is told in code, never by reading English');
+  assert.equal(dispatcher.leases.held('default'), 0, 'one stubborn session never holds a pool hostage');
 });
 
 test('the prepare timeout revokes a lease nobody provided a session for — capacity counted or not', async () => {

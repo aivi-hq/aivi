@@ -617,6 +617,14 @@ const dispatcherSchema = z
       })
       .default({ idle: '180m', prepare: '5m' })
       .describe('Watches on leases; durations add by spaces (1h 30m).'),
+    killAttempts: z
+      .number()
+      .int()
+      .min(1)
+      .default(3)
+      .describe(
+        'How hard the dispatcher strikes a session that will not die on a timeout kill. After this many attempts it gives up: the slot is taken back, the lease ends with a machine-readable kill-unconfirmed reason, and the tracker that owns the ticket says so loudly — help is on the way.',
+      ),
   })
   .superRefine((dispatcher, ctx) => {
     const pools = dispatcher.pools ?? {};

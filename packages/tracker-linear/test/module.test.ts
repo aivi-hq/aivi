@@ -34,7 +34,7 @@ import {
 import type { AiviServices } from '@aivi/plugin';
 import type { ChannelDelivery } from '@aivi/plugin/channel';
 import type {
-  Tracker,
+  PlatformAdapter,
   TrackerChange,
   TrackerCommentKind,
   TrackerEvent,
@@ -47,7 +47,7 @@ import type { LinearConfig } from '../src/config.ts';
 import { linearSchema } from '../src/config.ts';
 import { RunLinks } from '../src/links.ts';
 import { createLinearModule, openLinearStore } from '../src/module.ts';
-import { StoppedTickets } from '../src/stopped.ts';
+import type { LinearBoard } from '../src/work.ts';
 
 const run = promisify(execFile);
 
@@ -186,7 +186,7 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
  * Linear's `endedAt` does), and a `move` updates the issue's state (so a
  * catch-up that already landed says nothing twice).
  */
-class FakeTracker implements Tracker {
+class FakeTracker implements PlatformAdapter {
   readonly id = 'linear';
   comments: { conversation: string; text: string; kind: TrackerCommentKind }[] = [];
   /** The app ids the module was configured with; conversations carry them. */
@@ -194,6 +194,9 @@ class FakeTracker implements Tracker {
   /** Which app a conversation belongs to, as the module names it. */
   app: Record<string, string> = {};
   issues = new Map<string, TrackerIssue>();
+  /** Linear unreachable for the closings: results and closing notes throw
+   *  while set — the outage the owed closing is built for. */
+  closingDown = false;
   delegated: [string, string | null][] = [];
   sessionsCreated: string[] = [];
   moves: { conversation: string; issueId: string; update: TrackerUpdate }[] = [];
@@ -251,6 +254,8 @@ class FakeTracker implements Tracker {
     return `app-user-${this.conversation(conversation)}`;
   }
   async comment(conversation: string, text: string, kind: TrackerCommentKind): Promise<string | undefined> {
+    if (this.closingDown && (kind === 'answer' || kind === 'outcome'))
+      throw new Error('Linear is unreachable for the closing');
     this.comments.push({ conversation, text, kind });
     if (kind === 'answer' || kind === 'outcome') this.shown.add(conversation);
     return undefined;
@@ -264,6 +269,7 @@ class FakeTracker implements Tracker {
    *  issue and text is never posted twice. */
   closingNotes: { conversation: string; issueId: string; text: string }[] = [];
   async closingNote(conversation: string, issueId: string, text: string): Promise<void> {
+    if (this.closingDown) throw new Error('Linear is unreachable for the closing');
     if (this.closingNotes.some(n => n.issueId === issueId && n.text === text)) return;
     this.closingNotes.push({ conversation, issueId, text });
   }
@@ -337,14 +343,50 @@ const issue = (id: string, extra: Partial<TrackerIssue> = {}): TrackerIssue => (
 });
 
 const noEvents: SessionEvents = { watch: () => () => {} };
-/** A board with no projects on it: these tests drive runs through the tracker
- *  fake, and the eligibility walk never asks a Linear installation here. */
-const emptyFeed: import('@aivi/host').TicketFeed = {
+/** A board with no projects on it: these tests drive runs through webhooks
+ *  and the tools, and the eligibility walk never asks a Linear installation. */
+const emptyBoard: LinearBoard = {
   projects: () => [],
   tickets: async () => [],
   moveTo: async () => {},
-  firstMessage: async () => undefined,
+  issue: async () => undefined,
 };
+
+/** The board the walk reads, backed by the fake's issues — the same answers
+ *  `linearBoard` gives: eligible means alive, unlabeled and unblocked, and
+ *  a move lands on the issue itself so the next read says what Linear was
+ *  told. `shownAtMove` records whether the closing words had been posted
+ *  when each move was performed: the proof that the tracker speaks first. */
+function fakeBoard(tracker: FakeTracker, projectId: string): LinearBoard & { moves: string[]; shownAtMove: boolean[] } {
+  const moves: string[] = [];
+  const shownAtMove: boolean[] = [];
+  return {
+    moves,
+    shownAtMove,
+    projects: () => [projectId],
+    tickets: async (p, lane) =>
+      [...tracker.issues.values()]
+        .filter(i => !i.archived && i.state.name === lane && !i.labels.some(l => l.name === 'needs-human'))
+        .map(i => ({ id: i.id, blocked: i.blockedBy.some(b => !b.completed) })),
+    moveTo: async (p, ticketId, lane) => {
+      shownAtMove.push([...tracker.shown].length > 0);
+      moves.push(`${ticketId}->${lane}`);
+      const moved = tracker.issues.get(ticketId);
+      if (moved) moved.state = { id: `s-${lane}`, name: lane, type: lane === 'Done' ? 'completed' : 'started' };
+    },
+    issue: async ticketId => {
+      const found = tracker.issues.get(ticketId);
+      if (!found || found.archived) return undefined;
+      return {
+        identifier: found.identifier,
+        title: found.title,
+        description: found.description,
+        teamId: found.teamId,
+        stateName: found.state.name,
+      };
+    },
+  };
+}
 const until = async (check: () => boolean, what: string) => {
   for (let i = 0; i < 500 && !check(); i++) await new Promise(r => setTimeout(r, 10));
   assert.ok(check(), what);
@@ -414,7 +456,7 @@ function restartServices(base: AiviServices): AiviServices {
 const workerSession = (sessions: Map<string, unknown>, since = 0) =>
   [...sessions.keys()].filter(id => id.startsWith('ses_orchestrator_'))[since]!;
 
-test('a delegation runs the lane agent; plan, question, answer and interjection reach the worker; the ending catches Linear up in order; refusals answer plainly', async t => {
+test('a walk-picked run runs the lane agent; plan, question, answer and interjection reach the worker; the ending catches Linear up in order; hand delegations get one fixed refusal', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = await checkout(root, 'website');
@@ -442,17 +484,21 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
     sources: [],
   };
   const tracker = new FakeTracker(linearBlock(config));
+  // Only eng-1 sits in a walked lane: the others wait in Backlog or carry a
+  // person's mark, and arrive in this test through webhooks, as themselves.
+  const backlog = { id: 's-bl', name: 'Backlog', type: 'unstarted' as const };
   for (const seeded of [
     issue('eng-1'),
     issue('eng-2', { labels: [{ id: 'l', name: 'needs-human' }] }),
-    issue('eng-3', { teamId: 't9' }),
+    issue('eng-3', { teamId: 't9', state: backlog }),
     issue('eng-5', { state: { id: 's9', name: 'Deploy', type: 'started' } }),
-    issue('eng-6', { delegateId: null }),
+    issue('eng-6', { delegateId: null, state: backlog }),
     issue('eng-7', { archived: true }),
-    issue('eng-8', { teamId: 't9', delegateId: null }),
-    issue('eng-4', { teamId: 'tx' }),
+    issue('eng-8', { teamId: 't9', delegateId: null, state: backlog }),
+    issue('eng-4', { teamId: 'tx', state: backlog }),
   ])
     tracker.issues.set(seeded.id, seeded);
+  const board = fakeBoard(tracker, 'website');
 
   const store = new Store(':memory:');
   const abort = new AbortController();
@@ -460,7 +506,7 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
   const running = await createLinearModule(
     linearBlock(config),
     async () => tracker,
-    () => emptyFeed,
+    () => board,
   ).start(services);
   t.after(async () => {
     await running.stop();
@@ -477,19 +523,21 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
       promptContext: `<issue identifier="${issueId.toUpperCase()}"><title>Fix header</title></issue>`,
     });
 
-  // The delegation: the pair is recorded, the run starts in the checkout, and
-  // the acknowledgement is the session's first activity.
-  await started('dev:as-1', 'eng-1');
+  // The walk's claim: initWork delegates the ticket to our own app, Linear's
+  // answer carries the agent session and serves as the ticket's summary, the
+  // pair is recorded before anything arrives, and "preparing the workspace"
+  // is the new session's first word.
+  await orchestrator.wake('website');
   await until(() => opencode.prompts.length === 1, 'the worker was prompted');
-  assert.equal(tracker.comments[0]!.kind, 'progress', 'acknowledged first');
-  assert.match(tracker.comments[0]!.text, /Starting as `developer` in project website/);
+  assert.equal(tracker.comments[0]!.kind, 'progress', 'the new session hears first');
+  assert.match(tracker.comments[0]!.text, /Preparing the workspace/);
   const worker = workerSession(opencode.sessions);
   assert.equal(opencode.sessions.get(worker)!.agent, 'developer');
   assert.equal(opencode.sessions.get(worker)!.directory, source, 'the checkout is the work directory');
-  assert.deepEqual(links.byAgentSession('as-1'), { agentSession: 'as-1', ticketId: 'eng-1', opencodeSession: worker });
-  assert.match(
-    opencode.prompts[0]!.text,
-    /Linear delegated ENG-1 "Fix header" to you \(app dev\) in project website, lane "In Progress"/,
+  assert.deepEqual(
+    links.byAgentSession('as-auto-1'),
+    { agentSession: 'as-auto-1', ticketId: 'eng-1', opencodeSession: worker },
+    'the delegation Linear answered is the pair we keep',
   );
   assert.match(opencode.prompts[0]!.text, /<issue identifier="ENG-1">/);
   assert.match(
@@ -505,7 +553,7 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
     input: { steps: [{ content: 'Read the header styles', status: 'inProgress' }] },
   });
   assert.deepEqual(tracker.plans, [
-    { conversation: 'dev:as-1', steps: [{ content: 'Read the header styles', status: 'inProgress' }] },
+    { conversation: 'dev:as-auto-1', steps: [{ content: 'Read the header styles', status: 'inProgress' }] },
   ]);
 
   // The question: the ask tool's OpenCode form is the record; the follower
@@ -516,7 +564,7 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
   });
   assert.deepEqual(tracker.asks, [
     {
-      conversation: 'dev:as-1',
+      conversation: 'dev:as-auto-1',
       question: { question: 'Which blue?', options: [{ label: 'Teal', value: 'teal' }], formId: opencode.forms[0]!.id },
     },
   ]);
@@ -528,58 +576,58 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
 
   // The answer: the pending form is the discriminator — the worker gets the
   // text, the form closes as the record.
-  await tracker.drive({ kind: 'prompted', id: 'act-a1', conversation: 'dev:as-1', body: 'Use teal' });
+  await tracker.drive({ kind: 'prompted', id: 'act-a1', conversation: 'dev:as-auto-1', body: 'Use teal' });
   await until(() => opencode.forms[0]!.answered, 'the form was answered');
   const answered = opencode.prompts.find(p => p.text.startsWith('The person answered your question:'));
   assert.equal(answered!.text, 'The person answered your question: Use teal');
   assert.equal(answered!.delivery, 'queue');
 
   // An interjection with no form open steers the running turn.
-  await tracker.drive({ kind: 'prompted', id: 'act-i1', conversation: 'dev:as-1', body: 'Also fix the footer' });
+  await tracker.drive({ kind: 'prompted', id: 'act-i1', conversation: 'dev:as-auto-1', body: 'Also fix the footer' });
   await until(
     () => opencode.prompts.some(p => p.text === 'Also fix the footer'),
     'the interjection reached the session',
   );
   assert.equal(opencode.prompts.find(p => p.text === 'Also fix the footer')!.delivery, 'steer');
 
-  // The ending: only a tool call ends a run. The catch-up is the follower's
-  // order — result first (it stops Linear's spinner), then the move the lane
-  // order chose, then the delegate back.
+  // The ending, in the operator's order: the tracker speaks its closing
+  // words (the result completes the agent session and stops Linear's
+  // spinner), only then does the orchestrator perform the move its lane
+  // order chose, and lastly the lease returns.
   await orchestrator.completeTool({
     sessionId: worker,
     input: { outcome: 'success', summary: 'Header aligned.' },
   });
-  await until(() => tracker.ofKind('answer').some(c => c.text === 'Header aligned.'), 'the result was posted');
-  // The catch-up is the follower's own async work: wait for the whole ceremony.
+  await until(() => tracker.ofKind('answer').some(c => c.text === 'Header aligned.'), 'the closing words landed');
+  // The closing is the tracker's awaited stage: wait for the whole ceremony.
   await until(
-    () => tracker.moves.length === 1 && tracker.delegated.at(-1)?.[1] === null,
+    () => board.moves.length === 1 && tracker.delegated.at(-1)?.[1] === null,
     'the move and the delegate catch-up landed',
   );
   assert.deepEqual(
     tracker.closingNotes,
-    [{ conversation: 'dev:as-1', issueId: 'eng-1', text: 'Header aligned.' }],
+    [{ conversation: 'dev:as-auto-1', issueId: 'eng-1', text: 'Header aligned.' }],
     'the ending is readable on the ticket itself, not only in the session',
   );
-  assert.deepEqual(
-    tracker.moves.map(m => m.update),
-    [{ kind: 'move', lane: 'Done' }],
-    'the lane order chose Done and the follower performed it',
-  );
+  assert.deepEqual(board.moves, ['eng-1->Done'], 'the orchestrator performed the move its lane order chose');
+  assert.deepEqual(board.shownAtMove, [true], 'the closing words were Linear-real before the move was performed');
   assert.deepEqual(tracker.delegated.at(-1), ['eng-1', null], 'the delegate was un-taken');
   const ended = orchestrator.runBySession(worker)!;
   assert.deepEqual(
     [ended.state, ended.targetLane, ended.outcome],
-    ['completed', 'Done', { kind: 'success', summary: 'Header aligned.' }],
+    ['completed', undefined, { kind: 'success', summary: 'Header aligned.' }],
+    'the move landed, so the debt is paid and the target lane goes quiet',
   );
 
-  // A redelivery of the same delegation is a no-op: the pair and the run answer it.
+  // Linear's own webhook for the delegation initWork made is a redelivery:
+  // the pair and the live run fold it into the work already started.
   const quietComments = tracker.comments.length;
-  await started('dev:as-1', 'eng-1');
+  await started('dev:as-auto-1', 'eng-1');
   assert.equal(tracker.comments.length, quietComments, 'a redelivery is a no-op');
 
   // A follow-up into the finished conversation is the assistant's: the person
   // talks to aivi, with the ticket read afresh.
-  await tracker.drive({ kind: 'prompted', id: 'act-f1', conversation: 'dev:as-1', body: 'What did you change?' });
+  await tracker.drive({ kind: 'prompted', id: 'act-f1', conversation: 'dev:as-auto-1', body: 'What did you change?' });
   await until(
     () =>
       opencode.prompts.some(
@@ -596,7 +644,7 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
   const inbox = openLinearStore(store);
   await until(() => inbox.list().every(x => x.state === 'sent'), 'and answered');
   // A stop with nothing running says so plainly.
-  await tracker.drive({ kind: 'prompted', id: 'act-s', conversation: 'dev:as-1', signal: 'stop' });
+  await tracker.drive({ kind: 'prompted', id: 'act-s', conversation: 'dev:as-auto-1', signal: 'stop' });
   await until(
     () => tracker.ofKind('answer').some(c => c.text === 'Nothing is running right now.'),
     'stop with nothing running',
@@ -614,19 +662,19 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
   assert.equal(tracker.comments.length, quietAfter, 'the archived ticket gets no comment');
   assert.equal(opencode.prompts.length, quietPrompts, 'the archived ticket starts no agent');
 
-  // A delegation a config cannot run — the team maps no project — gets one
-  // plain fixed answer and the delegate un-taken. No agent improvises.
+  // A hand delegation whose team maps no project: one fixed refusal and the
+  // delegate un-taken. No agent improvises over a job the config never claimed.
   await started('dev:as-3', 'eng-3');
-  await until(() => tracker.answerWith('ENG-3') !== '', 'the unclaimed delegation was answered');
-  assert.match(tracker.answerWith('ENG-3'), /its team is not connected to an aivi project/);
+  await until(() => tracker.answerWith('ENG-3') !== '', 'the delegation was refused');
+  assert.match(tracker.answerWith('ENG-3'), /work reaches me through the board, not through a delegation/);
   assert.match(tracker.answerWith('ENG-3'), /removed myself as delegate/);
   assert.deepEqual(tracker.delegated.at(-1), ['eng-3', null], 'the delegation was un-taken');
 
   // A delegation into a state that is no lane of the project: the same fixed
-  // answer, naming the state.
+  // refusal — the answer is fixed, the lanes never vary it.
   await started('dev:as-5', 'eng-5');
-  await until(() => tracker.answerWith('ENG-5') !== '', 'the not-a-lane delegation was answered');
-  assert.match(tracker.answerWith('ENG-5'), /"Deploy" is not a lane of project website/);
+  await until(() => tracker.answerWith('ENG-5') !== '', 'the not-a-lane delegation was refused alike');
+  assert.match(tracker.answerWith('ENG-5'), /work reaches me through the board, not through a delegation/);
   assert.deepEqual(tracker.delegated.at(-1), ['eng-5', null], 'un-taken as well');
 
   // A mention (not a delegation) on a team no project maps still reaches the
@@ -651,13 +699,13 @@ test('a delegation runs the lane agent; plan, question, answer and interjection 
     'a mention is not un-delegated',
   );
 
-  // A second mapped team routes to the same checkout: teams is a list on purpose.
+  // A hand delegation on the second mapped team: the same fixed refusal. The
+  // mapping decides what the walk starts, never what a delegation becomes —
+  // teams is a list on purpose, and the walk proved it with eng-1.
   await started('dev:as-4', 'eng-4');
-  await until(
-    () => opencode.prompts.some(p => p.text.includes('Linear delegated ENG-4')),
-    'the other mapped team routes',
-  );
-  assert.equal(opencode.sessions.get(workerSession(opencode.sessions, 1))!.directory, source);
+  await until(() => tracker.answerWith('ENG-4') !== '', 'the mapped-team delegation was refused alike');
+  assert.match(tracker.answerWith('ENG-4'), /work reaches me through the board, not through a delegation/);
+  assert.deepEqual(tracker.delegated.at(-1), ['eng-4', null], 'un-taken as well');
 });
 
 test('a worked lane runs its agent in the project checkout; the ending without a next lane goes silent', async t => {
@@ -697,21 +745,17 @@ test('a worked lane runs its agent in the project checkout; the ending without a
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
+  const board = fakeBoard(tracker, 'site');
   const running = await createLinearModule(
     linearBlock(config),
     async () => tracker,
-    () => emptyFeed,
+    () => board,
   ).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
   });
-  await tracker.drive({
-    kind: 'started',
-    conversation: 'dev:as-r1',
-    issueId: 'site-1',
-    promptContext: '<issue identifier="SITE-1"></issue>',
-  });
+  await services.orchestrator.wake('site');
   await until(() => opencode.prompts.length === 1, 'the researcher was prompted');
   const worker = workerSession(opencode.sessions);
   assert.deepEqual(opencode.sessions.get(worker), { agent: 'researcher', directory: source });
@@ -721,22 +765,32 @@ test('a worked lane runs its agent in the project checkout; the ending without a
     'the prompt says where the agent works',
   );
   assert.ok(
-    tracker.ofKind('progress').some(c => /working in the project checkout/.test(c.text)),
-    'the acknowledgement says so too',
+    tracker.ofKind('progress').some(c => /Preparing the workspace/.test(c.text)),
+    'the new session hears its first word',
   );
   // The only lane of the array: success has nowhere configured to go and the
   // next-lane default names none — the ticket stays, unconfigured is silent.
   await services.orchestrator.completeTool({ sessionId: worker, input: { outcome: 'success', summary: 'A report.' } });
   await until(
-    () => tracker.ofKind('answer').some(c => c.text === 'A report.') && tracker.delegated.length > 0,
+    () => tracker.ofKind('answer').some(c => c.text === 'A report.') && tracker.delegated.at(-1)?.[1] === null,
     'the result was posted and the delegate un-taken',
   );
-  assert.deepEqual(tracker.moves, [], 'no move for a run at the end of the lane order');
+  assert.deepEqual(board.moves, [], 'no move for a run at the end of the lane order');
   assert.equal(services.orchestrator.runBySession(worker)!.targetLane, undefined);
-  assert.deepEqual(tracker.delegated.at(-1), ['site-1', null], 'the success still un-takes the delegate');
+  assert.ok(
+    tracker.delegated.some(d => d[0] === 'site-1' && d[1] === null),
+    'the success still un-takes the delegate',
+  );
+  // And the ticket, still sitting in the only worked lane with nowhere
+  // configured to go, is work again: the walk starts it fresh. An ending
+  // releases; only a person's move or label says otherwise (ruled 2026-10-02).
+  await until(
+    () => tracker.delegated.at(-1)?.[1] === 'app-user-dev',
+    'the worked lane takes the ticket again — endings release, they do not blacklist',
+  );
 });
 
-test('the listener delegates an issue entering a worked lane; a stop ends the run and says so in Linear; a blocked issue waits', async t => {
+test('a lane move is a wake: the walk starts the ticket it finds, a stop ends the run and says so in Linear; a blocked issue waits', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-listener-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = await checkout(root, 'api');
@@ -744,16 +798,11 @@ test('the listener delegates an issue entering a worked lane; a stop ends the ru
   const config = configSchema.parse({
     version: 1,
     opencode: { url: opencode.url },
-    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false, listener: true } },
+    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false } },
     projects: {
       api: {
         'tracker-linear': { teams: ['t'] },
-        lanes: [
-          { name: 'Todo' },
-          { name: 'In Progress', agent: 'developer' },
-          { name: 'Review', agent: 'reviewer' },
-          { name: 'Done' },
-        ],
+        lanes: [{ name: 'Todo' }, { name: 'In Progress', agent: 'developer' }, { name: 'Review' }, { name: 'Done' }],
       },
     },
   });
@@ -776,10 +825,11 @@ test('the listener delegates an issue entering a worked lane; a stop ends the ru
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
+  const board = fakeBoard(tracker, 'api');
   const running = await createLinearModule(
     linearBlock(config),
     async () => tracker,
-    () => emptyFeed,
+    () => board,
   ).start(services);
   t.after(async () => {
     await running.stop();
@@ -795,28 +845,29 @@ test('the listener delegates an issue entering a worked lane; a stop ends the ru
   await new Promise(r => setTimeout(r, 50));
   assert.deepEqual(tracker.sessionsCreated, []);
 
-  // The platform's own blocking: a blocker not in a finished state holds the listener back.
+  // The platform's own blocking: a blocker not in a finished state holds the
+  // walk back — the ticket waits, and the board says nothing of it.
   api.blockedBy = [{ id: 'b', completed: false }];
   api.state = { id: 'prog', name: 'In Progress', type: 'started' };
   await updated(['state']);
   await new Promise(r => setTimeout(r, 50));
-  assert.deepEqual(tracker.sessionsCreated, [], 'a blocked issue is not delegated');
+  assert.deepEqual(tracker.sessionsCreated, [], 'a blocked issue is not picked up');
   api.blockedBy = [{ id: 'b', completed: true }];
   await updated(['state']);
-  await until(() => tracker.sessionsCreated.length === 1, 'the listener delegated to the lane app');
+  await until(() => tracker.sessionsCreated.length === 1, 'the walk opened the ticket on its own app');
   assert.deepEqual(tracker.delegated.at(-1), ['api-7', 'app-user-dev']);
   await until(() => opencode.prompts.length === 1, 'the worker was prompted');
   const worker = workerSession(opencode.sessions);
   const run = orchestrator.activeRun('tracker-linear', 'api-7')!;
   assert.equal(run.sessionId, worker);
-  // The created webhook for the session the delegation itself made: the pair
-  // answers it — no second worker.
+  // The same move again — a wake is a wake: the live run answers it and no
+  // second worker opens.
   await updated(['state']);
   await new Promise(r => setTimeout(r, 50));
   assert.equal(opencode.sessions.size, 1, 'a redelivery starts nothing new');
 
   // In Progress → Review names a different agent: the update orphans the run.
-  // The stop is the orchestrator's (interrupt + cancel); the follower renders
+  // The stop is the orchestrator's (interrupt + cancel); the tracker speaks
   // the ending — the reason as Linear's error activity, and no move: a
   // stopped ticket stays where the person left it.
   api.state = { id: 'rev', name: 'Review', type: 'started' };
@@ -834,13 +885,13 @@ test('the listener delegates an issue entering a worked lane; a stop ends the ru
   assert.deepEqual(tracker.moves, [], 'a stop moves nothing');
   assert.equal(api.delegateId, 'app-user-dev', 'a failure leaves the delegate sitting');
 
-  // The ticket comes back to a worked lane with the delegate cleared (a
-  // failure left it sitting; a person takes it off) — the listener picks it
-  // up afresh. Then the HITL label stops the running worker the same way.
+  // The ticket comes back to a worked lane with the delegate cleared — and a
+  // stopped run remembers nothing (ruled 2026-10-02): the walk takes the
+  // ticket back as fresh work. Then the HITL label stops the new worker.
   api.state = { id: 'prog', name: 'In Progress', type: 'started' };
   api.delegateId = null;
   await updated(['state', 'delegate']);
-  await until(() => opencode.prompts.length === 2, 'the ticket came back and a new run started');
+  await until(() => opencode.prompts.length === 2, 'a stop releases the ticket: the walk starts it afresh');
   api.labels = [{ id: 'l', name: 'needs-human' }];
   await updated(['labels']);
   await until(
@@ -850,7 +901,7 @@ test('the listener delegates an issue entering a worked lane; a stop ends the ru
   assert.equal(orchestrator.activeRun('tracker-linear', 'api-7'), undefined);
 });
 
-test('boot reconcile heals an ending the follower missed, and says nothing twice', async t => {
+test('boot reconcile pays a closing Linear missed, and says nothing twice', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-boot-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = await checkout(root, 'api');
@@ -877,53 +928,66 @@ test('boot reconcile heals an ending the follower missed, and says nothing twice
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
+  const board = fakeBoard(first, 'api');
   const running = await createLinearModule(
     linearBlock(config),
     async () => first,
-    () => emptyFeed,
+    () => board,
   ).start(services);
 
-  // The delegation lands and the worker starts...
-  await first.drive({
-    kind: 'started',
-    conversation: 'dev:as-9',
-    issueId: 'api-9',
-    promptContext: '<issue identifier="API-9"></issue>',
-  });
+  // The walk opens the ticket and the worker starts...
+  await services.orchestrator.wake('api');
   await until(() => opencode.prompts.length === 1, 'the worker was prompted');
   const worker = workerSession(opencode.sessions);
 
-  // ...then aivi goes down with the worker still running, and the completion
-  // happens while no follower is listening (the outage that lost FLU-9's
-  // response in the live test).
-  await running.stop();
+  // ...and the run completes while Linear is unreachable for the closing.
+  // The closing fails — and a person hears of it the moment it does (ruled
+  // 2026-10-02: the operator must be informed): the help label rides the
+  // ticket, while the ticket still moves and the lease still returns.
+  first.closingDown = true;
   await services.orchestrator.completeTool({ sessionId: worker, input: { outcome: 'success', summary: 'It ships.' } });
-  assert.equal(first.ofKind('answer').length, 0, 'nothing posted while the follower was gone');
+  await until(() => board.moves.length === 1, 'the move lands even though the closing failed');
+  assert.equal(first.ofKind('answer').length, 0, 'the closing words did not land');
+  assert.deepEqual(
+    first.moves.map(m => m.update),
+    [{ kind: 'label', label: 'needs-human', on: true }],
+    'a person was asked for help the moment the closing failed',
+  );
 
-  // A boot pass: the pair survives in the follower's own table; the run
-  // record says ended; Linear is caught up — result, move, delegate.
+  // A boot pass: the pair survives in the tracker's own table — initWork
+  // bound it for every run, walk-picked included; the run record says ended;
+  // Linear is caught up — result, note, delegate.
+  first.closingDown = false;
+  await running.stop();
   const second = new FakeTracker(linearBlock(config));
-  second.issues.set('api-9', issue('api-9', { identifier: 'API-9', title: 'Ship it' }));
+  second.issues.set(
+    'api-9',
+    issue('api-9', {
+      identifier: 'API-9',
+      title: 'Ship it',
+      state: { id: 's-Done', name: 'Done', type: 'completed' },
+    }),
+  );
   const restarted = await createLinearModule(
     linearBlock(config),
     async () => second,
-    () => emptyFeed,
+    () => board,
   ).start(restartServices(services));
   assert.deepEqual(
-    second.comments.filter(c => c.conversation === 'dev:as-9').map(c => [c.kind, c.text]),
+    second.comments.filter(c => c.conversation === 'dev:as-auto-1').map(c => [c.kind, c.text]),
     [['answer', 'It ships.']],
-    'the owed ceremony is paid at boot',
+    'the owed closing is paid at boot',
   );
   assert.deepEqual(
-    second.moves.map(m => m.update),
-    [{ kind: 'move', lane: 'Done' }],
-    'and the move lands',
+    second.closingNotes.map(n => n.text),
+    ['It ships.'],
+    'and the note on the ticket too',
   );
   assert.deepEqual(second.delegated.at(-1), ['api-9', null], 'and the delegate is un-taken');
 
   // And a third boot says nothing twice: Linear itself says the result was
   // shown (the agent session is ended) and the state is where the move put
-  // it — the follower asks the platform, never a flag of its own.
+  // it — the tracker asks the platform, never a flag of its own.
   await restarted.stop();
   const third = new FakeTracker(linearBlock(config));
   third.issues.set(
@@ -935,33 +999,22 @@ test('boot reconcile heals an ending the follower missed, and says nothing twice
       delegateId: null,
     }),
   );
-  third.shown.add('dev:as-9');
+  third.shown.add('dev:as-auto-1');
   // Linear's real state carries the standing closing note too: the third
   // boot must not post it twice (the marker is the agent session id, which
   // the fake's text-equality guard stands in for).
-  third.closingNotes.push({ conversation: 'dev:as-9', issueId: 'api-9', text: 'It ships.' });
+  third.closingNotes.push({ conversation: 'dev:as-auto-1', issueId: 'api-9', text: 'It ships.' });
   const again = await createLinearModule(
     linearBlock(config),
     async () => third,
-    () => emptyFeed,
+    () => board,
   ).start(restartServices(services));
   assert.deepEqual(third.comments, [], 'a catch-up that already happened is silent');
-  assert.deepEqual(third.moves, [], 'and nothing re-moves');
+  assert.deepEqual(board.moves, ['api-9->Done'], 'and nothing re-moves');
   assert.equal(third.closingNotes.length, 1, 'a standing closing note is not posted twice');
   await again.stop();
   store.close();
 });
-
-/** The walk's board over one ticket: what the module's own feed answers with
- *  the stopped-ticket filter — the same two lines `linearFeed` runs. */
-function pickedBoard(store: Store, stopped: StoppedTickets): import('@aivi/host').TicketFeed {
-  return {
-    projects: () => ['website'],
-    tickets: async () => (stopped.has('eng-1') ? [] : [{ id: 'eng-1', blocked: false }]),
-    moveTo: async () => {},
-    firstMessage: async () => 'picked eng-1 for you',
-  };
-}
 
 async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
@@ -993,99 +1046,112 @@ async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
   };
   const tracker = new FakeTracker(linearBlock(config));
   tracker.issues.set('eng-1', issue('eng-1'));
+  const board = fakeBoard(tracker, 'website');
   const store = new Store(':memory:');
   const abort = new AbortController();
-  const stopped = new StoppedTickets(store);
   const services = makeServices(loaded, store, abort);
-  return { tracker, config, store, services, stopped, opencode, orchestrator: services.orchestrator };
+  return { tracker, config, store, services, board, opencode, orchestrator: services.orchestrator };
 }
 
-test('a picked-up run’s ending is said on the ticket with the installation’s own credentials, and stop means stop', async t => {
-  const { tracker, config, store, services, stopped, opencode, orchestrator } = await walkHarness(t);
+test('a picked-up run’s ending is said in the session its own delegation opened, and a stop releases the ticket', async t => {
+  const { tracker, config, store, services, board, opencode, orchestrator } = await walkHarness(t);
   const running = await createLinearModule(
     linearBlock(config),
     async () => tracker,
-    () => pickedBoard(store, stopped),
+    () => board,
   ).start(services);
   t.after(async () => {
     await running.stop();
     store.close();
   });
 
-  // The walk takes the ticket: no delegation, so no agent session anywhere.
+  // The walk takes the ticket: initWork delegates it to our own app, so the
+  // ending speaks in that agent session with the installation's credentials.
   await orchestrator.wake('website');
   await until(() => opencode.prompts.length === 1, 'the walk started the worker');
-  assert.match(opencode.prompts[0]!.text, /picked eng-1 for you/);
+  assert.match(opencode.prompts[0]!.text, /<issue identifier="ENG-1">/);
   const run = orchestrator.activeRun('tracker-linear', 'eng-1')!;
 
-  // The person stops it. The ending has no session to complete and no
-  // delegate to release: the closing note is said on the ticket with the
-  // installation's own app, and nothing moves — a stop moves nothing.
+  // The person stops it: the reason lands as the session's error activity
+  // and as a closing note on the ticket, and nothing moves — a stop moves
+  // nothing.
   await orchestrator.stop(run.id, 'a person asked to stop eng-1 from the session.');
-  await until(() => tracker.closingNotes.length === 1, 'the ticket heard its ending without an agent session');
+  await until(() => tracker.closingNotes.length === 1, 'the ticket heard its ending');
   assert.deepEqual(tracker.closingNotes[0], {
-    conversation: 'dev',
+    conversation: 'dev:as-auto-1',
     issueId: 'eng-1',
     text: 'a person asked to stop eng-1 from the session.',
   });
-  assert.deepEqual(tracker.moves, [], 'a stop moves nothing');
-  assert.equal(stopped.has('eng-1'), true, 'the stop is remembered');
+  assert.deepEqual(board.moves, [], 'a stop moves nothing');
 
-  // And the walk that very ending woke does not take the ticket back.
-  await new Promise(r => setTimeout(r, 50));
-  assert.equal(opencode.prompts.length, 1, 'stop means stop, even for the walk');
+  // And the walk that very ending woke takes the ticket straight back: a
+  // stop is no memory (ruled 2026-10-02) — "not that one again" is said by
+  // the HITL label on the board, never by a line in somebody's database.
+  await until(() => opencode.prompts.length === 2, 'stop releases the ticket back to the board');
 });
 
-test('an ending that arrived while nobody followed is found at boot from the orchestrator’s record', async t => {
-  const { tracker, config, store, services, stopped, opencode, orchestrator } = await walkHarness(t);
+test('a closing that failed to land is found at boot from the pair we keep — and the failed ticket is work again', async t => {
+  const { tracker, config, store, services, board, opencode, orchestrator } = await walkHarness(t);
   const first = await createLinearModule(
     linearBlock(config),
     async () => tracker,
-    () => pickedBoard(store, stopped),
+    () => board,
   ).start(services);
 
   await orchestrator.wake('website');
   await until(() => opencode.prompts.length === 1, 'the walk started the worker');
 
-  // The follower stops listening — a module restart while the host lives.
-  // The worker ends in that gap: nobody is following, and the walk takes
-  // the ticket again (failed work is work; only a person's stop says
-  // otherwise). The record of the first ending waits in the ledger.
+  // The module stops — a restart while the host lives — and the worker ends
+  // in that gap with Linear unreachable for the closing. The closing fails
+  // and says so (the help label rides the ticket); the ticket still moves
+  // where the lane order chose, and failed work is work: the queue lane the
+  // failure moved it to feeds the walked lane, and the walk takes it again.
+  tracker.closingDown = true;
   await first.stop();
   const worker = workerSession(opencode.sessions);
   await orchestrator.completeTool({
     sessionId: worker,
     input: { outcome: 'failure', summary: 'the worker died mid-outage' },
   });
-  assert.equal(tracker.closingNotes.length, 0, 'nobody was listening to say it');
-  await until(() => opencode.prompts.length === 2, 'the failed ticket is work again, and the walk takes it');
+  assert.deepEqual(board.moves, ['eng-1->Todo'], 'the failure moved the ticket to the queue lane');
+  assert.equal(tracker.closingNotes.length, 0, 'the closing did not land — Linear was unreachable');
+  assert.deepEqual(
+    tracker.moves.map(m => m.update),
+    [{ kind: 'label', label: 'needs-human', on: true }],
+    'the failed closing informed a person at once',
+  );
+  await until(
+    () => opencode.prompts.length === 2,
+    'the queue lane the failure moved it to feeds the walked lane: the walk takes it',
+  );
 
-  // The second module boots: the missed ending is found in the
-  // orchestrator's own record from the watermark — said on the ticket and
-  // moved where the lane order chose, with the installation's own app.
+  // The boot pass finds the owed closing from the pair initWork kept —
+  // walk-picked work included — and pays it with the installation's own
+  // app. The second run's pair is alive, so the pass leaves it alone.
+  tracker.closingDown = false;
   const again = await createLinearModule(
     linearBlock(config),
     async () => tracker,
-    () => pickedBoard(store, stopped),
+    () => board,
   ).start(restartServices(services));
   t.after(async () => {
     await again.stop();
     store.close();
   });
-  assert.equal(tracker.closingNotes.length, 1, 'the boot pass rendered the missed ending');
-  assert.deepEqual(tracker.closingNotes[0], {
-    conversation: 'dev',
-    issueId: 'eng-1',
-    text: 'the worker died mid-outage',
-  });
+  assert.ok(
+    tracker.closingNotes.some(
+      n => n.issueId === 'eng-1' && n.conversation === 'dev:as-auto-1' && n.text === 'the worker died mid-outage',
+    ),
+    'the boot pass paid the owed closing',
+  );
   assert.deepEqual(
-    tracker.moves.map(m => m.update),
-    [{ kind: 'move', lane: 'Todo' }],
-    'the failure move the lane order chose landed too',
+    tracker.comments.filter(c => c.conversation === 'dev:as-auto-1' && c.kind === 'outcome').length,
+    1,
+    'and the failure was said in the session that opened it',
   );
 });
 
-test('a delegation into a full pool queues with a word to the delegator, and walks in when the slot opens', async t => {
+test('a full pool says nothing on the board, and walks in when the slot opens — like normal humans', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = await checkout(root, 'website');
@@ -1116,14 +1182,7 @@ test('a delegation into a full pool queues with a word to the delegator, and wal
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
-  // The board shows what a person has placed in the worker lane: the
-  // queued delegation must still be there when the lease lands.
-  const board: import('@aivi/host').TicketFeed = {
-    projects: () => ['website'],
-    tickets: async () => [{ id: 'eng-2', blocked: false }],
-    moveTo: async () => {},
-    firstMessage: async () => 'never the walk\u2019s turn',
-  };
+  const board = fakeBoard(tracker, 'website');
   const running = await createLinearModule(
     linearBlock(config),
     async () => tracker,
@@ -1136,38 +1195,29 @@ test('a delegation into a full pool queues with a word to the delegator, and wal
   const orchestrator = services.orchestrator;
   const links = new RunLinks(store);
 
-  const started = (conversation: string, issueId: string) =>
-    tracker.drive({
-      kind: 'started',
-      conversation,
-      issueId,
-      promptContext: `<issue identifier="${issueId.toUpperCase()}"><title>Fix header</title></issue>`,
-    });
-
-  // The first delegation takes the only slot.
-  await started('dev:as-1', 'eng-1');
+  // The walk takes eng-1; eng-2 finds the pool full and **nothing appears
+  // on Linear for it** (ruled 2026-10-02): it sits in its lane until
+  // capacity frees, like a normal human waiting their turn.
+  await orchestrator.wake('website');
   await until(() => opencode.prompts.length === 1, 'the first worker starts at once');
-
-  // The second finds the pool full: it is queued, the delegator hears it,
-  // and no run exists yet — the pair waits with the request.
-  await started('dev:as-2', 'eng-2');
-  await until(
-    () => tracker.comments.some(c => c.text.includes('waits in the queue')),
-    'the delegator is told the delegation waits',
+  assert.deepEqual(
+    tracker.comments.map(c => c.kind),
+    ['progress'],
+    'the full pool says nothing to anybody: only eng-1’s own session heard a word',
   );
-  assert.equal(orchestrator.activeRun('tracker-linear', 'eng-2'), undefined, 'a queued delegation has no run');
+  assert.equal(orchestrator.activeRun('tracker-linear', 'eng-2'), undefined, 'the waiting ticket has no run');
 
-  // The first worker finishes: the slot opens and the queue walks in —
-  // the run attaches to the pair bound at delegation time.
+  // The first worker finishes: the queue walks in — eng-2's own initWork
+  // opens it, and the fulfilled queue place became its lease.
   const worker = workerSession(opencode.sessions);
   await orchestrator.completeTool({
     sessionId: worker,
     input: { outcome: 'success', summary: 'Header aligned.' },
   });
-  await until(() => opencode.prompts.length === 2, 'the queued delegation starts on its own');
-  assert.match(opencode.prompts[1]!.text, /Linear delegated ENG-2/, 'the worker hears its own delegation');
+  await until(() => opencode.prompts.length === 2, 'the waiting ticket starts on its own');
+  assert.match(opencode.prompts[1]!.text, /<issue identifier="ENG-2">/, 'the second worker hears its own ticket');
   const queuedRun = orchestrator.activeRun('tracker-linear', 'eng-2')!;
-  assert.ok(new RunLedger(store).get(queuedRun.id)!.leaseId, 'the fulfilled queue place became the run\u2019s lease');
-  const link = links.byAgentSession('as-2')!;
-  assert.equal(link.opencodeSession, queuedRun.sessionId, 'the run found the pair that waited');
+  assert.ok(new RunLedger(store).get(queuedRun.id)!.leaseId, 'the fulfilled queue place became the run’s lease');
+  const link = links.byAgentSession('as-auto-2')!;
+  assert.equal(link.opencodeSession, queuedRun.sessionId, 'the run found the session its own initWork opened');
 });

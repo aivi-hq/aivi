@@ -1,7 +1,7 @@
 /**
  * The orchestrator's own vocabulary: what a **run** is, in platform-neutral
  * words. A run is one attempt at one ticket — not the ticket (which outlives
- * it) and not any tracker's session. The shared event a follower subscribes
+ * it) and not any tracker's session. The stages a tracker answers for live
  * to lives in `@aivi/plugin` (run-events); this file holds the shapes the
  * orchestrator itself records and hands out.
  *
@@ -62,7 +62,14 @@ export interface RunQuestion {
  * knowledge; which lane each lands the ticket in is the orchestrator's lane
  * config, never the worker's report.
  */
-export type RunOutcome = { kind: 'success'; summary: string } | { kind: 'failure'; reason: string };
+export type RunOutcome = { kind: 'success'; summary: string } | { kind: 'failure'; reason: string; code?: FailureCode };
+
+/** Why aivi — not the worker — ended a run, in machine-readable words: a
+ *  tracker renders help for its platform from the code, never by reading
+ *  English. `kill-unconfirmed`: the dispatcher struck the session the
+ *  configured number of times and it would not die; the person watching
+ *  the ticket should know a worker may still be loose. */
+export type FailureCode = 'kill-unconfirmed';
 
 /**
  * A run as anyone outside the orchestrator may read it: enough to speak
@@ -107,29 +114,9 @@ export interface RunPlan {
 }
 
 /**
- * What a subscriber to the orchestrator's runs receives — typed once here and
- * re-exported by `@aivi/plugin` (run-events) so a tracker subscribes without
- * knowing the host's internals. The orchestrator orchestrates: it never calls
- * a tracker and never learns which platform is listening. It emits these
- * facts as its runs change, and a tracker that wants to follow renders them
- * in its own platform, in its own time, retrying its own failures. A tracker
- * that listens to nothing loses nothing the orchestrator cares about.
+ * The run's lifecycle belongs to the **tracker stages**, declared where a
+ * tracker author imports them: `@aivi/plugin` (work). The orchestrator
+ * calls them in order and awaits only the lifecycle ones; there is no
+ * event bus to subscribe to — a tracker that answers for a stage hears
+ * it, one that does not loses nothing the orchestrator cares about.
  */
-export type RunEvent =
-  /** The worker session exists: the follower records the pair
-   *  (ticket ↔ its platform's session ↔ the OpenCode session) here. */
-  | { type: 'started'; run: RunView }
-  /** The `ask` tool created the durable OpenCode form. Question support is
-   *  required of every tracker; the shape (elicitation, label, comment) is
-   *  the tracker's own. */
-  | { type: 'question'; run: RunView; question: RunQuestion }
-  /** The `plan` tool posted the checklist as it now stands: a forwarding,
-   *  never owed. A tracker without a plan surface drops it. */
-  | { type: 'plan'; run: RunView; plan: RunPlan }
-  /** The run ended — completion tool, failure, or stop. `targetLane` is
-   *  where the lane order says the ticket goes (absent: nowhere — a stop
-   *  moves nothing, and an unmapped lane goes silent). Catching the
-   *  platform up is the follower's ceremony, in the follower's order. */
-  | { type: 'ended'; run: RunView; outcome: RunOutcome; targetLane?: string };
-
-export type RunEventListener = (event: RunEvent) => void | Promise<void>;

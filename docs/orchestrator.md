@@ -326,8 +326,14 @@ no poll anywhere in the dispatcher. The timeouts watch leases whether or
 not pools count them: a silent worker dies at its idle clock even in
 unlimited mode, because the timeout is about the work, not the accounting.
 An unconfirmed kill keeps the slot unavailable and the next look is a
-known instant, not a poll: the retry strikes again until the kill
-confirms or a boot pass settles it. After a restart the survivors' clocks
+known instant, not a poll: the retry strikes again — at most
+`dispatcher.killAttempts` times (default **3**, ruled 2026-10-02) — until
+the kill confirms. After the last strike the dispatcher gives up on the
+session, **not** on the slot: the lease ends, the capacity returns, and
+the ending carries the machine-readable `kill-unconfirmed` code. The
+tracker that owns the ticket says so loudly — its platform's help mark —
+and a person goes looking. A worker may still be loose; that is a
+person's war now, not the dispatcher's. After a restart the survivors' clocks
 run from their **stored** activity — a silence that began before the
 restart is timed from where it began.
 
@@ -346,15 +352,68 @@ Queue request IDs and cancellation state may also remain entirely in memory.
 **Ruled and built 2026-10-02.** A service registers one callback namespace
 with the dispatcher; a full pool only waits for a service that has
 registered to hear — a lease granted to nobody would be a leak, not a
-queue, so an unregistered service gets the plain `full` refusal. When the
-dispatcher fulfils a waiting request it re-checks the work **before
-starting**: a walk request starts wherever the ticket sits now, a
-delegation only for the lane it was delegated in — a ticket moved while it
-waited is the person's next act, and the walk reads it fresh — and either
-way the lease that does not fit goes straight back. A person's move on a
-queued ticket cancels its request through the follower, and a queued
-delegation keeps its Linear pair while it waits: when the lease lands, the
-run attaches to the session the delegator already spoke in.
+queue, so an unregistered service gets the plain `full` refusal.
+**Fulfilment does not re-check eligibility (ruled 2026-10-02): cancel-on-
+move is the mechanism.** A person's move on a queued ticket cancels its
+request the moment the webhook lands — the wait is the plan, not a
+question. Each entry carries its own plan: a walk entry names its lane and
+whether the ticket was a queue pickup; a push entry rides with the
+tracker's summary and directory. What slips through a race ends in the
+claim's guard — a ticket that took a run gives the lease back unheard,
+never a second worker — and a lane that vanished with the wait is said
+loudly while the lease goes back.
+
+## The tracker's stages
+
+**Ruled 2026-10-02.** Orchestrator and tracker are one division of labour
+said as an interface (module authors import `Tracker` from `@aivi/plugin`;
+its source sits beside the machinery that calls it, in the host): the
+orchestrator
+orchestrates and never learns what a ticket platform is; the tracker
+tracks and answers for its platform alone. A tracker module registers ONE
+`Tracker` — the board the walk reads (`projects`, `tickets`, `moveTo`) and
+the stages every run walks through:
+
+1. **`initWork`** — the slot is in hand and the run is claimed: open the
+   ticket on the platform and return its **summary**. Linear's delegate
+   mutation creates the agent session and Linear's own answer serves as
+   the summary; the tracker records the pair and posts a first word
+   ("preparing the workspace"). **Awaited**: failure fails the run visibly
+   and the slot goes back.
+2. **`ready`** — the worker's session exists and its environment is
+   ready: where the tracker joins the run to the pair `initWork` opened.
+   A render.
+3. **`startWork`** — optional: the task went in and work is turning. A
+   platform whose session shows its own life (Linear watches its agent
+   sessions) says nothing here.
+4. **`question`** — the worker asked a person and parked. Required of
+   every tracker: the OpenCode form is the durable record of the wait,
+   but only the tracker knows what a question looks like on its platform.
+   A render.
+5. **`plan`** — optional: the working plan, whole as it stands. A render.
+6. **`endWork`** — the run ended: say so where people read, in the shape
+   the platform gives endings. **Awaited**; a permanent failure here does
+   **not** hold the ticket — the tracker marks it for a human in its
+   platform's words (help is on the way), and the orchestrator moves and
+   releases anyway.
+
+The lifecycle stages (`initWork`, `endWork`) are awaited — their failure
+is the run's failure, said visibly; the renders (`ready`, `startWork`,
+`question`, `plan`) are fire-and-forget — a platform that cannot show a
+thing loses nothing the orchestrator cares about, and the tracker retries
+its own renders, in its own time, from its own outbox.
+
+The worker's **first prompt is the orchestrator's composition**: a neutral
+line naming the project, the lane and the checkout, the ticket's summary
+as the tracker returned it, and the worker contract explaining the tools.
+The tools are the host's, so their explanation is core's, not any
+tracker's — `firstMessage` on a board feed is dead: the tracker supplies
+the ticket's words, never the worker's first message.
+
+There is **no event bus**: the stages are the surface. A run's ending,
+failure or question never arrives as an event somebody must subscribe to;
+a tracker that leaves an optional stage unimplemented loses nothing, and
+the orchestrator never learns who is Linear and who is Jira.
 
 ## How work gets picked
 
@@ -377,13 +436,29 @@ A refusal means the orchestrator stops trying work for that pool during the curr
 
 When the dispatcher creates a lease, it notifies the orchestrator and identifies the request it belongs to. This wakes the orchestrator again.
 
-Before starting the work, the orchestrator checks that the ticket is still eligible for the lane the request was made for. If it is not, the lease is released.
+There is no eligibility re-check before starting (ruled 2026-10-02): the
+wait is the plan, and the claim's own guard answers a race.
 
-Otherwise, the orchestrator creates the claim and prepares the work. This may include preparing the worktree and forge state before attaching a session to the lease.
+The orchestrator creates the claim and starts the run, in the operator's
+order: a **queue pickup enters the worker lane first** (its webhook is a
+wake and nothing more), the tracker's **`initWork`** opens the ticket on
+the platform and returns the ticket's summary, and the orchestrator
+composes the first prompt and turns the key. A lifecycle failure — the
+lane that would not take the ticket, the platform that would not open it
+— fails the run visibly and gives the slot back. An early failure (no
+worker ever came up) does **not** wake the walk again: the pass that
+claimed it is still walking, and a failure that woke itself would spin;
+the next human event drives the retry, the same way a person retrying a
+job does.
 
 For a ticket from a queue lane, the claim is for the worker lane it is entering. The orchestrator moves the ticket into that lane before starting the worker. The resulting lane-change webhook is ignored when the ticket already has a claim for that same lane.
 
-When work finishes, the orchestrator moves the ticket as instructed, releases the lease, and clears the claim.
+When work finishes the order is the operator's (ruled 2026-10-02): the
+tracker's **`endWork`** says the closing words first and is awaited; then
+the orchestrator **moves** the ticket where its lane order chose — a move
+that misses retries at known instants and from the next boot, for the
+tracker's move is idempotent and the debt lives in the run's row until it
+lands; and **lastly** the lease returns.
 
 There is **no merged queue across platforms**: each tracker's order stays
 its own; when a slot frees, the orchestrator collects ready candidates from
@@ -392,27 +467,25 @@ platform's ordering leaks into another's.
 
 If the dispatcher ends a lease, the orchestrator clears the corresponding claim.
 
-**Ruled and built 2026-10-02.** A ticket a person stopped stays off the
-walk's list until that person acts again — a move of the ticket, or a
-fresh run. The board may still hold the ticket (a stop leaves it where
-the person left it), but the follower remembers the stop and leaves the
-ticket off what it offers: the walk never hands a fresh worker to work a
-person just stopped. The memory survives restarts — an ending that
-arrived while nobody followed carries it into the new process.
+**Ruled and built 2026-10-02 (P1).** A stop **releases** the ticket back
+to the board: nothing anywhere remembers it. The stop's ending is said,
+the ticket stays where the person left it — and if that lane is worked,
+the walk may start it again. "Not that one again" is said on the board
+itself: the HITL label — a person's mark for human hands — is the only
+thing that keeps a ticket off the walk's list, exactly like a person
+moving it back to the human lanes. A stop-memory in a database would be
+a second, invisible board state; the board is the state.
 
-**Ruled 2026-10-02.** Picked-up work has no agent session — nobody
-delegated it — and its ticket is owed its ceremony all the same: the
-closing note and the lane move are said with the installation's own
-credentials (the primary app), and the worker's question arrives as a
-ticket comment, the OpenCode form remaining the durable record of the
-wait. The plan is the one thing a sessionless run does not show; the
-lane it moves in says enough. Endings that arrived while nobody was
-listening are rendered at boot from the orchestrator's own record,
-through the follower's read watermark; a rendering that fails leaves the
-watermark where it stands and the next boot tries again. The narrow gap
-this leaves — a stop landing exactly inside a module restart while the
-host lives, before any follower could remember it — is a known
-observation for the live round, not a silent claim of closure.
+**Ruled and built 2026-10-02 (P6, P8).** The walk is the only door for
+board work, and every run that gets a worker gets a real agent session:
+`initWork` opens the ticket on the platform — Linear delegates to its own
+app and the answer carries the session — so questions, plans and endings
+all render in that session, in the platform's own shapes. There is no
+sessionless ceremony and no read watermark: the pairs the tracker keeps
+are the whole list its boot pass reconciles, and the lane moves are the
+orchestrator's own debt — owed moves live in the run's row until they
+land, and its boot pass re-drives them; the tracker's move is idempotent,
+so a landed one lands twice as nothing.
 
 Pending lease requests are cancelled when their ticket moves, becomes blocked, or otherwise stops being eligible.
 
@@ -456,9 +529,17 @@ When the human responds, the ticket is unblocked and the orchestrator is woken. 
 
 ## Anticipated questions
 
-- **Q:** What happens when a user assigns a delegate directly in a tracker such as Linear?
+- **Q:** What happens when a person assigns a delegate directly in a tracker such as Linear?
 
-- **A:** Hard error (ruled 2026-10-02, replacing this section's earlier reading). A human assigning a delegate is always an error: if there were capacity, the pull would have picked the ticket up anyway; if there is none, the assignment cannot run — "no capacity". If the ticket sits in the wrong lane it goes to the assistant, and very likely errors there too, so the preventative error is the smart thing at delegation time. **Not built yet:** it lands with the dispatcher era, whose same logic family also covers mentions in comments. Until then the delegation entry point keeps working as today (a claim + lease request from inside the module — aivi's own listener delegation is not a human assignment).
+- **A:** One fixed refusal (ruled and built 2026-10-02, P11). Work reaches
+  the orchestrator through the board, not through a delegation: the walk
+  starts a worker only when it takes the ticket itself, so a hand
+  delegation gets the same plain answer whatever lane the ticket sits in,
+  and the app removes itself as delegate. The only delegation not refused
+  is the tracker's **own** — `initWork` delegating to its app — and that
+  one never hears the refusal: its webhook is a redelivery the run's own
+  guards fold away. A person's mention of the app in a comment is not a
+  delegation; it is the project's assistant answering.
 
 - **Q:** How does the dispatcher notify services that a lease is ready?
 

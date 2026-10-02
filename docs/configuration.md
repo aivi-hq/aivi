@@ -84,7 +84,8 @@ containing facts is the wrong file growing.
 | `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that fast-forwards every project's `source/` to its upstream and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
 | `scheduler.timezone` | Host-wide default for derived schedules (`retention`, `projects-sync`); default the host's own timezone. A schedule's own `timezone` wins over it |
 | `dispatcher.pools` | Absent: **unlimited** — capacity is not moderated, today's behavior (the intended default). Present: named pools of `{model?, capacity, fallback?}` every service draws from — the orchestrator, chat turns, jobs, the dreamer — configured once for the installation, never per project. The pool decides the model at session create; a lane's `pool` names one. Fallback grants are for new sessions only and chains must exist and end. [orchestrator](orchestrator.md) owns the design |
-| `dispatcher.timeouts` | `{ idle: "180m", prepare: "5m" }`: silence on an attached session before the dispatcher reclaims the slot (kill, confirm, free; an unconfirmed kill keeps the slot unavailable); and how long a lease without a session may take to be provided one. Durations add by spaces (`1h 30m`) |
+| `dispatcher.timeouts` | `{ idle: "180m", prepare: "5m" }`: silence on an attached session before the dispatcher reclaims the slot (kill, confirm, free; an unconfirmed kill keeps the slot unavailable until a strike confirms or the cap gives up); and how long a lease without a session may take to be provided one. Durations add by spaces (`1h 30m`) |
+| `dispatcher.killAttempts` | `3`: how many kill strikes an unconfirmed session gets before the dispatcher gives up on it — **not** on the slot: the capacity returns and the ending carries the `kill-unconfirmed` code, which the tracker says loudly on its platform ([orchestrator](orchestrator.md#ending-a-lease)) |
 | `orchestrator.elicitationKeepAlive` | `5m`: how long an open in-session elicitation (a worker waiting on a person, like Linear elicitation) holds its slot. After it the lease releases; the answer reacquires capacity and resumes the same session — fallback never applies to a resume |
 | `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). A bare operation name is shorthand for its invocation: `"task": "system.check"` is `{ "kind": "invocation", "name": "system.check" }`; use the explicit shape when the operation takes `args`. The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
 
@@ -244,7 +245,6 @@ which package speaks for it.
       "primary": "aivi",
       "apps": { "aivi": {}, "reviewer": {} },
       "logMisroutes": true,
-      "listener": false,
       "humanLabel": "needs-human",
       "resource": "local-model",
       "progress": "tools",
@@ -256,12 +256,11 @@ which package speaks for it.
 
 | Field | Meaning |
 | --- | --- |
-| `agent` | The OpenCode agent that answers people on Linear — comment mentions and delegations that no lane claims: the **assistant**. Default: `assistant` |
+| `agent` | The OpenCode agent that answers people on Linear — comment mentions above all: the **assistant**. A hand delegation is never its to answer: those get the fixed refusal. Default: `assistant` |
 | `primary` | The app that carries the workspace's data feed, signs the bare `LINEAR_*` secrets and authorises the Linear MCP. Default: the one app; required once several apps are configured |
 | `apps.<id>` | A Linear OAuth application acting as an app user. The primary does the receiving; every other app is a **face** — a name and icon in Linear's UI with its own credentials, no routing meaning |
 | `logMisroutes` | `true`: log at warn a webhook delivered to the wrong endpoint — a data change on a face's route. It is dropped either way |
-| `listener` | `false`: only delegations and mentions made in Linear start a worker. `true`: an issue entering a mapped lane is delegated by aivi (on the primary) and its worker starts |
-| `humanLabel` | Issues with this label are never worked automatically; a hand delegation is refused with an explanation in the agent session |
+| `humanLabel` | Issues with this label are never worked automatically — the only "not that one again" there is (a stop remembers nothing); a session created on one is refused with an explanation, and a failed closing or an unkillable worker marks the ticket with it |
 | `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
 | `mcp` | On by default: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app; `false` disables it ([linear](linear.md#the-linear-mcp)) |
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |

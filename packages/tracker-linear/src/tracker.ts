@@ -15,7 +15,7 @@
 import { getLogger, type Logger } from '@aivi/core';
 import { ConfigurationError, type PublicRoutes } from '@aivi/host';
 import type {
-  Tracker,
+  PlatformAdapter,
   TrackerChange,
   TrackerCommentKind,
   TrackerEvent,
@@ -106,7 +106,7 @@ export function neutralIssue(issue: Awaited<ReturnType<LinearClient['issue']>>):
   };
 }
 
-export class LinearTracker implements Tracker {
+export class LinearTracker implements PlatformAdapter {
   readonly id = MODULE_ID;
 
   private readonly config: LinearConfig;

@@ -1,7 +1,8 @@
 /**
- * The **tracker** contract: the seam between aivi and a ticket system.
- * A tracker owns tickets — lanes, delegation, what people write on them.
- * An adapter translates in both directions and speaks its platform's voice:
+ * The **platform adapter** contract: the seam between a tracker module and
+ * its ticket platform. A tracker owns tickets — lanes, delegation, what
+ * people write on them. The adapter translates in both directions and
+ * speaks its platform's voice:
  * it turns the platform's events into the neutral ones below, aivi's neutral
  * updates into the platform's mutations, and it is **required** to render a
  * worker's question and a run's outcome the way its platform shows them
@@ -124,7 +125,7 @@ export type TrackerUpdate =
  * namespaces its app's agent sessions); the machinery only carries it, and
  * binds it to agents, projects and issues in its own store.
  */
-export interface Tracker {
+export interface PlatformAdapter {
   /** The module id this tracker speaks for (`tracker-linear`). */
   readonly id: string;
   /** The team's workflow states as the platform holds them, so a proposed

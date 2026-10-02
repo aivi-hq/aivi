@@ -278,6 +278,29 @@ export class RunLedger {
     });
   }
 
+  /** The lane an ending still owes as a move: the run finished with a
+   *  target lane and the move has not been reported landed. A boot pass
+   *  re-drives these; performing the move is the tracker's, and it is
+   *  idempotent, so a move that landed before the restart lands again as
+   *  nothing. */
+  moveOwed(trackerId: string): Run[] {
+    return (
+      this.core.db
+        .prepare(
+          `SELECT * FROM orchestrator_runs
+         WHERE tracker_id=? AND state IN ('completed','failed') AND target_lane IS NOT NULL
+         ORDER BY updated_at`,
+        )
+        .all(trackerId) as Row[]
+    ).map(map);
+  }
+
+  /** The move landed: the debt is paid and the target lane goes quiet. */
+  moveLanded(id: string, now = Date.now()): Run {
+    this.core.db.prepare('UPDATE orchestrator_runs SET target_lane=NULL, updated_at=? WHERE id=?').run(now, id);
+    return this.#require(id);
+  }
+
   /** A stop ended the run without an outcome of the worker's; the ticket stays. */
   cancel(id: string, reason: string, now = Date.now()): Run {
     return this.core.transaction(() => {

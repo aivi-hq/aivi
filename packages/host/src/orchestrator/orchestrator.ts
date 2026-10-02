@@ -8,25 +8,21 @@ import type { ToolHandler } from '../tools.ts';
 import { ToolError } from '../tools.ts';
 import type { Run, RunLedger } from './ledger.ts';
 import { view } from './ledger.ts';
-import type {
-  RunEvent,
-  RunEventListener,
-  RunOutcome,
-  RunPlan,
-  RunPlanStep,
-  RunQuestion,
-  RunView,
-} from './vocabulary.ts';
+import type { FailureCode, RunOutcome, RunPlan, RunPlanStep, RunQuestion, RunView } from './vocabulary.ts';
 import { isTerminal } from './vocabulary.ts';
+import type { Tracker } from './work.ts';
 
 /**
  * The orchestrator: the one authority that turns a ticket into a **run**. It
  * owns the run's state machine and nothing else — no platform vocabulary, no
- * webhooks, no rendering, no delivery. It knows tickets, lanes, OpenCode
- * (and, once the dispatcher lands, leases). A tracker module that wants to
- * follow **subscribes** to its typed events and renders them in its own
- * platform, in its own time, retrying its own failures: the orchestrator
- * never calls a tracker and never learns who listens.
+ * webhooks, no rendering, no delivery. It knows tickets, lanes, OpenCode and
+ * leases. A tracker module registers **stages** (`@aivi/plugin`, work): the
+ * orchestrator walks every run through them — `initWork` to open the ticket
+ * on the platform, `ready` and `startWork` as the worker comes to life,
+ * `question` when a person is asked, `endWork` when the run ends — and never
+ * learns what a ticket platform is. The lifecycle stages are awaited (their
+ * failure is the run's failure); the renders are not (a tracker retries its
+ * own, in its own time).
  *
  * **No capacity gate in this version** (ruled 2026-09-30): every requested
  * run is prepared and started at once; admission arrives with the dispatcher
@@ -40,11 +36,16 @@ import { isTerminal } from './vocabulary.ts';
  * turn ends, never mirrored in the ledger.
  */
 
-/** Everything needed to start a run; the tracker builds `firstMessage` from
- *  the ticket, the worker contract below is the orchestrator's own words —
- *  the tools are the host's, so their explanation is core's, not any
- *  tracker's. The double-work guard is the ledger's: one active run per
- *  ticket, holding until the completion tool ends it. */
+/** Everything needed to start a run from the tracker's side: a push-shaped
+ *  tracker (a person's delegation, a mention-turned-assignment) already has
+ *  the platform-side entry done and the ticket's **summary** in hand —
+ *  Linear's agent session carries one — and hands both over with the
+ *  request. The walk's runs need neither: their entry is `initWork` and
+ *  their summary is what `initWork` returns. The worker contract below is
+ *  the orchestrator's own words either way: the tools are the host's, so
+ *  their explanation is core's, not any tracker's. The double-work guard is
+ *  the ledger's: one active run per ticket, holding until the completion
+ *  tool ends it. */
 export interface WorkRequest {
   projectId: string;
   trackerId: string;
@@ -53,7 +54,9 @@ export interface WorkRequest {
   agent: string;
   /** Where the worker works: the checkout this version; a worktree when a forge lands. */
   directory: string;
-  firstMessage: string;
+  /** The tracker's own summary of the ticket, composed into the worker's
+   *  first prompt with the orchestrator's contract around it. */
+  summary: string;
 }
 
 /** What a lease request waiting in a dispatcher queue is for. A walk
@@ -65,42 +68,20 @@ interface WaitingWork {
   trackerId: string;
   projectId: string;
   ticketId: string;
-  /** The worker lane the claim is for: delegations must see it still. */
+  /** The worker lane the claim is for: what the ticket enters at the start. */
   lane: string;
-  firstMessage?: string;
+  /** Was the ticket sitting in the queue lane when its request asked? Then
+   *  it enters the worker lane before the worker does. */
+  fromQueue: boolean;
+  /** A delegation's platform-side entry is the caller's, already done: its
+   *  summary and directory ride along, and `initWork` is not asked twice. */
+  summary?: string;
   directory?: string;
   /** An answer waiting for capacity to resume its run: the run to wake,
    *  the person's words, and the form that recorded the question. */
   runId?: string;
   answer?: string;
   formId?: string;
-}
-
-/**
- * A tracker's board, read pull-shaped: what the eligibility walk looks at
- * when it wants work, in neutral words. The `Tracker` seam is conversation-
- * keyed because a webhook arrives through an agent session; the walk has no
- * session — the feed is the module's own reading of its platform with its
- * own credentials, answering the orchestrator's pull-shaped questions.
- *
- * What it returns **is** eligible work: a feed leaves out archived tickets
- * and tickets a person marked for human hands, because those are the
- * platform's own words for "not for you", and the orchestrator never
- * learns the words.
- */
-export interface TicketFeed {
-  /** The projects this tracker speaks for, by core id. */
-  projects(): string[];
-  /** Tickets sitting in this state, in the board's own top-to-bottom order.
-   *  `blocked` says a person's move is awaited, whatever the platform calls
-   *  it; blocked tickets wait and are never claimed. */
-  tickets(projectId: string, state: string): Promise<{ id: string; blocked: boolean }[]>;
-  /** Move a ticket into the state: the queue pickup says it before starting,
-   *  so the board shows the work as entered. */
-  moveTo(projectId: string, ticketId: string, state: string): Promise<void>;
-  /** The worker's first words for this ticket, or undefined when the ticket
-   *  is gone — a deleted issue is not work, and the walk walks on. */
-  firstMessage(projectId: string, ticketId: string, lane: ProjectLane): Promise<string | undefined>;
 }
 
 export interface OrchestratorDeps {
@@ -149,8 +130,7 @@ const workerContract = (directory: string) =>
 export class Orchestrator {
   private readonly deps: OrchestratorDeps;
   private readonly budget: number;
-  private readonly listeners = new Set<RunEventListener>();
-  private readonly feeds = new Map<string, TicketFeed>();
+  private readonly trackers = new Map<string, Tracker>();
   private readonly passings = new Map<string, Promise<void>>();
   /** Work whose lease request waits in a dispatcher queue: the dispatcher's
    *  request id, then what the lease is for. Deliberately in memory — the
@@ -181,38 +161,26 @@ export class Orchestrator {
   }
 
   /**
-   * Follow the orchestrator's runs. A tracker module subscribes at start and
-   * receives every run event — started, question, plan, ended — with the
-   * fresh view of the run. Listening is optional; delivery is the
-   * subscriber's problem: a listener that throws or fails loses nothing the
-   * orchestrator cares about, and catches up from the run records it reads.
-   * The returned function unsubscribes.
+   * Register a tracker: the board the walk reads and the stages every run
+   * of this tracker's walks through (docs/orchestrator.md, "How work gets
+   * picked"). The lifecycle stages — `initWork` and `endWork` — are awaited:
+   * their failure is the run's failure, said visibly. The renders —
+   * `ready`, `startWork`, `question`, `plan` — are fire-and-forget: a
+   * platform that cannot show a thing loses nothing, and the tracker
+   * retries its own renders in its own time.
    */
-  subscribe(listener: RunEventListener): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
+  addTracker(tracker: Tracker): void {
+    this.trackers.set(tracker.id, tracker);
   }
 
-  /** Emit one fact to every listener. A listener's failure is its own: said
-   *  in the log, never carried back into the run. */
-  #emit(event: RunEvent): void {
-    for (const listener of this.listeners)
-      void Promise.resolve(listener(event)).catch(error =>
-        this.deps.log.warn('run.event.failed', { run: event.run.id, event: event.type, error }),
-      );
-  }
-
-  /** The ending event for a terminal run row: its outcome, and the target
-   *  lane when the lane order owed the ticket a move. */
-  #endedEvent(run: Run): RunEvent {
-    return {
-      type: 'ended',
-      run: view(run),
-      outcome: run.outcome!,
-      ...(run.targetLane ? { targetLane: run.targetLane } : {}),
-    };
+  /** Call a render stage: fire-and-forget, said in the log, never carried
+   *  into the run. A tracker without the stage loses nothing. */
+  #render(run: Run, what: (tracker: Tracker) => void | Promise<void>, stage: string): void {
+    const tracker = this.trackers.get(run.trackerId);
+    if (!tracker) return void this.deps.log.warn('stage.no-tracker', { run: run.id, tracker: run.trackerId });
+    void Promise.resolve(what(tracker)).catch(error =>
+      this.deps.log.warn('stage.failed', { run: run.id, stage, error }),
+    );
   }
 
   /** The run a worker session belongs to, whatever its state: the follower's
@@ -265,7 +233,8 @@ export class Orchestrator {
         projectId: request.projectId,
         ticketId: request.ticketId,
         lane: request.lane,
-        firstMessage: request.firstMessage,
+        fromQueue: false,
+        summary: request.summary,
         directory: request.directory,
       });
       return { runId: '', created: false, queued: grant.queued };
@@ -282,24 +251,10 @@ export class Orchestrator {
       return { runId: run.id, created: false };
     }
     this.deps.ledger.setLease(run.id, grant.lease.id);
-    if (created) void this.#prepare(run.id, request.firstMessage, request.directory, grant.lease.id);
+    // The push-shaped entry did its platform side already: the summary and
+    // directory ride, initWork is not asked twice, and no move is owed.
+    void this.#startRun(run, grant.lease.id, false, request.summary, request.directory);
     return { runId: run.id, created: true };
-  }
-
-  /** Runs of this tracker that ended after the instant, oldest first: a
-   *  follower's boot pass renders what it missed — including the endings
-   *  of picked-up work, which have no delegation pair to be found in. */
-  endedSince(trackerId: string, since: number): RunView[] {
-    return this.deps.ledger.terminalSince(trackerId, since).map(view);
-  }
-
-  /**
-   * Register a tracker's board for the walk (docs/orchestrator.md, "How work
-   * gets picked"). A tracker module registers its feed at start; from then
-   * on the orchestrator may ask it for work without any webhook pushing.
-   */
-  addFeed(trackerId: string, feed: TicketFeed): void {
-    this.feeds.set(trackerId, feed);
   }
 
   /**
@@ -308,8 +263,8 @@ export class Orchestrator {
    * behind it, so wakes never interleave two passes over one board.
    */
   async wake(projectId?: string): Promise<void> {
-    const pairs: [string, string][] = [...this.feeds.entries()].flatMap(([trackerId, feed]) =>
-      feed
+    const pairs: [string, string][] = [...this.trackers.entries()].flatMap(([trackerId, tracker]) =>
+      tracker
         .projects()
         .filter(p => projectId === undefined || p === projectId)
         .map(p => [trackerId, p]),
@@ -343,8 +298,8 @@ export class Orchestrator {
    * the board keeps its own order.
    */
   async #pass(trackerId: string, projectId: string): Promise<void> {
-    const feed = this.feeds.get(trackerId);
-    if (!feed) return;
+    const tracker = this.trackers.get(trackerId);
+    if (!tracker) return;
     const lanes = this.deps.lanes(projectId);
     const queueAt = lanes.findIndex(l => l.queue);
     const spent = new Set<string>();
@@ -354,10 +309,10 @@ export class Orchestrator {
       const asked = lane.pool ?? 'default';
       const fresh =
         queueAt >= 0 && this.#feedsQueue(lanes, queueAt, lane.name)
-          ? await feed.tickets(projectId, lanes[queueAt]!.name)
+          ? await tracker.tickets(projectId, lanes[queueAt]!.name)
           : [];
       const list = [
-        ...(await feed.tickets(projectId, lane.name)).map(t => ({ ...t, fromQueue: false })),
+        ...(await tracker.tickets(projectId, lane.name)).map(t => ({ ...t, fromQueue: false })),
         ...fresh.map(t => ({ ...t, fromQueue: true })),
       ];
       for (const ticket of list) {
@@ -382,27 +337,23 @@ export class Orchestrator {
             projectId,
             ticketId: ticket.id,
             lane: lane.name,
+            fromQueue: ticket.fromQueue,
           });
           continue;
         }
         // Still eligible after the awaits — the ledger's guard is the claim:
         // a ticket that took a run while this pass was reading never takes
         // a second worker.
-        const first = await feed.firstMessage(projectId, ticket.id, lane);
-        if (first === undefined) {
-          this.deps.dispatcher.release(grant.lease.id);
-          continue;
-        }
-        await this.#claimAndStart(trackerId, projectId, ticket.id, lane, ticket.fromQueue, grant.lease.id, first);
+        await this.#claimAndStart(trackerId, projectId, ticket.id, lane, ticket.fromQueue, grant.lease.id);
       }
     }
   }
 
   /**
-   * Claim, mirror the lease, move a queue pickup, and turn the key: the
-   * shared tail of a direct grant and a queue fulfilment alike. The
-   * ledger's guard is the claim — a ticket that took a run while this pass
-   * was reading gives its lease back unheard.
+   * Claim, mirror the lease, and hand the run to its start: the shared
+   * tail of a direct grant and a queue fulfilment alike. The ledger's
+   * guard is the claim — a ticket that took a run while this pass was
+   * reading gives its lease back unheard.
    */
   async #claimAndStart(
     trackerId: string,
@@ -411,7 +362,6 @@ export class Orchestrator {
     lane: ProjectLane,
     fromQueue: boolean,
     leaseId: string,
-    firstMessage: string,
   ): Promise<void> {
     const { run, created } = this.deps.ledger.request({
       projectId,
@@ -425,14 +375,49 @@ export class Orchestrator {
       return;
     }
     this.deps.ledger.setLease(run.id, leaseId);
-    if (fromQueue) {
-      // Move-then-start: the ticket enters the worker lane before the
-      // worker does, and the webhook this move sends finds a claim for
-      // that very lane waiting — the follower's own redelivery guard
-      // folds it into the claim instead of delegating twice.
-      await this.feeds.get(trackerId)!.moveTo(projectId, ticketId, lane.name);
+    await this.#startRun(run, leaseId, fromQueue);
+  }
+
+  /**
+   * The shared start of every run, walk or push. In order, the operator's
+   * flow said plainly: **a queue pickup enters the worker lane first**
+   * (the webhook its move sends is a wake and nothing more); the tracker's
+   * **`initWork`** opens the ticket on the platform — Linear delegates to
+   * its own app and the answer carries the agent session — and returns the
+   * ticket's **summary**, the words the worker is started with; and the
+   * orchestrator composes them with its own contract around the summary
+   * and turns the key. A lifecycle failure — the lane that would not take
+   * the ticket, the platform that would not open it — fails the run
+   * visibly and gives the slot back: never silence, never a half-run.
+   */
+  async #startRun(run: Run, leaseId: string, fromQueue: boolean, summary?: string, directory?: string): Promise<void> {
+    const tracker = this.trackers.get(run.trackerId);
+    if (!tracker) {
+      this.deps.dispatcher.release(leaseId);
+      await this.#fail(run.id, 'No tracker is registered for this work.');
+      return;
     }
-    void this.#prepare(run.id, firstMessage, this.deps.directory(projectId), leaseId);
+    const dir = directory ?? this.deps.directory(run.projectId);
+    if (fromQueue) {
+      try {
+        await tracker.moveTo(run.projectId, run.ticketId, run.lane);
+      } catch (error) {
+        this.deps.dispatcher.release(leaseId);
+        await this.#fail(run.id, `Could not enter the worker lane: ${errorMessage(error)}`);
+        return;
+      }
+    }
+    let task = summary;
+    if (task === undefined) {
+      try {
+        task = await tracker.initWork(view(run));
+      } catch (error) {
+        this.deps.dispatcher.release(leaseId);
+        await this.#fail(run.id, `Could not open the ticket on its platform: ${errorMessage(error)}`);
+        return;
+      }
+    }
+    void this.#prepare(run.id, task, dir, leaseId);
   }
 
   /**
@@ -466,58 +451,40 @@ export class Orchestrator {
       this.deps.dispatcher.release(lease.id);
       return;
     }
+    // No eligibility re-check: a ticket that moved, became blocked or was
+    // claimed in the meantime **cancelled its own queue place** when the
+    // person moved it — the wait is the plan, not a question. What slips
+    // through a race ends in the claim's guard: a ticket that took a run
+    // gives the lease back unheard, never a second worker.
     this.requested.delete(requestId);
-    const feed = this.feeds.get(work.trackerId);
-    const located = feed ? await this.#locate(feed, work.projectId, work.ticketId) : undefined;
-    const fits =
-      located !== undefined &&
-      !located.blocked &&
-      (work.kind === 'walk' || located.lane.name === work.lane) &&
-      !this.deps.ledger.activeByTicket(work.trackerId, work.ticketId);
-    if (!fits) {
+    const lane = this.deps.lanes(work.projectId).find(l => l.name === work.lane);
+    if (!lane) {
+      // The config changed under the wait: the lane is gone, the work has
+      // nowhere to enter. Said loudly; the board offers the ticket again.
       this.deps.dispatcher.release(lease.id);
-      void this.wake(work.projectId);
+      this.deps.log.warn('fulfill.lane-gone', { request: requestId, ticket: work.ticketId, lane: work.lane });
       return;
     }
-    const lane = located.lane;
-    const first =
-      work.kind === 'delegation' ? work.firstMessage! : await feed!.firstMessage(work.projectId, work.ticketId, lane);
-    if (first === undefined) {
-      // Gone since the re-check: not work, and the wake says so loudly
-      // by looking for what is.
-      this.deps.dispatcher.release(lease.id);
-      void this.wake(work.projectId);
-      return;
-    }
-    await this.#claimAndStart(work.trackerId, work.projectId, work.ticketId, lane, located.fromQueue, lease.id, first);
-    void this.wake(work.projectId);
-  }
-
-  /**
-   * Where the walk would claim a ticket **now**: which worker lane's list
-   * holds it, its queue's bottom included, and whether it is blocked. The
-   * same right-to-left reading as a pass; the fulfilment re-check is its
-   * only reader, and fulfillments are rare enough for the reads to be
-   * honest rather than clever.
-   */
-  async #locate(
-    feed: TicketFeed,
-    projectId: string,
-    ticketId: string,
-  ): Promise<{ lane: ProjectLane; blocked: boolean; fromQueue: boolean } | undefined> {
-    const lanes = this.deps.lanes(projectId);
-    const queueAt = lanes.findIndex(l => l.queue);
-    for (let at = lanes.length - 1; at >= 0; at--) {
-      const lane = lanes[at]!;
-      if (!lane.agent || lane.queue) continue;
-      const inLane = (await feed.tickets(projectId, lane.name)).find(t => t.id === ticketId);
-      if (inLane) return { lane, blocked: inLane.blocked, fromQueue: false };
-      if (queueAt >= 0 && this.#feedsQueue(lanes, queueAt, lane.name)) {
-        const queued = (await feed.tickets(projectId, lanes[queueAt]!.name)).find(t => t.id === ticketId);
-        if (queued) return { lane, blocked: queued.blocked, fromQueue: true };
+    if (work.kind === 'delegation') {
+      // The push entry's platform side was its caller's, already done.
+      const { run, created } = this.deps.ledger.request({
+        projectId: work.projectId,
+        trackerId: work.trackerId,
+        ticketId: work.ticketId,
+        lane: lane.name,
+        agent: lane.agent!,
+      });
+      if (!created) {
+        this.deps.dispatcher.release(lease.id);
+        return;
       }
+      this.deps.ledger.setLease(run.id, lease.id);
+      void this.#startRun(run, lease.id, false, work.summary, work.directory);
+      void this.wake(work.projectId);
+      return;
     }
-    return undefined;
+    await this.#claimAndStart(work.trackerId, work.projectId, work.ticketId, lane, work.fromQueue, lease.id);
+    void this.wake(work.projectId);
   }
 
   /**
@@ -548,10 +515,10 @@ export class Orchestrator {
    * with no live claim needed no clearing: the run ended first and had
    * already released it.
    */
-  async leaseEnded(lease: DispatcherLease, reason: string): Promise<void> {
+  async leaseEnded(lease: DispatcherLease, reason: string, code?: FailureCode): Promise<void> {
     const run = this.deps.ledger.byLease(lease.id);
     if (!run) return;
-    await this.#fail(run.id, `The dispatcher ended the lease: ${reason}`, false);
+    await this.#fail(run.id, `The dispatcher ended the lease: ${reason}`, false, code);
   }
 
   /** A run of this project just ended: work may be claimable now. */
@@ -625,6 +592,7 @@ export class Orchestrator {
         projectId: run.projectId,
         ticketId: run.ticketId,
         lane: run.lane,
+        fromQueue: false,
         runId: run.id,
         answer: text,
         ...(formId ? { formId } : {}),
@@ -679,12 +647,74 @@ export class Orchestrator {
     });
   }
 
+  /**
+   * The shared ending tail, in the operator's order: the tracker says the
+   * **closing words** on its platform (`endWork`, awaited — a permanent
+   * failure there is said by the tracker itself: its platform's help mark,
+   * because the person must know), the orchestrator moves the ticket to the
+   * lane its order chose, and **lastly** the lease returns to the
+   * dispatcher. A move that misses retries at known instants and from the
+   * next boot — the debt lives in the run's row until it lands — because
+   * the tracker's move is idempotent. Then the walk is woken.
+   */
+  async #finishRun(ended: Run): Promise<void> {
+    const tracker = this.trackers.get(ended.trackerId);
+    if (tracker) {
+      try {
+        await tracker.endWork(view(ended));
+      } catch (error) {
+        // The closing failed; the ticket still moves and the slot still
+        // returns — the tracker has said the failure where people read.
+        this.deps.log.error('endwork.failed', { run: ended.id, ticket: ended.ticketId, error });
+      }
+    } else this.deps.log.warn('endwork.no-tracker', { run: ended.id, tracker: ended.trackerId });
+    if (ended.targetLane) await this.#move(ended);
+    this.#releaseLease(ended);
+    // A run that lived wakes the walk: its slot is free and its ticket may
+    // have moved. An early failure — no worker ever came up — does **not**:
+    // the pass that claimed it is still walking and asks the rest itself,
+    // and a failure that woke itself would spin (claim → fail → wake →
+    // claim). The next human event wakes the retry, the same way a person
+    // retrying a job does.
+    if (ended.sessionId) this.#wakeAfter(ended);
+  }
+
+  /** Perform the ending move, retrying at known instants — a self-rearming
+   *  timeout, re-armed only after the previous attempt finished, never a
+   *  poll. Three strikes and the log says it plainly; the debt stays in
+   *  the run's row, so the next wake and the next boot drive it again. */
+  async #move(run: Run): Promise<void> {
+    await this.#moveAttempt(run.trackerId, run.projectId, run.ticketId, run.targetLane!, run.id, 1);
+  }
+
+  async #moveAttempt(
+    trackerId: string,
+    projectId: string,
+    ticketId: string,
+    target: string,
+    runId: string,
+    attempt: number,
+  ): Promise<void> {
+    const tracker = this.trackers.get(trackerId);
+    if (!tracker) return void this.deps.log.warn('move.no-tracker', { run: runId, tracker: trackerId });
+    try {
+      await tracker.moveTo(projectId, ticketId, target);
+      this.deps.ledger.moveLanded(runId);
+    } catch (error) {
+      if (attempt >= 3)
+        return void this.deps.log.error('move.failed', { run: runId, ticket: ticketId, to: target, error });
+      this.deps.log.warn('move.retrying', { run: runId, ticket: ticketId, to: target, attempt, error });
+      await new Promise(resolve => setTimeout(resolve, 5_000 * attempt));
+      await this.#moveAttempt(trackerId, projectId, ticketId, target, runId, attempt + 1);
+    }
+  }
+
   /** Provide the lease with its session and send the task. The dispatcher
    *  creates the session and decides its model (the pool's, or the agent
    *  file's where no pool names one); the orchestrator only ever says agent
    *  and directory. Any failure fails the run visibly, never silently, and
    *  gives the slot back. */
-  async #prepare(runId: string, firstMessage: string, directory: string, leaseId: string): Promise<void> {
+  async #prepare(runId: string, summary: string, directory: string, leaseId: string): Promise<void> {
     const log = this.deps.log.with({ run: runId });
     try {
       const run = this.deps.ledger.get(runId);
@@ -696,19 +726,29 @@ export class Orchestrator {
       const client = await this.deps.opencode();
       const request = { signal: this.deps.signal };
       const working = this.deps.ledger.attachSession(runId, sessionId, directory);
-      // The follower learns the pair (ticket, its own session, this OpenCode
-      // session) here — before the first prompt, so nothing it must render
-      // arrives unpaired.
-      this.#emit({ type: 'started', run: view(working) });
+      // The tracker attaches the run to the pair it opened at initWork —
+      // before the first prompt, so nothing it must render arrives unpaired.
+      this.#render(working, t => t.ready(view(working)), 'ready');
       await client.session.prompt(
         {
           sessionID: sessionId,
           id: `msg_${randomBytes(6).toString('hex')}`,
-          text: `${firstMessage}\n\n${workerContract(directory)}`,
+          // The task as the orchestrator composes it: where this run is and
+          // where the work happens are core's words, the ticket's summary is
+          // the tracker's, the tools' rules are the contract below. No
+          // tracker writes the worker's first message (ruled 2026-10-02).
+          text: [
+            `[aivi started this run for you (project ${working.projectId}, lane "${working.lane}"). You work in the project's checkout ${directory}; the agent file says what you may change.]`,
+            summary,
+            workerContract(directory),
+          ].join('\n\n'),
           delivery: 'queue',
         },
         request,
       );
+      // A platform whose session shows its own life skips startWork; one
+      // that must say "working" says it here.
+      this.#render(working, t => t.startWork?.(view(working)), 'startWork');
       log.info('run.started', { session: sessionId, directory });
     } catch (error) {
       log.error('run.prepare.failed', { error });
@@ -775,12 +815,10 @@ export class Orchestrator {
       this.deps.log.warn('run.interrupt.failed', { run: runId, error });
     }
     const ended = this.deps.ledger.cancel(runId, reason);
-    this.#releaseLease(ended);
-    this.#emit(this.#endedEvent(ended));
-    this.#wakeAfter(ended);
+    await this.#finishRun(ended);
   }
 
-  async #fail(runId: string, reason: string, workerEnded = false): Promise<void> {
+  async #fail(runId: string, reason: string, workerEnded = false, code?: FailureCode): Promise<void> {
     const run = this.deps.ledger.get(runId);
     if (!run || run.state === 'completed' || run.state === 'cancelled') return;
     // A failure the worker's own turn produced (nudge budget spent) moves the
@@ -788,12 +826,10 @@ export class Orchestrator {
     // up) leave it exactly where the person can see it.
     const ended = this.deps.ledger.finish(
       runId,
-      { kind: 'failure', reason },
+      { kind: 'failure', reason, ...(code ? { code } : {}) },
       workerEnded ? this.#moveTarget(run, false) : undefined,
     );
-    this.#releaseLease(ended);
-    this.#emit(this.#endedEvent(ended));
-    this.#wakeAfter(ended);
+    await this.#finishRun(ended);
   }
 
   /**
@@ -822,9 +858,7 @@ export class Orchestrator {
     if (isTerminal(run.state)) throw new ToolError(409, `This run already ended (${run.state}).`);
     const outcome = parseOutcome(call.input);
     const ended = this.deps.ledger.finish(run.id, outcome, this.#moveTarget(run, outcome.kind === 'success'));
-    this.#releaseLease(ended);
-    this.#emit(this.#endedEvent(ended));
-    this.#wakeAfter(ended);
+    await this.#finishRun(ended);
     return { recorded: true, outcome: outcome.kind };
   };
 
@@ -862,7 +896,7 @@ export class Orchestrator {
     // the OpenCode form is the durable record of the wait.
     const parked = this.deps.ledger.awaiting(run.id);
     this.deps.log.info('run.question', { run: run.id, form: form.id });
-    this.#emit({ type: 'question', run: view(parked), question: withForm });
+    this.#render(parked, t => t.question(view(parked), withForm), 'question');
     this.#armElicitation(run.id);
     return { delivered: true, endYourTurn: true };
   };
@@ -879,7 +913,8 @@ export class Orchestrator {
     if (!run) throw new ToolError(404, 'This session is not an aivi run; aivi_plan is not available here.');
     if (isTerminal(run.state)) throw new ToolError(409, `This run already ended (${run.state}).`);
     const plan = parsePlan(call.input);
-    this.#emit({ type: 'plan', run: view(this.deps.ledger.get(run.id)!), plan });
+    const runRow = this.deps.ledger.get(run.id)!;
+    this.#render(runRow, t => t.plan?.(view(runRow), plan), 'plan');
     return { recorded: true, steps: plan.steps.length };
   };
 
@@ -987,6 +1022,10 @@ export class Orchestrator {
       // slot, so it owes nobody an earlier release.
       if (run.state === 'awaiting_input') this.#armElicitation(run.id);
     }
+    // Moves that were owed when aivi died are owed still: the tracker's
+    // move is idempotent, so re-driving a landed one lands as nothing.
+    for (const trackerId of this.trackers.keys())
+      for (const run of this.deps.ledger.moveOwed(trackerId)) void this.#move(run);
   }
 }
 

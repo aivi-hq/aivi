@@ -47,11 +47,12 @@ test('the queue question is one question over the lanes that could legally wait 
     { name: 'In Progress', agent: 'developer' },
     { name: 'In Review', agent: 'reviewer' },
   ];
-  // Backlog's next works nobody; the last lane feeds nothing. Everything
-  // else sits before a worker and could hold the queue.
+  // Backlog's next works nobody; the last lane feeds nothing; and a lane
+  // with an agent is never a queue option (ruled 2026-10-02) — the queue is
+  // where people wait for a worker, never a working lane itself.
   assert.deepEqual(
     queueCandidates(lanes).map(l => l.name),
-    ['Todo', 'In Progress'],
+    ['Todo'],
   );
 
   const said = markQueue(lanes, 'In Progress');

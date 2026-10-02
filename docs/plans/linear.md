@@ -137,7 +137,5 @@ when they are planned. Record any partial findings in
   `prompted`.
 - Agent plans (`agentSession.plan`) from the progress model's tool list;
   `externalUrls` once there is something to link to.
-- Moving the issue to the first `started` state on delegation; moving on
-  completion by configuration.
 - Reading Linear's Inbox notification category for unassignment if verify 4
   shows it is the only signal.

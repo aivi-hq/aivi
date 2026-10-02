@@ -64,12 +64,6 @@ export const linearSchema = z
       .describe(
         'Log at warn a webhook delivered to the wrong endpoint (a data change on a face’s route); it is dropped either way.',
       ),
-    listener: z
-      .boolean()
-      .default(true)
-      .describe(
-        'React to issue lane changes by delegating eligible issues to the lane’s app: the listener picks a person’s ticket up. Off: only delegations and mentions made in Linear start a worker.',
-      ),
     humanLabel: z
       .string()
       .min(1)

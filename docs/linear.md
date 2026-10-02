@@ -2,17 +2,20 @@
 
 Linear's native agents, run by aivi. One Linear *app* — the **primary** —
 receives every webhook: its own **agent session events** and the workspace's
-**Issues** data changes, on one route. A person delegates an issue (or
-mentions the app), Linear opens an *agent session* — and the ticket is handed
-to the host's **orchestrator**, which owns the run: its durable record, the
-OpenCode worker session (the lane's agent, in the project checkout), the
-worker tools, and which lane a finished ticket belongs in. The Linear module
-never learns any of that from the inside: it **follows**. It subscribes to
-the orchestrator's typed run events and catches Linear up in its own order —
-the result first (Linear's response is what stops the "working" state), then
-the move, then taking the delegate back. People who want aivi itself rather
-than a worker talk to the **assistant**. This page owns the module's behavior
-**as built**; the run contracts it follows live in
+**Issues** data changes, on one route. The host's **orchestrator** owns a
+run: its durable record, the OpenCode worker session (the lane's agent, in
+the project checkout), the worker tools, and which lane a finished ticket
+belongs in. The Linear module answers for what happens **on Linear** at each
+stage (the interface lives in [orchestrator.md](orchestrator.md#the-trackers-stages)):
+`initWork` delegates the ticket to the primary — Linear's own answer carries
+the *agent session* and serves as the ticket's summary; `ready` joins the
+worker's session to that pair; `question` and `plan` render as they arrive;
+`endWork` says the closing words in the platform's own order — the result
+first, because Linear's response is what stops the "working" state — and
+only then does the orchestrator move the ticket and return the lease. People
+who want aivi itself rather than a worker talk to the **assistant** — and a
+hand *delegation* is neither: it gets one fixed refusal. This page owns the
+module's behavior **as built**; the run contracts live in
 [plans/templates/orchestrator.md](plans/templates/orchestrator.md), the
 work-pull flow (lanes, queue lanes, pools, leases, the dispatcher) is owned
 by [orchestrator.md](orchestrator.md) with its build checklist in
@@ -26,113 +29,122 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
 | --- | --- |
 | app | One Linear OAuth application acting as an app user (Linear's UI says "agent"); `linear.apps.<id>`. The **primary** carries the data feed and the bare `LINEAR_*` secrets; every other app is a face |
 | face | An extra app: a name and icon in Linear's UI, its own credentials (`LINEAR_<APP>_*`) and webhook route, and no meaning for routing at all. An activity is posted with the token of the app the session lives on |
-| primary | The one app by default; with faces, `plugins.tracker-linear.primary` names the app that carries the workspace data feed and authorises the Linear MCP. The listener always delegates on the primary, since that is whose token it holds |
-| assistant | The OpenCode agent people address directly on Linear (`linear.agent`, default the aivi name): comment mentions. It answers, clarifies or refuses; it does not do work. Delegations it never sees — one nobody can run gets a fixed answer instead |
+| primary | The one app by default; with faces, `plugins.tracker-linear.primary` names the app that carries the workspace data feed and authorises the Linear MCP. `initWork` always delegates on the primary, since that is whose token it holds |
+| assistant | The OpenCode agent people address directly on Linear (`linear.agent`, default the aivi name): comment mentions. It answers, clarifies or refuses; it does not do work. Hand delegations it never sees — every one gets the fixed refusal instead (ruled 2026-10-02) |
 | delegate | `Issue.delegate`: the app working the issue while the human assignee stays responsible. Its one meaning: *an app is working this issue* |
 | agent session | Linear's unit of agent work on an issue; aivi treats each as one conversation, id `<app>:<agent session id>` |
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `elicitation` (a worker's question, with its `select` signal when there are options), `response` (the answer, which **ends** the agent session) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
 | lane | One entry of the **core** ordered array `projects.<id>.lanes` — `{ name, agent?, queue?, pool?, worktree?, next?, previous? }`. A lane naming an `agent` is worked; naming none is worked by humans; `queue: true` marks the workflow's one queue lane (owner: [orchestrator.md](orchestrator.md)). Success moves a ticket to the **next** entry, failure to the **previous** one — overridden per lane by `next`/`previous`; a stop moves nothing |
-| listener | `linear.listener: true` (the default): aivi delegates an issue that enters a worked lane to the primary and the lane agent works it; off, only what people do in Linear starts a worker |
-| follower | What the Linear module is to the orchestrator: it records the pair (agent session ↔ OpenCode session ↔ ticket) in **its own table**, renders run events, posts people's messages into the worker's session itself, and retries **its own** delivery failures at wake and boot. The orchestrator never calls it |
+| tracker | What the Linear module is to the orchestrator: ONE `Tracker` (`@aivi/plugin`) — the board the eligibility walk reads (`projects`, `tickets`, `moveTo`, idempotent) and the stages every run walks through (`initWork`, `ready`, `question`, `plan`, `endWork`). It records the pair (agent session ↔ OpenCode session ↔ ticket) in **its own table**, posts people's messages into the worker's session itself, and retries **its own** closings at wake and boot. The orchestrator never learns what Linear is |
 | worker | The run's OpenCode session (`ses_run_…`): the lane's agent, working in the project's checkout — kept for the whole run and left there after a stop for inspection. Git worktrees wait for a forge to give them; the module's worktree helpers stay exported for that day |
 
 ## What happens
 
-1. **A person delegates or mentions the app** in an issue. Linear posts an
-   `AgentSessionEvent` `created` webhook to
-   `POST /linear/webhooks/app/<app>` on the host listener. aivi verifies the
-   signature and answers within the 5 seconds Linear allows, then works.
-2. **Routing is deterministic code, from the issue re-read.** An archived
-   (deleted) ticket gets nothing at all: a session created on it starts no
-   worker and no assistant, and gets not even a refusal — there is nothing
-   left to do. The HITL label (`linear.humanLabel`, default `needs-human`)
-   refuses any agent with one `error` activity. A **delegation whose lane
-   names an agent** hands the ticket to the orchestrator and runs that lane's
-   agent — the face is the person's choice, never a routing input, and a
-   delegation into a worked lane runs the lane agent whatever face was picked.
-   A delegation nothing can run — the lane names no agent, the state is no
-   lane of the project, or the team maps no project — has the delegation
-   un-taken (aivi removes the delegate) and gets one plain fixed answer
-   saying why; no agent improvises over a job the config never claimed.
-   Anything people send another way — a comment mention above all — lands on
-   the **assistant**. The assistant's directory is the project's `source/`
+1. **Work enters through the walk, the only door** (ruled 2026-10-02): the
+   orchestrator's eligibility pass takes a ticket from a worked lane, and the
+   module's `initWork` delegates it to the primary (`issueUpdate` with the
+   primary as delegate). Becoming the delegate makes Linear create the agent
+   session itself, and this mutation's own answer names it (live, 2026-09-26)
+   — nothing opens a session by hand. The pair is recorded **before** anything
+   can arrive, "preparing the workspace" is the new session's first word (an
+   ephemeral `thought`), and the ticket's dossier — what it is, what it says —
+   is what `initWork` returns as the **summary**. A lane move people make is a
+   wake and nothing more: the walk reads the board afresh.
+2. **Webhooks route deterministically, from the issue re-read.** A `created`
+   for a session `initWork` itself opened — the pair recorded, or the ticket's
+   run already live — is a redelivery: folded into the run, said in the log as
+   `run.deduped` and nothing else. An archived (deleted) ticket gets nothing at
+   all: not even a refusal — there is nothing left to do. The HITL label
+   (`linear.humanLabel`, default `needs-human`) refuses any agent with one
+   `error` activity. A **hand delegation** — the app named to work an issue
+   when no run of ours opened that session — gets one fixed refusal whatever
+   lane the ticket sits in (ruled 2026-10-02, P11): *work reaches me through
+   the board, not through a delegation*; aivi removes itself as delegate, and
+   no agent improvises over a job the config never claimed. Anything people
+   send another way — a comment mention above all — lands on the
+   **assistant**. The assistant's directory is the project's `source/`
    checkout when the team maps one, the home otherwise; it never gets a
    worktree.
-3. **Acknowledgement** within Linear's 10 seconds: an ephemeral `thought`,
-   "Starting as `developer` in project website, working in the project
-   checkout." A redelivered `created` for a ticket that already has a live
-   run (or whose pair the follower already holds) is a no-op, said in the
-   log as `run.deduped` and nothing else.
-4. **The run.** The follower records the pair **before** asking for the work;
-   the orchestrator makes the worker session (the lane's agent, the project's
-   checkout as directory, the agent file's model applied) and names it in the
-   `started` event, which attaches it to the pair. The worker's first prompt
-   is the delegation line, the issue dossier, and the **worker contract**:
+3. **The acknowledgement** of a webhook answers within the 5 seconds Linear
+   allows; the walk's own first word inside a new agent session is the
+   `thought` "Preparing the workspace…".
+4. **The run.** The orchestrator makes the worker session (the lane's agent,
+   the project's checkout as directory, the agent file's model applied) and
+   the `ready` stage attaches that session to the pair `initWork` opened. The
+   worker's first prompt is the **orchestrator's composition** (ruled
+   2026-10-02): a neutral line naming the project, the lane and the checkout,
+   the ticket's summary as `initWork` returned it, and the **worker contract**:
    the ticket ends only through `aivi_work_complete`, a person's decision
    only through `aivi_ask`, the checklist through `aivi_plan`, and a turn
-   ending without one is treated as a failure.
+   ending without one is treated as a failure. `startWork` the module says
+   nothing for: Linear watches its own agent sessions, and a working session
+   shows itself.
 5. **While it runs.** The `plan` tool's checklist is a forwarding: the whole
-   array arrives whenever the worker re-sends it and Linear replaces the
-   agent session's plan with it. The `ask` tool creates an OpenCode session
-   form — the durable record of the wait — and the `question` event renders
-   it as an `elicitation` activity, with the `select` signal when options
-   came with it. A progress stream for the worker (ephemeral `thought`s fed
-   by the OpenCode event stream while it works) is **not built yet**.
-6. **Answers and interjections — the follower posts into the OpenCode
-   session itself; the orchestrator is not in this path.** The open form is
+   array arrives whenever the worker re-sends it and the `plan` stage has
+   Linear replace the agent session's plan with it. The `ask` tool creates an
+   OpenCode session form — the durable record of the wait — and the
+   `question` stage renders it as an `elicitation` activity in the session
+   `initWork` opened, with the `select` signal when options came with it. A
+   progress stream for the worker (ephemeral `thought`s fed by the OpenCode
+   event stream while it works) is **not built yet**.
+6. **Answers and interjections — the tracker posts into the OpenCode
+   session itself.** The open form is
    the discriminator, read from OpenCode, never inferred from words. A
-   message while a form is `pending` *is* an answer: the text goes in as a
-   queued prompt and the form is answered as the record. With nothing open
+   message while a form is `pending` *is* an answer: it goes to the
+   orchestrator's `answer`, which owns the delivery — the slot may have been
+   given back while the person thought, and a full pool **reacquires** it
+   before the same session resumes — the text goes in as a queued prompt and
+   the form is answered as the record. With nothing open
    the same message **steers** the running turn (ruled 2026-10-01); with no
    turn to steer it queues instead, said in the log, never lost. "Send stop
    request" arrives as `signal: "stop"`: the orchestrator interrupts the
    worker and ends the run cancelled — see 7.
-7. **The ending, and the catch-up.** Only a tool call ends a run: the
-   completion tool records the outcome and the **target lane** the project's
-   lane order chose (success → the **next** entry, failure → the
-   **previous**, per-lane `next`/`previous` overrides aside; a stop → none),
-   and the orchestrator emits
-   `ended`. The follower then pays its ceremony **in this order**: the
-   **result** (a success posts the summary as the `response`, which completes
-   the agent session and stops the "working" state; a failure posts an `error`
-   activity), then the **closing note** — the same text as a comment on the
-   **issue** itself, linked to the agent session, so the ending is readable
-   without opening the session (ruled 2026-10-02; the session id on the
-   ticket is the marker, so retries and boots never post it twice), then the
-   **move** (only when the issue is not already there),
-   then the **delegate** — un-taken on a success, left sitting on a failure
-   so the session stays the readable trail and the next lane change
-   re-triggers. Each step asks Linear's real state first (`resultShown`: is
-   the agent session ended; is the issue already in the lane), so a
-   half-landed ceremony says nothing twice. A step that fails keeps the run
-   owed in memory; the next wake tries again, and every boot pass re-derives
-   the list from the follower's own pairs and the run records — the outage
-   that loses a response heals at the next boot.
+7. **The ending.** Only a tool call ends a run: the completion tool records
+   the outcome and the **target lane** the project's lane order chose
+   (success → the **next** entry, failure → the **previous**, per-lane
+   `next`/`previous` overrides aside; a stop → none). The order from there is
+   the operator's (ruled 2026-10-02, P7): first the `endWork` stage — the
+   tracker speaks **in this order**: the **result** (a success posts the
+   summary as the `response`, which completes the agent session and stops the
+   "working" state; a failure, and a cancellation, post an `error` activity),
+   then the **closing note** — the same text as a comment on the **issue**
+   itself, linked to the agent session, so the ending is readable without
+   opening the session (the session id on the ticket is the marker, so retries
+   and boots never post it twice), then the **delegate** — un-taken on a
+   success, left sitting on a failure so the session stays the readable
+   trail. Each step asks Linear's real state first (`resultShown`: is the
+   agent session ended), so a half-landed closing says nothing twice. **Then**
+   the orchestrator performs the **move** through the board's idempotent
+   `moveTo`, and **lastly** the lease returns.
+   A closing that fails does **not** hold the ticket: the person is told the
+   moment it fails — the human label rides the ticket and the session says
+   why — the move lands and the slot comes back anyway, and the closing stays
+   owed to the next wake and the next boot (the label stands until a person
+   removes it). And when the dispatcher gives up on killing a stubborn worker
+   (`dispatcher.killAttempts`, `kill-unconfirmed`), the ticket carries the
+   human label and says plainly that a worker may still be loose.
 8. **One worker per ticket.** The orchestrator's guard: a ticket with a run
-   still **active** never gets a second one; whether a delegation after a
-   finished run is new work is the follower's routing, not the ledger's.
-   There is no per-project lock: workers share the checkout (worktrees
-   isolate them once a forge is wired), and capacity arrives with the
-   dispatcher. The listener does not delegate an issue that is blocked by
-   unfinished issues (Linear's native blocking).
+   still **active** never gets a second one. An ending **releases**: a ticket
+   still sitting in a worked lane after its run is fresh work again — the
+   walk starts it anew, and only a person's move or the human label says
+   otherwise (a stop remembers nothing, ruled 2026-10-02). There is no
+   per-project lock: workers share the checkout (worktrees isolate them once
+   a forge is wired), and capacity arrives with the dispatcher. The walk does
+   not pick up an issue blocked by unfinished issues (Linear's native
+   blocking).
 9. **Issue changes** (the **Issues** data-change category, on the primary's
    route). When an issue with a **live run** gains the HITL label, moves to a
    lane that names another agent (or no agent), or loses the app as delegate,
    the orchestrator interrupts the worker and ends the run cancelled; the
-   ending's catch-up says the reason as an `error` activity — and a stop
-   moves nothing, because the person who stopped it left the ticket where
-   they wanted it. A lane change between two lanes naming the same agent
-   changes nothing. With the listener on, an issue entering a worked lane
-   with no delegate, no HITL label and no live run is delegated to the
-   primary (`issueUpdate` with the primary as delegate): becoming the
-   delegate makes Linear create the agent session itself, and this mutation's
-   own answer names it (live, 2026-09-26). The run starts from that answer;
-   a `created` webhook arriving for that session afterwards is a redelivery
-   the pair answers. An answer that names no session undoes the delegation
-   and logs `listener.no-session` at error — the delivery was acknowledged,
-   so no retry would ever come. The issue is re-read from the API for every
-   such change, so label and state names are current, and a change delivered
-   twice finds the delegate already set.
+   `endWork` stage says the reason as an `error` activity — and a stop moves
+   nothing, because the person who stopped it left the ticket where they
+   wanted it. A lane change between two lanes naming the same agent changes
+   nothing. Every other lane or label change is a **wake and nothing more**
+   (ruled 2026-10-02, P6): it cancels a waiting request for that ticket,
+   wakes the walk, and the walk reads the board afresh — a person's move on
+   a queued ticket is cancel-on-move, the mechanism that replaced the
+   fulfilment re-check. The issue is re-read from the API for every such
+   change, so label and state names are current.
 
 One route shape: `POST /linear/webhooks/app/<id>`, verified by that app's
 signing secret. The primary's route carries both families — its own agent
@@ -229,11 +241,12 @@ recording.
    per-lane ask) — which lane waits with work while the working lanes are
    full, `-- None --` included. Its options are only the lanes that could
    legally hold the queue — a lane whose next works nobody is no option, and
-   the last lane feeds nothing — and choosing a lane that just got an agent
-   gives that agent up out loud: the queue answer is the later word. No
-   lanes means nothing is picked up for the project and its tickets are
-   silent; the assistant still answers pings. A hand delegation a lane cannot run gets the fixed answer,
-   not the assistant. With no forge installed the project is repo-less
+   the last lane feeds nothing — and **a lane that names an agent is never an
+   option** (ruled 2026-10-02, P4): the queue is where people wait for a
+   worker, never a working lane itself. No lanes means nothing is picked up
+   for the project and its tickets are silent; the assistant still answers
+   pings. A hand delegation always gets the fixed refusal, never the
+   assistant. With no forge installed the project is repo-less
    (memory and knowledge, no checkout).
 5. Later, only if a second face in Linear's UI is wanted: another app, its
    `LINEAR_<FACE>_*` secrets, `apps.<face>: {}`, and `primary` naming

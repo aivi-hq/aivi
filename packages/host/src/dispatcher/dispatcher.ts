@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { type Config, errorMessage, getLogger, type Logger, parseDuration } from '@aivi/core';
 import type { OpenCodeClient } from '../opencode.ts';
+import type { FailureCode } from '../orchestrator/vocabulary.ts';
 import { agentModel, type NativeModel } from '../session.ts';
 import { type DispatcherLease, type LeaseStore, UNLIMITED } from './leases.ts';
 
@@ -55,7 +56,7 @@ export interface DispatcherDeps {
   /** The dispatcher ended a lease itself; the owner is told (for ticket work
    *  the orchestrator clears the claim that mirrored it). Per-service
    *  callback namespaces land with the queue; this is that seam. */
-  onEnded?: (lease: DispatcherLease, reason: string) => void;
+  onEnded?: (lease: DispatcherLease, reason: string, code?: FailureCode) => void;
 }
 
 /** `provider/model[@variant]`, the one spelling pools use; a name the pool
@@ -77,6 +78,15 @@ export class Dispatcher {
   /** Milliseconds, parsed once: the same durations the config load accepted. */
   private readonly idleMs: number;
   private readonly prepareMs: number;
+  /** How hard to strike a session that will not die, before giving up on
+   *  it: each strike lands at a known instant (the retry clock), never as
+   *  a poll. After the last one the slot is taken back anyway and the
+   *  ending is said with a machine-readable code — a worker may still be
+   *  loose, and a person should know. */
+  private readonly killAttempts: number;
+  /** Kill strikes counted per lease, cleared the moment the kill confirms
+   *  or the lease ends any other way. */
+  private readonly strikes = new Map<string, number>();
   /** One timer per lease: the known instant its current clock expires,
    *  re-armed by grants, sessions and signs of life — never a poll, never
    *  an interval. */
@@ -93,6 +103,7 @@ export class Dispatcher {
     this.pools = deps.dispatcher.pools ?? {};
     this.idleMs = parseDuration(deps.dispatcher.timeouts.idle);
     this.prepareMs = parseDuration(deps.dispatcher.timeouts.prepare);
+    this.killAttempts = deps.dispatcher.killAttempts;
     // A pool model is checked at startup, not at the grant that would need it.
     for (const pool of Object.values(this.pools)) if (pool.model !== undefined) parseModelSpec(pool.model);
     // Shutting down: every armed clock goes with it. Nothing fires into a
@@ -151,13 +162,37 @@ export class Dispatcher {
   async #due(leaseId: string): Promise<void> {
     const lease = this.leases.get(leaseId);
     if (!lease) return; // ended while the clock flew: nothing is due twice
-    const outcome = await this.expire(
-      leaseId,
-      lease.sessionId
-        ? 'its session said nothing for longer than the idle timeout'
-        : 'no session was provided within the prepare timeout',
+    if (!lease.sessionId) {
+      // The prepare clock needs no cap: there is nothing to kill.
+      await this.expire(leaseId, 'no session was provided within the prepare timeout');
+      return;
+    }
+    const strikes = (this.strikes.get(leaseId) ?? 0) + 1;
+    this.strikes.set(leaseId, strikes);
+    const outcome = await this.expire(leaseId, 'its session said nothing for longer than the idle timeout');
+    if ('pending' in outcome) {
+      if (strikes >= this.killAttempts) return void this.#giveUp(lease, strikes);
+      this.#arm(leaseId, Date.now() + this.idleMs);
+    }
+  }
+
+  /**
+   * The last strike missed: give up on the session, not on the slot. The
+   * lease ends and the capacity returns — a dispatcher that loses a whole
+   * pool to one stubborn session helps nobody — but the ending carries the
+   * `kill-unconfirmed` code: whoever owns the work says so loudly and a
+   * person goes looking. The session is left alive; killing it is no
+   * longer the dispatcher's war.
+   */
+  #giveUp(lease: DispatcherLease, strikes: number): void {
+    this.strikes.delete(lease.id);
+    this.#free(lease);
+    this.log.warn('kill.gave-up', { lease: lease.id, session: lease.sessionId, strikes });
+    this.deps.onEnded?.(
+      lease,
+      `the session did not stop after ${strikes} kill attempt${strikes === 1 ? '' : 's'}`,
+      'kill-unconfirmed',
     );
-    if ('pending' in outcome) this.#arm(leaseId, Date.now() + this.idleMs);
   }
 
   /** Capacity is moderated only when pools are configured; without them the
@@ -302,6 +337,7 @@ export class Dispatcher {
    *  to the next request of this pool, in the order they asked. */
   #free(lease: DispatcherLease): void {
     this.#disarm(lease.id);
+    this.strikes.delete(lease.id); // the war on this lease is over, one way or another
     this.leases.release(lease.id);
     this.#drain(lease.pool);
   }

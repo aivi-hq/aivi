@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema, type Logger, type ProjectLane, parseDuration } from '@aivi/core';
+import type { Tracker } from '@aivi/plugin';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
 import type { SessionEvents } from '../src/events.ts';
 import type { OpenCodeClient } from '../src/opencode.ts';
 import { RunLedger } from '../src/orchestrator/ledger.ts';
-import type { TicketFeed } from '../src/orchestrator/orchestrator.ts';
 import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
 import { Store } from '../src/store.ts';
 
@@ -86,27 +86,31 @@ function fakeOpenCode(): Fake {
   return fake;
 }
 
-interface Scripted extends TicketFeed {
+interface Scripted extends Tracker {
   /** Everything the walk did to the board: queue pickups arrive as moves. */
   moves: string[];
   /** How many prompts existed when each move was said — the proof of
    *  move-then-start: the lane says it before the worker does. */
   moveDepths: number[];
+  /** Every stage call and move, in order: the proof of the operator's flow
+   *  — open, ready, close, move — pinned without a platform. */
+  stages: string[];
   retire(ticketId: string): void;
 }
 
 function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boolean }[]>): Scripted {
   const lanes = new Map(Object.entries(board).map(([lane, tickets]) => [lane, tickets.map(t => ({ ...t }))]));
-  const moves: string[] = [];
-  const moveDepths: number[] = [];
-  return {
-    moves,
-    moveDepths,
+  const scripted: Scripted = {
+    id: 'test-tracker',
+    moves: [],
+    moveDepths: [],
+    stages: [],
     projects: () => ['p'],
     tickets: async (projectId, state) => (lanes.get(state) ?? []).map(t => ({ id: t.id, blocked: t.blocked ?? false })),
     moveTo: async (projectId, ticketId, state) => {
-      moves.push(`move:${ticketId}->${state}`);
-      moveDepths.push(fake.prompts.length);
+      scripted.moves.push(`move:${ticketId}->${state}`);
+      scripted.moveDepths.push(fake.prompts.length);
+      scripted.stages.push(`move:${ticketId}->${state}`);
       for (const tickets of lanes.values()) {
         const at = tickets.findIndex(t => t.id === ticketId);
         if (at >= 0) tickets.splice(at, 1);
@@ -115,22 +119,38 @@ function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boo
       entering.push({ id: ticketId });
       lanes.set(state, entering);
     },
-    firstMessage: async (projectId, ticketId, lane) => `do ${ticketId} in ${lane.name}`,
+    // The platform-side opening: the summary is the ticket's words, and the
+    // orchestrator composes the worker's first prompt around it.
+    initWork: async run => {
+      scripted.stages.push(`init:${run.ticketId}`);
+      return `do ${run.ticketId} in ${run.lane}`;
+    },
+    ready: run => {
+      scripted.stages.push(`ready:${run.sessionId}`);
+    },
+    question: run => {
+      scripted.stages.push(`question:${run.ticketId}`);
+    },
+    endWork: async run => {
+      scripted.stages.push(`end:${run.ticketId}:${run.outcome?.kind ?? run.state}`);
+    },
     retire: ticketId => {
-      // What the module's stop-memory does to its board: a ticket a person
-      // stopped is not on it, whatever lane still holds the issue.
+      // What a person does after a stop: moves the ticket off the walked
+      // board (or labels it for human hands) so the next pass asks for
+      // another one. Stop itself remembers nothing (ruled 2026-10-02).
       for (const tickets of lanes.values()) {
         const at = tickets.findIndex(t => t.id === ticketId);
         if (at >= 0) tickets.splice(at, 1);
       }
     },
   };
+  return scripted;
 }
 
 function harness(
   lanes: ProjectLane[],
   written: Record<string, unknown>,
-  feed: TicketFeed,
+  work: Tracker,
   fake = fakeOpenCode(),
   abort = new AbortController(),
 ) {
@@ -143,7 +163,7 @@ function harness(
     signal: abort.signal,
     // The application's wiring: the dispatcher ends a lease, and the claim
     // that mirrored it clears through the orchestrator.
-    onEnded: (lease, reason) => void orchestrator.leaseEnded(lease, reason),
+    onEnded: (lease, reason, code) => void orchestrator.leaseEnded(lease, reason, code),
   });
   const orchestrator = new Orchestrator({
     ledger,
@@ -156,7 +176,7 @@ function harness(
     directory: () => '/checkout',
     dispatcher,
   });
-  orchestrator.addFeed('test-tracker', feed);
+  orchestrator.addTracker(work);
   return { ledger, dispatcher, orchestrator, fake };
 }
 
@@ -243,8 +263,12 @@ test('a full pool queues one ticket of its own and stops the pass asking twice, 
     () => fake.prompts.length === 2,
     'l1 (pool b) and d1 (pool a): the second Doing ticket never asks pool a twice',
   );
-  const firsts = fake.prompts.map(p => p.text.split('\n')[0]).sort();
-  assert.deepEqual(firsts, ['do d1 in Doing', 'do l1 in Later'], 'd2 waits in the queue: one place per pool');
+  assert.equal(fake.prompts.length, 2, 'd2 waits in the queue: one place per pool');
+  for (const asked of ['do d1 in Doing', 'do l1 in Later'])
+    assert.ok(
+      fake.prompts.some(p => p.text.includes(asked)),
+      `${asked} got its worker; the other waits`,
+    );
   assert.equal(dispatcher.leases.held('a'), 1);
   assert.equal(dispatcher.leases.held('b'), 1);
   await new Promise(r => setTimeout(r, 30));
@@ -268,27 +292,38 @@ test('a full pool queues one ticket of its own and stops the pass asking twice, 
   assert.equal(dispatcher.leases.held('a'), 1, 'the queue place became a lease');
 });
 
-test('blocked tickets wait, and a ticket gone since the listing gives its slot back', async () => {
+test('blocked tickets wait, and a ticket gone by initWork fails its run visibly and gives its slot back', async () => {
   const fake = fakeOpenCode();
-  const feed: TicketFeed = {
+  const work: Tracker = {
+    id: 'test-tracker',
     projects: () => ['p'],
     tickets: async () => [
       { id: 'blocked-1', blocked: true },
       { id: 'gone-1', blocked: false },
     ],
     moveTo: async () => {},
-    firstMessage: async (projectId, ticketId) => (ticketId === 'gone-1' ? undefined : 'never asked'),
+    initWork: async run => {
+      if (run.ticketId === 'gone-1') throw new Error('the ticket is gone from the board (deleted by a person)');
+      return 'never asked';
+    },
+    ready: () => {},
+    question: () => {},
+    endWork: async () => {},
   };
-  const { dispatcher, orchestrator } = harness(
+  const { ledger, dispatcher, orchestrator } = harness(
     [lane('In Progress', { agent: 'dev' })],
     { dispatcher: { pools: { default: { capacity: 2 } } } },
-    feed,
+    work,
     fake,
   );
   await orchestrator.wake('p');
   await new Promise(r => setTimeout(r, 30));
   assert.deepEqual(fake.prompts, [], 'the blocked ticket waits; the gone ticket never reaches a prompt');
   assert.equal(dispatcher.leases.held('default'), 0, 'the grant made for the gone ticket is given back');
+  const gone = ledger.activeByTicket('test-tracker', 'gone-1');
+  assert.equal(gone, undefined, 'the claimed run ended and is not active');
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(ledger.moveOwed('test-tracker').length, 0, 'a failed opening owes no move');
 });
 
 test('a delegation takes a lease too: a full pool queues it, and the dispatcher ending a lease clears the claim visibly', async () => {
@@ -310,7 +345,7 @@ test('a delegation takes a lease too: a full pool queues it, and the dispatcher 
       lane: 'In Progress',
       agent: 'dev',
       directory: '/checkout',
-      firstMessage: `delegated ${ticketId}`,
+      summary: `delegated ${ticketId}`,
     });
 
   const first = await work('t-1');
@@ -352,8 +387,12 @@ test('unlimited mode walks the whole board at once — capacity is not moderated
   const { orchestrator } = harness(lanes, {}, feed, fake);
   await orchestrator.wake('p');
   await until(() => fake.prompts.length === 3, 'every eligible ticket gets its worker');
-  const firsts = fake.prompts.map(p => p.text.split('\n')[0]);
-  assert.deepEqual(firsts, ['do w1 in In Progress', 'do q1 in In Progress', 'do q2 in In Progress']);
+  const order = ['do w1 in In Progress', 'do q1 in In Progress', 'do q2 in In Progress'];
+  assert.deepEqual(
+    fake.prompts.map(p => order.filter(w => p.text.includes(w))[0]),
+    order,
+    'working tickets first, then the queue in board order — all at once',
+  );
   assert.deepEqual(feed.moves, ['move:q1->In Progress', 'move:q2->In Progress']);
 });
 
@@ -373,7 +412,7 @@ test('an open elicitation holds its slot for the keep-alive, then gives the slot
     lane: 'Doing',
     agent: 'dev',
     directory: '/checkout',
-    firstMessage: 'do t-1 in Doing',
+    summary: 'do t-1 in Doing',
   });
   await until(() => fake.prompts.length === 1, 'the worker starts');
   const sessionId = ledger.get(runId)!.sessionId!;
@@ -417,7 +456,7 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
     lane: 'Doing',
     agent: 'dev',
     directory: '/checkout',
-    firstMessage: 'do t-1',
+    summary: 'do t-1',
   });
   await until(() => fake.prompts.length === 1, 'the worker starts');
   const sessionId = ledger.get(first.runId)!.sessionId!;
@@ -433,7 +472,7 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
     lane: 'Doing',
     agent: 'dev',
     directory: '/checkout',
-    firstMessage: 'do t-2',
+    summary: 'do t-2',
   });
   await until(() => fake.prompts.length === 2, 'the next ticket works');
 
