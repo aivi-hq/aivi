@@ -563,3 +563,42 @@ test('host.public: the reach address, validated and preferred when printed', () 
     declared: false,
   });
 });
+
+test('the install record seeds manual sources, in place, disabled plugins included', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-manual-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, 'config.json');
+  await writeFile(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  const app = join(root, 'app');
+  await mkdir(join(app, 'node_modules', '@aivi', 'host', 'docs'), { recursive: true });
+  await mkdir(join(app, 'node_modules', '@aivi', 'dead', 'docs'), { recursive: true });
+  await writeFile(join(app, 'node_modules', '@aivi', 'host', 'docs', 'configuration.md'), '# Configuration\n');
+  await writeFile(
+    join(app, 'package.json'),
+    JSON.stringify({
+      name: 'aivi-server',
+      ['aivi-plugins']: ['@aivi/host', ['@aivi/dead', false], 'plain-no-docs'],
+    }),
+  );
+  const loaded = await loadConfig(configPath);
+  const manuals = loaded.sources.filter(s => s.kind === 'manual');
+  assert.deepEqual(
+    manuals.map(s => ({ id: s.id, scope: s.scope })),
+    [
+      { id: 'manual:@aivi/host', scope: 'core' },
+      { id: 'manual:@aivi/dead', scope: 'core' },
+    ],
+    'the list indexes regardless of the enablement flag; a package without docs is no source',
+  );
+  assert.equal(manuals[0]!.path, join(app, 'node_modules', '@aivi', 'host', 'docs'), 'indexed in place: no copying');
+
+  // A home without the install record is a home with nothing installed: no error, no sources.
+  const bare = join(root, 'bare');
+  await mkdir(bare);
+  await writeFile(join(bare, 'config.json'), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  assert.deepEqual(
+    (await loadConfig(join(bare, 'config.json'))).sources.filter(s => s.kind === 'manual'),
+    [],
+    'no install record, no manual sources',
+  );
+});

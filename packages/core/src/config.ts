@@ -342,10 +342,16 @@ export const hostSchema = z.strictObject({
     .refine(url => /^https?:\/\//.test(url), 'host.public must use http or https')
     .refine(url => !url.endsWith('/'), 'host.public must not end in /')
     .optional(),
+  /** Whether `aivi_config` lets an agent write this file at all (the gate is
+   *  the shape `scheduler.agentSchedules` gave `aivi_jobs`): on by default —
+   *  the bar is "anything in config.json, you never go in there yourself" —
+   *  and one switch off host-wide when the assistant should stop touching it. */
+  agentConfigEdits: z.boolean().default(true),
 });
 
-/** The URL aivi *calls* itself on: `bind`/`port`, wildcard binds collapsed to loopback. */
-export function hostUrl(host: Config['host']): string {
+/** The URL aivi *calls* itself on: `bind`/`port`, wildcard binds collapsed to loopback.
+ *  Only those two fields are its business; the rest of `host` can grow freely. */
+export function hostUrl(host: Pick<Config['host'], 'bind' | 'port'>): string {
   const h = ['0.0.0.0', '::', '[::]'].includes(host.bind) ? '127.0.0.1' : host.bind;
   return `http://${h.includes(':') && !h.startsWith('[') ? `[${h}]` : h}:${host.port}`;
 }
@@ -667,7 +673,10 @@ const configShape = z.strictObject({
   $schema: z.string().optional().describe('Editor hint; ignored at runtime.'),
   version: z.literal(1),
   stateDirectory: z.string().default('state'),
-  host: hostSchema.default({ bind: '127.0.0.1', port: 4100 }),
+  // zod takes a missing key's default **verbatim** — the inner schema never
+  // fills it in — so this literal is the whole shape of a host that wrote
+  // nothing; keep it complete when hostSchema grows.
+  host: hostSchema.default({ bind: '127.0.0.1', port: 4100, agentConfigEdits: true }),
   opencode: opencodeSchema.default({ lifecycle: 'own' }),
   knowledge: z
     .array(source)
@@ -1138,6 +1147,42 @@ function absolutizePaths(config: Config, base: string): void {
   }
 }
 
+/** The install record's `manual` sources (docs/plans/templates/self-knowledge.md):
+ *  every package in `<home>/app/package.json`'s `aivi-plugins` list that ships a
+ *  `docs/` directory gets it indexed **in place** — no copying, so the file
+ *  keeps its one owner and `aivi upgrade` refreshes the words along with the
+ *  code they describe. A disabled plugin (`[name, false]`) is still installed,
+ *  and its docs are what the operator needs while debugging the disablement,
+ *  so the list indexes regardless of the enablement flag. The package tag
+ *  lives in the source id: `manual:<package>`. A home whose app directory was
+ *  moved (the client record's `appDir`) is the laptop case, not the server's;
+ *  the convention here is `<home>/app`, like everything else in the home. */
+async function manualSources(base: string): Promise<KnowledgeSource[]> {
+  let list: unknown;
+  try {
+    const manifest = JSON.parse(await readFile(join(base, 'app', 'package.json'), 'utf8')) as {
+      ['aivi-plugins']?: unknown;
+    };
+    list = manifest['aivi-plugins'];
+  } catch {
+    // No install record yet: nothing installed, nothing to know about.
+    return [];
+  }
+  const sources: KnowledgeSource[] = [];
+  for (const entry of Array.isArray(list) ? list : []) {
+    const name = Array.isArray(entry) ? entry[0] : entry;
+    if (typeof name !== 'string') continue;
+    const docs = resolve(base, 'app', 'node_modules', ...name.split('/'), 'docs');
+    try {
+      if ((await stat(docs)).isDirectory())
+        sources.push({ id: `manual:${name}`, path: docs, kind: 'manual', scope: 'core' });
+    } catch {
+      // No docs shipped with this package: nothing to know beyond the code.
+    }
+  }
+  return sources;
+}
+
 export async function loadConfig(path: string, schema: z.ZodType<Config> = configSchema): Promise<LoadedConfig> {
   path = resolve(path);
   const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
@@ -1147,6 +1192,7 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
   const sources: KnowledgeSource[] = [
     ...config.knowledge.map((s): KnowledgeSource => ({ ...s, path: absolute(base, s.path), scope: 'core' })),
     { id: MEMORY_SOURCE_ID, path: resolve(base, 'memory'), kind: 'memory', scope: 'core' },
+    ...(await manualSources(base)),
   ];
   const projects: Project[] = [];
   for (const { id: projectId, removed } of await discoverProjects(base, config.projects)) {

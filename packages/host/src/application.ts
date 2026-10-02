@@ -76,6 +76,9 @@ export interface RunHostOptions {
   log?: Logger;
   /** Backoff for module starts that fail; the default climbs from 1 s to 10 min. */
   moduleRetry?: RetryPolicy;
+  /** Reload a config file under the composed closed schema (the `aivi_config`
+   *  referee); supplied by the boot, which alone may load the plugin registry. */
+  compose?: (configPath: string) => Promise<unknown>;
   onReady?: (address: unknown) => void;
 }
 
@@ -194,6 +197,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         linkable: () => channels.linkable(),
         tools,
         context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
+        // The composed-schema referee for `aivi_config` writes; the boot
+        // handed this function in because only it may import the registry.
+        compose: options.compose,
         // The redirect hook's one question, answered from the run ledger:
         // the ledger is the only fact of who is an aivi run.
         runMembership: sessionID => ledger.bySession(sessionID) !== undefined,

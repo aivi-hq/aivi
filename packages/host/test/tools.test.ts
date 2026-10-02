@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import type { LoadedConfig } from '@aivi/core';
-import { configSchema } from '@aivi/core';
+import { composeConfigSchema, configSchema, loadConfig } from '@aivi/core';
 import { createHostClient } from '@aivi/plugin/api';
 import { createApp, serveApp } from '../src/api/app.ts';
 import { ConfigurationError } from '../src/modules.ts';
@@ -17,6 +20,11 @@ const loaded: LoadedConfig = {
 };
 
 const descriptor = { namespace: 'aivi' as const, name: 'ping', description: 'Say pong.', input: {} };
+
+// The composed referee `aivi_config` writes against, wired as the boot wires
+// it: the closed composition over the core shape, exactly what
+// `loadComposedConfig` builds in a home with no plugins installed.
+const compose = (configPath: string) => loadConfig(configPath, composeConfigSchema({}));
 
 test('the tool registry claims each id exactly once; the same owner replacing is fine', () => {
   const registry = new ToolRegistry();
@@ -48,7 +56,7 @@ test('GET /tools serves the host tools id-sorted, and a module claim lands besid
   const store = new Store(':memory:');
   const seen: { sessionId: string; action: string }[] = [];
   const registry = new ToolRegistry();
-  const server = serveApp(createApp({ store, loaded, tools: registry }));
+  const server = serveApp(createApp({ store, loaded, tools: registry, compose }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -61,7 +69,7 @@ test('GET /tools serves the host tools id-sorted, and a module claim lands besid
   // The host's own always-present tools; no context or jobs without those options.
   assert.deepEqual(
     (await client.listTools()).map(tool => tool.id),
-    ['aivi_sources', 'aivi_status', 'knowledge_projects'],
+    ['aivi_config', 'aivi_sources', 'aivi_status', 'knowledge_projects'],
   );
 
   // A module claims its tool at its own door — as the browser module claims
@@ -78,7 +86,7 @@ test('GET /tools serves the host tools id-sorted, and a module claim lands besid
   const served = await client.listTools();
   assert.deepEqual(
     served.map(tool => tool.id),
-    ['aivi_browse', 'aivi_sources', 'aivi_status', 'knowledge_projects'],
+    ['aivi_browse', 'aivi_config', 'aivi_sources', 'aivi_status', 'knowledge_projects'],
     'a module tool sorts in beside the host tools',
   );
   assert.equal(served.find(tool => tool.id === 'aivi_browse')!.timeoutMs, 300_000, 'its own budget survives');
@@ -89,7 +97,7 @@ test('GET /tools serves the host tools id-sorted, and a module claim lands besid
     .claim({ namespace: 'knowledge', name: 'dream', description: 'Dream.', input: {} }, async () => 42);
   assert.deepEqual(
     (await client.listTools()).map(tool => tool.id),
-    ['aivi_browse', 'aivi_sources', 'aivi_status', 'knowledge_dream', 'knowledge_projects'],
+    ['aivi_browse', 'aivi_config', 'aivi_sources', 'aivi_status', 'knowledge_dream', 'knowledge_projects'],
   );
 
   const status = (await client.callTool('aivi_status', { sessionId: 'ses_one', input: {} })) as { sources: number };
@@ -113,7 +121,7 @@ test('POST /tools answers for every claimed name and fails loudly for every one 
     .claim({ namespace: 'aivi', name: 'broken', description: 'Crash.', input: {} }, async () => {
       throw new Error('bug');
     });
-  const server = serveApp(createApp({ store, loaded, tools: registry }));
+  const server = serveApp(createApp({ store, loaded, tools: registry, compose }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -169,4 +177,98 @@ test('a host without a tool registry serves an empty list, not a failure', async
     /aivi_status/,
     'a call of an unoffered name fails with the name in the reason',
   );
+});
+
+test('aivi_config reads, writes and removes one block; the schema referees and the file survives refusals', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-config-tool-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, 'config.json');
+  await writeFile(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  const real = await loadConfig(configPath);
+  const store = new Store(':memory:');
+  const server = serveApp(createApp({ store, loaded: real, tools: new ToolRegistry(), compose }));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const client = createHostClient(`http://127.0.0.1:${address.port}`);
+  const call = (input: Record<string, unknown>) => client.callTool('aivi_config', { sessionId: 'ses_x', input });
+
+  assert.deepEqual(await call({ action: 'read' }), { version: 1 }, 'read answers the file as written');
+
+  const saved = (await call({ action: 'write', path: ['orchestrator', 'elicitationKeepAlive'], value: '30m' })) as {
+    saved?: boolean;
+    note?: string;
+  };
+  assert.equal(saved.saved, true);
+  assert.match(saved.note ?? '', /boots|restart/, 'the answer says how the change lands');
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    version: 1,
+    orchestrator: { elicitationKeepAlive: '30m' },
+  });
+
+  await assert.rejects(
+    () => call({ action: 'write', path: ['orchestrator', 'elicitationKeepAlive'], value: 7 }),
+    /Refused/,
+    'a value the schema refuses bounces with the validation error',
+  );
+  await assert.rejects(() => call({ action: 'write', path: ['nonsense'], value: {} }), /Refused/);
+  await assert.rejects(() => call({ action: 'write', path: [], value: {} }), /Invalid config call/);
+  assert.deepEqual(
+    JSON.parse(await readFile(configPath, 'utf8')),
+    { version: 1, orchestrator: { elicitationKeepAlive: '30m' } },
+    'refused writes leave the bytes alone',
+  );
+
+  const removed = await call({ action: 'remove', path: ['orchestrator'] });
+  assert.equal((removed as { removed?: boolean }).removed, true);
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), { version: 1 });
+  assert.deepEqual(await call({ action: 'remove', path: ['orchestrator'] }), { removed: false });
+
+  // identity.name is the watched exception: its note says the next turn speaks it.
+  const watched = (await call({ action: 'write', path: ['identity', 'name'], value: 'Clawd' })) as { note?: string };
+  assert.match(watched.note ?? '', /identity\.name/);
+});
+
+test('a home that switches agent config edits off never shows the tool', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-config-gate-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, 'config.json');
+  await writeFile(configPath, `${JSON.stringify({ version: 1, host: { agentConfigEdits: false } }, null, 2)}\n`);
+  const real = await loadConfig(configPath);
+  const store = new Store(':memory:');
+  const server = serveApp(createApp({ store, loaded: real, tools: new ToolRegistry(), compose }));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const client = createHostClient(`http://127.0.0.1:${address.port}`);
+  const ids = (await client.listTools()).map(tool => tool.id);
+  assert.ok(!ids.includes('aivi_config'), 'the gate is the claim: absent, not present-failing');
+});
+
+test('a boot that wired no composed referee does not offer the config tool', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-config-unwired-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, 'config.json');
+  await writeFile(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  const real = await loadConfig(configPath);
+  const store = new Store(':memory:');
+  const server = serveApp(createApp({ store, loaded: real, tools: new ToolRegistry() }));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const client = createHostClient(`http://127.0.0.1:${address.port}`);
+  const ids = (await client.listTools()).map(tool => tool.id);
+  assert.ok(!ids.includes('aivi_config'), 'no composed referee, no writes — absent, not present-failing');
 });

@@ -204,6 +204,18 @@ export const searchSchema = sourceSelectionSchema.extend({
   query: z.string().trim().min(1).max(2000),
   limit: z.number().int().min(1).max(20).default(8),
 });
+
+/** The input of `aivi_config`: the read/write door to the live `config.json`
+ *  (the doing side of self-knowledge, docs/plans/templates/self-knowledge.md).
+ *  One block per write; the composed closed schema is the referee. */
+export const configToolSchema = z
+  .strictObject({
+    action: z.enum(['read', 'write', 'remove']),
+    path: z.array(z.string().min(1).max(60)).min(1).max(6).optional(),
+    value: z.unknown(),
+  })
+  .refine(call => call.action === 'read' || call.path !== undefined, 'write and remove need a path of key segments')
+  .refine(call => call.action !== 'write' || call.value !== undefined, 'write needs a value');
 export interface SearchHit {
   sourceId: string;
   kind: KnowledgeKind;

@@ -61,7 +61,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Definitions and executions are two tables.** A job says what and when; a
   run is one execution and always belongs to a job, so a one-off is a job
   with `at` and not a special run. Operators reason about `jobs …`, inspect
-  `runs …` ([configuration](docs/configuration.md#jobs-runs-tasks)).
+  `runs …` ([configuration](packages/host/docs/configuration.md#jobs-runs-tasks)).
 - **It matched or it didn't.** A due occurrence found within
   `misfire.graceSeconds` runs; found later it becomes one `missed` run for the
   whole gap, never executed, reported like a failure, and the job moves on.
@@ -81,7 +81,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   claimant or two system jobs sharing an id is fatal at startup, an unclaimed
   name fails the run with its name. The host's own five operations are claimed
   into the same registry; only `prompt` and `shell` are tasks an agent can
-  author ([configuration](docs/configuration.md#tasks)).
+  author ([configuration](packages/host/docs/configuration.md#tasks)).
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
   `blocked`, capacity kept, human resolves. Exception: a conversation turn
@@ -164,7 +164,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   directory from the calling session and refuses sessions with origin `job` or
   `dreaming`, unless a Discord thread adopted that session. Whoever may talk
   to the agent is the authority; jobs are the admin's responsibility
-  ([configuration](docs/configuration.md#agent-created-jobs)).
+  ([configuration](packages/host/docs/configuration.md#agent-created-jobs)).
 - **Outcomes are conversations, not posts.** The default report of an
   agent-created job is `session`: the outcome re-enters the asking thread as
   a turn and the librarian says what matters. A channel report opens a thread
@@ -191,7 +191,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   No module points at a separate config file. aivi and the
   operator edit the live `config.json` itself, so it never goes under version
   control; a home in a git repository tracks only a template, which the first
-  run copies ([configuration](docs/configuration.md#home)).
+  run copies ([configuration](packages/host/docs/configuration.md#home)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
 - **One compiled shape, locally and on npm.** Packages compile to `dist/`
@@ -233,7 +233,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   voice, injected by the plugin into every agent's prompt and hot-reloaded;
   what aivi is *called* is `identity.name`, which the plugin states ahead of
   it, so the name has one owner and a soul edit cannot change it
-  ([linear](docs/linear.md), [configuration](docs/configuration.md#the-soul)).
+  ([linear](docs/linear.md), [configuration](packages/host/docs/configuration.md#the-soul)).
 - **A repository is a Linear team.** Routing reads the issue's team only
   (`projects.<id>.tracker-linear.teams`, a list: several teams may share one
   checkout); lanes, branch-name format and labels all live per Linear team,
@@ -247,7 +247,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   source that answers: `identity.github`, else `opencode.coauthor` in the
   machine's git config, else the aivi app. The project's `source/` is never
   marked, so attended work keeps a human author with the agent as co-author
-  ([linear](docs/linear.md), [configuration](docs/configuration.md#fields)).
+  ([linear](docs/linear.md), [configuration](packages/host/docs/configuration.md#fields)).
 - **Tokens identify, never authorize — except people management.** Auth is
   `none`: commands are open, and a bearer only names the caller for
   association — whose job, whose link, whose memory; unknown or missing stays
@@ -291,7 +291,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 
 | Fact | Owner |
 | --- | --- |
-| Config fields, task kinds, secrets and `.env` order | [docs/configuration.md](docs/configuration.md) |
+| Config fields, task kinds, secrets and `.env` order | [packages/host/docs/configuration.md](packages/host/docs/configuration.md) |
 | Startup, shutdown, dispatch, failed/blocked outcomes, resolving blocked work, CLI | [docs/operations.md](docs/operations.md) |
 | First run, librarian in OpenCode, first project and channel | [docs/getting-started.md](docs/getting-started.md) |
 | Module contract (`AiviServices`, `Store.migrate`, `fail`) | [docs/architecture.md](docs/architecture.md#one-application-contained-modules) |

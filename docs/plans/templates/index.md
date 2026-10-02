@@ -1,8 +1,11 @@
 # Templates program
 
-Status: crystallizing (2026-09-29, with the operator): scheduled into the
-[v1 rc line](../../roadmap.md#next-in-order-of-intent), sequence and the
-linear.md supersession recorded below. From a vision conversation
+Status: two pieces built 2026-10-03 — the [scaffolding](scaffolding.md)
+agent files ship with the home, and [self-knowledge](self-knowledge.md) is
+complete (`manual` sources and `aivi_config`); the lane-map proposal stays
+open. Before that: crystallizing (2026-09-29, with the operator): scheduled
+into the [v1 rc line](../../roadmap.md#next-in-order-of-intent), sequence and
+the linear.md supersession recorded below. From a vision conversation
 (2026-09-27); reconciled 2026-09-27 with
 [cli-refactor](../cli-refactor/index.md) (built on the branch): it owns
 `@aivi/plugin`, the `aivi-plugins` list, the `@aivi/<kind>-<name>` naming,

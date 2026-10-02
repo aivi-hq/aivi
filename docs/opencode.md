@@ -51,6 +51,7 @@ signpost). See [git workflow](plans/git-workflow.md#the-redirect-hook).
 | `aivi_status` | `aivi_status` | aivi version, job counts and capabilities | Read-only; does not start work. |
 | `aivi_context` | `aivi_context` | This conversation's context window, tokens, cost and knowledge scope | Read-only; takes the session id from the tool context. |
 | `aivi_jobs` | `aivi_jobs` | Create/list/pause/resume/remove/run jobs | Schedules work. Turn the tool off host-wide with `scheduler.agentSchedules: false`. |
+| `aivi_config` | `aivi_config` | Read the live `config.json`, write one block, or remove one — validated against the composed closed schema | The doing side of self-knowledge. A refused write leaves the file byte-identical. Turn it off host-wide with `host.agentConfigEdits: false` (then the tool is absent, not present-failing). Secrets stay `.env` territory. |
 | `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The seeded assistant denies `browser` (OpenCode's), **not** this one. |
 
 ### Giving tools to an agent

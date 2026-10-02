@@ -12,7 +12,7 @@ import { createKnowledgeService } from '@aivi/knowledge';
 import type { AiviModule } from '@aivi/plugin/module';
 import { type HostResources, runHost } from './application.ts';
 import { context, home, withStore } from './cli/context.ts';
-import { buildModules } from './cli/registry.ts';
+import { buildModules, loadComposedConfig } from './cli/registry.ts';
 
 /** Foreground serve, from any entry that reached it: same home, same
  *  graceful stop. The `serve` command calls this after its own tree has
@@ -44,6 +44,9 @@ export async function startServer(): Promise<void> {
         store,
         modules,
         protectedEnv,
+        // The composed closed schema the boot itself loaded against: this
+        // is the referee `aivi_config` re-validates every write with.
+        compose: configPath => loadComposedConfig(home, configPath),
         log,
         signal: abort.signal,
         resources: () => createResources(loaded, log),
