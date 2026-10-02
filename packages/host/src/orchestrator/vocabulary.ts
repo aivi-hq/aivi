@@ -19,14 +19,15 @@
  * "the work environment and session are being made".
  *
  * - `preparing` — requested; the work environment and the session are being made.
- * - `working` — a turn is running, queued, or parked on an open question: the
- *   OpenCode form is the whole truth of waiting, read from OpenCode, never
- *   mirrored here. (An `awaiting_input` state returns with the later refactor
- *   that puts a keep-alive timeout on an open elicitation.)
+ * - `working` — a turn is running or queued.
+ * - `awaiting_input` — parked on an open elicitation: the OpenCode form is
+ *   the durable record of the wait; the keep-alive says how long the slot
+ *   is held for it, and after that the ticket waits without one. The run
+ *   keeps its session and its claim either way.
  * - `completed` / `failed` / `cancelled` — terminal; only a completion tool
  *   call, a failure, or a stop puts a run here. Never a text, never idleness.
  */
-export type RunState = 'preparing' | 'working' | 'completed' | 'failed' | 'cancelled';
+export type RunState = 'preparing' | 'working' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
 
 /** Terminal means nothing more can happen to this run. */
 export function isTerminal(state: RunState): boolean {

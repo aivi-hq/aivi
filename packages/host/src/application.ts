@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { getLogger, systemJobs } from '@aivi/core';
+import { getLogger, parseDuration, systemJobs } from '@aivi/core';
 import { createApp, serveApp } from './api/app.ts';
 import { attachExec } from './api/exec.ts';
 import { PublicRoutes } from './api/public.ts';
@@ -187,6 +187,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       return project.directory;
     },
     dispatcher,
+    // The orchestrator's own dial: how long an open elicitation holds a slot.
+    keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
   });
   clearClaim = (lease, reason) => void orchestrator.leaseEnded(lease, reason);
   for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);

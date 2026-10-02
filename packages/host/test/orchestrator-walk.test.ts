@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { configSchema, type Logger, type ProjectLane } from '@aivi/core';
+import { configSchema, type Logger, type ProjectLane, parseDuration } from '@aivi/core';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
 import type { SessionEvents } from '../src/events.ts';
@@ -32,12 +32,21 @@ interface Fake {
   /** Sessions that are spending: what `active` answers with. */
   busy: Set<string>;
   interrupted: string[];
+  /** The elicitations: askTool opens one, an answer closes it. */
+  forms: { id: string; sessionID: string; answered?: unknown }[];
 }
 
 function fakeOpenCode(): Fake {
   const sessions = new Map<string, { agent: string; directory: string }>();
   const busy = new Set<string>();
-  const fake: Fake = { client: undefined as unknown as OpenCodeClient, prompts: [], sessions, busy, interrupted: [] };
+  const fake: Fake = {
+    client: undefined as unknown as OpenCodeClient,
+    prompts: [],
+    sessions,
+    busy,
+    interrupted: [],
+    forms: [],
+  };
   fake.client = {
     agent: { list: async () => ({ data: [{ id: 'dev', model: { providerID: 'agentprov', id: 'agentmodel' } }] }) },
     session: {
@@ -56,6 +65,21 @@ function fakeOpenCode(): Fake {
       },
       prompt: async (input: { sessionID: string; text: string }) => {
         fake.prompts.push({ sessionID: input.sessionID, text: input.text });
+      },
+      form: {
+        create: async (input: { sessionID: string }) => {
+          const id = `form_${fake.forms.length + 1}`;
+          fake.forms.push({ id, sessionID: input.sessionID });
+          return { id };
+        },
+        list: async ({ sessionID }: { sessionID: string }) =>
+          fake.forms.filter(f => f.sessionID === sessionID && f.answered === undefined),
+        reply: async (input: { sessionID: string; formID: string; answer: unknown }) => {
+          const form = fake.forms.find(f => f.id === input.formID && f.answered === undefined);
+          if (!form) throw new Error(`no open form ${input.formID}`);
+          form.answered = input.answer;
+          return form;
+        },
       },
     },
   } as unknown as OpenCodeClient;
@@ -128,6 +152,7 @@ function harness(
     log: quiet,
     signal: abort.signal,
     lanes: () => lanes,
+    keepAliveMs: parseDuration(configSchema.parse({ version: 1, ...written }).orchestrator.elicitationKeepAlive),
     directory: () => '/checkout',
     dispatcher,
   });
@@ -330,4 +355,98 @@ test('unlimited mode walks the whole board at once — capacity is not moderated
   const firsts = fake.prompts.map(p => p.text.split('\n')[0]);
   assert.deepEqual(firsts, ['do w1 in In Progress', 'do q1 in In Progress', 'do q2 in In Progress']);
   assert.deepEqual(feed.moves, ['move:q1->In Progress', 'move:q2->In Progress']);
+});
+
+test('an open elicitation holds its slot for the keep-alive, then gives the slot back with the session alive — and the answer resumes the same session', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, dispatcher, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    firstMessage: 'do t-1 in Doing',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+
+  await orchestrator.askTool({ sessionId, input: { question: 'Which shade?' } });
+  assert.equal(ledger.get(runId)!.state, 'awaiting_input', 'the run parks on the person');
+  assert.equal(dispatcher.leases.held('a'), 1, 'the elicitation holds its slot');
+
+  await until(() => dispatcher.leases.held('a') === 0, 'the keep-alive ends and the slot goes');
+  const parked = ledger.get(runId)!;
+  assert.equal(parked.state, 'awaiting_input', 'the wait goes on without the slot: the claim stands');
+  assert.equal(parked.leaseId, undefined, 'no lease mirrors a slot that is gone');
+  assert.deepEqual(fake.interrupted, [], 'released, not expired: nobody killed the worker');
+  assert.ok(fake.sessions.has(sessionId), 'the session waits with its form');
+
+  const form = fake.forms.find(f => f.sessionID === sessionId)!;
+  const answered = await orchestrator.answer(sessionId, 'the deep one', form.id);
+  assert.deepEqual(answered, { resumed: true }, 'a free slot lets the answer back at once');
+  assert.equal(ledger.get(runId)!.state, 'working', 'the same session works again');
+  assert.ok(ledger.get(runId)!.leaseId, 'the answer reacquired capacity — in a fresh lease');
+  assert.match(fake.prompts.at(-1)!.text, /The person answered your question: the deep one/);
+  assert.deepEqual(form.answered, { answer: 'the deep one' }, 'the form closes as the record');
+});
+
+test('the answer reacquires capacity in its own pool and waits there — the fallback never applies to a resume', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, {});
+  const { ledger, dispatcher, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    {
+      dispatcher: { pools: { a: { capacity: 1, fallback: 'b' }, b: { capacity: 5 } } },
+      orchestrator: { elicitationKeepAlive: '1s' },
+    },
+    feed,
+    fake,
+  );
+  const first = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    firstMessage: 'do t-1',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(first.runId)!.sessionId!;
+  await orchestrator.askTool({ sessionId, input: { question: 'Which shade?' } });
+  await until(() => dispatcher.leases.held('a') === 0, 'the keep-alive gives the slot back');
+  const form = fake.forms.find(f => f.sessionID === sessionId)!;
+
+  // Another ticket takes the opened slot before the answer arrives.
+  const second = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-2',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    firstMessage: 'do t-2',
+  });
+  await until(() => fake.prompts.length === 2, 'the next ticket works');
+
+  const waiting = await orchestrator.answer(sessionId, 'the deep one', form.id);
+  assert.ok('queued' in waiting, 'the answer waits for its slot instead of losing the worker');
+  assert.equal(dispatcher.leases.held('a'), 1, 'the other ticket holds pool a');
+  assert.equal(dispatcher.leases.held('b'), 0, 'pool b had five slots: the fallback is not a resume’s answer');
+  assert.equal(ledger.get(first.runId)!.state, 'awaiting_input', 'the answer waits with the request');
+
+  // The other ticket ends: the queue drains, and the resume walks into its own pool.
+  await orchestrator.stop(second.runId, 'done with it');
+  await until(() => ledger.get(first.runId)!.state === 'working', 'the answer resumed its session');
+  assert.equal(dispatcher.leases.require(ledger.get(first.runId)!.leaseId!).pool, 'a');
+  assert.match(fake.prompts.at(-1)!.text, /The person answered your question: the deep one/);
+  assert.equal(dispatcher.leases.held('b'), 0, 'and still nobody moved pools');
 });

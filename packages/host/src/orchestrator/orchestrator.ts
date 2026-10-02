@@ -61,7 +61,7 @@ export interface WorkRequest {
  *  have moved lanes while it waited); a delegation carries the words the
  *  person's delegate mutation earned, because no one else composed them. */
 interface WaitingWork {
-  kind: 'walk' | 'delegation';
+  kind: 'walk' | 'delegation' | 'answer';
   trackerId: string;
   projectId: string;
   ticketId: string;
@@ -69,6 +69,11 @@ interface WaitingWork {
   lane: string;
   firstMessage?: string;
   directory?: string;
+  /** An answer waiting for capacity to resume its run: the run to wake,
+   *  the person's words, and the form that recorded the question. */
+  runId?: string;
+  answer?: string;
+  formId?: string;
 }
 
 /**
@@ -114,6 +119,9 @@ export interface OrchestratorDeps {
   /** The dispatcher is the only part that knows how much capacity is left:
    *  the orchestrator asks it for every slot and never counts one itself. */
   dispatcher: Dispatcher;
+  /** How long an open elicitation holds its slot. The orchestrator's own
+   *  dial (docs/orchestrator.md, "When a worker needs human input"). */
+  keepAliveMs: number;
   /** Premature turn-ends tolerated before the run fails visibly. A safety net, not a poller. */
   nudgeBudget?: number;
 }
@@ -149,6 +157,10 @@ export class Orchestrator {
    *  dispatcher's queue is ephemeral and a restart lets the walk simply ask
    *  again for work that is still on the board. */
   private readonly requested = new Map<string, WaitingWork>();
+  /** One clock per open elicitation: the known instant its keep-alive
+   *  expires. Re-armed by the question and the answer, cleared by every
+   *  ending — never an interval. */
+  private readonly elicitations = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(deps: OrchestratorDeps) {
     this.deps = deps;
@@ -435,6 +447,20 @@ export class Orchestrator {
    */
   async #fulfill(requestId: string, lease: DispatcherLease): Promise<void> {
     const work = this.requested.get(requestId);
+    if (work?.kind === 'answer') {
+      // An answer waiting for its slot: the run is the eligibility —
+      // stopped or answered in the meantime, and the lease goes back.
+      this.requested.delete(requestId); // the wait is over either way
+      const run = work.runId ? this.deps.ledger.get(work.runId) : undefined;
+      if (!run || run.state !== 'awaiting_input' || !work.answer) {
+        this.deps.dispatcher.release(lease.id);
+        return;
+      }
+      this.deps.ledger.setLease(run.id, lease.id);
+      await this.#deliverAnswer(run, work.answer, work.formId);
+      void this.wake(work.projectId);
+      return;
+    }
     if (!work) {
       // Nobody remembers asking. The lease has no work: give the slot back.
       this.deps.dispatcher.release(lease.id);
@@ -536,7 +562,108 @@ export class Orchestrator {
   }
 
   /** Give back the slot a terminal run's claim held, if it still stands. */
+  /** Aim the one clock of an open elicitation at its known instant. */
+  #armElicitation(runId: string): void {
+    this.#clearElicitation(runId);
+    const handle = setTimeout(() => {
+      this.elicitations.delete(runId);
+      void this.#keepAliveExpired(runId).catch(error => this.deps.log.warn('keep-alive.failed', { run: runId, error }));
+    }, this.deps.keepAliveMs);
+    this.elicitations.set(runId, handle);
+  }
+
+  #clearElicitation(runId: string): void {
+    const previous = this.elicitations.get(runId);
+    if (previous) clearTimeout(previous);
+    this.elicitations.delete(runId);
+  }
+
+  /**
+   * The keep-alive rang and the slot goes: **released, not expired** —
+   * nobody is killed, the session keeps its form and waits for the answer,
+   * and the claim stands so no other worker takes the ticket. The freed
+   * capacity goes to the queue and the walk, which is the point of letting
+   * a silent wait cost nothing.
+   */
+  async #keepAliveExpired(runId: string): Promise<void> {
+    const run = this.deps.ledger.get(runId);
+    if (!run || run.state !== 'awaiting_input') return; // answered, stopped or failed in the window
+    if (run.leaseId && this.deps.dispatcher.leases.get(run.leaseId)) {
+      this.deps.dispatcher.release(run.leaseId);
+      this.deps.ledger.clearLease(runId);
+      this.deps.log.info('elicitation.waiting', { run: runId, ticket: run.ticketId });
+      void this.wake(run.projectId);
+    }
+  }
+
+  /**
+   * A person answered an elicitation. With the slot still behind the run
+   * (the keep-alive has not rung) the answer lands at once; without one,
+   * the answer **reacquires capacity and resumes the same session** — the
+   * dispatcher's rules do the rest: the session's own pool only, the
+   * fallback never, and a full pool queues the reacquisition. The answer's
+   * words wait with the request; a refusal is said, never swallowed.
+   */
+  async answer(
+    sessionId: string,
+    text: string,
+    formId?: string,
+  ): Promise<{ resumed: true } | { resumed: false; queued?: string; refused?: string }> {
+    const run = this.deps.ledger.bySession(sessionId);
+    if (!run) throw new ToolError(404, 'This session is not an aivi run.');
+    this.#clearElicitation(run.id);
+    if (run.leaseId && this.deps.dispatcher.leases.get(run.leaseId)) {
+      await this.#deliverAnswer(run, text, formId);
+      return { resumed: true };
+    }
+    const grant = this.deps.dispatcher.request({ service: 'orchestrator', resume: sessionId });
+    if ('refused' in grant) return { resumed: false, refused: grant.refused };
+    if ('queued' in grant) {
+      this.requested.set(grant.queued, {
+        kind: 'answer',
+        trackerId: run.trackerId,
+        projectId: run.projectId,
+        ticketId: run.ticketId,
+        lane: run.lane,
+        runId: run.id,
+        answer: text,
+        ...(formId ? { formId } : {}),
+      });
+      return { resumed: false, queued: grant.queued };
+    }
+    this.deps.ledger.setLease(run.id, grant.lease.id);
+    await this.#deliverAnswer(run, text, formId);
+    return { resumed: true };
+  }
+
+  /** The answer's delivery, immediate or after a queue wait: the run is
+   *  working again **before** the words go in (the idle clock restarts with
+   *  the answer), the worker gets the text first, and the form closes as
+   *  the record — a form that refuses the reply is a stale record, not a
+   *  lost answer. */
+  async #deliverAnswer(run: Run, text: string, formId?: string): Promise<void> {
+    const resumed = this.deps.ledger.resumed(run.id);
+    if (resumed.leaseId) this.deps.dispatcher.activity(resumed.leaseId);
+    const client = await this.deps.opencode();
+    await client.session.prompt({
+      sessionID: run.sessionId!,
+      id: `msg_${randomBytes(6).toString('hex')}`,
+      text: `The person answered your question: ${text}`,
+      delivery: 'queue',
+    });
+    if (formId) {
+      try {
+        await client.session.form.reply({ sessionID: run.sessionId!, formID: formId, answer: { answer: text } });
+      } catch (error) {
+        this.deps.log.warn('run.form.reply.failed', { run: run.id, form: formId, error });
+      }
+    }
+    this.deps.log.info('run.answered', { run: run.id, ...(formId ? { form: formId } : {}) });
+  }
+
   #releaseLease(run: Run): void {
+    this.#clearElicitation(run.id); // a terminal run holds no clocks
+    this.cancelWaiting(run.trackerId, run.ticketId); // nor queue places — a waiting answer reacquisition included
     if (!run.leaseId) return;
     if (!this.deps.dispatcher.leases.get(run.leaseId)) return; // the dispatcher already ended it
     this.deps.dispatcher.release(run.leaseId);
@@ -638,7 +765,7 @@ export class Orchestrator {
    *  wanted it. */
   async stop(runId: string, reason: string): Promise<void> {
     const run = this.deps.ledger.get(runId);
-    if (!run || run.state !== 'working') return;
+    if (!run || (run.state !== 'working' && run.state !== 'awaiting_input')) return;
     try {
       if (run.sessionId) {
         const client = await this.deps.opencode();
@@ -731,8 +858,12 @@ export class Orchestrator {
       ],
     });
     const withForm: RunQuestion = { ...question, formId: form.id };
+    // The run parks on the person: the slot is held for the keep-alive and
+    // the OpenCode form is the durable record of the wait.
+    const parked = this.deps.ledger.awaiting(run.id);
     this.deps.log.info('run.question', { run: run.id, form: form.id });
-    this.#emit({ type: 'question', run: view(this.deps.ledger.get(run.id)!), question: withForm });
+    this.#emit({ type: 'question', run: view(parked), question: withForm });
+    this.#armElicitation(run.id);
     return { delivered: true, endYourTurn: true };
   };
 
@@ -851,6 +982,10 @@ export class Orchestrator {
         continue;
       }
       this.#watch(run.sessionId, run.leaseId);
+      // A wait that survived the restart keeps waiting: the keep-alive
+      // re-arms from now — the silence during the outage cost nobody a
+      // slot, so it owes nobody an earlier release.
+      if (run.state === 'awaiting_input') this.#armElicitation(run.id);
     }
   }
 }

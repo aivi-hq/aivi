@@ -428,6 +428,19 @@ default **5 minutes**. It needs the waiting state to time against
 reacquires capacity and **resumes its existing session** — fallback never
 applies to a resume, because the session keeps the pool it was created in.
 
+**Built 2026-10-02.** The keep-alive's ending is a **release, not an
+expiry**: nobody is killed, the session keeps its open form, and the claim
+stands — the ticket waits without a slot, and no other worker takes it.
+The answer's delivery is the orchestrator's: the run is working again
+**before** the words go in, the worker gets the text first, and the form
+closes as the record. A full pool queues the reacquisition like any other
+resume — the answer's words wait with the request and the person is told
+the worker wakes when a slot opens; a refusal is said too, and the question
+still stands. A stop reaches a parked run: stop means stop, even
+mid-question. After a restart, a wait that survived the outage keeps
+waiting — its keep-alive re-arms from the boot, since the silence during
+the outage cost nobody a slot.
+
 For trackers where human input happens outside the active session, the orchestrator releases the lease, clears the claim, and marks the ticket blocked.
 
 When the human responds, the ticket is unblocked and the orchestrator is woken. The ticket then goes through normal priority and capacity handling again. Its existing session can be resumed when a lease is granted.

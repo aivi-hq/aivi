@@ -59,7 +59,7 @@ export interface RunRequest {
 
 type Row = Record<string, unknown>;
 
-const ACTIVE = "state IN ('preparing','working')";
+const ACTIVE = "state IN ('preparing','working','awaiting_input')";
 
 const map = (r: Row): Run => ({
   id: String(r.id),
@@ -175,6 +175,38 @@ export class RunLedger {
   }
 
   /** Bind a run to the lease it claims. */
+  /** An elicitation opened: the run parks on the person, and the
+   *  keep-alive's clock starts with this row. Only a working run asks. */
+  awaiting(id: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db
+        .prepare(`UPDATE orchestrator_runs SET state='awaiting_input', updated_at=? WHERE id=? AND state='working'`)
+        .run(now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** The answer arrived and capacity stands behind it again: back to
+   *  working. Only an awaiting run resumes; anything else stands. */
+  resumed(id: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db
+        .prepare(`UPDATE orchestrator_runs SET state='working', updated_at=? WHERE id=? AND state='awaiting_input'`)
+        .run(now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** The keep-alive ended and the lease went with it: the claim stands,
+   *  the slot does not. The session stays where it is — the answer will
+   *  find it. */
+  clearLease(id: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db.prepare(`UPDATE orchestrator_runs SET lease_id=NULL, updated_at=? WHERE id=?`).run(now, id);
+      return this.#require(id);
+    });
+  }
+
   setLease(id: string, leaseId: string, now = Date.now()): Run {
     return this.core.transaction(() => {
       this.core.db.prepare('UPDATE orchestrator_runs SET lease_id=?, updated_at=? WHERE id=?').run(leaseId, now, id);

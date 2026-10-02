@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import type { KnowledgeService, LoadedConfig } from '@aivi/core';
-import { configSchema, getLogger } from '@aivi/core';
+import { configSchema, getLogger, parseDuration } from '@aivi/core';
 import type { SessionEvents } from '@aivi/host';
 import {
   Channels,
@@ -376,6 +376,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
       opencode,
       signal: abort.signal,
     }),
+    keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
   });
   return {
     loaded,

@@ -609,23 +609,24 @@ async function startLinear(config: LinearConfig, services: AiviServices, makeTra
         const client = await services.opencode();
         const [form] = await client.session.form.list({ sessionID: run.sessionId });
         if (form) {
-          // An answer is at-least-once like any delivery: the worker gets the
-          // text first, then the form closes as the record; a form that
-          // refuses the reply is a stale record, not a lost answer.
-          await client.session.prompt({
-            sessionID: run.sessionId,
-            id: `msg_${crypto.randomUUID()}`,
-            text: `The person answered your question: ${text}`,
-            delivery: 'queue',
-          });
-          try {
-            await client.session.form.reply({ sessionID: run.sessionId, formID: form.id, answer: { answer: text } });
-          } catch (error) {
-            // A form that refuses the reply is a stale record, not a lost
-            // answer: the worker already has the text from the prompt above.
-            log.warn('run.form.reply.failed', { run: run.id, form: form.id, error });
-          }
-          return log.info('run.answered', { run: run.id, form: form.id });
+          // The orchestrator owns the answer's delivery: the slot may have
+          // been given back while the person thought, and an answer that
+          // finds no capacity **reacquires** it — in the session's own pool,
+          // queue included — before the same session resumes. The worker
+          // gets the text first, then the form closes as the record.
+          const outcome = await services.orchestrator.answer(run.sessionId, text, form.id);
+          if ('refused' in outcome)
+            return refuse(
+              conversation,
+              'The worker’s slot is gone and no capacity is free to wake it again — the pool behind its lane is full and its one queue place is taken. The question still stands: answer it again once a slot opens.',
+            );
+          if ('queued' in outcome)
+            await say(
+              conversation,
+              'I have your answer. No slot is free to wake that worker yet, so it wakes the moment one opens.',
+              'progress',
+            );
+          return log.info('run.answered', { run: run.id, form: form.id, ...outcome });
         }
         try {
           // Interjections steer (ruled 2026-10-01): the message lands between

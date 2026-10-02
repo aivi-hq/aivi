@@ -75,11 +75,14 @@ close).
       instant for unconfirmed kills, the clocks watching leases in every
       mode (pools count, they do not gate the watch), and survivors
       re-armed from stored activity after a boot pass. (2026-10-02)
-- [ ] 10 Elicitation: in-session human input **holds** its slot; after
+- [x] 10 Elicitation: in-session human input **holds** its slot; after
       `elicitationKeepAlive` the lease releases (the session stays); the
       answer reacquires and **resumes the same session** — fallback never
       applies to resumes. `awaiting_input` returns as the state to time
-      against.
+      against. Built with it: the keep-alive ends as a release, never a
+      kill; a full pool queues the reacquisition and a refusal is said;
+      a stop reaches a parked run; a wait that survived a restart re-arms
+      its clock from the boot. (2026-10-02)
 - [ ] 11 Wizard: after **all** lanes are configured, one question — a select
       of the configured lanes (or `-- None --`) picking the queue lane. Not
       per lane.
