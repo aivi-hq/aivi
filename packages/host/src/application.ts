@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
 import { getLogger, parseDuration, systemJobs } from '@aivi/core';
+import type { AiviModule, AiviServices } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
 import { attachExec } from './api/exec.ts';
 import { PublicRoutes } from './api/public.ts';
@@ -9,19 +10,17 @@ import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
 import { Dispatcher, type DispatcherLease } from './dispatcher/dispatcher.ts';
 import { LeaseStore } from './dispatcher/leases.ts';
-import { EventStream, type SessionEvents } from './events.ts';
+import { EventStream } from './events.ts';
 import { createJobHandler } from './jobs.ts';
-import { ConfigurationError, type ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
-import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
+import { ConfigurationError, ModuleSupervisor, type RetryPolicy } from './modules.ts';
+import { connectOpenCode, restartOpenCode } from './opencode.ts';
 import { RunLedger } from './orchestrator/ledger.ts';
 import { Orchestrator } from './orchestrator/orchestrator.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import type { Store } from './store.ts';
-import type { TaskClaims } from './tasks.ts';
 import { TaskRegistry } from './tasks.ts';
-import type { ToolClaims } from './tools.ts';
 import { ToolRegistry } from './tools.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
@@ -59,43 +58,9 @@ class Wake {
   }
 }
 
-export interface AiviServices {
-  loaded: LoadedConfig;
-  store: Store;
-  knowledge: KnowledgeService;
-  /** Discovers the OpenCode service on every call. Call once per unit of work and hold the client for its duration. */
-  opencode: () => Promise<OpenCodeClient>;
-  /** The host's one OpenCode event stream, fanned out by session id; channel progress watches turns through it. */
-  events: SessionEvents;
-  signal: AbortSignal;
-  log: Logger;
-  /** Chat platform modules register here once; that makes them report destinations and session owners. */
-  channels: Channels;
-  /** Webhook routes a module exposes on the host listener, outside bearer auth; the platform's signature is the auth. */
-  routes: PublicRoutes;
-  /** What `kind: 'invocation'` tasks dispatch to: the host claims its own operations here, modules claim theirs. */
-  tasks: TaskClaims;
-  /** The tool surface the OpenCode plugin registers at load: the host claims its own tools here, modules claim theirs. */
-  tools: ToolClaims;
-  /** Ticket-to-run machinery: a tracker module hands work over, stops runs
-   *  and reads run records here, and **subscribes** to the typed run events
-   *  to follow them on its platform. The orchestrator owns the run's state
-   *  machine, the worker session, and the worker tools; it never calls back. */
-  orchestrator: Orchestrator;
-  /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
-  wake(): void;
-  /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
-  onWake(listener: () => void): () => void;
-  /** Abort the whole host. Only for failures the module cannot recover from. */
-  fail(error: unknown): void;
-}
 export interface HostResources {
   knowledge: KnowledgeService;
 }
-export type { RunningModule } from './modules.ts';
-/** The module contract: what the host composes. Declared here, the implementer;
- *  exported under these names to plugin authors by `@aivi/plugin`. */
-export type AiviModule = ModuleContract<AiviServices>;
 
 export interface RunHostOptions {
   loaded: LoadedConfig;

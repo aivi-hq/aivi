@@ -1,12 +1,10 @@
 import { setTimeout } from 'node:timers/promises';
 import type { Config, Job, Logger, ModuleHealth } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
+import type { RunningModule } from '@aivi/plugin/module';
 import type { TaskRegistry } from './tasks.ts';
 import type { ToolRegistry } from './tools.ts';
 
-export interface RunningModule {
-  stop(): Promise<void>;
-}
 export interface ModuleContract<Services = unknown> {
   /** The module id — the package's short name (`channel-discord`), the same
    *  word as `plugins.<id>`. It keys the supervisor, shows as the `/status`

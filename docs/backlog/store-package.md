@@ -7,39 +7,36 @@ starts. This page records the why and the payoff.
 
 ## The problem
 
-`packages/host/src/store.ts` is 1,116 lines and ~63 methods: it opens the
+`packages/host/src/store.ts` is 1,100 lines and ~63 methods: it opens the
 database (node's built-in `node:sqlite`, so loading the file is genuinely
 small) and then carries every query in the system — migrations, jobs, runs,
 capacity leases, the request diary, people and tokens.
-`ConversationStore` (`packages/host/src/channel/store.ts`, 495 lines) is the
-same story for turns and leases. One class knows the whole system; "load
-this file" is the constructor and the other ~1,500 lines are everything else.
+`ConversationStore` (`packages/host/src/channel/store.ts`) is the same story
+for turns and leases. One class knows the whole system; "load this file" is
+the constructor and the other ~1,500 lines are everything else.
 
-## The architectural edge it leaves
+## The architectural edge — resolved by the flip (2026-10-02)
 
-`@aivi/plugin` — the package a plugin author imports — names host types in
-its contracts: `Store` and `ConversationStore` (the CLI and setup contexts
-hand them out), and the module contract's services bag names `Channels`,
-`PublicRoutes`, `TaskClaims`, `ToolClaims`, `SessionEvents` and
-`OpenCodeClient` besides.
+This page once recorded that `@aivi/plugin` named host types in its
+contracts and so could not be imported *by* the host engine
+(project-reference cycle). The flip deleted that edge: the kit now
+*declares* the contracts — `module.ts` carries the `Store` and
+`Orchestrator` interfaces, `channel.ts` the `ConversationStore` and
+`Channels` ones — and the host's classes carry `implements` clauses against
+them. The kit depends on core, `@opencode/client` and `@clack/prompts`, and
+on nothing above it.
 
-This is type-only — verified 2026-09-28: the shipped JS of `@aivi/plugin`
-never mentions the host, and its npm dependency is `@aivi/core` alone — but
-it is still a reference the compiler follows, and it forces the one
-deviation the refactor recorded
-([plugin-contract, Landing](../plans/cli-refactor/plugin-contract.md)):
-the kit cannot be imported *by* the host engine (project-reference cycle),
-so the module contract's declaration stays in the host and the kit merely
-re-exports it under the authoring names.
+What is left here is therefore *only* the implementation split: the kit's
+`Store` interface mirrors the host class's public surface, and both would
+rather the queries lived nearer their tables. When the split lands, the
+interfaces move to whichever package ends up below the kit and the `implements`
+clauses keep the classes honest through the move.
 
 ## The payoff when the split lands
 
-- The store types live in a package *below* the kit — the host and the kit
-  both depend on it — so the kit's only reference to the host disappears.
-- With that edge gone, the host can import the contracts *from* the kit and
-  the declarations really move there: one copy, owned by the package plugin
-  authors already import.
-- Where the database file lives stays the CLI's business exactly as it is
-  today: the runner reads `stateDirectory` from the config, opens the
-  database, and hands plugins the open handle
-  (`ctx.withStore`). No plugin ever names a path.
+- The queries live beside their tables, not in one class that knows the
+  whole system.
+- The database handle stays a handle: the runner reads `stateDirectory` from
+  the config, opens the database, and hands plugins the open handle
+  (`ctx.withStore`). No plugin ever names a path — that stays true either
+  way.

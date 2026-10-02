@@ -366,9 +366,9 @@ loudly while the lease goes back.
 ## The tracker's stages
 
 **Ruled 2026-10-02.** Orchestrator and tracker are one division of labour
-said as an interface (module authors import `Tracker` from `@aivi/plugin`;
-its source sits beside the machinery that calls it, in the host): the
-orchestrator
+said as an interface (module authors meet `Tracker` at `@aivi/plugin`, the
+package that **declares** it; the host imports the contract from the kit and
+follows it — the flip of 2026-10-02): the orchestrator
 orchestrates and never learns what a ticket platform is; the tracker
 tracks and answers for its platform alone. A tracker module registers ONE
 `Tracker` — the board the walk reads (`projects`, `tickets`, `moveTo`) and

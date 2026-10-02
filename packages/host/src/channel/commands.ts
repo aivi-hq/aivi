@@ -1,27 +1,9 @@
-import type { OpenCodeClient } from '../opencode.ts';
-import type { Store } from '../store.ts';
-import type { ChannelPlatform } from './contract.ts';
+import type { ChannelPlatform, ChatCommand, ChatCommandName } from '@aivi/plugin/channel';
+import type { OpenCodeClient, Store } from '@aivi/plugin/module';
 import type { ChannelEngine } from './engine.ts';
 import { formatDuration } from './progress.ts';
 import type { ConversationStore } from './store.ts';
 import { messageIdFor, speakerLine } from './turns.ts';
-
-export interface ChatCommandArgument {
-  name: string;
-  description: string;
-  required: boolean;
-  /** Discord offers choices for this argument from the named catalogue. */
-  autocomplete?: 'model';
-}
-/** One chat command, the same on every platform; the adapters translate names and arguments. */
-export interface ChatCommand {
-  name: string;
-  /** Under 100 characters: Discord's limit for a command description. */
-  description: string;
-  /** Acts on one conversation: refused where a slash command cannot name one (a threads-mode channel). */
-  conversation: boolean;
-  arguments: ChatCommandArgument[];
-}
 
 /**
  * The one list of chat commands. Discord registers it, Slack checks it against
@@ -73,8 +55,7 @@ export const CHAT_COMMANDS = [
     arguments: [{ name: 'code', description: 'The 5-digit code shown by aivi link', required: true }],
   },
   { name: 'help', description: 'List aivi’s commands', conversation: false, arguments: [] },
-] as const satisfies readonly ChatCommand[];
-export type ChatCommandName = (typeof CHAT_COMMANDS)[number]['name'];
+] as const satisfies readonly (ChatCommand & { name: ChatCommandName })[];
 
 export const isChatCommand = (name: string): name is ChatCommandName => CHAT_COMMANDS.some(c => c.name === name);
 export const chatCommand = (name: ChatCommandName): ChatCommand => CHAT_COMMANDS.find(c => c.name === name)!;

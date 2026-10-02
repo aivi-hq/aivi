@@ -1,16 +1,22 @@
 import { randomBytes } from 'node:crypto';
 import type { Logger, ProjectLane, ToolDescriptor } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
+import type { OpenCodeClient, Orchestrator as OrchestratorApi, SessionEvents, ToolHandler } from '@aivi/plugin/module';
+import type {
+  FailureCode,
+  RunOutcome,
+  RunPlan,
+  RunPlanStep,
+  RunQuestion,
+  RunView,
+  WorkRequest,
+} from '@aivi/plugin/run';
+import { isTerminal } from '@aivi/plugin/run';
+import type { Tracker } from '@aivi/plugin/tracker';
 import type { Dispatcher, DispatcherLease } from '../dispatcher/dispatcher.ts';
-import type { SessionEvents } from '../events.ts';
-import type { OpenCodeClient } from '../opencode.ts';
-import type { ToolHandler } from '../tools.ts';
 import { ToolError } from '../tools.ts';
 import type { Run, RunLedger } from './ledger.ts';
 import { view } from './ledger.ts';
-import type { FailureCode, RunOutcome, RunPlan, RunPlanStep, RunQuestion, RunView } from './vocabulary.ts';
-import { isTerminal } from './vocabulary.ts';
-import type { Tracker } from './work.ts';
 
 /**
  * The orchestrator: the one authority that turns a ticket into a **run**. It
@@ -35,29 +41,6 @@ import type { Tracker } from './work.ts';
  * the OpenCode form is the record of a question, read from OpenCode when a
  * turn ends, never mirrored in the ledger.
  */
-
-/** Everything needed to start a run from the tracker's side: a push-shaped
- *  tracker (a person's delegation, a mention-turned-assignment) already has
- *  the platform-side entry done and the ticket's **summary** in hand —
- *  Linear's agent session carries one — and hands both over with the
- *  request. The walk's runs need neither: their entry is `initWork` and
- *  their summary is what `initWork` returns. The worker contract below is
- *  the orchestrator's own words either way: the tools are the host's, so
- *  their explanation is core's, not any tracker's. The double-work guard is
- *  the ledger's: one active run per ticket, holding until the completion
- *  tool ends it. */
-export interface WorkRequest {
-  projectId: string;
-  trackerId: string;
-  ticketId: string;
-  lane: string;
-  agent: string;
-  /** Where the worker works: the checkout this version; a worktree when a forge lands. */
-  directory: string;
-  /** The tracker's own summary of the ticket, composed into the worker's
-   *  first prompt with the orchestrator's contract around it. */
-  summary: string;
-}
 
 /** What a lease request waiting in a dispatcher queue is for. A walk
  *  request re-reads its first message when the lease lands (the ticket may
@@ -127,7 +110,7 @@ const workerContract = (directory: string) =>
   'End your turn right after calling one of the two tools. A turn that ends without either is treated as a failure. ' +
   'Never declare completion in plain text.';
 
-export class Orchestrator {
+export class Orchestrator implements OrchestratorApi {
   private readonly deps: OrchestratorDeps;
   private readonly budget: number;
   private readonly trackers = new Map<string, Tracker>();

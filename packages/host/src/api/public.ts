@@ -1,19 +1,8 @@
 import type { Logger } from '@aivi/core';
+import type { PublicRouteHandler, PublicRoutes as PublicRoutesApi } from '@aivi/plugin/module';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppMiddleware } from './env.ts';
 import { MAX_PUBLIC_BODY, readCapped, respond } from './http.ts';
-
-/**
- * What a public route sees: the request and its raw body (signatures are
- * computed over bytes, never re-serialized JSON). Headers are the plain
- * lower-cased view the API has always handed over.
- */
-export interface PublicRequest {
-  method: string;
-  headers: Record<string, string | undefined>;
-  body: Buffer;
-}
-export type PublicRouteHandler = (request: PublicRequest) => Promise<{ status: number; body?: unknown }>;
 
 /** Paths the API answers before any routing logic: a public route may not claim either. */
 const RESERVED = new Set(['/health', '/version']);
@@ -24,7 +13,7 @@ const RESERVED = new Set(['/health', '/version']);
  * registering it twice is a programming error. `/health` and `/version` are
  * the only other unauthenticated routes, and no module may take them.
  */
-export class PublicRoutes {
+export class PublicRoutes implements PublicRoutesApi {
   private readonly handlers = new Map<string, PublicRouteHandler>();
   register(path: string, handler: PublicRouteHandler): () => void {
     if (!path.startsWith('/') || RESERVED.has(path))

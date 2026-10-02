@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Run } from '@aivi/core';
 import { configSchema, jobSchema, taskSchema } from '@aivi/core';
-import type { ChannelModule } from '../src/channel/contract.ts';
+import type { ChannelModule } from '@aivi/plugin/channel';
 import { Channels } from '../src/channel/router.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from '../src/reports.ts';
 import { Scheduler } from '../src/scheduler.ts';

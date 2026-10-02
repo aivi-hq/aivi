@@ -15,8 +15,8 @@
  */
 
 import type { OutputBlock, ProjectLaneInput, ProjectRole } from '@aivi/core';
-import type { Store } from '@aivi/host';
 import type * as prompts from '@clack/prompts';
+import type { Store } from './module.ts';
 import { PluginSetupCancelled } from './setup.ts';
 
 export { PluginSetupCancelled };

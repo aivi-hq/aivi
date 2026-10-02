@@ -136,18 +136,23 @@ come from `GET /tools` at load
 
 Landed as described, with four deviations:
 
-- **The module contract's declaration stays in the host.** The kit type-imports
-  `Store` and `ConversationStore` from `@aivi/host`, so the host engine cannot
-  reference the kit without a project-reference cycle (TS6202 — the same trap
-  half 2 of [one-cli.md](one-cli.md) split around). The engine declares and
-  renames in place (`HostServices`→`AiviServices`, `HostModule`→`AiviModule`
-  in `packages/host/src/application.ts`) and the kit exports those names to
-  plugin authors; plugins' type imports come only from the kit, so the
-  authoring face is exactly what this document describes.
-  `ConfigurationError` stays in the host: module entries import it at runtime
-  from the process that hosts them. The type-only reference the kit keeps to
-  the host is what forces this; deleting it is scheduled as
-  [store-package](../../backlog/store-package.md) right after the refactor.
+- **The module contract's declaration stays in the host.** ~~The kit
+  type-imports `Store` and `ConversationStore` from `@aivi/host`, so the host
+  engine cannot reference the kit without a project-reference cycle (TS6202 —
+  the same trap half 2 of [one-cli.md](one-cli.md) split around).~~
+  **Resolved 2026-10-02 — the flip.** The kit now *declares* the shared
+  contracts (`run.ts`, `tracker.ts`, `channel.ts`, `module.ts`): the module
+  contract, the run shapes, the channel vocabulary, and interfaces for every
+  service-bag member (`Store`, `Orchestrator`, `ConversationStore`,
+  `Channels`, `PublicRoutes`, `TaskClaims`, `ToolClaims`, `SessionEvents`),
+  which the host's classes carry `implements` clauses against. The kit
+  depends on core, `@opencode/client` and `@clack/prompts` and on nothing
+  above it; the host references the kit and imports its own vocabulary from
+  it. `ConfigurationError` stays in the host: module entries import it at
+  runtime from the process that hosts them. What forced this deviation — the
+  type-only reference the kit kept to the host — is gone, so
+  [store-package](../../backlog/store-package.md) now only carries the
+  *implementation* split (the 1,100-line class), not a contract problem.
 - **`PluginSetupContext` gained a `withStore` door.** The deletion ledger wants
   no plugin→host runtime imports, and `linear/src/setup.ts` built
   `new Store(...)` from `@aivi/host` to read the request diary during the

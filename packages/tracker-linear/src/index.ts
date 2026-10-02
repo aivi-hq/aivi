@@ -38,7 +38,7 @@ export {
 export type { WebhookApp } from './routes.ts';
 export { appWebhookPath, registerWebhookRoutes } from './routes.ts';
 export type { LinearAppRuntime } from './tracker.ts';
-export { clientFor, createLinearTracker, LinearTracker, neutralIssue, requireLinearSecrets } from './tracker.ts';
+export { clientFor, createLinearPlatform, LinearPlatform, neutralIssue, requireLinearSecrets } from './tracker.ts';
 export type {
   AgentSessionEventPayload,
   IssueEventPayload,

@@ -3,6 +3,7 @@ import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema, jobSchema } from '@aivi/core';
+import type { ChannelPlatform } from '@aivi/plugin/channel';
 import {
   CHAT_COMMANDS,
   describeJobs,
@@ -13,7 +14,6 @@ import {
   stopTurn,
   usageHint,
 } from '../src/channel/commands.ts';
-import type { ChannelPlatform } from '../src/channel/contract.ts';
 import { ChannelEngine, STOPPED_NOTICE, STOPPED_REASON } from '../src/channel/engine.ts';
 import type { ModelChoice } from '../src/channel/model.ts';
 import {

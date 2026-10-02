@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import type { SessionEvent, SessionEventListener, SessionEvents } from '../src/events.ts';
+import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/plugin/module';
 import { connectOpenCode } from '../src/opencode.ts';
 import { finalAnswer, PermissionRequired, runTurn } from '../src/session.ts';
 

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { type Config, configSchema } from '@aivi/core';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore, UNLIMITED } from '../src/dispatcher/leases.ts';
-import type { OpenCodeClient } from '../src/opencode.ts';
 import { Store } from '../src/store.ts';
 
 /** The dispatcher's whole client surface is create, get, active, interrupt

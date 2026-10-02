@@ -11,8 +11,8 @@
  * the platform SDK — `createModule` reaches for the module code itself, lazily.
  */
 
-import type { AiviModule } from '@aivi/host';
 import type { z } from 'zod';
+import type { AiviModule } from './module.ts';
 
 /** What the registry finds at a plugin package's `./config` subpath. */
 export interface AiviPlugin<C = unknown> {

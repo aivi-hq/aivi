@@ -1,15 +1,16 @@
 /**
- * The orchestrator's own vocabulary: what a **run** is, in platform-neutral
- * words. A run is one attempt at one ticket — not the ticket (which outlives
- * it) and not any tracker's session. The stages a tracker answers for live
- * to lives in `@aivi/plugin` (run-events); this file holds the shapes the
- * orchestrator itself records and hands out.
+ * The **run** domain: what a run is, in platform-neutral words, as both sides
+ * of the contract read it. A run is one attempt at one ticket — not the
+ * ticket (which outlives it) and not any tracker's session. The orchestrator
+ * records these shapes; a tracker renders them on its platform and never
+ * drives them. This is the vocabulary the host's engine and every module
+ * share — which is why it lives here, below both.
  *
  * Core words are `tracker` and `forge`, never a platform's name: Linear, Jira
  * and GitHub Issues all spell these differently on their own side, and nothing
  * here notices which one is speaking. The orchestrator knows tickets, lanes
  * and OpenCode — a conversation string is no orchestrator fact, and delivery
- * of anything to a platform is the follower's own business.
+ * of anything to a platform is the tracker's own business.
  */
 
 /**
@@ -34,19 +35,26 @@ export function isTerminal(state: RunState): boolean {
   return state === 'completed' || state === 'failed' || state === 'cancelled';
 }
 
-/** One question's options, in neutral words; a follower renders them its way
- *  (Linear shows its `select` signal, GitHub a numbered comment). */
+/**
+ * One question's options, in neutral words; a tracker renders them its way
+ * (Linear shows its `select` signal, GitHub a numbered comment). `label` is
+ * what the person sees; `value` is what an answer arrives as (they may also
+ * answer in free text — platforms that render options emit the chosen value
+ * as an ordinary message).
+ */
 export interface RunOption {
   label: string;
   value: string;
 }
 
 /**
- * A question the worker asked. `formId` is the OpenCode session form that
- * holds the durable copy: the worker created it through `ask`, it reads
- * `pending` until a human answers it, and it is the *discriminator* between
- * an answer and an interjection. The form is the record; this is the
- * rendering a follower shows.
+ * A question the worker asked — one shape, seen from both sides: the
+ * orchestrator records it, the tracker renders it. `formId` is the OpenCode
+ * session form that holds the durable copy: the worker created it through
+ * `ask`, it reads `pending` until a human answers it, and it is the
+ * *discriminator* between an answer and an interjection. The form is the
+ * record; this is the rendering a tracker shows, and a platform that reads
+ * only the text and options ignores `formId` without losing anything.
  */
 export interface RunQuestion {
   question: string;
@@ -57,7 +65,7 @@ export interface RunQuestion {
 /**
  * What the completion tool says the worker did, and the reason a run ends.
  * This is an application protocol, not an OpenCode type: the worker authored
- * it, the orchestrator parsed and validated it, and a follower decides how —
+ * it, the orchestrator parsed and validated it, and a tracker decides how —
  * and whether — to show it. `success` and `failure` are the worker's
  * knowledge; which lane each lands the ticket in is the orchestrator's lane
  * config, never the worker's report.
@@ -74,7 +82,7 @@ export type FailureCode = 'kill-unconfirmed';
 /**
  * A run as anyone outside the orchestrator may read it: enough to speak
  * about one, never enough to drive it. It names the ticket, not a tracker's
- * session — the follower holds that pair in its own store.
+ * session — the tracker holds that pair in its own store.
  */
 export interface RunView {
   readonly id: string;
@@ -89,10 +97,10 @@ export interface RunView {
   readonly worktree?: string;
   readonly outcome?: RunOutcome;
   /** The lane the lane order chose for a finished run's ticket: the
-   *  orchestrator's decision; performing the move is the follower's. Absent:
+   *  orchestrator's decision; performing the move is the tracker's. Absent:
    *  the ticket stays — a stop moves nothing, an unmapped lane goes silent. */
   readonly targetLane?: string;
-  /** When the run last changed: a follower's rendering watermark reads
+  /** When the run last changed: a tracker's rendering watermark reads
    *  endings through it, so nothing that arrived while aivi slept is
    *  missed and nothing already rendered is said twice. */
   readonly updatedAt: number;
@@ -114,9 +122,19 @@ export interface RunPlan {
 }
 
 /**
- * The run's lifecycle belongs to the **tracker stages**, declared where a
- * tracker author imports them: `@aivi/plugin` (work). The orchestrator
- * calls them in order and awaits only the lifecycle ones; there is no
- * event bus to subscribe to — a tracker that answers for a stage hears
- * it, one that does not loses nothing the orchestrator cares about.
+ * What work is asked of the orchestrator: one ticket, in a lane, worked by
+ * an agent in a directory, opened with the tracker's summary. The shape the
+ * walk builds when it claims a ticket; the door stays the walk's.
  */
+export interface WorkRequest {
+  projectId: string;
+  trackerId: string;
+  ticketId: string;
+  lane: string;
+  agent: string;
+  /** Where the worker works: the checkout this version; a worktree when a forge lands. */
+  directory: string;
+  /** The tracker's own summary of the ticket, composed into the worker's
+   *  first prompt with the orchestrator's contract around it. */
+  summary: string;
+}

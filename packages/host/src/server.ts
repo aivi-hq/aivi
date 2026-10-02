@@ -9,7 +9,8 @@ import { resolve } from 'node:path';
 import type { LoadedConfig, Logger } from '@aivi/core';
 import { configureLogging, isTty } from '@aivi/core';
 import { createKnowledgeService } from '@aivi/knowledge';
-import { type AiviModule, type HostResources, runHost } from './application.ts';
+import type { AiviModule } from '@aivi/plugin/module';
+import { type HostResources, runHost } from './application.ts';
 import { context, home, withStore } from './cli/context.ts';
 import { buildModules } from './cli/registry.ts';
 

@@ -1,8 +1,8 @@
-/** Linear's **tracker adapter**: the seam from `@aivi/plugin/tracker` spelled
- *  in Linear's words. It owns everything Linear-shaped below the neutral
- *  surface — the apps and their credentials, the webhook endpoints and their
- *  signatures, the GraphQL reads and mutations, the agent-session activity
- *  types — and translates at the border: platform events become
+/** Linear's **platform**: the `Platform` contract of `@aivi/plugin/tracker`
+ *  spelled in Linear's words. It owns everything Linear-shaped below the
+ *  neutral surface — the apps and their credentials, the webhook endpoints
+ *  and their signatures, the GraphQL reads and mutations, the agent-session
+ *  activity types — and translates at the border: platform events become
  *  `TrackerEvent`s, neutral updates become Linear mutations. The module's
  *  decision code imports **no** Linear types through this file; if it needs
  *  something Linear-shaped, the neutral contract grows (or the answer stays
@@ -13,15 +13,15 @@
  *  module never polled today, so the adapter does not pretend to.
  */
 import { getLogger, type Logger } from '@aivi/core';
-import { ConfigurationError, type PublicRoutes } from '@aivi/host';
+import { ConfigurationError } from '@aivi/host';
+import type { PublicRoutes } from '@aivi/plugin';
+import type { RunPlan, RunQuestion } from '@aivi/plugin/run';
 import type {
-  PlatformAdapter,
+  Platform,
   TrackerChange,
   TrackerCommentKind,
   TrackerEvent,
   TrackerIssue,
-  TrackerPlanStep,
-  TrackerQuestion,
   TrackerState,
   TrackerUpdate,
 } from '@aivi/plugin/tracker';
@@ -106,7 +106,7 @@ export function neutralIssue(issue: Awaited<ReturnType<LinearClient['issue']>>):
   };
 }
 
-export class LinearTracker implements PlatformAdapter {
+export class LinearPlatform implements Platform {
   readonly id = MODULE_ID;
 
   private readonly config: LinearConfig;
@@ -152,7 +152,7 @@ export class LinearTracker implements PlatformAdapter {
   }
 
   /** Learn who aivi is in each app's workspace; bad credentials are a setup
-   *  error the operator fixes, not a retry. `createLinearTracker` awaits
+   *  error the operator fixes, not a retry. `createLinearPlatform` awaits
    *  this; it is public so a caller may re-learn the identities. */
   async ready(): Promise<void> {
     for (const runtime of this.apps.values()) {
@@ -263,7 +263,7 @@ export class LinearTracker implements PlatformAdapter {
    * session waits in `awaitingInput` for as long as it takes: an elicitation
    * is not on any clock.
    */
-  async ask(conversation: string, question: TrackerQuestion): Promise<void> {
+  async ask(conversation: string, question: RunQuestion): Promise<void> {
     await this.of(conversation).client.createActivity({
       agentSessionId: this.sessionOf(conversation),
       content: { type: 'elicitation', body: question.question },
@@ -274,8 +274,8 @@ export class LinearTracker implements PlatformAdapter {
   /** Linear's way with a plan: replace the agent session's plan wholesale —
    *  the same words Linear's own API uses for it, statuses and all
    *  (docs/agent-interaction, Agent Plans). */
-  async plan(conversation: string, steps: TrackerPlanStep[]): Promise<void> {
-    await this.of(conversation).client.setPlan(this.sessionOf(conversation), steps);
+  async plan(conversation: string, plan: RunPlan): Promise<void> {
+    await this.of(conversation).client.setPlan(this.sessionOf(conversation), plan.steps);
   }
 
   /** Linear's word for "the result was shown": the response activity that
@@ -379,13 +379,13 @@ export class LinearTracker implements PlatformAdapter {
  *  identities are learned before it comes back — a tracker from here is
  *  ready to speak. Route registration stays with `events`, which the module
  *  calls once its own handlers exist. */
-export async function createLinearTracker(
+export async function createLinearPlatform(
   config: LinearConfig,
   routes: PublicRoutes,
   clients?: Map<string, LinearClient>,
   log?: Logger,
-): Promise<LinearTracker> {
-  const tracker = new LinearTracker(config, routes, clients, log);
+): Promise<LinearPlatform> {
+  const tracker = new LinearPlatform(config, routes, clients, log);
   await tracker.ready();
   return tracker;
 }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import type { ChannelPlatform } from '../src/channel/contract.ts';
+import type { ChannelPlatform } from '@aivi/plugin/channel';
 import { createTurnRunner, messageIdFor } from '../src/channel/turns.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { TurnNotStarted } from '../src/session.ts';

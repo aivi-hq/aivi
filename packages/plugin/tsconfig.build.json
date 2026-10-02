@@ -5,10 +5,7 @@
     "rootDir": "src",
     "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo"
   },
-  "//": "The kit is a leaf: it type-imports the runtime names its contracts speak (Store, ConversationStore) from the host, and nothing imports the kit back into the host engine — the host's command surface does, which keeps the reference graph acyclic.",
+  "//": "The kit is the floor: it depends on core (and on the OpenCode client it names for plugins) and on nothing above it. The host references the kit and imports its contracts from it — the direction the contracts were always meant to point.",
   "include": ["src"],
-  "references": [
-    { "path": "../core/tsconfig.build.json" },
-    { "path": "../host/tsconfig.build.json" }
-  ]
+  "references": [{ "path": "../core/tsconfig.build.json" }]
 }

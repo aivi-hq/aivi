@@ -1,6 +1,7 @@
-import type { OpenCodeClient } from '../opencode.ts';
+import type { ModelRef } from '@aivi/plugin/channel';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import { agentModel } from '../session.ts';
-import type { ConversationStore, ModelRef } from './store.ts';
+import type { ConversationStore } from './store.ts';
 
 type CatalogueModel = Awaited<ReturnType<OpenCodeClient['model']['list']>>['data'][number];
 /** One thing a person can pick: a catalogue model, or one of its variants. */

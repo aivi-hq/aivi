@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema, jobSchema } from '@aivi/core';
-import type { AiviModule, HostResources } from '../src/application.ts';
+import type { AiviModule } from '@aivi/plugin/module';
+import type { HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
 import { ConfigurationError } from '../src/modules.ts';
 import { createExecutor } from '../src/runtime.ts';

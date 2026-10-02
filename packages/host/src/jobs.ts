@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { Job, JobItem, JobRequest, JobResponse, LoadedConfig, Report } from '@aivi/core';
+import type { Job, JobEntry, JobItem, JobRequest, JobResponse, LoadedConfig, Report } from '@aivi/core';
 import { formatInstant, jobSchema, nextOccurrences, parseDue, userTaskSchema } from '@aivi/core';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import type { Channels } from './channel/router.ts';
-import type { OpenCodeClient } from './opencode.ts';
 import { SESSION_DESTINATION } from './reports.ts';
-import type { JobEntry, Store } from './store.ts';
+import type { Store } from './store.ts';
 
 /** A request the host will not carry out; the message is meant for the agent to relay. */
 export class JobRefused extends Error {

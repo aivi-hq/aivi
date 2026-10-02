@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import type { LoadedConfig } from '@aivi/core';
-import type { OpenCodeClient } from '../opencode.ts';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import type { ConversationStore } from './store.ts';
 
 const n = (value: number) => value.toLocaleString('en');

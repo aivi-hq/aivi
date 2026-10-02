@@ -6,6 +6,8 @@
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
     "./api": { "development": "./src/api.ts", "default": "./dist/api.js" },
     "./channel": { "development": "./src/channel.ts", "default": "./dist/channel.js" },
+    "./module": { "development": "./src/module.ts", "default": "./dist/module.js" },
+    "./run": { "development": "./src/run.ts", "default": "./dist/run.js" },
     "./tracker": { "development": "./src/tracker.ts", "default": "./dist/tracker.js" },
     "./forge": { "development": "./src/forge.ts", "default": "./dist/forge.js" }
   },
@@ -29,6 +31,8 @@
   },
   "dependencies": {
     "@aivi/core": "^0.7.1",
+    "@clack/prompts": "1.8.1",
+    "@opencode/client": "2.0.18",
     "zod": "4.1.13"
   },
   "devDependencies": {

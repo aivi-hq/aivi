@@ -33,19 +33,13 @@ import {
 } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
-import type {
-  PlatformAdapter,
-  TrackerChange,
-  TrackerCommentKind,
-  TrackerEvent,
-  TrackerIssue,
-} from '@aivi/plugin/tracker';
+import type { Platform, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
 import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
 import { RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue } from './projects.ts';
-import { createLinearTracker, LinearTracker } from './tracker.ts';
+import { createLinearPlatform, LinearPlatform } from './tracker.ts';
 import type { LinearBoard } from './work.ts';
 import { issueDossier, linearBoard } from './work.ts';
 
@@ -92,7 +86,7 @@ export function openLinearStore(store: Store): ConversationStore {
 
 /** Where the module's tracker comes from: Linear's adapter by default, a
  *  fake tracker in a test of the decisions below. */
-type MakeTracker = (services: AiviServices) => Promise<PlatformAdapter>;
+type MakeTracker = (services: AiviServices) => Promise<Platform>;
 
 /**
  * The module, built on a tracker. What lives here is routing and Linear's
@@ -112,7 +106,7 @@ export function createLinearModule(config: LinearConfig, makeTracker?: MakeTrack
       startLinear(
         config,
         services,
-        makeTracker ?? (({ routes, log }) => createLinearTracker(config, routes, undefined, log.getChild(MODULE_ID))),
+        makeTracker ?? (({ routes, log }) => createLinearPlatform(config, routes, undefined, log.getChild(MODULE_ID))),
         makeBoard ?? (s => linearBoard(config, s, s.log.getChild(MODULE_ID))),
       ),
   };
@@ -364,7 +358,7 @@ async function startLinear(
         await tracker.ask(conversationOf(run), question);
       },
       plan: async (run, plan) => {
-        await tracker.plan(conversationOf(run), plan.steps);
+        await tracker.plan(conversationOf(run), plan);
       },
       endWork: async run => {
         if (closings.has(run.id)) return; // the stage and the boot pass may race for one run

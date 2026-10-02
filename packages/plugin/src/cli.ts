@@ -11,8 +11,9 @@
  */
 
 import type { LoadedConfig, OutputBlock } from '@aivi/core';
-import type { ConversationStore, Store } from '@aivi/host';
 import type * as prompts from '@clack/prompts';
+import type { ConversationStore } from './channel.ts';
+import type { Store } from './module.ts';
 
 /** What the machine this CLI runs on *is*: the one fact that decides command
  *  membership. `home` is the aivi home this machine has, or absent when it has

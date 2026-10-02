@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import type { ChannelPlatform } from '../src/channel/contract.ts';
+import type { ChannelPlatform } from '@aivi/plugin/channel';
 import { ChannelEngine, STOPPED_NOTICE, STOPPED_REASON, splitReply } from '../src/channel/engine.ts';
 import { ConversationStore } from '../src/channel/store.ts';
 import { TurnNotStarted } from '../src/session.ts';

@@ -1,15 +1,5 @@
-import type { Run } from '@aivi/core';
+import type { TaskClaims, TaskHandler } from '@aivi/plugin/module';
 import { ConfigurationError } from './modules.ts';
-import type { ExecutionContext, ExecutionResult } from './scheduler.ts';
-
-/** Executes one run of one operation; what `kind: 'invocation'` tasks dispatch to. */
-export type TaskHandler = (run: Run, context: ExecutionContext) => Promise<ExecutionResult>;
-
-/** The task door as one module sees it: claims carry the module's own id. */
-export interface TaskClaims {
-  claim(name: string, handler: TaskHandler): void;
-  release(name: string): void;
-}
 
 /**
  * The operations the host schedules but somebody else executes: the host's

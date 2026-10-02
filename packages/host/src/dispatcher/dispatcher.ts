@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { type Config, errorMessage, getLogger, type Logger, parseDuration } from '@aivi/core';
-import type { OpenCodeClient } from '../opencode.ts';
-import type { FailureCode } from '../orchestrator/vocabulary.ts';
+import type { OpenCodeClient } from '@aivi/plugin/module';
+import type { FailureCode } from '@aivi/plugin/run';
 import { agentModel, type NativeModel } from '../session.ts';
 import { type DispatcherLease, type LeaseStore, UNLIMITED } from './leases.ts';
 

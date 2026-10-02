@@ -1,7 +1,6 @@
 import type { Logger } from '@aivi/core';
 import { errorMessage, getLogger } from '@aivi/core';
-import type { SessionEvents } from './events.ts';
-import type { OpenCodeClient } from './opencode.ts';
+import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 
 export type NativeMessages = Awaited<ReturnType<OpenCodeClient['session']['context']>>;
 export type PermissionRule = { action: string; resource: string; effect: 'allow' | 'deny' | 'ask' };

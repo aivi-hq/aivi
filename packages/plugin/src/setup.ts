@@ -7,8 +7,8 @@
  */
 
 import type { OutputBlock } from '@aivi/core';
-import type { Store } from '@aivi/host';
 import type * as prompts from '@clack/prompts';
+import type { Store } from './module.ts';
 
 /** A prompt the person cancelled; the runner says it stopped and writes nothing further. */
 export class PluginSetupCancelled extends Error {}

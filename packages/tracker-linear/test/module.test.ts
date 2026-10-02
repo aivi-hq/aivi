@@ -33,14 +33,13 @@ import {
 } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
 import type { ChannelDelivery } from '@aivi/plugin/channel';
+import type { RunPlan, RunPlanStep, RunQuestion } from '@aivi/plugin/run';
 import type {
-  PlatformAdapter,
+  Platform,
   TrackerChange,
   TrackerCommentKind,
   TrackerEvent,
   TrackerIssue,
-  TrackerPlanStep,
-  TrackerQuestion,
   TrackerUpdate,
 } from '@aivi/plugin/tracker';
 import type { LinearConfig } from '../src/config.ts';
@@ -186,7 +185,7 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
  * Linear's `endedAt` does), and a `move` updates the issue's state (so a
  * catch-up that already landed says nothing twice).
  */
-class FakeTracker implements PlatformAdapter {
+class FakeTracker implements Platform {
   readonly id = 'linear';
   comments: { conversation: string; text: string; kind: TrackerCommentKind }[] = [];
   /** The app ids the module was configured with; conversations carry them. */
@@ -274,13 +273,13 @@ class FakeTracker implements PlatformAdapter {
     this.closingNotes.push({ conversation, issueId, text });
   }
   /** Questions the follower rendered from the run's `question` events. */
-  asks: { conversation: string; question: TrackerQuestion }[] = [];
-  async ask(conversation: string, question: TrackerQuestion): Promise<void> {
+  asks: { conversation: string; question: RunQuestion }[] = [];
+  async ask(conversation: string, question: RunQuestion): Promise<void> {
     this.asks.push({ conversation, question });
   }
-  plans: { conversation: string; steps: TrackerPlanStep[] }[] = [];
-  async plan(conversation: string, steps: TrackerPlanStep[]): Promise<void> {
-    this.plans.push({ conversation, steps });
+  plans: { conversation: string; steps: RunPlanStep[] }[] = [];
+  async plan(conversation: string, plan: RunPlan): Promise<void> {
+    this.plans.push({ conversation, steps: plan.steps });
   }
   async apply(conversation: string, issueId: string, update: TrackerUpdate): Promise<void> {
     this.moves.push({ conversation, issueId, update });
@@ -512,7 +511,7 @@ test('a walk-picked run runs the lane agent; plan, question, answer and interjec
     await running.stop();
     store.close();
   });
-  const orchestrator = services.orchestrator;
+  const orchestrator = services.orchestrator as Orchestrator; // the test drives the tool handlers directly
   const links = new RunLinks(store);
 
   const started = (conversation: string, issueId: string) =>
@@ -770,7 +769,10 @@ test('a worked lane runs its agent in the project checkout; the ending without a
   );
   // The only lane of the array: success has nowhere configured to go and the
   // next-lane default names none — the ticket stays, unconfigured is silent.
-  await services.orchestrator.completeTool({ sessionId: worker, input: { outcome: 'success', summary: 'A report.' } });
+  await (services.orchestrator as Orchestrator).completeTool({
+    sessionId: worker,
+    input: { outcome: 'success', summary: 'A report.' },
+  });
   await until(
     () => tracker.ofKind('answer').some(c => c.text === 'A report.') && tracker.delegated.at(-1)?.[1] === null,
     'the result was posted and the delegate un-taken',
@@ -835,7 +837,7 @@ test('a lane move is a wake: the walk starts the ticket it finds, a stop ends th
     await running.stop();
     store.close();
   });
-  const orchestrator = services.orchestrator;
+  const orchestrator = services.orchestrator as Orchestrator; // the test drives the tool handlers directly
   const updated = async (changed: TrackerChange[]) => {
     await tracker.drive({ kind: 'updated', conversation: 'dev', issueId: 'api-7', changed });
   };
@@ -945,7 +947,10 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
   // 2026-10-02: the operator must be informed): the help label rides the
   // ticket, while the ticket still moves and the lease still returns.
   first.closingDown = true;
-  await services.orchestrator.completeTool({ sessionId: worker, input: { outcome: 'success', summary: 'It ships.' } });
+  await (services.orchestrator as Orchestrator).completeTool({
+    sessionId: worker,
+    input: { outcome: 'success', summary: 'It ships.' },
+  });
   await until(() => board.moves.length === 1, 'the move lands even though the closing failed');
   assert.equal(first.ofKind('answer').length, 0, 'the closing words did not land');
   assert.deepEqual(
@@ -1050,7 +1055,7 @@ async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
-  return { tracker, config, store, services, board, opencode, orchestrator: services.orchestrator };
+  return { tracker, config, store, services, board, opencode, orchestrator: services.orchestrator as Orchestrator };
 }
 
 test('a picked-up run’s ending is said in the session its own delegation opened, and a stop releases the ticket', async t => {
@@ -1192,7 +1197,7 @@ test('a full pool says nothing on the board, and walks in when the slot opens �
     await running.stop();
     store.close();
   });
-  const orchestrator = services.orchestrator;
+  const orchestrator = services.orchestrator as Orchestrator; // the test drives the tool handlers directly
   const links = new RunLinks(store);
 
   // The walk takes eng-1; eng-2 finds the pool full and **nothing appears

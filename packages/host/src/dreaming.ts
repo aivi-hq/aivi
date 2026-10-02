@@ -3,8 +3,7 @@ import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/pro
 import { join, relative } from 'node:path';
 import type { DreamingArgs, Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
-import type { SessionEvents } from './events.ts';
-import type { OpenCodeClient } from './opencode.ts';
+import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 import { runTurn, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
 

@@ -1,40 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { Config } from '@aivi/core';
-import type { Store } from '../store.ts';
-import type { ChannelPlatform } from './contract.ts';
+import type {
+  ChannelPlatform,
+  ConversationStore as ConversationStoreApi,
+  ModelRef,
+  Turn,
+  TurnKind,
+  TurnState,
+} from '@aivi/plugin/channel';
+import type { Store } from '@aivi/plugin/module';
 
-export interface Turn {
-  id: string;
-  channel: string;
-  user: string;
-  name: string;
-  text: string;
-  session: string;
-  ready: boolean;
-  state: TurnState;
-  result: string | null;
-  error: string | null;
-  /** `message`: a person wrote it. `job`: aivi brings a job's outcome back into the conversation. */
-  kind: TurnKind;
-  /** Set when the conversation adopted a job's session: that session runs this agent in this directory, not the module's. */
-  agent: string | null;
-  directory: string | null;
-  /** Text posted in the conversation before any session existed (a script's output); context for the first turn. */
-  seed: string | null;
-  /** The conversation's model override (`/model`), applied to the session before each prompt; null means the agent's default. */
-  model: ModelRef | null;
-  /** Set by `bind` for workers: one turn at a time per issue across the module's conversations. */
-  project: string | null;
-  issue: string | null;
-}
-export type TurnState = 'queued' | 'running' | 'replying' | 'sent' | 'blocked' | 'discarded';
-export type TurnKind = 'message' | 'job';
-/** A catalogue model as OpenCode names it, with an optional variant (`high`, `max`). */
-export interface ModelRef {
-  providerID: string;
-  modelID: string;
-  variant?: string;
-}
 type Row = Record<string, unknown>;
 const modelRef = (value: unknown): ModelRef | null => {
   if (value == null) return null;
@@ -123,7 +98,7 @@ const migrations = (n: ReturnType<typeof namesFor>, id: string) => [
  * with scheduled jobs through host resource leases; a turn's claim and its
  * lease are one transaction.
  */
-export class ConversationStore {
+export class ConversationStore implements ConversationStoreApi {
   readonly core: Store;
   readonly platform: ChannelPlatform;
   private readonly n: ReturnType<typeof namesFor>;

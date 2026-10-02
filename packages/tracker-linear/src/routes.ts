@@ -1,6 +1,6 @@
 import type { Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
-import type { PublicRequest, PublicRoutes } from '@aivi/host';
+import type { PublicRequest, PublicRoutes } from '@aivi/plugin';
 import { MODULE_ID } from './config.ts';
 import { type LinearWebhook, verifyWebhook } from './webhook.ts';
 

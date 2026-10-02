@@ -1,19 +1,8 @@
 import { setTimeout } from 'node:timers/promises';
 import type { Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
+import type { OpenCodeClient, SessionEvent, SessionEventListener, SessionEvents } from '@aivi/plugin/module';
 import type { RetryPolicy } from './modules.ts';
-import type { OpenCodeClient } from './opencode.ts';
-
-/** The shape every OpenCode event shares; session events carry `data.sessionID`. */
-export interface SessionEvent {
-  type: string;
-  data?: { sessionID?: string } & Record<string, unknown>;
-}
-export type SessionEventListener = (event: SessionEvent) => void;
-export interface SessionEvents {
-  /** Receive this session's events until the returned function is called. */
-  watch(sessionID: string, listener: SessionEventListener): () => void;
-}
 
 export const EVENTS_RETRY: RetryPolicy = { baseMs: 1000, maxMs: 30_000 };
 

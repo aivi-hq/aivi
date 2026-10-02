@@ -9,7 +9,7 @@ import type { TrackerEvent } from '@aivi/plugin/tracker';
 import { type AgentActivityInput, LinearClient, type LinearIssue } from '../src/client.ts';
 import { linearSchema } from '../src/config.ts';
 import { appWebhookPath } from '../src/routes.ts';
-import { createLinearTracker } from '../src/tracker.ts';
+import { createLinearPlatform } from '../src/tracker.ts';
 import { signWebhook } from '../src/webhook.ts';
 
 /** Linear as the adapter sees it: records activities and delegate
@@ -130,7 +130,7 @@ async function wired(t: { after(fn: () => Promise<void>): void }, apps = ['dev',
   process.env.LINEAR_FACE_WEBHOOK_SECRET = 'whsec-face';
   const routes = new PublicRoutes();
   const client = new FakeLinear();
-  const tracker = await createLinearTracker(
+  const tracker = await createLinearPlatform(
     linearSchema.parse({ primary: 'dev', apps: Object.fromEntries(apps.map(a => [a, {}])) }),
     routes,
     new Map(apps.map(a => [a, client])),

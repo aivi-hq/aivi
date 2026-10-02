@@ -1,21 +1,96 @@
 /**
- * The **platform adapter** contract: the seam between a tracker module and
- * its ticket platform. A tracker owns tickets — lanes, delegation, what
- * people write on them. The adapter translates in both directions and
- * speaks its platform's voice:
- * it turns the platform's events into the neutral ones below, aivi's neutral
- * updates into the platform's mutations, and it is **required** to render a
- * worker's question and a run's outcome the way its platform shows them
- * (`ask`, and the answer/outcome kinds of `comment`) — the host's orchestrator
- * owns the run itself: its durable record, its session, the two worker tools
- * and the rule that only a tool call ends it. All of that machinery spells
- * `tracker` — never `linear` or any other name.
+ * The **tracker** contract, in the two seams a tracker module lives between.
  *
- * Types only — the machinery consuming them ships in the host. The exact
- * member set is **provisional by design** ([orchestrator.md](../../docs/plans/templates/orchestrator.md)):
- * more trackers will move it, and every entry earns its place with a
- * second tracker's need.
+ * `Tracker` is the seam between the host's orchestrator and the module: the
+ * **stages** a run is walked through, keyed by the run. The orchestrator
+ * walks them in order and awaits only the lifecycle ones; it never learns
+ * what a ticket platform is. `Platform` is the seam between the module and
+ * its ticket platform: the conversation-keyed translator that turns the
+ * platform's events into neutral ones and aivi's neutral updates into the
+ * platform's mutations. A module registers one `Tracker` with the
+ * orchestrator and speaks its `Platform` to whomever on its platform; the
+ * stages that render are usually one-line forwards — the division is honest,
+ * not duplicated.
+ *
+ * The words here are platform-neutral by design: roughly seven trackers will
+ * move this contract, and every entry earns its place with a second
+ * tracker's need. The run shapes the stages carry are the shared run domain
+ * (`./run.ts`); the ticket shapes here are what the tracker reports and the
+ * orchestrator routes.
  */
+
+import type { RunPlan, RunQuestion, RunView } from './run.ts';
+
+/**
+ * The work a tracker answers for: the **stages** the orchestrator walks a
+ * run through, and the board it walks for work. Division of labour, said as
+ * an interface: the orchestrator orchestrates and never learns what a ticket
+ * platform is; the tracker tracks and answers for its platform alone. A
+ * tracker module registers ONE of these at start; the orchestrator calls the
+ * stages in the documented order and awaits only the lifecycle ones
+ * (`initWork`, `endWork`): their failure is the run's failure, said visibly.
+ * The renders (`ready`, `startWork`, `question`, `plan`) are fire-and-forget
+ * — a platform that cannot show a thing loses nothing the orchestrator cares
+ * about, and a tracker retries its own renders in its own time. The order is
+ * owned by `docs/orchestrator.md` ("The tracker's stages").
+ *
+ * `initWork` is where a tracker does whatever its platform needs to open a
+ * ticket to work — Linear delegates the issue to its own app and Linear's
+ * answer carries the new agent session — and it hands back the ticket's
+ * **summary**: the words the worker is started with, composed around the
+ * directory and the lane by the orchestrator, which never reads a ticket
+ * itself. A tracker that needs nothing answers with the ticket's text alone.
+ */
+export interface Tracker {
+  /** The module id this tracker speaks for (`tracker-linear`): the key
+   *  the orchestrator records claims and queue places under. */
+  readonly id: string;
+
+  /** The projects this tracker speaks for, by core id: what a walk
+   *  visits. */
+  projects(): string[];
+  /** Tickets sitting in a lane, in the board's own top-to-bottom order.
+   *  `blocked` says a person's move is awaited, whatever the platform
+   *  calls it; blocked tickets wait and are never claimed. */
+  tickets(projectId: string, lane: string): Promise<{ id: string; blocked: boolean }[]>;
+  /** Move a ticket into a lane: the queue pickup says it before the
+   *  worker starts, an ending moves the ticket where the lane order put
+   *  it. The orchestrator's decision; the tracker performs it. */
+  moveTo(projectId: string, ticketId: string, lane: string): Promise<void>;
+
+  /** The dispatcher's slot is in hand and the run is claimed: open the
+   *  ticket to work on the platform and return its summary. Linear's
+   *  delegate mutation creates the agent session and its answer serves
+   *  as the summary; the tracker stores the pair and may already post a
+   *  first word ("preparing the workspace"). Failure fails the run —
+   *  visibly, and the slot goes back. AWAITED. */
+  initWork(run: RunView): Promise<string>;
+  /** The worker's session exists and its work environment is ready:
+   *  where a tracker attaches the run to the pair it opened at
+   *  `initWork`. A render. */
+  ready(run: RunView): void | Promise<void>;
+  /** The task went into the session and work is turning. Optional: a
+   *  platform whose session already shows life (Linear watches its own
+   *  agent sessions) says nothing here. */
+  startWork?(run: RunView): void | Promise<void>;
+  /** The worker asked a person a question and parked. **Required of
+   *  every tracker**: the OpenCode form is the durable record of the
+   *  wait, but only the tracker knows what a question looks like on its
+   *  platform. A render. */
+  question(run: RunView, question: RunQuestion): void | Promise<void>;
+  /** The worker's working plan, whole as it stands. Optional: a platform
+   *  without a plan surface drops it. A render. */
+  plan?(run: RunView, plan: RunPlan): void | Promise<void>;
+  /** The run ended: say so where people read — the closing words in the
+   *  shape the platform gives endings (Linear responds its agent
+   *  session, which ends it). The move to the next lane is the
+   *  orchestrator's and happens after this returns; the lease returns
+   *  last. A permanent failure here does not hold the ticket: the
+   *  ending failed is said and the person is asked for help (a tracker
+   *  marks its ticket for a human, in its platform's words), while the
+   *  closing stays owed to the tracker's own retries. AWAITED. */
+  endWork(run: RunView): Promise<void>;
+}
 
 /** One workflow state of a team, as the platform holds it. `type` is the
  *  platform's own flavor word — Linear's `completed`/`canceled` are finished
@@ -89,26 +164,6 @@ export type TrackerCommentKind =
   /** A terminal outcome: finished, stopped, or refused. */
   | 'outcome';
 
-/**
- * A worker's question to a person, in neutral words: the text, and the
- * options when there are clear choices. `label` is what the person sees;
- * `value` is what an answer arrives as (they may also answer in free text —
- * platforms that render options, like Linear's `select` signal, emit the
- * chosen value as an ordinary message).
- */
-export interface TrackerQuestion {
-  question: string;
-  options?: { label: string; value: string }[];
-}
-
-/** One step of a worker's plan: what it will do, and where it stands.
- *  The four statuses are the neutral words; a platform with its own
- *  vocabulary (Linear's `inProgress`) maps them in the adapter. */
-export interface TrackerPlanStep {
-  content: string;
-  status: 'pending' | 'inProgress' | 'completed' | 'canceled';
-}
-
 /** What the machinery asks of the platform, in neutral words. The adapter
  *  translates and performs; *when* to act stays the machinery's decision. */
 export type TrackerUpdate =
@@ -120,12 +175,23 @@ export type TrackerUpdate =
   | { kind: 'comment'; text: string };
 
 /**
- * The tracker's *conversation*: one working session on a ticket — a
- * worker's or the assistant's. The id is the adapter's own string (Linear
- * namespaces its app's agent sessions); the machinery only carries it, and
- * binds it to agents, projects and issues in its own store.
+ * The tracker's **platform**: the ticket system behind a tracker module —
+ * Linear, Jira, GitHub Issues — seen as the conversation-keyed translator it
+ * is. A tracker owns tickets — lanes, delegation, what people write on them;
+ * the platform speaks its platform's voice: it turns the platform's events
+ * into the neutral ones above, aivi's neutral updates into the platform's
+ * mutations, and it is **required** to render a worker's question and a run's
+ * outcome the way its platform shows them (`ask`, and the answer/outcome
+ * kinds of `comment`) — the host's orchestrator owns the run itself: its
+ * durable record, its session, the two worker tools and the rule that only a
+ * tool call ends it. Channels use platforms, forges use platforms, and this
+ * is the same word for the same thing: the system aivi talks to over an API.
+ *
+ * The machinery consuming this ships in the host. The exact member set is
+ * **provisional by design**: roughly seven trackers will move it, and every
+ * entry earns its place with a second tracker's need.
  */
-export interface PlatformAdapter {
+export interface Platform {
   /** The module id this tracker speaks for (`tracker-linear`). */
   readonly id: string;
   /** The team's workflow states as the platform holds them, so a proposed
@@ -188,23 +254,24 @@ export interface PlatformAdapter {
    *  a note already standing must never be posted twice. */
   closingNote?(conversation: string, issueId: string, text: string): Promise<void>;
   /**
-   * Put a worker's question to the people, in the platform's own shape.
-   * **Required of every tracker** (ruled 2026-09-30): the orchestrator records
-   * the question and does nothing else with it — only the adapter knows what a
-   * question looks like on its platform (Linear renders an elicitation activity,
-   * with its `select` signal when there are options; GitHub Issues would post a
-   * numbered comment). The answer arrives as an ordinary message event; the
-   * open OpenCode form is the discriminator, read from OpenCode, never a
-   * guess from texts.
+   * Put a worker's question to the people, in the platform's own shape —
+   * the same `RunQuestion` the orchestrator recorded, rendered here.
+   * **Required of every tracker** (ruled 2026-09-30): the orchestrator
+   * records the question and does nothing else with it — only the adapter
+   * knows what a question looks like on its platform (Linear renders an
+   * elicitation activity, with its `select` signal when there are options;
+   * GitHub Issues would post a numbered comment). The answer arrives as an
+   * ordinary message event; the open OpenCode form is the discriminator,
+   * read from OpenCode, never a guess from texts.
    */
-  ask(conversation: string, question: TrackerQuestion): Promise<void>;
+  ask(conversation: string, question: RunQuestion): Promise<void>;
   /**
    * Show the worker's working plan — the whole checklist, as it now stands.
    * A forwarding like the orchestrator's own: the tracker renders it in its
    * platform's shape (Linear replaces the session's agent plan wholesale)
    * and nothing about a run waits on its delivery.
    */
-  plan(conversation: string, steps: TrackerPlanStep[]): Promise<void>;
+  plan(conversation: string, plan: RunPlan): Promise<void>;
   /** Subscribe to the normalized events. The adapter owns the platform's
    *  whole inbound surface — endpoints, signatures, acknowledgements;
    *  registration happens at module start. Returns the unsubscribe. */

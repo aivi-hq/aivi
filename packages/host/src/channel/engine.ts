@@ -1,9 +1,9 @@
 import type { Config, Logger } from '@aivi/core';
 import { errorMessage, getLogger } from '@aivi/core';
+import type { ChannelDelivery, EngineNotices, Turn } from '@aivi/plugin/channel';
 import { TurnNotStarted } from '../session.ts';
-import type { ChannelDelivery, EngineNotices } from './contract.ts';
 import { type ProgressOptions, ProgressReporter } from './reporter.ts';
-import type { ConversationStore, Turn } from './store.ts';
+import type { ConversationStore } from './store.ts';
 
 /** Split on code points so surrogate pairs survive; the limit counts UTF-16 units like the platforms do. */
 export function splitReply(text: string, limit: number): string[] {

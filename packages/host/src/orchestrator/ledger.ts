@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import type { RunOutcome, RunState, RunView } from '@aivi/plugin/run';
 import type { Store } from '../store.ts';
-import type { RunOutcome, RunState, RunView } from './vocabulary.ts';
 
 /**
  * The durable record of every run: ticket ↔ OpenCode session ↔ state. This
