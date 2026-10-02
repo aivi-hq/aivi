@@ -28,8 +28,11 @@ export const ATTRIBUTION_PLUGIN = 'opencode-attribution';
 const CLIENT_PLUGINS = [AIVI_PLUGIN, ATTRIBUTION_PLUGIN];
 
 /** The OpenCode shape of a server home: the service `aivi serve` runs loads
- *  these from the home. A file that exists is never overwritten. */
-const HOME_AGENTS = ['assistant.md', 'dreamer.md'];
+ *  these from the home. A file that exists is never overwritten. The three
+ *  lane workers are the template's strong defaults (docs/plans/templates/
+ *  scaffolding.md): written once, then plain files — editing them is the
+ *  whole configuration, deleting them is the only uninstall. */
+const HOME_AGENTS = ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md'];
 
 const SCRIPT_FORM =
   'setup needs an interactive terminal; in a script use: aivi setup --use this-machine|another --name TEXT, or aivi setup --connect --url URL --token TOKEN';

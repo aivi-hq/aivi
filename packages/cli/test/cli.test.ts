@@ -175,7 +175,7 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
   assert.deepEqual(calls.identity, [[{ use: 'this-machine', name: 'Ada' }]]);
   const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
   assert.match(jsonc, /"@aivi\/opencode@9\.9\.9"/);
-  for (const agent of ['assistant.md', 'dreamer.md'])
+  for (const agent of ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md'])
     assert.equal(existsSync(join(home, '.opencode', 'agents', agent)), true, agent);
   const assistant = readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8');
   assert.match(
@@ -183,6 +183,10 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
     /you do not perform\nproject work/,
     'the do-not-do-the-work rule lives in the agent file, not in module code',
   );
+  const dev = readFileSync(join(home, '.opencode', 'agents', 'dev.md'), 'utf8');
+  assert.match(dev, /both use aivi_respond_feedback/, 'the returning-work posture line ships with the worker');
+  const review = readFileSync(join(home, '.opencode', 'agents', 'review.md'), 'utf8');
+  assert.match(review, /Request changes for problems\.\s+Comments for nits\./, 'the review posture ships');
   const record = loadClientConfig()!;
   assert.equal(record.home, home);
   assert.equal(record.appDir, join(home, 'app'));
@@ -362,6 +366,8 @@ test('seeding the home keeps what exists and fills only the gaps', () => {
   assert.equal(readFileSync(join(home, 'opencode.jsonc'), 'utf8'), '{"kept":true}');
   assert.equal(readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8'), 'custom');
   assert.equal(existsSync(join(home, '.opencode', 'agents', 'dreamer.md')), true, 'missing agents are added');
+  for (const worker of ['product.md', 'dev.md', 'review.md'])
+    assert.equal(existsSync(join(home, '.opencode', 'agents', worker)), true, `${worker} is added too`);
 });
 
 /** A fake installed server: an ESM `dist/cli.js` the CLI can import. */
