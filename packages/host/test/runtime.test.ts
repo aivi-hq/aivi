@@ -3,6 +3,7 @@ import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema, taskSchema } from '@aivi/core';
+import { Forges } from '../src/forges.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
@@ -101,7 +102,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
       },
-      { store, events: quiet, opencode, tasks: new TaskRegistry() },
+      { store, events: quiet, opencode, tasks: new TaskRegistry(), forges: new Forges() },
     ),
   );
   scheduler.tick();
@@ -142,7 +143,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
       },
-      { store, events: quiet, opencode, tasks: new TaskRegistry() },
+      { store, events: quiet, opencode, tasks: new TaskRegistry(), forges: new Forges() },
     ),
   );
   scheduler.tick();
@@ -188,7 +189,13 @@ test('a turn that times out while session.wait is pending reports the timeout, n
       projects: [],
       sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
     },
-    { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}), tasks: new TaskRegistry() },
+    {
+      store,
+      events: quiet,
+      opencode: () => connectOpenCode(config.opencode, {}),
+      tasks: new TaskRegistry(),
+      forges: new Forges(),
+    },
   );
   // Below the schema minimum on purpose: the executor is called directly to keep the test fast.
   assert.equal(job.task.kind, 'prompt');
@@ -230,7 +237,13 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
       },
-      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}), tasks: new TaskRegistry() },
+      {
+        store,
+        events: quiet,
+        opencode: () => connectOpenCode(config.opencode, {}),
+        tasks: new TaskRegistry(),
+        forges: new Forges(),
+      },
     ),
   );
   scheduler.tick();
@@ -276,7 +289,13 @@ test('a dreaming job persists its session id before the first request and blocks
         projects: [],
         sources: [{ id: 'memory', path: '/lib', kind: 'memory' as const, scope: 'core' as const }],
       },
-      { store, events: quiet, opencode: () => connectOpenCode(config.opencode, {}), tasks: new TaskRegistry() },
+      {
+        store,
+        events: quiet,
+        opencode: () => connectOpenCode(config.opencode, {}),
+        tasks: new TaskRegistry(),
+        forges: new Forges(),
+      },
     ),
   );
   scheduler.tick();
@@ -318,7 +337,7 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   const scheduler = new Scheduler(
     store,
     { ...config.scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
-    createExecutor(loaded, { store, events: quiet, opencode, tasks: new TaskRegistry() }),
+    createExecutor(loaded, { store, events: quiet, opencode, tasks: new TaskRegistry(), forges: new Forges() }),
   );
   scheduler.tick();
   await scheduler.drain();
@@ -380,6 +399,7 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
         store,
         events: quiet,
         tasks: new TaskRegistry(),
+        forges: new Forges(),
         protectedEnv: ['FROM_DOTENV'],
         opencode: async () => {
           throw new Error('x');
@@ -425,6 +445,7 @@ test('a command that cannot start fails instead of blocking capacity', async t =
         store,
         events: quiet,
         tasks: new TaskRegistry(),
+        forges: new Forges(),
         opencode: async () => {
           throw new Error('x');
         },
@@ -466,6 +487,7 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
         store,
         events: quiet,
         tasks: new TaskRegistry(),
+        forges: new Forges(),
         opencode: async () => {
           throw new Error('x');
         },
@@ -489,6 +511,7 @@ test('invocations dispatch to their claimant: the host claims its five, an uncla
       store,
       events: quiet,
       tasks,
+      forges: new Forges(),
       opencode: async () => {
         throw new Error('unused');
       },

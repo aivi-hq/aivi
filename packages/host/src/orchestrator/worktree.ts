@@ -90,6 +90,14 @@ export async function ensureWorktree(input: WorktreeInput): Promise<{ path: stri
   // this issue holds the branch and its uncommitted work: the new session continues there.
   const holder = worktreeHolding(await git('worktree', 'list', '--porcelain'), input.branch);
   if (holder) return { path: await ready(holder), branch: input.branch, base: 'existing worktree' };
+  // The one fetch in the orchestrator's local-only git, and it is caught: the
+  // worktree starts from the remote tip so a stale `source/` never matters,
+  // and a machine without credentials has no origin to reach. By the
+  // remote/local boundary (docs/plans/forge-github.md) this transfer belongs
+  // to the forge — whether its sync should keep `origin` refs fresh (it
+  // fetches only the checked-out branch today) or the worktree should start
+  // from refs already in the clone waits for the build that gives the
+  // worktree its caller; nothing in production asks yet (ruled open 2026-10-02).
   await git('fetch', '--quiet', '--prune', 'origin').catch(() => {});
   const exists = (ref: string) =>
     git('rev-parse', '--verify', '--quiet', ref).then(

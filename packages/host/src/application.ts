@@ -11,6 +11,7 @@ import { Channels } from './channel/router.ts';
 import { Dispatcher, type DispatcherLease } from './dispatcher/dispatcher.ts';
 import { LeaseStore } from './dispatcher/leases.ts';
 import { EventStream } from './events.ts';
+import { Forges } from './forges.ts';
 import { createJobHandler } from './jobs.ts';
 import { ConfigurationError, ModuleSupervisor, type RetryPolicy } from './modules.ts';
 import { connectOpenCode, restartOpenCode } from './opencode.ts';
@@ -113,6 +114,10 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   const wake = new Wake();
   const tasks = new TaskRegistry();
   const tools = new ToolRegistry();
+  // The forge registry: modules register their forges at start; the projects-sync
+  // task asks who owns a remote before fetching it, and the push and the review
+  // wake will ask the same question when they come.
+  const forges = new Forges();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
@@ -213,6 +218,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       // The supervisor replaces this with each module's own scope before start; nothing else reads it.
       tasks: tasks.forModule('host'),
       tools: tools.forModule('host'),
+      forges,
       orchestrator,
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
@@ -267,7 +273,16 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
-      createExecutor(loaded, { store, knowledge, opencode, events, protectedEnv: options.protectedEnv, log, tasks }),
+      createExecutor(loaded, {
+        store,
+        knowledge,
+        opencode,
+        events,
+        protectedEnv: options.protectedEnv,
+        log,
+        tasks,
+        forges,
+      }),
       log,
       async (run, state, result, reason) => {
         // Capacity was released: queued work may be claimable now.

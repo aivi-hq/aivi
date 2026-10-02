@@ -57,13 +57,22 @@ result. The orchestrator's own git is **local only** — it creates and
 reaps worktrees and the worker commits inside them, and it never clones,
 fetches, or pushes, because those need credentials it must not hold.
 
-**Two operations sit in the wrong package today** and move with the build
-that owns them: the sync fetch/ff lives in `host/src/projects.ts` (a forge
-operation — it becomes the forge's when `@aivi/forge-github` lands; until
-any forge exists the host runs it as plain generic git, naming no plugin),
-and the worktree git lives in `tracker-linear/src/worktree.ts` (an
-orchestrator operation — a tracker answers tickets, it does not manage
-worktrees; it moves into the orchestrator when that is extracted).
+**Both operations left the wrong package (2026-10-02).** The sync fetch/ff
+moved with the build that owns it: the **host-side forge registry** is built
+(`host/src/forges.ts` — the kit declares the `Forges` contract, the host
+implements it, `forge-github` registers at module start), and the
+`projects-sync` task asks *"who owns this project's remote?"* before it
+fetches: an owned checkout syncs through the forge's `syncSource`,
+authenticated as its own installation; no forge, or a remote no forge
+recognises, stays plain git naming no plugin (the configurable path). The
+worktree git moved too: `tracker-linear/src/worktree.ts` is now
+`host/src/orchestrator/worktree.ts` — a tracker answers tickets, worktree
+git is the orchestrator's. **One open question moved with it** (ruled open
+2026-10-02): `ensureWorktree` still fetches `origin` (caught) so a worktree
+starts from the remote tip, which is the remote/local boundary's — resolving
+it (the forge's sync keeps `origin` refs fresh, or the worktree starts from
+refs already in the clone) waits for the build that gives the worktree its
+caller; nothing in production calls it yet.
 
 **No shared `@aivi/git` package now** (ruled 2026-09-29): the orchestrator
 keeps its raw local git, a forge carries its own remote git; whether a
@@ -178,17 +187,27 @@ and can push back, stand down, or stay silent without re-commenting
 - The orchestrator validates, retries **3 times**, then errors out: HITL
   label + comment + session id. The exit contract's fallback, verbatim.
 
-**The wake flow — proposed, not settled** (2026-09-29). The operator
-wants concrete worked examples before this is fixed in detail; at first
-glance the shape is:
+**The wake flow — settled by the operator (2026-10-02)**, in his words:
+"this is just the normal aivi, lane triggers, review agent gets the summary
+from the tracker ticket and the forge PR (if one exists. Also includes all
+review and regular comments)." There is no wake machinery: a lane move is the
+wake, the walk claims for the review lane's agent, and the orchestrator's
+first prompt composes the ticket's dossier, the pull request over the
+ticket's branch (`prForBranch` — the tracker's own answer first, the forge's
+search after), and everything the pull request says: review threads with
+their replies, **and the pull request's plain conversation comments**. One
+gap to fill when building: `ReviewFacts` carries review states and open
+threads, not the plain comments — the gather grows until "all review and
+regular comments" is literally true.
 
-1. Wake: `git fetch` + fast-forward the restored worktree; gather the
-   ticket facts and the open review threads (signed comments) — one
-   gather for dev and reviewer alike.
+1. Wake: bring the restored worktree up to date (the forge's fetch plus a
+   fast-forward); gather the ticket facts and everything the pull request
+   says — one gather for dev and reviewer alike.
 2. Worker turn in the recovered worktree; commits stay local.
-3. Closing report validated — in a review wake that is the resolution
-   turn — then the orchestrator has the forge push (only if the worker committed),
-   posts the signed replies, and resolves the threads.
+3. The worker calls `aivi_pr` when it wants the branch moved (ruled
+   2026-10-02, below); the orchestrator has the forge push, and in a
+   review wake posts the signed replies from the validated resolution
+   turn and resolves the threads.
 
 Every forge step here is a *path*, entered only when the ticket's
 project has a forge — the configurable-path ruling above; a
@@ -208,17 +227,24 @@ plugin's move — and the closing report carries the PR message and any
 deviations for the orchestrator to act on. All forge network I/O lives
 on one side: fetch, push, PR creation, review replies.
 
-**The closing report** (ruled 2026-09-29). The schema instruction rides
-at session start — *finish your turn by answering following this schema
-exactly, no other text* — and when the turn ends the orchestrator
-validates the closing message; a failed validation is re-asked, a few
-tries, then the exit contract's fallback. The report carries what the
+**The closing report** (ruled 2026-09-29, **superseded 2026-10-02**). The
+schema instruction rides at session start — *finish your turn by answering
+following this schema exactly, no other text* — and when the turn ends the
+orchestrator validates the closing message; a failed validation is re-asked,
+a few tries, then the exit contract's fallback. The report carries what the
 orchestrator needs to act: the outcome, the ticket comment, **the PR
 message**, and **any deviations** the worker mentions. This is the
 wrap-up ruling reconciled: the dedicated turn survives as the *retry*
 for when the closing message is not the JSON — which is exactly the
 case the earlier ruling feared (a long session forgetting the
-instruction), now caught by validation instead of hope.
+instruction), now caught by validation instead of hope. **Superseded by the
+tools that exist**: completion is the `aivi_work_complete` tool and the
+answer is its input, not text to parse; and the PR message rides its own
+`aivi_pr` tool — "that's a separate tool signaling something else. I would
+not add it to the work complete tool" (ruled 2026-10-02). Per-session tool
+injection is not possible (the plugin registers at load; calls are already
+per-session), so `aivi_pr` is served always and errors plainly when the
+project has no forge, no remote, or nothing to push.
 
 ## Auth: octokit, the app user
 
@@ -409,10 +435,11 @@ flow detail stays proposed until worked examples are walked.
 - [x] `@aivi/plugin/forge` subpath (built 2026-09-29): `RepoRef`, `PrFacts`,
       `ReviewFacts` and the `Forge` interface (`repoFor`, `prForBranch`,
       `reviewFeedback`, `resolveThread`), plus `syncSource` and `push` from
-      the remote/local boundary. Still open here: the host-side forge
-      registry (claim at module start, the `ToolRegistry` pattern; "who owns
-      this project's remote?") — it arrives with the orchestrator, the first
-      thing that has the question to ask.
+      the remote/local boundary. The host-side forge registry is **built
+      2026-10-02** (`host/src/forges.ts`, the kit's `Forges` contract):
+      forges register at module start, the `projects-sync` task asks first,
+      and an owned checkout syncs through the forge; the push and the review
+      wake will ask the same question when they come.
 - [x] `@aivi/forge-github` package (built 2026-09-29, **prepared, not wired**:
       nothing lists it in `aivi-plugins` yet). Module id `forge-github` — the
       package name, so the list entry, the `plugins.forge-github` block and
@@ -468,16 +495,22 @@ flow detail stays proposed until worked examples are walked.
       installed config to break, no backwards compatibility to hold). Core keeps
       the commit pair — name and email — and no GitHub fact at all.
 - [ ] Q1's other half: the worker's `git push` deny in its own agent file, and
-      the push at turn end on the orchestrator's word with the pull-request
-      message from the closing report. The transfer side is built above; the
-      word to give it is the orchestrator's.
-- [ ] Take the misplaced remote git out of its current package, do not
-      carry it forward as-is: `syncProject` in `host/src/projects.ts`
-      (the `projects-sync` job's fetch/ff — `syncSource` above is the rewrite;
-      the host keeps running generic git naming no plugin until the forge
-      registry can answer "who owns this project's remote?"), and
-      `tracker-linear/src/worktree.ts` (worktree git is the orchestrator's; a
-      tracker answers tickets).
+      the push on the orchestrator's word. The transfer side is built above;
+      the word to give it is the orchestrator's. **Ruled 2026-10-02: the PR
+      message rides a separate `aivi_pr` tool** — "that's a separate tool
+      signaling something else", not the completion tool — served always and
+      erroring plainly when the project has no forge, no remote or nothing to
+      push (per-session tool injection is not possible: the plugin registers
+      at load, and calls are already per-session).
+- [x] Took the misplaced remote git out of its current package (2026-10-02):
+      `projects.sync` asks the forge registry before fetching — an owned
+      remote syncs through the forge's `syncSource` (the rewrite), an
+      unowned one and a host with no forge stay plain generic git naming no
+      plugin — and the worktree git moved from `tracker-linear/src/worktree.ts`
+      to `host/src/orchestrator/worktree.ts`. Open question that moved with
+      it: `ensureWorktree`'s caught `git fetch origin` (remote tip start) vs
+      the orchestrator's local-only git — see the boundary section; nothing
+      in production calls it yet.
 - [ ] Docs: configuration.md (the block, the secret) and CONTEXT.md's package
       list and vocabulary travelled with this build; operations.md waits until
       the forge has a part in the worker story, which it gets with the

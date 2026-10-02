@@ -113,6 +113,7 @@ export { LeaseStore, UNLIMITED } from './dispatcher/leases.ts';
 export type { DreamingResult } from './dreaming.ts';
 export { collectSessions, dream, readCursor, renderTranscript, writeCursor } from './dreaming.ts';
 export { EVENTS_RETRY, EventStream } from './events.ts';
+export { Forges } from './forges.ts';
 export type { JobHandler, JobHandlerDeps } from './jobs.ts';
 export { createJobHandler, JobRefused } from './jobs.ts';
 export type { RetryPolicy } from './modules.ts';

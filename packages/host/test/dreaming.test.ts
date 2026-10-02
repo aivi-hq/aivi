@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { dreamingArgsSchema } from '@aivi/core';
 import { collectSessions, dream, readCursor, renderTranscript } from '../src/dreaming.ts';
+import { Forges } from '../src/forges.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { createExecutor } from '../src/runtime.ts';
 import { Store } from '../src/store.ts';
@@ -266,6 +267,7 @@ test('the dreaming operation resolves its args against the home and demands a se
         throw new Error('no OpenCode here');
       },
       tasks: new TaskRegistry(),
+      forges: new Forges(),
     });
     const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', `dream:${memoryDirectory ?? 'default'}`);
     return execute(

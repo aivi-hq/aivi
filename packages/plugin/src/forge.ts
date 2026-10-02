@@ -156,3 +156,30 @@ export interface ForgeSync {
   to?: string;
   reason?: string;
 }
+
+/** The registry's answer: the forge that recognised the project's remote,
+ *  and the repository it recognised — handed straight to `syncSource`,
+ *  `push` and friends, never inspected outside the forge. */
+export interface ForgeOwner {
+  forge: Forge;
+  repo: RepoRef;
+}
+
+/** The host-side forge registry (built 2026-10-02, the first thing with the
+ *  question "who owns this project's remote?" to ask). Forge modules
+ *  register once at module start, the way channels register with the router
+ *  and tools claim on the tool surface; the host's machinery asks.
+ *
+ *  **The answer may be nobody** (ruled 2026-09-29: the forge is a
+ *  configurable path, not the spine): with no forge registered, or a remote
+ *  no registered forge recognises, `owner` answers undefined and the
+ *  machinery does the local-only thing it has always done. Nothing here
+ *  reaches a network: recognising is a read of `origin`, and reaching
+ *  `origin` is what the returned forge authenticates for. */
+export interface Forges {
+  /** Register once at module start; the returned function unregisters. */
+  register(forge: Forge): () => void;
+  /** Who owns this project's remote: the first registered forge whose
+   *  `repoFor` answers with a repository. Undefined when none does. */
+  owner(project: ForgeProject): Promise<ForgeOwner | undefined>;
+}

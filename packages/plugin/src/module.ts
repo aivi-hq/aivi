@@ -37,6 +37,7 @@ import type {
 } from '@aivi/core';
 import type { OpenCode } from '@opencode/client';
 import type { Channels } from './channel.ts';
+import type { Forges } from './forge.ts';
 import type { RunView } from './run.ts';
 import type { Tracker } from './tracker.ts';
 
@@ -86,6 +87,10 @@ export interface AiviServices {
   tasks: TaskClaims;
   /** The tool surface the OpenCode plugin registers at load: the host claims its own tools here, modules claim theirs. */
   tools: ToolClaims;
+  /** The forge registry: a forge module registers its `Forge` once at start;
+   *  the host's machinery asks who owns a project's remote. A project with no
+   *  forge is not a failure — the answer is simply nobody. */
+  forges: Forges;
   /** Ticket-to-run machinery: a tracker module registers its stages, stops
    *  runs and reads run records here. The orchestrator owns the run's state
    *  machine, the worker session, and the worker tools; it never calls back. */

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { ensureWorktree, worktreePathFor } from '../src/worktree.ts';
+import { ensureWorktree, worktreePathFor } from '../src/orchestrator/worktree.ts';
 
 const run = promisify(execFile);
 const git = (cwd: string, ...args: string[]) =>

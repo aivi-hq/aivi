@@ -47,5 +47,3 @@ export type {
   WebhookVerdict,
 } from './webhook.ts';
 export { isAgentSessionEvent, isIssueEvent, signWebhook, verifyWebhook, WEBHOOK_MAX_SKEW_MS } from './webhook.ts';
-export type { WorktreeInput } from './worktree.ts';
-export { ensureWorktree, globalGitConfig, worktreeHolding, worktreePathFor } from './worktree.ts';

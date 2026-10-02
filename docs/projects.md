@@ -125,7 +125,11 @@ nothing to clone: `add` leaves an untracked `source/` directory holding a note,
 and the project still has its memory and knowledge.
 
 `source/` is kept at its upstream by the system job `projects-sync` (hourly by
-default, `scheduler.projectsSync`): fetch and fast-forward only, so a merge on
+default, `scheduler.projectsSync`): the host first asks the **forge registry**
+who owns the project's remote, and an owned checkout syncs **through that
+forge**, authenticated as its own app; anything else — no forge installed, a
+remote no forge recognises — is plain git, naming no plugin. Either way:
+fetch and fast-forward only, so a merge on
 GitHub reaches what is indexed within the hour and nothing is ever forced;
 local changes, a detached HEAD or a diverged branch are reported and left
 alone ([configuration](configuration.md#tasks)).

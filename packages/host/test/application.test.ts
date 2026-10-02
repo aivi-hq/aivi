@@ -4,6 +4,7 @@ import { configSchema, jobSchema } from '@aivi/core';
 import type { AiviModule } from '@aivi/plugin/module';
 import type { HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
+import { Forges } from '../src/forges.ts';
 import { ConfigurationError } from '../src/modules.ts';
 import { createExecutor } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
@@ -302,6 +303,7 @@ test('scheduled knowledge indexing uses the same injected service', async t => {
       events: { watch: () => () => {} },
       opencode: noOpenCode,
       tasks: new TaskRegistry(),
+      forges: new Forges(),
     }),
   );
   scheduler.tick();

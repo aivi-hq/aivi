@@ -12,6 +12,7 @@ import type {
   Task,
 } from '@aivi/core';
 import { dreamingArgsSchema, errorMessage, getLogger, MEMORY_SOURCE_ID, runsPruneArgsSchema } from '@aivi/core';
+import type { Forges } from '@aivi/plugin/forge';
 import type { OpenCodeClient, SessionEvents, TaskHandler } from '@aivi/plugin/module';
 import { dream } from './dreaming.ts';
 import { syncProjects } from './projects.ts';
@@ -32,6 +33,8 @@ export interface ExecutorDeps {
   log?: Logger | undefined;
   /** What `kind: 'invocation'` tasks dispatch to. The host claims its own system operations here, as `host`. */
   tasks: TaskRegistry;
+  /** Who owns a project's remote: the projects-sync task asks before fetching, and an owned checkout syncs through that forge. */
+  forges: Forges;
 }
 
 /** Secrets aivi reads from its own environment; a shell task never sees them unless its `env` sets them on purpose. */
@@ -109,7 +112,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       return { state: 'succeeded', result: await deps.knowledge.index() };
     },
     'projects.sync': async (_run, context) => {
-      const projects = await syncProjects(loaded.projects, context.signal);
+      const projects = await syncProjects(loaded.projects, deps.forges, context.signal);
       const updated = projects.filter(p => p.state === 'updated').map(p => p.id);
       for (const p of projects)
         if (p.state === 'skipped') log.warn('projects.sync.skipped', { project: p.id, reason: p.reason });
