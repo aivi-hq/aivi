@@ -424,7 +424,10 @@ its own renders, in its own time, from its own outbox.
 
 The worker's **first prompt is the orchestrator's composition**: a neutral
 line naming the project, the lane and the checkout, the ticket's summary
-as the tracker returned it, and the worker contract explaining the tools.
+as the tracker returned it, the feedback-loop paragraph when the run
+started with open review threads on its pull request (what it owes, named
+once at the start: `docs/plans/git-workflow.md`), and the worker contract
+explaining the tools.
 The tools are the host's, so their explanation is core's, not any
 tracker's — `firstMessage` on a board feed is dead: the tracker supplies
 the ticket's words, never the worker's first message.

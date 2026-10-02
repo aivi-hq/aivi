@@ -40,9 +40,31 @@ export interface Run {
    *  mirror of the slot its worker spends. Set at the claim, and the lease
    *  is released when the run ends. */
   leaseId?: string;
+  /** The feedback loop's bookkeeping (ruled 2026-10-02, docs/plans/git-
+   *  workflow.md): the review threads **open when the run started** — the
+   *  only ones the completion gate can ever owe — with the refused-completion
+   *  count and whether the person has been asked already. Absent means the
+   *  run started with nothing open: feedback arriving mid-run is context,
+   *  never owed. */
+  feedback?: RunFeedback;
   nudges: number;
   createdAt: number;
   updatedAt: number;
+}
+
+/** What the feedback loop persists on the run row, in one JSON value that
+ *  survives restarts because everything else does. */
+export interface RunFeedback {
+  /** The pull request's open review-thread ids at the moment the run
+   *  started. The completion gate owes exactly these, still open. */
+  openThreadIds: string[];
+  /** Successes refused by the gate; the person is asked at the third. */
+  attempts: number;
+  /** The escalation form was made: it is never doubled. `formId` is that
+   *  form — the answer that resets the strikes is the answer to *it*, not
+   *  to any question the worker asked along the way. */
+  escalated: boolean;
+  formId?: string;
 }
 
 /** What intake needs to open a run: the ticket's facts, in neutral words.
@@ -74,6 +96,9 @@ const map = (r: Row): Run => ({
   ...(r.outcome === null ? {} : { outcome: JSON.parse(String(r.outcome)) as RunOutcome }),
   ...(r.target_lane === null ? {} : { targetLane: String(r.target_lane) }),
   ...(r.lease_id === null || r.lease_id === undefined ? {} : { leaseId: String(r.lease_id) }),
+  ...(r.feedback === null || r.feedback === undefined
+    ? {}
+    : { feedback: JSON.parse(String(r.feedback)) as RunFeedback }),
   nudges: Number(r.nudges),
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
@@ -109,6 +134,11 @@ const migrations = [
   // counts the slot — the column is the join.
   `ALTER TABLE orchestrator_runs ADD COLUMN lease_id TEXT;
    CREATE INDEX orchestrator_runs_lease ON orchestrator_runs(lease_id);`,
+  // Version 4 (the feedback loop, docs/plans/git-workflow.md): the run row
+  // remembers which review threads were open when the run started, how many
+  // completions the gate refused, and whether the person has been asked.
+  // One JSON value; the gate is pure arithmetic over it and one fresh read.
+  `ALTER TABLE orchestrator_runs ADD COLUMN feedback TEXT;`,
 ];
 
 export class RunLedger {
@@ -260,6 +290,62 @@ export class RunLedger {
     return this.core.transaction(() => {
       this.core.db.prepare(`UPDATE orchestrator_runs SET nudges=nudges+1, updated_at=? WHERE id=?`).run(now, id);
       return this.#require(id).nudges;
+    });
+  }
+
+  /** The moment of the run's start, persisted: these open review threads —
+   *  and only these — are what the completion gate can ever owe. A run that
+   *  started clean is never snapshotted; feedback arriving mid-run is
+   *  context, not a debt (ruled 2026-10-02). */
+  snapshotFeedback(id: string, openThreadIds: string[], now = Date.now()): Run {
+    return this.core.transaction(() => {
+      this.core.db
+        .prepare('UPDATE orchestrator_runs SET feedback=?, updated_at=? WHERE id=?')
+        .run(JSON.stringify({ openThreadIds, attempts: 0, escalated: false } satisfies RunFeedback), now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** The gate refused a success: one more strike. Without a snapshot there
+   *  is nothing to count — the caller checked, and silence here would be a
+   *  bug's hiding place, so the row comes back untouched and unreadable
+   *  callers are the orchestrator's problem to not have. */
+  countFeedback(id: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      const previous = this.#require(id).feedback;
+      if (previous)
+        this.core.db
+          .prepare('UPDATE orchestrator_runs SET feedback=?, updated_at=? WHERE id=?')
+          .run(JSON.stringify({ ...previous, attempts: previous.attempts + 1 } satisfies RunFeedback), now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** The escalation form stands: recorded with its id, so a second gate
+   *  never doubles it and the answer that lands can be checked against it. */
+  markEscalated(id: string, formId: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      const previous = this.#require(id).feedback;
+      if (previous)
+        this.core.db
+          .prepare('UPDATE orchestrator_runs SET feedback=?, updated_at=? WHERE id=?')
+          .run(JSON.stringify({ ...previous, escalated: true, formId } satisfies RunFeedback), now, id);
+      return this.#require(id);
+    });
+  }
+
+  /** The person answered the escalation: the strikes reset. Their words were
+   *  "try again with these instructions", not "fail after three more"
+   *  (ruled in the walkthrough); the escalated flag stays — the form was
+   *  made once, and making it twice would be noise. */
+  resetFeedback(id: string, now = Date.now()): Run {
+    return this.core.transaction(() => {
+      const previous = this.#require(id).feedback;
+      if (previous)
+        this.core.db
+          .prepare('UPDATE orchestrator_runs SET feedback=?, updated_at=? WHERE id=?')
+          .run(JSON.stringify({ ...previous, attempts: 0 } satisfies RunFeedback), now, id);
+      return this.#require(id);
     });
   }
 

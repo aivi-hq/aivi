@@ -90,7 +90,9 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    way across to the remote, and the forge — the project's own, if it has
    one — moves the commits as its app and opens the pull request (the
    worker's git stays local; the `git push` deny in the worker's agent file
-   is the operator's own, never aivi's). `startWork` the module says
+   is the operator's own, never aivi's); returning work adds a
+   feedback-loop paragraph naming the open review threads it owes (the
+   gate of `docs/plans/git-workflow.md`). `startWork` the module says
    nothing for: Linear watches its own agent sessions, and a working session
    shows itself.
 5. **While it runs.** The worker's **progress stream** is live (built

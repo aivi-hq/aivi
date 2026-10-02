@@ -134,13 +134,18 @@ test('a checkout that names no GitHub repository is not this forge’s, and is n
 
 test('the pull request over a branch is asked for across every state, newest first', async () => {
   const forge = (await forgeWith({ 'GET /repos/acme/widget/pulls': () => ({ status: 200, body: [pull()] }) })).forge;
-  assert.deepEqual(await forge.prForBranch(REPO, 'feat/retry'), {
-    id: '12',
-    url: 'https://github.com/acme/widget/pull/12',
-    title: 'Retry the header',
-    state: 'open',
-    branch: 'feat/retry',
-  });
+  assert.deepEqual(
+    await forge.prForBranch(REPO, 'feat/retry'),
+    {
+      id: '12',
+      url: 'https://github.com/acme/widget/pull/12',
+      title: 'Retry the header',
+      state: 'open',
+      branch: 'feat/retry',
+      mergeable: 'unknown',
+    },
+    'a list read says what it knows: GitHub has not been asked whether the merge is clean here',
+  );
 });
 
 test('a branch with no pull request over it is answered as having none', async () => {
@@ -160,6 +165,7 @@ const REVIEW_ANSWER = {
       title: 'Retry the header',
       state: 'open',
       headRefName: 'feat/retry',
+      mergeable: 'CONFLICTING',
       reviews: {
         nodes: [
           { state: 'CHANGES_REQUESTED', author: { login: 'octocat', __typename: 'User' } },
@@ -200,6 +206,20 @@ const REVIEW_ANSWER = {
           },
         ],
       },
+      comments: {
+        nodes: [
+          {
+            body: 'Overall this reads well, is the retry bounded?',
+            createdAt: '2026-10-01T09:00:00Z',
+            author: { login: 'octocat', __typename: 'User' },
+          },
+          {
+            body: 'Bounded at three attempts.\n\n---\n\n_worker: aivi · implement_',
+            createdAt: '2026-10-01T10:00:00Z',
+            author: { login: 'aivi-agent[bot]', __typename: 'Bot' },
+          },
+        ],
+      },
     },
   },
 };
@@ -214,17 +234,30 @@ test('a review wake gets what is open: the approvals, and only the threads still
     branch: 'feat/retry',
   });
 
-  assert.deepEqual(facts.pr, {
-    id: '12',
-    url: 'https://github.com/acme/widget/pull/12',
-    title: 'Retry the header',
-    state: 'open',
-    branch: 'feat/retry',
-  });
+  assert.deepEqual(
+    facts.pr,
+    {
+      id: '12',
+      url: 'https://github.com/acme/widget/pull/12',
+      title: 'Retry the header',
+      state: 'open',
+      branch: 'feat/retry',
+      mergeable: 'dirty',
+    },
+    'GitHub said CONFLICTING, aivi says dirty: the worker hears “main moved, you conflict” at its start',
+  );
   assert.deepEqual(facts.reviews, [
     { author: { login: 'octocat', bot: false }, state: 'CHANGES_REQUESTED' },
     { author: { login: 'aivi-agent[bot]', bot: true }, state: 'COMMENTED' },
   ]);
+  assert.deepEqual(
+    facts.comments.map(c => [c.author.login, c.author.worker, c.body.split('\n')[0], c.createdAt]),
+    [
+      ['octocat', undefined, 'Overall this reads well, is the retry bounded?', '2026-10-01T09:00:00Z'],
+      ['aivi-agent[bot]', 'implement', 'Bounded at three attempts.', '2026-10-01T10:00:00Z'],
+    ],
+    'plain conversation comments ride the read, oldest first, aivi’s own read back from its signature',
+  );
   assert.deepEqual(
     facts.threads.map(thread => [thread.id, thread.state]),
     [
@@ -286,6 +319,70 @@ test('answering a thread posts the worker’s signed words, then resolves it', a
     'It is nil until the retry lands; a comment now says why.\n\n---\n\n_worker: aivi · review_',
     'the posted comment names the worker that wrote it, in the text a person reads',
   );
+});
+
+test('a plain comment lands on the pull request’s conversation, signed like every aivi post', async () => {
+  const api = await forgeWith({ 'POST /repos/acme/widget/issues/12/comments': () => ({ status: 201, body: {} }) });
+  await api.forge.commentPr(
+    REPO,
+    { id: '12', url: 'x', title: 't', state: 'open', branch: 'feat/retry' },
+    { author: 'implement', text: 'Rebased over main; the retry bound is three attempts.' },
+  );
+  const posted = JSON.parse(
+    api.seen.find(call => call.method === 'POST' && call.path.endsWith('/comments'))?.body ?? '{}',
+  );
+  assert.equal(
+    posted.body,
+    'Rebased over main; the retry bound is three attempts.\n\n---\n\n_worker: aivi · implement_',
+    'the conversation knows which worker spoke',
+  );
+});
+
+test('a review lands on the lines themselves, and APPROVE is not a thing aivi can post', async () => {
+  const posted: Record<string, unknown>[] = [];
+  const api = await forgeWith({
+    'POST /repos/acme/widget/pulls/12/reviews': call => {
+      posted.push(JSON.parse(call.body ?? '{}'));
+      return { status: 201, body: pull() };
+    },
+  });
+  await api.forge.submitReview(
+    REPO,
+    { id: '12', url: 'x', title: 't', state: 'open', branch: 'feat/retry' },
+    {
+      author: 'review',
+      state: 'REQUEST_CHANGES',
+      body: 'Two problems, on the lines.',
+      comments: [
+        { path: 'src/header.ts', line: 42, body: 'This retry is unbounded.' },
+        { path: 'src/nil.ts', body: 'Nil here speaks to nothing.' },
+      ],
+    },
+  );
+  assert.equal(posted[0]?.event, 'REQUEST_CHANGES');
+  assert.equal(
+    posted[0]?.body,
+    'Two problems, on the lines.\n\n---\n\n_worker: aivi · review_',
+    'the review says which worker wrote it',
+  );
+  assert.deepEqual(
+    posted[0]?.comments,
+    [
+      { path: 'src/header.ts', line: 42, body: 'This retry is unbounded.\n\n---\n\n_worker: aivi · review_' },
+      { path: 'src/nil.ts', body: 'Nil here speaks to nothing.\n\n---\n\n_worker: aivi · review_' },
+    ],
+    'inline findings are signed too: they become review threads the next worker owes',
+  );
+  // And a verdict without findings is still a review: the words alone say
+  // something. (APPROVE is not even expressible here — the kit's type stops
+  // it before this file, because the app author can never approve anyway.)
+  await api.forge.submitReview(
+    REPO,
+    { id: '12', url: 'x', title: 't', state: 'open', branch: 'feat/retry' },
+    { author: 'review', body: 'readable overall', state: 'COMMENT' },
+  );
+  assert.equal(posted[1]?.event, 'COMMENT');
+  assert.ok(!('comments' in (posted[1] ?? {})), 'no findings, no comments field');
 });
 
 test('a clean checkout is brought up to date, and the files move with it', async () => {
@@ -438,6 +535,7 @@ test('openPr opens the pull request on the repository’s own default branch, si
     title: 'Retry the header',
     state: 'open',
     branch: 'feat/retry',
+    mergeable: 'unknown',
   });
   assert.equal(created?.base, 'trunk', 'the base is the repository’s default branch, not a guess');
   assert.equal(created?.head, 'feat/retry');

@@ -58,6 +58,12 @@ export interface PrFacts {
   state: string;
   /** The branch it stands for — the one thing aivi correlates on. */
   branch: string;
+  /** Whether the base branch could take this merge today, so "main moved,
+   *  you conflict" is in the worker's first prompt instead of a surprise at
+   *  push time. `unknown` is the honest answer where the platform has not
+   *  computed it (a REST list read never says); a forge that cannot say
+   *  leaves it absent rather than guessing clean. */
+  mergeable?: 'clean' | 'dirty' | 'unknown';
 }
 
 /** Who wrote a review comment. Aivi's own posts are *signed* — visibly, in
@@ -100,6 +106,11 @@ export interface ReviewFacts {
   /** The threads a worker still owes an answer on. Empty means a clean
    *  review: nothing to resolve, nothing to reply to. */
   threads: ReviewThread[];
+  /** The pull request's plain conversation comments — not review threads,
+   *  and the platform gives them **no resolved state**, so they are
+   *  context, never gate items (ruled 2026-10-02). Oldest first, capped
+   *  like the thread reads; the agent file's guidance says to answer them. */
+  comments: { author: ReviewAuthor; body: string; createdAt: string }[];
 }
 
 /** What a forge answers and does. Everything here is either a **fact aivi
@@ -124,6 +135,28 @@ export interface Forge {
    *  never holds forge credentials to write review traffic, and the comment
    *  says which worker role it came from — visibly. */
   resolveThread(repo: RepoRef, pr: PrFacts, threadId: string, reply: { author: string; text: string }): Promise<void>;
+
+  /** Post a plain conversation comment on the pull request — the non-thread
+   *  channel a worker uses to say something grounded when there is no
+   *  thread to answer. Signed like every aivi post. */
+  commentPr(repo: RepoRef, pr: PrFacts, comment: { author: string; text: string }): Promise<void>;
+
+  /** Say *on the pull request itself* what aivi's review found: a review
+   *  with inline findings, which the platform shows as review threads — the
+   *  only way agent feedback becomes gate-owed on the next round. APPROVE
+   *  is not offered: the app authored the pull request and GitHub refuses an
+   *  author's own approval, so the approve button stays human forever
+   *  (ruled 2026-10-02). */
+  submitReview(
+    repo: RepoRef,
+    pr: PrFacts,
+    review: {
+      author: string;
+      body: string;
+      state: 'COMMENT' | 'REQUEST_CHANGES';
+      comments?: { path: string; line?: number; body: string }[];
+    },
+  ): Promise<void>;
 
   /** Bring a project's clean checkout up to date with `origin`: fetch, then
    *  fast-forward the checked-out branch. Anything needing a decision (local

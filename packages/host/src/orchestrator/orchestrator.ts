@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { GitIdentity, Logger, ProjectLane, ToolDescriptor } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
-import type { ForgeOwner, Forges } from '@aivi/plugin/forge';
+import type { ForgeOwner, Forges, PrFacts, ReviewFacts } from '@aivi/plugin/forge';
 import type { OpenCodeClient, Orchestrator as OrchestratorApi, SessionEvents, ToolHandler } from '@aivi/plugin/module';
 import type {
   FailureCode,
@@ -106,6 +106,45 @@ const NUDGE =
   '(outcome "success" or "failure") with a one-line summary. If you are blocked or need a ' +
   'decision from a person, call the aivi_ask tool with your question. Do not just reply in text.';
 
+/** Refused completions before the person is asked, in their words: "a max
+ *  of 3 tries or something until HITL" (ruled 2026-10-02). */
+const MAX_FEEDBACK_TRIES = 3;
+
+/** One line of a prompt or a tool answer: whatever the platform said, told
+ *  in the space aivi has for it. */
+const clip = (text: string, max = 500): string => {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+};
+
+/** The feedback-loop guidance the first prompt carries when the run started
+ *  with an open pull request: the posture in the operator's words — process
+ *  each by agreeing (do the work) or disagreeing (leave a grounded comment),
+ *  both ending with aivi_respond_feedback — and the facts it applies to.
+ *  Empty when there is nothing to say: a clean start carries no paragraph. */
+const feedbackGuidance = (pr: PrFacts, facts: ReviewFacts): string => {
+  const parts: string[] = [];
+  if (facts.threads.length)
+    parts.push(
+      `This ticket is returning work: the pull request ${pr.url} has unresolved review comments. ` +
+        'Process each one by either agreeing (do the work, move it with aivi_push) or disagreeing ' +
+        '(leave a grounded comment); both end by answering the thread with aivi_respond_feedback, ' +
+        'which resolves it. A thread a person resolved needs no answer: they are authoritative.',
+      ...facts.threads.map(t => `- [${t.id}] ${t.path ? `${t.path}: ` : ''}${clip(t.question)}`),
+    );
+  if (facts.comments.length)
+    parts.push(
+      'Plain comments on the pull request (answer them in the conversation too; aivi_review has the full text):',
+      ...facts.comments.slice(-10).map(c => `- ${c.author.login}: ${clip(c.body)}`),
+      ...(facts.comments.length > 10 ? [`(${facts.comments.length - 10} older comments: aivi_review)`] : []),
+    );
+  if (facts.pr.mergeable === 'dirty')
+    parts.push(
+      'The pull request does not merge cleanly into its base right now: integrate before you finish — aivi_sync, then merge or rebase with your git.',
+    );
+  return parts.join('\n');
+};
+
 const exec = promisify(execFile);
 
 /** Local git reads for the push tool: trimmed stdout, `''` when git has no
@@ -135,7 +174,7 @@ const workerContract = (directory: string) =>
   'send the full list again whenever a step changes; people watch it while you work. ' +
   'Crossing to the remote is always through aivi\u2019s tools, never git push, fetch or pull: aivi_sync for the ' +
   'remote\u2019s latest refs, aivi_push to move your commits, aivi_pr for the pull request. ' +
-  'End your turn right after calling aivi_work_complete or aivi_ask; the git tools do not end it. ' +
+  'End your turn right after calling aivi_work_complete or aivi_ask; the git and review tools do not end it. ' +
   'A turn that ends without either is treated as a failure. ' +
   'Never declare completion in plain text.';
 
@@ -635,6 +674,14 @@ export class Orchestrator implements OrchestratorApi {
   async #deliverAnswer(run: Run, text: string, formId?: string): Promise<void> {
     const resumed = this.deps.ledger.resumed(run.id);
     if (resumed.leaseId) this.deps.dispatcher.activity(resumed.leaseId);
+    // The person answered **the escalation form**: the strikes reset. Their
+    // words were "try again with these instructions", not "fail after three
+    // more" (ruled in the walkthrough); the escalated flag stays, the form
+    // was made once.
+    if (formId && resumed.feedback?.escalated && formId === resumed.feedback.formId) {
+      this.deps.ledger.resetFeedback(resumed.id);
+      this.deps.log.info('run.feedback.reset', { run: resumed.id, form: formId });
+    }
     const client = await this.deps.opencode();
     await client.session.prompt({
       sessionID: run.sessionId!,
@@ -765,11 +812,11 @@ export class Orchestrator implements OrchestratorApi {
       if (!run) return;
       let dir = directory;
       const lane = this.deps.lanes(run.projectId).find(l => l.name === run.lane);
+      const owned = await this.deps.forges.owner({ id: run.projectId, directory });
       if (lane?.worktree) {
         if (!branch)
           throw new Error('this lane works in its own worktree, and the tracker named no branch for the ticket');
-        const source = this.deps.directory(run.projectId);
-        const owned = await this.deps.forges.owner({ id: run.projectId, directory: source });
+        const source = directory;
         const made = await ensureWorktree({
           source,
           path: worktreePathFor(source, runId),
@@ -781,6 +828,29 @@ export class Orchestrator implements OrchestratorApi {
         dir = made.path;
         log.info('worktree.ready', { branch, base: made.base, ...(owned ? { forge: owned.repo.id } : {}) });
       }
+      // The feedback gather at start (docs/plans/git-workflow.md): the open
+      // review threads of **this moment** are the only ones the completion
+      // gate can ever owe, and the guidance rides the first prompt. A forge
+      // that cannot be read here is warned, not fatal: the run starts without
+      // a snapshot — started-clean, so the gate will owe nothing — and the
+      // log says why. Whether the agent is reviewing or answering a review
+      // is the agent file's word, never this code's.
+      let feedback = '';
+      if (owned && branch)
+        try {
+          const pr = await owned.forge.prForBranch(owned.repo, branch);
+          if (pr?.state === 'open') {
+            const facts = await owned.forge.reviewFeedback(owned.repo, pr);
+            if (facts.threads.length)
+              this.deps.ledger.snapshotFeedback(
+                runId,
+                facts.threads.map(t => t.id),
+              );
+            feedback = feedbackGuidance(pr, facts);
+          }
+        } catch (error) {
+          log.warn('run.feedback.unreadable', { branch, error });
+        }
       const lease = await this.deps.dispatcher.provide(leaseId, { agent: run.agent, directory: dir });
       const sessionId = lease.sessionId!;
       // Watch before prompting: a live-only stream must not miss the first turn's end.
@@ -806,6 +876,7 @@ export class Orchestrator implements OrchestratorApi {
                 : `a git worktree of the project at ${dir}, on branch ${branch}`
             }; the agent file says what you may change.]`,
             summary,
+            ...(feedback ? [feedback] : []),
             workerContract(dir),
           ].join('\n\n'),
           delivery: 'queue',
@@ -917,16 +988,95 @@ export class Orchestrator implements OrchestratorApi {
 
   /** The worker says it is done. A tool call, so it is a fact: end the run,
    *  record where the lane order sends the ticket, and emit the ending for
-   *  whoever follows. Telling the platform is nobody here's business. */
+   *  whoever follows. Telling the platform is nobody here's business. A
+   *  **success** passes the feedback gate first; a failure is exempt — a
+   *  worker giving up doesn't have to answer reviewers to hand the ticket
+   *  back. */
   readonly completeTool: ToolHandler = async call => {
     const run = this.deps.ledger.bySession(call.sessionId);
     if (!run) throw new ToolError(404, 'This session is not an aivi run; aivi_work_complete is not available here.');
     if (isTerminal(run.state)) throw new ToolError(409, `This run already ended (${run.state}).`);
     const outcome = parseOutcome(call.input);
+    if (outcome.kind === 'success') await this.#feedbackGate(run);
     const ended = this.deps.ledger.finish(run.id, outcome, this.#moveTarget(run, outcome.kind === 'success'));
     await this.#finishRun(ended);
     return { recorded: true, outcome: outcome.kind };
   };
+
+  /**
+   * The feedback gate (ruled 2026-10-02): *"if there is open feedback, we
+   * keep nudging until there is none"* with *"a max of 3 tries or something
+   * until HITL"*. Owed = the threads open **when the run started** that are
+   * **still open** — a run that started clean owes nothing (a reviewing
+   * agent posts its findings and finishes freely), plain comments are
+   * context only, and a human resolving a thread is authoritative. Each
+   * refusal counts; at the third the person is asked through the same
+   * durable form `aivi_ask` makes, and the escalation is never doubled.
+   * There is no bypass hatch: past the gate only threads actually resolved.
+   */
+  async #feedbackGate(run: Run): Promise<void> {
+    const feedback = run.feedback;
+    if (!feedback || !feedback.openThreadIds.length) return; // started clean: nothing is ever owed
+    const directory = run.worktree ?? this.deps.directory(run.projectId);
+    const owned = await this.deps.forges.owner({ id: run.projectId, directory });
+    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    if (!owned || !branch)
+      throw new ToolError(
+        502,
+        'The feedback gate cannot read the pull request right now (this run has no forge or no branch to ask by); call aivi_work_complete again.',
+      );
+    const pr = await owned.forge.prForBranch(owned.repo, branch);
+    if (!pr || pr.state !== 'open') return; // the pull request closed: its threads died with it, nothing owed
+    let facts: ReviewFacts;
+    try {
+      facts = await owned.forge.reviewFeedback(owned.repo, pr);
+    } catch (error) {
+      throw new ToolError(
+        502,
+        `The feedback gate could not read ${pr.url} this time: ${errorMessage(error)}. Call aivi_work_complete again.`,
+      );
+    }
+    const owed = facts.threads.filter(t => feedback.openThreadIds.includes(t.id));
+    if (!owed.length) return; // every owed thread resolved — by the worker or by a person, both authoritative
+    const counted = this.deps.ledger.countFeedback(run.id);
+    const strikes = counted.feedback?.attempts ?? 0;
+    const list = owed.map(t => `- ${t.path ? `${t.path}: ` : ''}${clip(t.question)} (id ${t.id})`).join('\n');
+    if (strikes >= MAX_FEEDBACK_TRIES && !counted.feedback?.escalated) {
+      const question =
+        `Your worker finished, but the pull request ${pr.url} still holds unresolved feedback it owes answers on:\n${list}\n` +
+        'What should it do? (answer with instructions, resolve the threads here, or say to ship it as-is)';
+      try {
+        const client = await this.deps.opencode();
+        const form = await client.session.form.create({
+          sessionID: run.sessionId!,
+          title: question,
+          fields: [{ key: 'answer', type: 'string', title: question, required: true, custom: true }],
+        });
+        const parked = this.deps.ledger.awaiting(run.id);
+        this.deps.ledger.markEscalated(run.id, form.id);
+        this.deps.log.info('run.feedback.escalated', { run: run.id, pull: pr.id, owed: owed.length });
+        this.#render(parked, t => t.question(view(parked), { question, formId: form.id }), 'question');
+        this.#armElicitation(run.id);
+      } catch (error) {
+        // The person could not be reached: the strike stands and the next
+        // refusal tries the form again. A silent skip is the one thing
+        // worse than a loud failure here.
+        this.deps.log.warn('run.feedback.form.failed', { run: run.id, error });
+      }
+      throw new ToolError(
+        409,
+        `The person has been asked about the unresolved feedback above. End your turn; their answer reaches you as a follow-up.`,
+      );
+    }
+    if (counted.feedback?.escalated)
+      throw new ToolError(409, `Still owed — the person was asked once and the threads stand:\n${list}`);
+    throw new ToolError(
+      409,
+      `Not done: the pull request still has unresolved review threads you owe answers on:\n${list}\n` +
+        'Answer each with aivi_respond_feedback — agree (do the work, aivi_push) or disagree (a grounded comment); both resolve the thread. ' +
+        `This refusal is ${strikes} of ${MAX_FEEDBACK_TRIES}; at the third, a person is asked.`,
+    );
+  }
 
   /**
    * The worker asks a human a question. Creates the durable OpenCode session
@@ -1175,6 +1325,100 @@ export class Orchestrator implements OrchestratorApi {
     return { pushed: true, pull: opened.url, state: opened.state };
   };
 
+  /** The branch's **open** pull request, said plainly when there is none:
+   *  the reading and answering tools all start from this fact. */
+  async #openPull(owned: ForgeOwner, directory: string): Promise<{ branch: string; pr: PrFacts }> {
+    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    if (!branch) throw new ToolError(409, 'This run sits on a detached HEAD; no branch, no pull request to read.');
+    const pr = await owned.forge.prForBranch(owned.repo, branch);
+    if (!pr || pr.state !== 'open')
+      throw new ToolError(
+        409,
+        `No open pull request stands for ${branch}${pr ? ` (the last one is ${pr.state})` : ''}: aivi_pr opens one when the work is ready.`,
+      );
+    return { branch, pr };
+  }
+
+  /**
+   * `aivi_review` — a fresh read of the pull request over this branch: open
+   * threads with their replies, the plain conversation comments, the
+   * approval states, and whether the base would take the merge. What the
+   * completion gate checks, the worker can see for itself.
+   */
+  readonly reviewTool: ToolHandler = async call => {
+    const { directory, owned } = await this.#forgeRun(call, 'aivi_review');
+    const { pr } = await this.#openPull(owned, directory);
+    const facts = await owned.forge.reviewFeedback(owned.repo, pr);
+    return {
+      pull: facts.pr.url,
+      state: facts.pr.state,
+      mergeable: facts.pr.mergeable,
+      threads: facts.threads.map(t => ({
+        id: t.id,
+        ...(t.path ? { path: t.path } : {}),
+        state: t.state,
+        question: clip(t.question, 4000),
+        replies: t.replies.map(r => ({
+          author: r.author.login,
+          ...(r.author.worker ? { worker: r.author.worker } : {}),
+          body: clip(r.body, 4000),
+        })),
+      })),
+      comments: facts.comments.map(c => ({
+        author: c.author.login,
+        ...(c.author.worker ? { worker: c.author.worker } : {}),
+        body: clip(c.body, 4000),
+        createdAt: c.createdAt,
+      })),
+      reviews: facts.reviews.map(r => ({ author: r.author.login, state: r.state })),
+    };
+  };
+
+  /**
+   * `aivi_respond_feedback` — the worker's answer to feedback, the one
+   * channel the gate counts. With a `threadId`: reply to that open review
+   * thread, signed, and resolve it — agreeing (the work was done) or
+   * disagreeing (a grounded comment) both end resolved. Without one: a
+   * plain PR comment, which is context, never a gate item. A thread a
+   * person already resolved is not owed and not answerable here: they are
+   * authoritative.
+   */
+  readonly respondTool: ToolHandler = async call => {
+    const { run, directory, owned } = await this.#forgeRun(call, 'aivi_respond_feedback');
+    const { threadId, body } = parseRespond(call.input);
+    const { pr } = await this.#openPull(owned, directory);
+    if (threadId) {
+      const facts = await owned.forge.reviewFeedback(owned.repo, pr);
+      if (!facts.threads.some(t => t.id === threadId))
+        throw new ToolError(
+          409,
+          `Thread ${threadId} is not open on ${pr.url} — resolved (perhaps by a person, who is authoritative) or never there. aivi_review lists what is open.`,
+        );
+      await owned.forge.resolveThread(owned.repo, pr, threadId, { author: run.agent, text: body });
+      this.deps.log.info('run.feedback.answered', { run: run.id, pull: pr.id, thread: threadId });
+      return { answered: threadId, resolved: true };
+    }
+    await owned.forge.commentPr(owned.repo, pr, { author: run.agent, text: body });
+    return { commented: true, pull: pr.url };
+  };
+
+  /**
+   * `aivi_submit_review` — the review agent's voice on the pull request:
+   * findings on the lines themselves, as a review the platform shows as
+   * review threads — which is what makes agent feedback gate-owed on the
+   * next round. APPROVE is not offered: the app authored the pull request
+   * and GitHub refuses an author's own approval, so the approve button
+   * stays human, forever.
+   */
+  readonly submitReviewTool: ToolHandler = async call => {
+    const { run, directory, owned } = await this.#forgeRun(call, 'aivi_submit_review');
+    const review = parseReview(call.input);
+    const { pr } = await this.#openPull(owned, directory);
+    await owned.forge.submitReview(owned.repo, pr, { author: run.agent, ...review });
+    this.deps.log.info('run.review.submitted', { run: run.id, pull: pr.id, state: review.state });
+    return { reviewed: true, state: review.state, findings: review.comments?.length ?? 0 };
+  };
+
   /** The worker tools to claim on the host's tool door; the plugin registers them as `aivi_*`. */
   tools(): { descriptor: ToolDescriptor; handler: ToolHandler }[] {
     return [
@@ -1300,6 +1544,72 @@ export class Orchestrator implements OrchestratorApi {
         },
         handler: this.prTool,
       },
+      {
+        descriptor: {
+          namespace: 'aivi',
+          name: 'review',
+          description:
+            'Read the pull request over your branch fresh: open review threads with their replies, plain ' +
+            'conversation comments, the approval states, and whether the base would take the merge. What ' +
+            'the completion gate checks, you can see.',
+          input: { type: 'object', properties: {}, additionalProperties: false },
+        },
+        handler: this.reviewTool,
+      },
+      {
+        descriptor: {
+          namespace: 'aivi',
+          name: 'respond_feedback',
+          description:
+            'Answer feedback as aivi. With a threadId: reply to that open review thread and resolve it — ' +
+            'agreeing (do the work, aivi_push) or disagreeing (a grounded comment), both end resolved. ' +
+            'Without one: a plain comment on the pull request, for anything the reviewers should know.',
+          input: {
+            type: 'object',
+            properties: {
+              threadId: { type: 'string', description: 'The open review thread this answers (from aivi_review).' },
+              body: { type: 'string', description: 'Your answer, grounded in the work.' },
+            },
+            required: ['body'],
+            additionalProperties: false,
+          },
+        },
+        handler: this.respondTool,
+      },
+      {
+        descriptor: {
+          namespace: 'aivi',
+          name: 'submit_review',
+          description:
+            'Say on the pull request what your review found, as a review with inline findings (they become ' +
+            'review threads the next worker owes answers on). state: COMMENT for notes, REQUEST_CHANGES for ' +
+            'problems. Approval is not offered — that button stays human.',
+          input: {
+            type: 'object',
+            properties: {
+              body: { type: 'string', description: 'The review, in words a human reads.' },
+              state: { type: 'string', enum: ['COMMENT', 'REQUEST_CHANGES'], description: 'The verdict.' },
+              findings: {
+                type: 'array',
+                description: 'What you found, on which file and line.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    path: { type: 'string', description: 'The file the finding speaks to.' },
+                    line: { type: 'number', description: 'The line, when you can name one.' },
+                    body: { type: 'string', description: 'The finding itself.' },
+                  },
+                  required: ['path', 'body'],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ['body', 'state'],
+            additionalProperties: false,
+          },
+        },
+        handler: this.submitReviewTool,
+      },
     ];
   }
 
@@ -1375,4 +1685,36 @@ function parsePr(input: Record<string, unknown>): { title: string; body: string 
   if (!title) throw new ToolError(400, 'title is required.');
   const body = typeof input.body === 'string' ? input.body : '';
   return { title, body };
+}
+
+/** `aivi_respond_feedback`: an answer, optionally to a named thread. */
+function parseRespond(input: Record<string, unknown>): { threadId?: string; body: string } {
+  const body = typeof input.body === 'string' ? input.body.trim() : '';
+  if (!body) throw new ToolError(400, 'body is required: what you say to the feedback, grounded in the work.');
+  const threadId = typeof input.threadId === 'string' && input.threadId ? input.threadId : undefined;
+  return { ...(threadId ? { threadId } : {}), body };
+}
+
+/** `aivi_submit_review`: a review verdict and inline findings. APPROVE is
+ *  not in the state list and no string will ever talk this code into it. */
+function parseReview(input: Record<string, unknown>): {
+  body: string;
+  state: 'COMMENT' | 'REQUEST_CHANGES';
+  comments?: { path: string; line?: number; body: string }[];
+} {
+  const body = typeof input.body === 'string' ? input.body.trim() : '';
+  if (!body) throw new ToolError(400, 'body is required: the review, in words a human reads.');
+  if (input.state !== 'COMMENT' && input.state !== 'REQUEST_CHANGES')
+    throw new ToolError(400, 'state is required: COMMENT or REQUEST_CHANGES. Approval stays a human button.');
+  const findings: { path: string; line?: number; body: string }[] = [];
+  const raw = Array.isArray(input.findings) ? input.findings : [];
+  for (const finding of raw) {
+    const f = finding as Record<string, unknown>;
+    const path = typeof f.path === 'string' ? f.path : '';
+    const text = typeof f.body === 'string' ? f.body.trim() : '';
+    if (!path || !text)
+      throw new ToolError(400, 'each finding needs a path and a body: what you found, on which file.');
+    findings.push({ path, ...(typeof f.line === 'number' ? { line: f.line } : {}), body: text });
+  }
+  return { body, state: input.state, ...(findings.length ? { comments: findings } : {}) };
 }

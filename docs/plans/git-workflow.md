@@ -53,6 +53,7 @@ the worktree when the lane has one.
 | `aivi_sync` | – | Carry the remote's refs in through the forge (all branches, pruned) and report `behind`/`ahead` for the branch and the default branch. Keeps the push lease honest; a rebase starts here. | no forge |
 | `aivi_review` | – | Fresh read of the pull request: open threads with replies, **plain conversation comments**, approval states, mergeable state. | no forge · no PR known |
 | `aivi_respond_feedback` | `threadId?`, `body` | With a `threadId`: reply to that review thread, signed, and resolve it (agree or disagree — both end resolved). Without: a plain PR comment. | no forge · no PR · thread not open |
+| `aivi_submit_review` | `body`, `state` (`COMMENT` \| `REQUEST_CHANGES`), `findings?` | The review agent's voice: a review with inline findings, which the platform shows as review threads — agent feedback the next round's worker owes answers on. APPROVE is not offered (GitHub fiat: the app authored the PR). | no forge · no PR · bad state |
 | `aivi_work_complete` | unchanged | Completion, **plus the feedback gate** below. | (existing) |
 
 `aivi_push` and `aivi_pr` are **separate tools** (ruled: "Differentiate
@@ -72,6 +73,14 @@ while the *content* was wrong — is plugged by the same check, from the
 other side.
 
 ## The feedback loop
+
+**Built 2026-10-02.** The edges the build had to name: a pull request that
+**closed** mid-run owes nothing (its threads died with it); a gate read that
+**fails** is a plain "call it again" error and **no strike** (a GitHub
+hiccup must not burn the tries); a start gather that fails is warned in the
+log and the run starts clean — the gate will owe nothing, loudly visible in
+the log; and after an escalation is answered, refusals count again but the
+form is never made a second time.
 
 The core mechanic, ruled by the operator: **"if there is open feedback, we
 keep nudging until there is none"** with **"a max of 3 tries or something
@@ -125,7 +134,7 @@ agent would never finish its own review.
 pushes is **authored by the app**, and GitHub refuses an author's own
 approval — so the approve button stays human, forever. What the review
 agent *can* do, and v1 gives it: read everything (`aivi_review`), post
-inline findings as a **review** (`submitReview` below — COMMENT or
+inline findings as a **review** (`aivi_submit_review` — COMMENT or
 REQUEST_CHANGES; those become review threads, which is what makes agent
 feedback gate-owed on the next round), plain comments, and the ticket
 report. Its run ends when its findings are delivered; the next round is a
@@ -133,30 +142,31 @@ person moving the ticket — no wake machinery, no watchers.
 
 ## What the forge interface gains
 
-On `@aivi/plugin/forge`, answered by `forge-github`. **Built 2026-10-02**
-with the push/sync split: `push` is now pure transfer — plain when the
-remote fast-forwards, `--force-with-lease` keyed on the sha the smart push
-just fetched when the divergence is the worker's own rewrite — and opening
-the pull request is its own member, `openPr(repo, branch, { author, title,
-body }): Promise<PrFacts>`, base the repository's default branch, body
-signed `_worker: aivi · <role>_`.
+On `@aivi/plugin/forge`, answered by `forge-github`. **All built
+2026-10-02.** The push/sync split made `push` pure transfer — plain when
+the remote fast-forwards, `--force-with-lease` keyed on the sha the smart
+push just fetched when the divergence is the worker's own rewrite — and
+opening the pull request became its own member, `openPr(repo, branch, {
+author, title, body }): Promise<PrFacts>`, base the repository's default
+branch, body signed `_worker: aivi · <role>_`.
 
-- `fetchRefs(repo, directory): Promise<void>` — **built** — fetch **all**
-  branches with prune, refs only, nothing checked out (`aivi_sync`).
-  `fetchBranch` stays as the single-branch fetch the worktree start and
-  the push's fresh view use.
+- `fetchRefs(repo, directory): Promise<void>` — fetch **all** branches
+  with prune, refs only, nothing checked out (`aivi_sync`). `fetchBranch`
+  stays as the single-branch fetch the worktree start and the push's fresh
+  view use.
 - `commentPr(repo, pr, { author, text }): Promise<void>` — a signed plain
   conversation comment.
 - `submitReview(repo, pr, { author, body, state: 'COMMENT' | 'REQUEST_CHANGES', comments?: { path, line?, body }[] })`
   — the review agent's teeth. APPROVE is not offered: the author cannot
   approve (GitHub), and offering a member that always throws is noise.
-- `ReviewFacts` grows `comments: { author; body; createdAt }[]` — the PR's
+  Inline findings are signed too.
+- `ReviewFacts` grew `comments: { author; body; createdAt }[]` — the PR's
   plain conversation comments, oldest first, capped (~100, like the thread
-  reads). The gather grows until "all review and regular comments" is
+  reads). The gather grew until "all review and regular comments" is
   literally true.
-- `PrFacts` grows `mergeable?: 'clean' | 'dirty' | 'unknown'` — so "main
+- `PrFacts` grew `mergeable?: 'clean' | 'dirty' | 'unknown'` — so "main
   moved, you conflict" is in the first prompt, not a surprise at push
-  time. Where the answer isn't computed yet (REST list reads), `unknown`.
+  time. Where the answer isn't computed (REST list reads), `unknown`.
 
 ## The worktree gets its caller
 
@@ -221,10 +231,11 @@ they can. … 'fixing it' is just removing their messed up version."
 
 ## Ledger
 
-One migration adds the loop's state to `orchestrator_runs`: a `feedback`
-JSON — `{ openThreadIds: string[], attempts: number, escalated: boolean }`
-— written at start, counted at each rejected completion. Survives restarts
-because everything else does.
+**Built 2026-10-02.** One migration (version 4) added the loop's state to
+`orchestrator_runs`: a `feedback` JSON — `{ openThreadIds: string[],
+attempts: number, escalated: boolean, formId? }` — written at start,
+counted at each rejected completion; `formId` is the escalation form whose
+answer resets the count. Survives restarts because everything else does.
 
 ## Build order
 
@@ -239,10 +250,11 @@ commit, and the operator's word to start.
    `fetchRefs`, `aivi_pr` reduced to *open the PR* (push-if-needed,
    already-open answers, fresh PR after merge), the lease-refusal message
    naming `aivi_sync`.
-3. **The feedback loop** — `ReviewFacts.comments`, `PrFacts.mergeable`,
-   `commentPr`, `submitReview`, the start snapshot (migration included),
-   first-prompt composition, `aivi_review`, `aivi_respond_feedback`, the
-   completion gate with the 3-strike escalation form (an answer resets the
+3. **The feedback loop** — **built 2026-10-02** — `ReviewFacts.comments`,
+   `PrFacts.mergeable`, `commentPr`, `submitReview`, the start snapshot
+   (migration included), first-prompt composition, `aivi_review`,
+   `aivi_respond_feedback`, `aivi_submit_review`, the completion gate with
+   the 3-strike escalation form (an answer to *that form* resets the
    strikes).
 4. **The hook + `prompts/`** — session-scoped deny in aivi's plugin, the
    host membership endpoint, core defaults + setup-installed copies +

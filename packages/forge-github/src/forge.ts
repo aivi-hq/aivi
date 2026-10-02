@@ -1,8 +1,10 @@
-/** The `Forge` contract, answered to GitHub. Three reads and one write over
- *  the API — the facts git cannot see from a clone: which pull request stands
- *  for a branch, what its review said, and the one answer aivi posts back —
- *  plus the two transfers the remote boundary belongs to: fetching a project's
- *  clean checkout up to date, and moving aivi's own commits out.
+/** The `Forge` contract, answered to GitHub. Reads and writes over the API —
+ *  the facts git cannot see from a clone: which pull request stands for a
+ *  branch, what its review threads and conversation say, whether the base
+ *  would take the merge — and the posts aivi makes back: a thread answer, a
+ *  plain comment, a review with inline findings — plus the transfers the
+ *  remote boundary belongs to: fetching branches and checkouts, and moving
+ *  aivi's own commits out.
  *
  *  Every call here is made **as the app** through one installation token, and
  *  every transfer carries that token in the command's own environment: a push
@@ -38,7 +40,9 @@ function address(repo: RepoRef): { owner: string; repo: string } {
 }
 
 /** A pull request, in aivi's words. `id` is the pull number as GitHub's own
- *  string: what aivi carries and hands back, never interprets. */
+ *  string: what aivi carries and hands back, never interprets. The REST list
+ *  read does not compute whether the merge is clean, and this forge does not
+ *  guess what GitHub has not said: `unknown`. */
 function prFacts(pull: {
   number: number;
   html_url: string;
@@ -46,7 +50,14 @@ function prFacts(pull: {
   state: string;
   head: { ref: string };
 }): PrFacts {
-  return { id: String(pull.number), url: pull.html_url, title: pull.title, state: pull.state, branch: pull.head.ref };
+  return {
+    id: String(pull.number),
+    url: pull.html_url,
+    title: pull.title,
+    state: pull.state,
+    branch: pull.head.ref,
+    mergeable: 'unknown',
+  };
 }
 
 interface GraphAuthor {
@@ -56,6 +67,7 @@ interface GraphAuthor {
 interface GraphComment {
   body: string;
   author: GraphAuthor | null;
+  createdAt: string;
 }
 interface GraphThread {
   id: string;
@@ -74,8 +86,10 @@ interface GraphPull {
   title: string;
   state: string;
   headRefName: string;
+  mergeable: string | null;
   reviews: { nodes: GraphReview[] };
   reviewThreads: { nodes: GraphThread[] };
+  comments: { nodes: GraphComment[] };
 }
 
 /** The review conversation in one read. GitHub keeps thread *resolution* in
@@ -91,6 +105,7 @@ const REVIEW_FACTS_QUERY = /* GraphQL */ `
         title
         state
         headRefName
+        mergeable
         reviews(last: 50) {
           nodes {
             state
@@ -109,6 +124,13 @@ const REVIEW_FACTS_QUERY = /* GraphQL */ `
                 author { login __typename }
               }
             }
+          }
+        }
+        comments(first: $comments) {
+          nodes {
+            body
+            createdAt
+            author { login __typename }
           }
         }
       }
@@ -212,10 +234,11 @@ export class GitHubForge implements Forge {
     return newest ? prFacts(newest) : undefined;
   }
 
-  /** Everything a review wake needs, in one read: the state of the approvals
-   *  and the threads still open. A pull request aivi cannot see is said, not
-   *  answered empty — an empty review sends a worker away believing it is
-   *  done. */
+  /** Everything a review wake needs, in one read: the state of the approvals,
+   *  the threads still open, and the plain conversation comments — context
+   *  the worker reads but is never gated on. A pull request aivi cannot see
+   *  is said, not answered empty — an empty review sends a worker away
+   *  believing it is done. */
   async reviewFeedback(repo: RepoRef, pr: PrFacts): Promise<ReviewFacts> {
     const { owner, repo: name } = address(repo);
     const answer = await this.app.octokit.graphql<{ repository: { pullRequest: GraphPull | null } | null }>(
@@ -228,12 +251,27 @@ export class GitHubForge implements Forge {
         `forge-github: pull request #${pr.id} of ${repo.id} is not visible to installation #${this.app.installationId}`,
       );
     return {
-      pr: { id: String(pull.number), url: pull.url, title: pull.title, state: pull.state, branch: pull.headRefName },
+      pr: {
+        id: String(pull.number),
+        url: pull.url,
+        title: pull.title,
+        state: pull.state,
+        branch: pull.headRefName,
+        // GitHub's own word, in aivi's three: MERGEABLE is clean,
+        // CONFLICTING is dirty, and a mergeability GitHub has not computed
+        // yet (it computes on demand) is said as unknown, not guessed.
+        mergeable: pull.mergeable === 'MERGEABLE' ? 'clean' : pull.mergeable === 'CONFLICTING' ? 'dirty' : 'unknown',
+      },
       reviews: pull.reviews.nodes.map(review => ({ author: authorOf(review.author), state: review.state })),
       threads: pull.reviewThreads.nodes.flatMap(node => {
         const thread = openThread(node);
         return thread ? [thread] : [];
       }),
+      comments: pull.comments.nodes.map(comment => ({
+        author: authorOfComment(comment),
+        body: comment.body,
+        createdAt: comment.createdAt,
+      })),
     };
   }
 
@@ -248,6 +286,59 @@ export class GitHubForge implements Forge {
     await this.app.octokit.graphql(REPLY_MUTATION, { threadId, body: signComment(reply.text, reply.author) });
     await this.app.octokit.graphql(RESOLVE_MUTATION, { threadId });
     this.log.info('review.answered', { repo: repo.id, thread: threadId, worker: reply.author });
+  }
+
+  /** A plain conversation comment, signed like every aivi post: what the
+   *  worker says when there is no thread to answer. */
+  async commentPr(repo: RepoRef, pr: PrFacts, comment: { author: string; text: string }): Promise<void> {
+    const { owner, repo: name } = address(repo);
+    await this.app.octokit.rest.issues.createComment({
+      owner,
+      repo: name,
+      issue_number: Number(pr.id),
+      body: signComment(comment.text, comment.author),
+    });
+    this.log.info('pull.commented', { repo: repo.id, pull: pr.id, worker: comment.author });
+  }
+
+  /** The review agent's teeth: findings on the lines themselves, which the
+   *  platform shows as review threads — agent feedback that the next round's
+   *  worker owes answers on. Every inline body carries the signature like
+   *  every aivi post, so a wake can tell its own findings from a human's. */
+  async submitReview(
+    repo: RepoRef,
+    pr: PrFacts,
+    review: {
+      author: string;
+      body: string;
+      state: 'COMMENT' | 'REQUEST_CHANGES';
+      comments?: { path: string; line?: number; body: string }[];
+    },
+  ): Promise<void> {
+    const { owner, repo: name } = address(repo);
+    await this.app.octokit.rest.pulls.createReview({
+      owner,
+      repo: name,
+      pull_number: Number(pr.id),
+      event: review.state,
+      body: signComment(review.body, review.author),
+      ...(review.comments
+        ? {
+            comments: review.comments.map(finding => ({
+              path: finding.path,
+              ...(finding.line === undefined ? {} : { line: finding.line }),
+              body: signComment(finding.body, review.author),
+            })),
+          }
+        : {}),
+    });
+    this.log.info('review.submitted', {
+      repo: repo.id,
+      pull: pr.id,
+      state: review.state,
+      worker: review.author,
+      findings: review.comments?.length ?? 0,
+    });
   }
 
   /** The URL and credential for one transfer. The URL is the one this forge

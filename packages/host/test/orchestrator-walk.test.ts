@@ -515,10 +515,22 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
  *  move, so the smart push is tested against real divergence — a fast-
  *  forward, a person's commit to merge, a conflict to resolve, a rebase to
  *  force — and not against a scripted opinion of any of them. */
+/** The mutable review conversation behind the fake forge: threads a person
+ *  (or the worker) resolves between reads, comments that ride the reads,
+ *  and the posts the tools made. */
+interface ReviewStore {
+  threads: Map<string, { path?: string; question: string; resolved: boolean }>;
+  comments: { login: string; body: string; createdAt: string }[];
+  resolves: { threadId: string; text: string }[];
+  plain: string[];
+  reviews: unknown[];
+}
+
 function localForge(
   origin: string,
   seen: { pushes: { branch: string; lease?: string }[]; opens: string[] },
   prs: Map<string, string>,
+  review?: ReviewStore,
 ) {
   return {
     async repoFor(project: { id: string }) {
@@ -560,6 +572,41 @@ function localForge(
       prs.set(branch, 'open');
       return { id: 'pr-1', url: 'https://github.com/acme/site/pull/1', title: 'Widget', state: 'open', branch };
     },
+    ...(review
+      ? {
+          async reviewFeedback(
+            _repo: unknown,
+            pr: { id: string; url: string; title: string; state: string; branch: string },
+          ) {
+            return {
+              pr: { ...pr, mergeable: 'clean' },
+              reviews: [],
+              threads: [...review.threads].flatMap(([id, t]) =>
+                t.resolved
+                  ? []
+                  : [{ id, ...(t.path ? { path: t.path } : {}), state: 'open', question: t.question, replies: [] }],
+              ),
+              comments: review.comments.map(c => ({
+                author: { login: c.login, bot: c.login.endsWith('[bot]') },
+                body: c.body,
+                createdAt: c.createdAt,
+              })),
+            };
+          },
+          async resolveThread(_repo: unknown, _pr: unknown, threadId: string, reply: { text: string }) {
+            const thread = review.threads.get(threadId);
+            if (!thread || thread.resolved) throw new Error(`no open thread ${threadId}`);
+            thread.resolved = true;
+            review.resolves.push({ threadId, text: reply.text });
+          },
+          async commentPr(_repo: unknown, _pr: unknown, comment: { text: string }) {
+            review.plain.push(comment.text);
+          },
+          async submitReview(_repo: unknown, _pr: unknown, submitted: unknown) {
+            review.reviews.push(submitted);
+          },
+        }
+      : {}),
   };
 }
 
@@ -867,4 +914,184 @@ test('a worktree lane whose tracker named no branch fails the run visibly and sa
   assert.equal(ended.outcome?.kind, 'failure');
   assert.match(ended.outcome?.kind === 'failure' ? ended.outcome.reason : '', /named no branch/);
   assert.deepEqual(fake.prompts, [], 'the worker was never started in a directory nobody named');
+});
+
+/** The full walk with a forge that answers review: the run starts through
+ *  the board (so the gather at start really fires), the checkout directory
+ *  is real git, and the review conversation is mutable between reads. */
+async function gateFixture(
+  t: { after: (fn: () => Promise<unknown>) => void },
+  name: string,
+  openThreads: Record<string, { path?: string; question: string }>,
+) {
+  const root = await mkdtemp(join(tmpdir(), `aivi-${name}-`));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const upstream = join(root, 'upstream');
+  await mkdir(upstream);
+  await writeFile(join(upstream, 'README.md'), 'one');
+  await git(upstream, 'init', '-q', '-b', 'main');
+  await git(upstream, 'add', '.');
+  await git(upstream, 'commit', '-q', '-m', 'one');
+  const source = join(root, 'site');
+  await git(root, 'clone', '-q', 'upstream', 'site');
+  await git(source, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(source, 'config', 'user.email', 'dev@example.com');
+  await git(source, 'config', 'user.name', 'Dev');
+  // The run works in the checkout, on the ticket's branch: that is the
+  // branch the gate and the review tools ask the forge about.
+  await git(source, 'checkout', '-q', '-b', 'me/t-gate');
+
+  const fake = fakeOpenCode();
+  const lanes = [lane('Todo', { queue: true }), lane('In Progress', { agent: 'dev' })];
+  const feed = boardFeed(fake, { 'In Progress': [{ id: 't-gate' }] });
+  const work = { ...feed, projects: () => ['site'] };
+  const forges = new Forges();
+  const review: ReviewStore = {
+    threads: new Map(Object.entries(openThreads).map(([id, t]) => [id, { ...t, resolved: false }])),
+    comments: [],
+    resolves: [],
+    plain: [],
+    reviews: [],
+  };
+  const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
+  forges.register(localForge(upstream, seen, new Map([['me/t-gate', 'open']]), review) as never);
+  const { ledger, orchestrator } = harness(lanes, {}, work, fake, new AbortController(), forges, () => source);
+  await orchestrator.wake('site');
+  await until(() => fake.prompts.length === 1, 'the worker starts with its ticket');
+  const run = ledger.active()[0]!;
+  return {
+    root,
+    upstream,
+    source,
+    fake,
+    ledger,
+    orchestrator,
+    feed,
+    review,
+    seen,
+    run,
+    call: (input: Record<string, unknown>) => ({ sessionId: run.sessionId!, input }),
+  };
+}
+
+test('a returning ticket is told what it owes; the gate refuses until it is answered, and the third refusal asks a person', async t => {
+  const g = await gateFixture(t, 'gate', { PRRT_1: { path: 'src/header.ts', question: 'Why is this nil?' } });
+
+  // The start: the snapshot is the whole bookkeeping, the guidance rides the prompt.
+  assert.match(g.fake.prompts[0]!.text, /returning work/, 'the first prompt says this is returning work');
+  assert.match(g.fake.prompts[0]!.text, /Why is this nil\?/, 'and names what is owed');
+  assert.deepEqual(g.ledger.get(g.run.id)!.feedback, { openThreadIds: ['PRRT_1'], attempts: 0, escalated: false });
+
+  // Refusals count, and teach the loop in their own words.
+  for (const strike of [1, 2]) {
+    await assert.rejects(
+      () => g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'done' })),
+      (error: unknown) =>
+        error instanceof ToolError &&
+        /owe answers/.test(String(error)) &&
+        new RegExp(`${strike} of 3`).test(String(error)),
+      `refusal ${strike} says so`,
+    );
+    assert.equal(g.ledger.get(g.run.id)!.feedback?.attempts, strike);
+  }
+
+  // The third: the person is asked — the same durable form aivi_ask makes.
+  await assert.rejects(
+    () => g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'done' })),
+    (error: unknown) => error instanceof ToolError && /person has been asked/.test(String(error)),
+  );
+  assert.equal(g.fake.forms.length, 1, 'the escalation form stands');
+  assert.equal(g.ledger.get(g.run.id)!.state, 'awaiting_input', 'the run parks on the person');
+  assert.equal(g.ledger.get(g.run.id)!.feedback?.escalated, true);
+
+  // Never doubled.
+  await assert.rejects(
+    () => g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'done' })),
+    (error: unknown) => error instanceof ToolError && /asked once/.test(String(error)),
+  );
+  assert.equal(g.fake.forms.length, 1, 'one escalation form per run');
+
+  // The person answers: the strikes reset — "try again with these instructions".
+  const formId = g.ledger.get(g.run.id)!.feedback!.formId!;
+  const answered = await g.orchestrator.answer(g.run.sessionId!, 'resolve them with a note and ship it', formId);
+  assert.deepEqual(answered, { resumed: true });
+  assert.deepEqual(g.ledger.get(g.run.id)!.feedback, {
+    openThreadIds: ['PRRT_1'],
+    attempts: 0,
+    escalated: true,
+    formId,
+  });
+
+  // A person resolving the thread on the platform is authoritative: the gate lets it through.
+  g.review.threads.get('PRRT_1')!.resolved = true;
+  g.feed.retire('t-gate');
+  const ended = await g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'done' }));
+  assert.deepEqual(ended, { recorded: true, outcome: 'success' });
+});
+
+test('a run that started clean is never chased by feedback arriving mid-run: the reviewing agent posts and finishes', async t => {
+  const g = await gateFixture(t, 'clean', {});
+  assert.ok(!g.fake.prompts[0]!.text.includes('returning work'), 'a clean start carries no guidance paragraph');
+  assert.equal(g.ledger.get(g.run.id)!.feedback, undefined, 'and no snapshot');
+
+  // The review agent posts its findings (threads appear mid-run) and completes
+  // freely: those threads are not owed, or it could never finish its own job.
+  g.review.threads.set('PRRT_new', { path: 'src/x.ts', question: 'Unbounded loop', resolved: false });
+  const ended = await g.orchestrator.completeTool(g.call({ outcome: 'success', summary: 'findings posted' }));
+  assert.deepEqual(ended, { recorded: true, outcome: 'success' });
+});
+
+test('a worker giving up does not have to answer reviewers to hand the ticket back', async t => {
+  const g = await gateFixture(t, 'exempt', { PRRT_1: { path: 'a.ts', question: 'Fix this' } });
+  const ended = await g.orchestrator.completeTool(g.call({ outcome: 'failure', summary: 'stuck' }));
+  assert.deepEqual(ended, { recorded: true, outcome: 'failure' });
+  assert.deepEqual(g.review.resolves, [], 'nothing was answered to pass the failure through');
+});
+
+test('aivi_review shows what the gate checks, aivi_respond_feedback answers or comments, aivi_submit_review posts findings', async t => {
+  const g = await gateFixture(t, 'voice', { PRRT_1: { path: 'src/header.ts', question: 'Why is this nil?' } });
+
+  const facts = (await g.orchestrator.reviewTool(g.call({}))) as {
+    pull: string;
+    mergeable: string;
+    threads: { id: string; question: string }[];
+  };
+  assert.equal(facts.pull, 'https://github.com/acme/site/pull/1');
+  assert.equal(facts.mergeable, 'clean');
+  assert.equal(facts.threads[0]!.id, 'PRRT_1');
+
+  // Answer the thread: signed reply, resolved — agree or disagree, both end resolved.
+  await g.orchestrator.respondTool(g.call({ threadId: 'PRRT_1', body: 'It is nil until the retry lands.' }));
+  assert.deepEqual(g.review.resolves, [{ threadId: 'PRRT_1', text: 'It is nil until the retry lands.' }]);
+  await assert.rejects(
+    () => g.orchestrator.respondTool(g.call({ threadId: 'PRRT_1', body: 'answering again' })),
+    (error: unknown) => error instanceof ToolError && /not open/.test(String(error)),
+    'a resolved thread is not answerable: the person who resolved it is authoritative',
+  );
+
+  // Without a thread: a plain comment, context only.
+  await g.orchestrator.respondTool(g.call({ body: 'Rebased over main.' }));
+  assert.deepEqual(g.review.plain, ['Rebased over main.']);
+
+  // The review agent's voice, with the posture in its own args.
+  await g.orchestrator.submitReviewTool(
+    g.call({
+      body: 'Two problems',
+      state: 'REQUEST_CHANGES',
+      findings: [{ path: 'src/x.ts', line: 7, body: 'Unbounded' }],
+    }),
+  );
+  assert.deepEqual(g.review.reviews, [
+    {
+      author: 'dev',
+      body: 'Two problems',
+      state: 'REQUEST_CHANGES',
+      comments: [{ path: 'src/x.ts', line: 7, body: 'Unbounded' }],
+    },
+  ]);
+  await assert.rejects(
+    () => g.orchestrator.submitReviewTool(g.call({ body: 'ship it', state: 'APPROVE' })),
+    (error: unknown) => error instanceof ToolError && /COMMENT or REQUEST_CHANGES/.test(String(error)),
+    'approval is not a thing aivi can post',
+  );
 });

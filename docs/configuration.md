@@ -349,8 +349,10 @@ the forge, authenticated as its own installation; the rest stays plain git)
 and the worker's git tools: `aivi_sync` brings the remote's refs in,
 `aivi_push` moves commits (as the forge's own app, fast-forwarding, merging,
 or forcing only a patch-equivalent rewrite), and `aivi_pr` opens the pull
-request when the branch has none. A project with no forge gets none of
-these, and the three tools say so plainly when they are called anyway.
+request when the branch has none; `aivi_review`, `aivi_respond_feedback` and
+`aivi_submit_review` carry the review conversation the same way. A project
+with no forge gets none of these, and the tools say so plainly when they
+are called anyway.
 
 ## Operator commands
 
