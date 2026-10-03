@@ -94,7 +94,15 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
     if (!agent) throw new JobRefused('This session has no agent; pass agent explicitly.');
     // Verified against OpenCode 2.0.3: `agent.list` with a location sees agents defined under that
     // directory's .opencode/, where `agent.get` does not.
-    const agents = await client.agent.list({ location: { directory } }).catch(() => ({ data: [] }));
+    // A failed read is not "no agents": the same condition the create path
+    // answers with an honest 503 (below) must not become a confident wrong
+    // "No agent exists" here.
+    const agents = await client.agent.list({ location: { directory } }).catch(error => {
+      throw new JobRefused(
+        `Could not list the agents in ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+        503,
+      );
+    });
     if (!agents.data.some(a => a.id === agent)) throw new JobRefused(`No agent "${agent}" exists in ${directory}.`);
     return userTaskSchema.parse({
       kind: 'prompt',

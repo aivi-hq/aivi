@@ -178,29 +178,6 @@ was acknowledged already, so Linear never resends. The comment at :601
 promises "said in the log, never lost"; the person hears nothing. The
 conversation deserves the engine's own "I could not deliver that" line.
 
-### D9. A worker that quotes its own session id can silence the closing note forever
-
-The closing note's idempotence marker (tracker-linear/tracker.ts) is "some
-comment's body contains the session id". Workers are *invited* to talk about
-their sessions; one comment quoting `ses_…` makes every future closing
-attempt read as already said. The marker should be a signature aivi controls
-(the forge package already signs its posts), not an id the worker may echo.
-
-### D10. `aivi_jobs` says "no such agent" when OpenCode was merely unreachable
-
-jobs.ts:97 — `client.agent.list(...).catch(() => ({ data: [] }))`: any failure
-reads as *no agents at all*, and the tool refuses with `No agent "x" exists in
-…` — a confident wrong answer. A few lines below (:192) reachability gets an
-explicit honest 503; the same condition here becomes a false statement.
-
-### D11. The forge's review read truncates silently
-
-forge.ts:246 asks GraphQL for `threads: 100, comments: 100` and reads neither
-`hasNextPage` nor totals: a 150-thread review hands the worker 100 threads and
-says nothing. The Linear client logs `walk.board.truncated` for exactly this
-shape; here a worker that believes it answered everything ends a run owing
-answers.
-
 ### D12. The Linear MCP proxy buffers request bodies without a cap
 
 mcp.ts `readBody` accumulates unbounded, while every other body reader in aivi
@@ -269,8 +246,8 @@ temp-file-plus-rename is three lines in each place.
 
 ## Suggested order of repair
 
-1. **The claims that promise what is not there (D9, D10, D11)** — either
-   build the bound/cap/signature or fix the sentence; each is small.
+1. **The claims that promise what is not there (D9, D10, D11)** — *done
+   2026-10-03, see Disposition.*
 2. **B3, B4, B5, B6** — each needs a decision more than a patch (what should
    boot say about a broken symlink; whether `fail` policy stays advertised;
    whether release-mid-expiry or the strikes map is the wrong half; whether
@@ -283,6 +260,15 @@ temp-file-plus-rename is three lines in each place.
 
 ## Disposition
 
+- **D9, D10, D11 — fixed 2026-10-03.** The closing note's idempotence marker
+  is a trailer aivi controls and reads only as a comment's last line, so a
+  worker quoting its session id in prose no longer silences the closing
+  (pinned by test). `aivi_jobs` answers an unreadable agent list with the
+  honest 503 the create path already gave the same condition, never a
+  confident "No agent exists". The forge's review read asks GitHub for
+  `hasNextPage` on both connections and says `review.facts.truncated` when
+  the read could not hold everything — the worker is not left believing a
+  150-thread review was 100 threads.
 - **B1, B2 — fixed 2026-10-03** (the operator's ruling: the board is the
   stop's memory). The HITL label rides before the run ends on both module
   stop paths; an interrupt OpenCode would not answer carries

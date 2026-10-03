@@ -406,6 +406,18 @@ test('the closing note stands on the ticket once: linked to its session, never p
   client.sessionsByIssue.set('eng-2', [{ id: 'as-2', status: 'active' }]);
   await tracker.closingNote!('dev:as-2', 'eng-2', 'Stopped: a person takes over.');
   assert.equal(client.posted[1]!.body, 'Stopped: a person takes over.\n\n— aivi · agent session `as-2`');
+  // Workers are invited to talk about their sessions. A
+  // comment quoting the id in prose is the worker's text, not the note
+  // standing — the closing still lands. Only the trailer closes a comment.
+  const { client: quoting, tracker: quotingTracker } = await wired(t);
+  quoting.sessionsByIssue.set('eng-3', [{ id: 'as-3', status: 'active' }]);
+  quoting.sessionUrls.set('as-3', 'https://linear.app/x/agent-session/as-3');
+  quoting.commentsByIssue.set('eng-3', ['I finished this in session ses_as-3, all tests green.']);
+  await quotingTracker.closingNote!('dev:as-3', 'eng-3', 'Done.');
+  assert.equal(quoting.posted.length, 1, 'a quoted id in prose does not silence the closing note');
+  // The note's own trailer, standing on the ticket, does.
+  await quotingTracker.closingNote!('dev:as-3', 'eng-3', 'Done.');
+  assert.equal(quoting.posted.length, 1, 'and the standing trailer is honored on the retry');
 });
 
 test('the human label rides: apply adds the named label to the issue and lifts it back', async t => {

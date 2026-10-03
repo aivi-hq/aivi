@@ -14,6 +14,7 @@ import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import type { Logger } from '@aivi/core';
 import type { RepoRef } from '@aivi/plugin/forge';
 import { createGitHubForge, type GitHubForge } from '../src/forge.ts';
 import type { GitRunner } from '../src/github.ts';
@@ -74,6 +75,7 @@ const checkoutDir = async (): Promise<{ root: string; source: string }> => {
 async function forgeWith(
   routes: Record<string, (call: Seen) => Answer>,
   git?: GitRunner,
+  log?: Logger,
 ): Promise<{
   forge: GitHubForge;
   calls: () => string[];
@@ -86,7 +88,8 @@ async function forgeWith(
     ...routes,
   });
   const app = await GitHubApp.connect({ app: 7 }, { fetch: api.fetch });
-  return { forge: git ? createGitHubForge(app, { git }) : createGitHubForge(app), calls: api.calls, seen: api.seen };
+  const options = { ...(git ? { git } : {}), ...(log ? { log } : {}) };
+  return { forge: createGitHubForge(app, options), calls: api.calls, seen: api.seen };
 }
 
 /** The pull request as GitHub's REST answer carries it. */
@@ -187,6 +190,7 @@ const REVIEW_ANSWER = {
         ],
       },
       reviewThreads: {
+        pageInfo: { hasNextPage: false },
         nodes: [
           {
             id: 'PRRT_1',
@@ -221,6 +225,7 @@ const REVIEW_ANSWER = {
         ],
       },
       comments: {
+        pageInfo: { hasNextPage: false },
         nodes: [
           {
             body: 'Overall this reads well, is the retry bounded?',
@@ -302,6 +307,31 @@ test('a pull request aivi cannot see is said, not answered empty: an empty revie
   const api = await forgeWith({ 'POST /graphql': () => ({ status: 200, body: { data: { repository: null } } }) });
   const pr = { id: '12', url: 'x', title: 't', state: 'open', branch: 'feat/retry' };
   await assert.rejects(api.forge.reviewFeedback(REPO, pr), /pull request #12 of acme\/widget is not visible/);
+});
+
+test('a review read that could not hold everything says so — never silently short', async () => {
+  const warned: { message: string; objects: unknown[] }[] = [];
+  const log = {
+    debug: () => {},
+    info: () => {},
+    warn: (message: string, ...objects: unknown[]) => warned.push({ message, objects }),
+    error: () => {},
+    fatal: () => {},
+  } as unknown as Logger;
+  const short = structuredClone(REVIEW_ANSWER);
+  short.repository.pullRequest.reviewThreads.pageInfo.hasNextPage = true;
+  const api = await forgeWith({ 'POST /graphql': () => ({ status: 200, body: { data: short } }) }, undefined, log);
+  const facts = await api.forge.reviewFeedback(REPO, {
+    id: '12',
+    url: 'https://github.com/acme/widget/pull/12',
+    title: 'Retry the header',
+    state: 'open',
+    branch: 'feat/retry',
+  });
+  assert.equal(warned.length, 1, 'the truncation is said once');
+  assert.equal(warned[0]!.message, 'review.facts.truncated');
+  assert.deepEqual(warned[0]!.objects, [{ repo: 'acme/widget', pr: '12', held: 'review threads' }]);
+  assert.equal(facts.threads.length, 2, 'and the facts still come back — the worker is not left empty');
 });
 
 test('answering a thread posts the worker’s signed words, then resolves it', async () => {

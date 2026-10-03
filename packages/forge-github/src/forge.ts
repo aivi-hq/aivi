@@ -88,8 +88,8 @@ interface GraphPull {
   headRefName: string;
   mergeable: string | null;
   reviews: { nodes: GraphReview[] };
-  reviewThreads: { nodes: GraphThread[] };
-  comments: { nodes: GraphComment[] };
+  reviewThreads: { pageInfo: { hasNextPage: boolean }; nodes: GraphThread[] };
+  comments: { pageInfo: { hasNextPage: boolean }; nodes: GraphComment[] };
 }
 
 /** The review conversation in one read. GitHub keeps thread *resolution* in
@@ -113,6 +113,7 @@ const REVIEW_FACTS_QUERY = /* GraphQL */ `
           }
         }
         reviewThreads(first: $threads) {
+          pageInfo { hasNextPage }
           nodes {
             id
             isResolved
@@ -127,6 +128,7 @@ const REVIEW_FACTS_QUERY = /* GraphQL */ `
           }
         }
         comments(first: $comments) {
+          pageInfo { hasNextPage }
           nodes {
             body
             createdAt
@@ -240,7 +242,11 @@ export class GitHubForge implements Forge {
    *  the threads still open, and the plain conversation comments — context
    *  the worker reads but is never gated on. A pull request aivi cannot see
    *  is said, not answered empty — an empty review sends a worker away
-   *  believing it is done. */
+   *  believing it is done. And a read that could not hold everything is
+   *  **said too**: `hasNextPage` on either connection is a
+   *  loud `review.facts.truncated`, the same word Linear keeps for its own
+   *  wide board reads — silence here leaves a worker owing answers it
+   *  believed were gathered. */
   async reviewFeedback(repo: RepoRef, pr: PrFacts): Promise<ReviewFacts> {
     const { owner, repo: name } = address(repo);
     const answer = await this.app.octokit.graphql<{ repository: { pullRequest: GraphPull | null } | null }>(
@@ -252,6 +258,11 @@ export class GitHubForge implements Forge {
       throw new Error(
         `forge-github: pull request #${pr.id} of ${repo.id} is not visible to installation #${this.app.installationId}`,
       );
+    const cut = [
+      ...(pull.reviewThreads.pageInfo.hasNextPage ? ['review threads'] : []),
+      ...(pull.comments.pageInfo.hasNextPage ? ['conversation comments'] : []),
+    ];
+    if (cut.length) this.log.warn('review.facts.truncated', { repo: repo.id, pr: pr.id, held: cut.join(' and ') });
     return {
       pr: {
         id: String(pull.number),

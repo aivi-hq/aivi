@@ -306,16 +306,17 @@ export class LinearPlatform implements Platform {
   /** The closing note on the **ticket** (ruled 2026-10-02: the answer was
    *  only readable by opening the agent session). The person gets the text
    *  plus a link to the session that did the work. Idempotence is ours, as
-   *  the seam demands: the marker is this conversation's agent session id —
-   *  a comment already carrying it means the note stands, so wake retries
-   *  and the boot pass never post it twice. */
+   *  the seam demands, and it is a signature aivi controls:
+   *  the note's own closing trailer, not a bare session id a worker was
+   *  invited to talk about. Wake retries and the boot pass never post it
+   *  twice. */
   async closingNote(conversation: string, issueId: string, text: string): Promise<void> {
     const session = this.sessionOf(conversation);
     const facts = await this.of(conversation).client.closingNoteFacts(issueId);
-    if (facts.comments.some(c => c.body.includes(session))) return;
-    const url = facts.sessions.find(s => s.id === session)?.url;
+    const url = facts.sessions.find(s => s.id === session)?.url ?? undefined;
+    if (facts.comments.some(c => closingNoteStands(c.body, session, url))) return;
     const link = url ? `[agent session](${url})` : `agent session \`${session}\``;
-    await this.of(conversation).client.createComment(issueId, `${text}\n\n— aivi · ${link}`);
+    await this.of(conversation).client.createComment(issueId, `${text}\n\n${CLOSING_MARK}${link}`);
   }
 
   /**
@@ -414,6 +415,23 @@ export class LinearPlatform implements Platform {
  *  reads them: state, labels, delegate, archive. A field absent from
  *  `updatedFrom` did not change — and the list is the whole contract of
  *  what a data change can mean to aivi. */
+/** The mark that opens the closing note's trailer — the one piece of its
+ *  shape aivi controls and reads back. */
+const CLOSING_MARK = '— aivi · ';
+
+/** Whether the closing note for this session stands on the ticket, read
+ *  the forge's way: the trailer **closes** the comment, so
+ *  only its last line is read — a session id quoted in a worker's prose is
+ *  the worker's text, not the note standing. The note names its session by
+ *  id or by the url it linked; either one on the trailer line is aivi's own
+ *  mark. Deliberate forgery of the whole trailer is a person's comment now,
+ *  not an accident the marker invites. */
+function closingNoteStands(body: string, session: string, url: string | undefined): boolean {
+  const last = body.trimEnd().split('\n').at(-1)?.trim();
+  if (!last?.startsWith(CLOSING_MARK)) return false;
+  return last.includes(session) || (url !== undefined && last.includes(url));
+}
+
 function changedFields(payload: IssueEventPayload): TrackerChange[] {
   const changed: TrackerChange[] = [];
   for (const [field, change] of [
