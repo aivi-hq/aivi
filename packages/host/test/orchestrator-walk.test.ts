@@ -48,6 +48,12 @@ interface Fake {
    *  form's title is recorded too: the words an edited `escalation` prompt
    *  speaks must be visible from here. */
   forms: { id: string; sessionID: string; title?: string; answered?: unknown }[];
+  /** Test switches: OpenCode down at the exact moment of a prompt (the
+   *  answer delivery's failure paths, ruled 2026-10-03). */
+  ctl: { promptFails: boolean };
+  /** Prompts OpenCode refused while `promptFails` stood: the test's signal
+   *  that a delivery was attempted and failed. */
+  rejected: string[];
 }
 
 function fakeOpenCode(): Fake {
@@ -60,6 +66,8 @@ function fakeOpenCode(): Fake {
     busy,
     interrupted: [],
     forms: [],
+    ctl: { promptFails: false },
+    rejected: [],
   };
   fake.client = {
     agent: { list: async () => ({ data: [{ id: 'dev', model: { providerID: 'agentprov', id: 'agentmodel' } }] }) },
@@ -78,6 +86,10 @@ function fakeOpenCode(): Fake {
         busy.delete(sessionID);
       },
       prompt: async (input: { sessionID: string; text: string }) => {
+        if (fake.ctl.promptFails) {
+          fake.rejected.push(input.sessionID);
+          throw new Error('OpenCode is down');
+        }
         fake.prompts.push({ sessionID: input.sessionID, text: input.text });
       },
       form: {
@@ -515,6 +527,154 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
   assert.equal(dispatcher.leases.require(ledger.get(first.runId)!.leaseId!).pool, 'a');
   assert.match(fake.prompts.at(-1)!.text, /The person answered your question: the deep one/);
   assert.equal(dispatcher.leases.held('b'), 0, 'and still nobody moved pools');
+});
+
+test('an answer OpenCode will not take leaves the run parked: the books did not move, and the answer is giveable again', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, dispatcher, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+  await orchestrator.askTool({ sessionId, input: { question: 'Which shade?' } });
+  const form = fake.forms.find(f => f.sessionID === sessionId)!;
+  const leaseId = ledger.get(runId)!.leaseId!;
+
+  // OpenCode goes down at the exact moment of the answer.
+  fake.ctl.promptFails = true;
+  await assert.rejects(
+    () => orchestrator.answer(sessionId, 'the deep one', form.id),
+    'the failed delivery reaches the caller, who says it to the person',
+  );
+  const parked = ledger.get(runId)!;
+  assert.equal(parked.state, 'awaiting_input', 'the books did not move: still parked on its form');
+  assert.equal(parked.leaseId, leaseId, 'and it stands on the slot it had');
+  assert.equal(form.answered, undefined, 'the question stands open: the answer is giveable again');
+
+  // The re-armed keep-alive stands the wait as before — ring, slot back —
+  // and a later answer lands on the same session.
+  fake.ctl.promptFails = false;
+  await until(() => dispatcher.leases.held('a') === 0, 'the re-armed keep-alive rang and gave the slot back');
+  const answered = await orchestrator.answer(sessionId, 'the deep one', form.id);
+  assert.deepEqual(answered, { resumed: true }, 'a later answer walks back into the same session');
+  assert.match(fake.prompts.at(-1)!.text, /The person answered your question: the deep one/);
+  assert.deepEqual(form.answered, { answer: 'the deep one' }, 'and the form closes as the record');
+});
+
+test('a queued answer whose delivery fails: the slot goes back, the run parks again — no silence bought', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, {});
+  const { ledger, dispatcher, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    feed,
+    fake,
+  );
+  const first = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(first.runId)!.sessionId!;
+  await orchestrator.askTool({ sessionId, input: { question: 'Which shade?' } });
+  await until(() => dispatcher.leases.held('a') === 0, 'the keep-alive gives the slot back');
+  const form = fake.forms.find(f => f.sessionID === sessionId)!;
+
+  // Another ticket takes the opened slot, so the answer queues for it.
+  const second = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-2',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-2',
+  });
+  await until(() => fake.prompts.length === 2, 'the next ticket works');
+  const waiting = await orchestrator.answer(sessionId, 'the deep one', form.id);
+  assert.ok('queued' in waiting, 'the answer waits for its slot');
+
+  // The slot opens — and OpenCode is down at the delivery. Before the
+  // 2026-10-03 ordering this was the stuck case: the books had flipped to
+  // `working` before the prompt, the lease went back with the failure, and
+  // nothing — no turn, no clock — would ever move the run again.
+  fake.ctl.promptFails = true;
+  await orchestrator.stop(second.runId, 'done with it');
+  await until(() => fake.rejected.length === 1, 'the queued delivery was attempted and refused');
+  const parked = ledger.get(first.runId)!;
+  assert.equal(parked.state, 'awaiting_input', 'the books did not move: no working run with no lease and no clock');
+  assert.equal(parked.leaseId, undefined, 'the reacquired slot went straight back');
+  assert.equal(dispatcher.leases.held('a'), 0, 'the pool serves the board again');
+  assert.equal(form.answered, undefined, 'the question stands open for the person to answer again');
+
+  // And it does: the next answer lands on the same session.
+  fake.ctl.promptFails = false;
+  const answered = await orchestrator.answer(sessionId, 'the deep one', form.id);
+  assert.deepEqual(answered, { resumed: true }, 'a later answer walks back into the same session');
+  assert.ok(
+    fake.prompts.some(p => p.text === 'The person answered your question: the deep one'),
+    'the worker got the words',
+  );
+});
+
+test('two answers in the same instant: both persons’ words reach the worker, the books flip once', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+  await orchestrator.askTool({ sessionId, input: { question: 'Which shade?' } });
+  const form = fake.forms.find(f => f.sessionID === sessionId)!;
+
+  // The same instant, twice: both deliveries pass the parked check before
+  // either book flips. The ruling (2026-10-03) keeps both persons' words —
+  // both are true answers — and the guard miss says so: the loser touches
+  // the books, the clocks and the form not at all.
+  const [first, second] = await Promise.all([
+    orchestrator.answer(sessionId, 'the deep one', form.id),
+    orchestrator.answer(sessionId, 'the deep one', form.id),
+  ]);
+  assert.deepEqual(first, { resumed: true });
+  assert.deepEqual(second, { resumed: true }, 'both deliveries reached the worker');
+  assert.equal(ledger.get(runId)!.state, 'working', 'the books flipped once and stand');
+  assert.equal(
+    fake.prompts.filter(p => p.text === 'The person answered your question: the deep one').length,
+    2,
+    'the worker reads both — by design, both are a person’s true words',
+  );
+  assert.deepEqual(form.answered, { answer: 'the deep one' }, 'the form closed once, as the record');
 });
 
 /** A forge backed by real git against a local-path remote: bytes really

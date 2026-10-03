@@ -216,14 +216,16 @@ export class RunLedger {
     });
   }
 
-  /** The answer arrived and capacity stands behind it again: back to
-   *  working. Only an awaiting run resumes; anything else stands. */
-  resumed(id: string, now = Date.now()): Run {
+  /** The answer arrived and OpenCode took the words: back to working. Only
+   *  an awaiting run resumes, and a missed guard says so (`undefined`)
+   *  instead of pretending (2026-10-03: the books move *after* the worker's
+   *  prompt, so a raced or late delivery must see that it did not land). */
+  resumed(id: string, now = Date.now()): Run | undefined {
     return this.core.transaction(() => {
-      this.core.db
+      const moved = this.core.db
         .prepare(`UPDATE orchestrator_runs SET state='working', updated_at=? WHERE id=? AND state='awaiting_input'`)
         .run(now, id);
-      return this.#require(id);
+      return moved.changes ? this.#require(id) : undefined;
     });
   }
 

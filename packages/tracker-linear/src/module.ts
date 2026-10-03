@@ -593,9 +593,22 @@ async function startLinear(
           // The orchestrator owns the answer's delivery: the slot may have
           // been given back while the person thought, and an answer that
           // finds no capacity **reacquires** it — in the session's own pool,
-          // queue included — before the same session resumes. The worker
-          // gets the text first, then the form closes as the record.
-          const outcome = await services.orchestrator.answer(run.sessionId, text, form.id);
+          // queue included — before the same session resumes. OpenCode
+          // first, the books second (ruled 2026-10-03): the worker gets the
+          // text, then the form closes as the record.
+          let outcome: Awaited<ReturnType<typeof services.orchestrator.answer>>;
+          try {
+            outcome = await services.orchestrator.answer(run.sessionId, text, form.id);
+          } catch (error) {
+            // OpenCode would not take the answer. Nothing moved — the run
+            // is still parked, the question still stands — and the person
+            // hears that now, in these words, not by silence.
+            log.warn('answer.delivery.failed', { run: run.id, error });
+            return refuse(
+              conversation,
+              'I could not reach my agent runtime to wake the worker — the question still stands; answer it again once the runtime is back.',
+            );
+          }
           if ('refused' in outcome)
             return refuse(
               conversation,

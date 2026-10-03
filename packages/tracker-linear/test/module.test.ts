@@ -98,7 +98,9 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
   // The dials a test turns while the server runs: `interruptFails` makes the
   // service answer 500 to an interrupt — the OpenCode-down moment a stop has
   // to tell honestly instead of claiming "stopped at your request".
-  const ctl = { interruptFails: false };
+  // `promptFails` does the same at a prompt: the answer delivery that must
+  // leave the run parked and say so (ruled 2026-10-03).
+  const ctl = { interruptFails: false, promptFails: false };
   let formSeq = 0;
   /** The context of the last prompt. The transcript names the agent that ran;
    *  finalAnswer verifies it against the session's. */
@@ -171,6 +173,7 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
       return void res.end(JSON.stringify({ data: { id: body.id } }));
     }
     if (url.endsWith('/prompt')) {
+      if (ctl.promptFails) return void res.writeHead(500).end('{"error":"OpenCode is down"}');
       prompts.push({ id: body.id, text: body.text, delivery: body.delivery, metadata: body.metadata });
       return void res.end(JSON.stringify({ data: { id: body.id } }));
     }
@@ -1276,6 +1279,48 @@ test('a stop the runtime would not answer ends *unconfirmed*: the honest words, 
   );
   await new Promise(r => setTimeout(r, 50));
   assert.equal(opencode.prompts.length, 1, 'the walk does not read the stopped ticket back');
+});
+
+test('an answer OpenCode will not take is spoken, not silence: the run stays parked and the answer is giveable again', async t => {
+  const { tracker, config, store, services, board, opencode, orchestrator } = await walkHarness(t);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+  const worker = workerSession(opencode.sessions);
+
+  // The worker asks; the run parks on the OpenCode form.
+  await orchestrator.askTool({ sessionId: worker, input: { question: 'Which blue?' } });
+  const form = opencode.forms.find(f => f.sessionID === worker)!;
+
+  // OpenCode goes down at the exact moment the person answers (ruled
+  // 2026-10-03: OpenCode first, the books second). The delivery fails —
+  // and the person hears that now, while the question still stands open.
+  opencode.ctl.promptFails = true;
+  await tracker.drive({ kind: 'prompted', id: 'act-ans1', conversation: 'dev:as-auto-1', body: 'Use teal' });
+  await until(
+    () => tracker.ofKind('outcome').some(c => /could not reach my agent runtime/.test(c.text)),
+    'the failed delivery is said in the conversation, not bought with silence',
+  );
+  const parked = orchestrator.activeRun('tracker-linear', 'eng-1')!;
+  assert.equal(parked.state, 'awaiting_input', 'the books did not move: the run is still parked on its form');
+  assert.ok(!form.answered, 'the question stands open: the answer is giveable again');
+
+  // And it is: the runtime comes back, the person answers again, the same
+  // session wakes with their words.
+  opencode.ctl.promptFails = false;
+  await tracker.drive({ kind: 'prompted', id: 'act-ans2', conversation: 'dev:as-auto-1', body: 'Use teal' });
+  await until(() => form.answered, 'the form closes as the record');
+  const answered = opencode.prompts.find(p => p.text.startsWith('The person answered your question:'));
+  assert.equal(answered!.text, 'The person answered your question: Use teal', 'the worker got the words');
 });
 
 test('a stop in a worktree lane tears the attempt down: worktree gone, local commits gone, ticket marked', async t => {

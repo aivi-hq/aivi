@@ -146,28 +146,6 @@ stops `serve` anyway; the conflation only misleads direct `loadConfig` callers.
 Still the AGENTS.md shape of "no swallowed errors" — the catch should at least
 distinguish absent from unreadable.
 
-### D2. An answer whose delivery fails leaves a `working` run with no lease and no clock
-
-`#deliverAnswer` flips the ledger to `working` (`ledger.resumed`) **before**
-`client.session.prompt`. If the prompt throws (OpenCode down at that instant):
-
-- Immediate path (`answer()` with a live lease): the throw reaches the caller;
-  the lease stands, so the dispatcher's idle clock eventually expires the run
-  visibly — late but honest.
-- Queued path (`#fulfill`'s `answer` branch): the outer callback catch logs and
-  releases the lease. The run is now `working`, holds no lease, no turn is
-  running, no event will ever arrive — nothing times it out. It stays stuck
-  until the next boot's reconcile. A person's answer bought silence.
-
-### D3. Two answers in the same instant both deliver
-
-`ledger.resumed` is an UPDATE guarded by `state='awaiting_input'` that does not
-throw when the guard misses (ledger.ts:221-228), so two concurrent `answer()`
-calls both pass the state check and both prompt the worker: the worker reads
-"The person answered your question: X" twice; the second `form.reply` fails
-into a warn. Narrow (needs two answers in flight at once), listed for
-completeness.
-
 ### D4. Two readers of the same file answer the same corruption two ways
 
 `readList` (host/cli/registry.ts:47-64) reads `<home>/app/package.json` and a
@@ -290,9 +268,6 @@ temp-file-plus-rename is three lines in each place.
 
 ## F. Test gaps at the boundaries that matter
 
-- **No test for the queued-answer delivery failure (D2) or the double-answer
-  race (D3).** The answer machinery's tests cover the happy resume and the
-  refusals, not a prompt that throws after `resumed`.
 - **The dreaming walk (B6) is tested against a fake that returns whatever the
   test asks for** — the ordering assumption the whole walk rests on is never
   pinned, in code or against the live API.
@@ -305,20 +280,29 @@ temp-file-plus-rename is three lines in each place.
 
 ## Suggested order of repair
 
-1. **The answer-delivery holes (D2, D3)** — the stop paths (B1, B2) are fixed
-   (2026-10-03); these are the same file, same week of live use.
-2. **The claims that promise what is not there (B7, D9, D10, D11)** — either
+1. **The claims that promise what is not there (B7, D9, D10, D11)** — either
    build the bound/cap/signature or fix the sentence; each is small.
-3. **B3, B4, B5, B6** — each needs a decision more than a patch (what should
+2. **B3, B4, B5, B6** — each needs a decision more than a patch (what should
    boot say about a broken symlink; whether `fail` policy stays advertised;
    whether release-mid-expiry or the strikes map is the wrong half; whether
    the session list is update-ordered — one live call answers B6).
-4. **D1/D4 together** (one reader of app/package.json, named loudly), D5-D8,
+3. **D1/D4 together** (one reader of app/package.json, named loudly), D5-D8,
    E1-E5 — small honest fixes.
-5. **E6 and C1** — the atomic-write trio and the error-classes-into-kit move
+4. **E6 and C1** — the atomic-write trio and the error-classes-into-kit move
    are the two refactors worth doing before anything external installs a
    plugin; C1's engine/store half can wait for its own plan.
 
 ## Disposition
 
-(operator's call on each; nothing above has been applied)
+- **B1, B2 — fixed 2026-10-03** (the operator's ruling: the board is the
+  stop's memory). The HITL label rides before the run ends on both module
+  stop paths; an interrupt OpenCode would not answer carries
+  `stop-unconfirmed` and says so; a stopped run's worktree is torn down.
+- **D2, D3 — fixed 2026-10-03** (the operator's ruling: "opencode first,
+  linear second"). The answer's delivery prompts OpenCode before the books
+  move: a refused prompt leaves the run parked on its open form, re-armed,
+  and said in the conversation — the answer is giveable again. A books-guard
+  miss answers `undefined` and says `answer.duplicate` instead of
+  pretending; the double prompt itself stays by design (both are true
+  answers), pinned by test.
+- The rest: operator's call on each.

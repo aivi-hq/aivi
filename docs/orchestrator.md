@@ -559,9 +559,18 @@ applies to a resume, because the session keeps the pool it was created in.
 **Built 2026-10-02.** The keep-alive's ending is a **release, not an
 expiry**: nobody is killed, the session keeps its open form, and the claim
 stands — the ticket waits without a slot, and no other worker takes it.
-The answer's delivery is the orchestrator's: the run is working again
-**before** the words go in, the worker gets the text first, and the form
-closes as the record. A full pool queues the reacquisition like any other
+The answer's delivery is the orchestrator's, and its order is **OpenCode
+first, the books second** (ruled 2026-10-03): the worker's prompt goes in
+first, and only when OpenCode has taken the words does the run flip back
+to `working` and the form close as the record. A prompt OpenCode refuses
+moves nothing — the run stays parked on its open form, the keep-alive
+re-arms as it stood, and the person hears the failure in the conversation
+instead of silence; the answer is giveable again. (Flipping first bought
+stuck runs: a failed queued delivery left a `working` run with no lease,
+no turn and no clock, nothing timing it out until the next boot.) A raced
+or late delivery whose books-guard missed — the other answer won, or a
+stop landed in flight — says so in the log and touches nothing. A full
+pool queues the reacquisition like any other
 resume — the answer's words wait with the request and the person is told
 the worker wakes when a slot opens; a refusal is said too, and the question
 still stands. A stop reaches a parked run: stop means stop, even

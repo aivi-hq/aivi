@@ -466,7 +466,21 @@ export class Orchestrator implements OrchestratorApi {
         return;
       }
       this.deps.ledger.setLease(run.id, lease.id);
-      await this.#deliverAnswer(run, work.answer, work.formId);
+      try {
+        await this.#deliverAnswer(run, work.answer, work.formId);
+      } catch (error) {
+        // OpenCode would not take the words on the reacquired slot (ruled
+        // 2026-10-03): the books never moved, so take the slot back, re-arm
+        // the keep-alive, and the run parks on its open form again — the
+        // answer still a person's to give. Before this ordering the failed
+        // delivery left a `working` run with no lease, no turn and no
+        // clock: silence until the next boot.
+        this.deps.log.warn('answer.delivery.failed', { run: run.id, ticket: run.ticketId, error });
+        this.deps.ledger.clearLease(run.id);
+        this.deps.dispatcher.release(lease.id);
+        this.#armElicitation(run.id);
+        return;
+      }
       void this.wake(work.projectId);
       return;
     }
@@ -603,38 +617,69 @@ export class Orchestrator implements OrchestratorApi {
     const run = this.deps.ledger.bySession(sessionId);
     if (!run) throw new ToolError(404, 'This session is not an aivi run.');
     this.#clearElicitation(run.id);
-    if (run.leaseId && this.deps.dispatcher.leases.get(run.leaseId)) {
+    try {
+      if (run.leaseId && this.deps.dispatcher.leases.get(run.leaseId)) {
+        await this.#deliverAnswer(run, text, formId);
+        return { resumed: true };
+      }
+      const grant = this.deps.dispatcher.request({ service: 'orchestrator', resume: sessionId });
+      if ('refused' in grant) return { resumed: false, refused: grant.refused };
+      if ('queued' in grant) {
+        this.requested.set(grant.queued, {
+          kind: 'answer',
+          trackerId: run.trackerId,
+          projectId: run.projectId,
+          ticketId: run.ticketId,
+          lane: run.lane,
+          fromQueue: false,
+          runId: run.id,
+          answer: text,
+          ...(formId ? { formId } : {}),
+        });
+        return { resumed: false, queued: grant.queued };
+      }
+      this.deps.ledger.setLease(run.id, grant.lease.id);
       await this.#deliverAnswer(run, text, formId);
       return { resumed: true };
+    } catch (error) {
+      // OpenCode would not take the words (ruled 2026-10-03: the worker's
+      // runtime first, the books second). Nothing moved — so re-arm the
+      // keep-alive and the run parks on its open form exactly as it did
+      // before the answer: claim standing, slot as it stands, a person able
+      // to answer again. The caller says it in the conversation; the throw
+      // must not buy silence.
+      this.deps.log.warn('answer.delivery.failed', { run: run.id, ticket: run.ticketId, error });
+      this.#armElicitation(run.id);
+      throw error;
     }
-    const grant = this.deps.dispatcher.request({ service: 'orchestrator', resume: sessionId });
-    if ('refused' in grant) return { resumed: false, refused: grant.refused };
-    if ('queued' in grant) {
-      this.requested.set(grant.queued, {
-        kind: 'answer',
-        trackerId: run.trackerId,
-        projectId: run.projectId,
-        ticketId: run.ticketId,
-        lane: run.lane,
-        fromQueue: false,
-        runId: run.id,
-        answer: text,
-        ...(formId ? { formId } : {}),
-      });
-      return { resumed: false, queued: grant.queued };
-    }
-    this.deps.ledger.setLease(run.id, grant.lease.id);
-    await this.#deliverAnswer(run, text, formId);
-    return { resumed: true };
   }
 
-  /** The answer's delivery, immediate or after a queue wait: the run is
-   *  working again **before** the words go in (the idle clock restarts with
-   *  the answer), the worker gets the text first, and the form closes as
-   *  the record — a form that refuses the reply is a stale record, not a
-   *  lost answer. */
+  /** The answer's delivery, immediate or after a queue wait: **OpenCode
+   *  first, the books second** (ruled 2026-10-03: the worker's runtime is
+   *  the side that fails; a closed form is worthless if the worker never
+   *  got the words). If the prompt throws, nothing has moved — the run is
+   *  still parked on its open form and a person can answer it again.
+   *  Flipping to `working` first bought silence: a failed queued delivery
+   *  left a run `working` with no lease, no turn and no clock — nothing
+   *  timed it out until the next boot. The idle clock restarts with the
+   *  answer either way, a breath later. */
   async #deliverAnswer(run: Run, text: string, formId?: string): Promise<void> {
+    const client = await this.deps.opencode();
+    await client.session.prompt({
+      sessionID: run.sessionId!,
+      id: `msg_${randomBytes(6).toString('hex')}`,
+      text: `The person answered your question: ${text}`,
+      delivery: 'queue',
+    });
     const resumed = this.deps.ledger.resumed(run.id);
+    if (!resumed) {
+      // The guard missed: the other answer of a race won the books, or a
+      // stop landed while this delivery was in flight. The worker heard a
+      // person's true words either way; the winner closes the form and
+      // stands the clocks. This delivery adds its warn and touches nothing.
+      this.deps.log.warn('answer.duplicate', { run: run.id, ticket: run.ticketId });
+      return;
+    }
     if (resumed.leaseId) this.deps.dispatcher.activity(resumed.leaseId);
     // The person answered **the escalation form**: the strikes reset. Their
     // words were "try again with these instructions", not "fail after three
@@ -644,17 +689,12 @@ export class Orchestrator implements OrchestratorApi {
       this.deps.ledger.resetFeedback(resumed.id);
       this.deps.log.info('run.feedback.reset', { run: resumed.id, form: formId });
     }
-    const client = await this.deps.opencode();
-    await client.session.prompt({
-      sessionID: run.sessionId!,
-      id: `msg_${randomBytes(6).toString('hex')}`,
-      text: `The person answered your question: ${text}`,
-      delivery: 'queue',
-    });
     if (formId) {
       try {
         await client.session.form.reply({ sessionID: run.sessionId!, formID: formId, answer: { answer: text } });
       } catch (error) {
+        // The form is OpenCode's record, not the answer's delivery: a form
+        // that refuses the reply is a stale record, not a lost answer.
         this.deps.log.warn('run.form.reply.failed', { run: run.id, form: formId, error });
       }
     }
