@@ -44,7 +44,9 @@
     "@aivi/core": "^0.7.1",
     "@aivi/plugin": "^0.1.0",
     "@octokit/auth-app": "8.3.1",
-    "octokit": "5.0.5",
+    "@octokit/core": "7.0.8",
+    "@octokit/plugin-rest-endpoint-methods": "17.0.0",
+    "@octokit/plugin-retry": "8.1.1",
     "zod": "4.1.13"
   },
   "peerDependencies": {

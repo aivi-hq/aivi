@@ -16,9 +16,22 @@ import { promisify } from 'node:util';
 import { getLogger, type Logger } from '@aivi/core';
 import { ConfigurationError } from '@aivi/host';
 import { createAppAuth } from '@octokit/auth-app';
-import { Octokit } from 'octokit';
+import { Octokit as OctokitCore } from '@octokit/core';
+import { restEndpointMethods } from '@octokit/plugin-rest-endpoint-methods';
+import { retry } from '@octokit/plugin-retry';
 import type { ForgeGithubConfig } from './config.ts';
 import { GITHUB_PRIVATE_KEY_ENV } from './config.ts';
+
+/** octokit as aivi actually needs it: the core, the endpoint methods, and the
+ *  retry that sleeps only after a real failure. Built from the parts and not
+ *  the umbrella on purpose — the umbrella bolts on its throttling plugin,
+ *  whose Bottleneck enforces a fixed one-second gap in front of *every* write
+ *  whether GitHub complained or not: a person's `aivi pr` would pace one write
+ *  per second, and every test pays seconds for a rate limit nobody hit. aivi
+ *  is one caller making a handful of writes; GitHub's rate limits get answered
+ *  when they arrive (`retry` re-sends what failed), never pre-scheduled. */
+const Octokit = OctokitCore.plugin(restEndpointMethods, retry);
+export type Octokit = InstanceType<typeof Octokit>;
 
 const run = promisify(execFile);
 
