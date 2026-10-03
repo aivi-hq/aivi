@@ -323,6 +323,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         log,
         tasks,
         forges,
+        channelOrigins: () => channels.ids(),
       }),
       log,
       async (run, state, result, reason) => {

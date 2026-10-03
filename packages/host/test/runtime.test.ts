@@ -295,6 +295,8 @@ test('a dreaming job persists its session id before the first request and blocks
         opencode: () => connectOpenCode(config.opencode, {}),
         tasks: new TaskRegistry(),
         forges: new Forges(),
+        // The home this test simulates speaks Discord.
+        channelOrigins: () => ['discord'],
       },
     ),
   );

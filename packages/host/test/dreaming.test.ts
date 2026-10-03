@@ -157,7 +157,9 @@ test('dream writes the transcript, allows the same two write targets in the org 
   const client = await start(t, mock);
   const store = new Store(':memory:');
   t.after(async () => store.close());
-  const task = dreamingArgsSchema.parse({ directory: '/lib', memoryDirectory: memory });
+  // The schema default is the empty list (the executor fills it from the module
+  // registry); dream() itself reviews what the args name.
+  const task = dreamingArgsSchema.parse({ directory: '/lib', memoryDirectory: memory, origins: ['discord'] });
   // Simulate the agent writing an org fact and a project fact during its turn.
   const originalPrompt = mock.server.listeners('request')[0] as (...args: unknown[]) => unknown;
   mock.server.removeAllListeners('request');
@@ -255,7 +257,7 @@ test('the dreaming operation resolves its args against the home and demands a se
       }),
     );
   // The claimant parses and resolves its own args; wrong ones fail the run with a readable reason.
-  const runDreaming = async (memoryDirectory?: string) => {
+  const runDreaming = async (memoryDirectory?: string, channelOrigins: () => string[] = () => ['discord']) => {
     await write(memoryDirectory);
     const loaded = await loadConfig(join(root, 'config.json'));
     const store = new Store(':memory:');
@@ -268,6 +270,7 @@ test('the dreaming operation resolves its args against the home and demands a se
       },
       tasks: new TaskRegistry(),
       forges: new Forges(),
+      channelOrigins,
     });
     const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', `dream:${memoryDirectory ?? 'default'}`);
     return execute(
@@ -283,4 +286,81 @@ test('the dreaming operation resolves its args against the home and demands a se
   assert.match(inside.reason ?? '', /no OpenCode here/);
   const fallback = await runDreaming();
   assert.match(fallback.reason ?? '', /no OpenCode here/, '<home>/memory is always a core source');
+});
+
+test('origins nobody named are the registered channel modules; a home with none says so and reviews nothing', async t => {
+  const { loadConfig } = await import('@aivi/core');
+  const { Channels } = await import('../src/channel/router.ts');
+  const root = await mkdtemp(join(tmpdir(), 'aivi-dream-origins-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // The job names no origins at all: the schema default is the empty list.
+  await writeFile(
+    join(root, 'config.json'),
+    JSON.stringify({
+      version: 1,
+      knowledge: [{ id: 'k', path: 'knowledge' }],
+      jobs: [
+        {
+          id: 'dreaming',
+          cron: '0 3 * * *',
+          task: { kind: 'invocation', name: 'dreaming', args: { directory: 'lib' } },
+        },
+      ],
+    }),
+  );
+  const loaded = await loadConfig(join(root, 'config.json'));
+  const runOnce = async (channelOrigins: () => string[]) => {
+    const store = new Store(':memory:');
+    t.after(() => store.close());
+    const execute = createExecutor(loaded, {
+      store,
+      events: { watch: () => () => {} },
+      opencode: async () => {
+        throw new Error('no OpenCode here');
+      },
+      tasks: new TaskRegistry(),
+      forges: new Forges(),
+      channelOrigins,
+    });
+    const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', 'dream:origins');
+    return execute({ ...job, id: 'run:origins' }, { signal: new AbortController().signal, attachSession() {} });
+  };
+
+  const noChannels = await runOnce(() => []);
+  assert.equal(noChannels.state, 'failed');
+  assert.match(noChannels.reason ?? '', /no channel module is registered/);
+
+  // A Slack-only home: the module list is the origins list, no config edit.
+  const slackOnly = new Channels();
+  slackOnly.register({
+    id: 'slack',
+    ownsSession: () => false,
+    reenter: async () => {},
+    post: async () => {},
+    accepts: () => true,
+    channelOf: async () => undefined,
+  });
+  const mock = mockOpenCode();
+  const client = await start(t, mock);
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const execute = createExecutor(loaded, {
+    store,
+    events: { watch: () => () => {} },
+    opencode: async () => client,
+    tasks: new TaskRegistry(),
+    forges: new Forges(),
+    channelOrigins: () => slackOnly.ids(),
+  });
+  const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', 'dream:slack');
+  const viaRegistry = await execute(
+    { ...job, id: 'run:slack' },
+    { signal: new AbortController().signal, attachSession() {} },
+  );
+  assert.equal(viaRegistry.state, 'succeeded');
+  assert.equal(
+    (viaRegistry.result as { reviewed: number }).reviewed,
+    0,
+    'the fixture sessions are Discord; slack reviews none of them',
+  );
 });

@@ -16,9 +16,6 @@ the channel work (2026-09-15):
 - Signal and Telegram (no threads, DM-first) will test whether the
   thread-per-conversation model generalizes; expect a "conversation without
   threads" case. Slack's `sessions: "channel"` mode is the closest thing today.
-- Dreaming's default `origins` is `["discord"]`; a Slack-only installation must
-  list `slack` itself. A default of "every registered channel module" needs the
-  task to see the module list.
 - Module health (the `modules[]` in `GET /status`) is not yet shown in the
   channels' own `/status` replies or in any health report.
 

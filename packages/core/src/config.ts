@@ -93,9 +93,10 @@ export const dreamingArgsSchema = z.strictObject({
     ),
   origins: z
     .array(z.string().min(1))
-    .min(1)
-    .default(['discord'])
-    .describe('Which aivi session origins to review (metadata.aivi.origin).'),
+    .default([])
+    .describe(
+      'Which aivi session origins to review (metadata.aivi.origin). Empty — the default — means every channel module registered when the run starts; a home with no channel module must name origins itself or the run says so.',
+    ),
   maxSessions: z
     .number()
     .int()

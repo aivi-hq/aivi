@@ -15,10 +15,13 @@ assistant's soul stays stable.
 2. The host reads the cursor for the memory directory: the newest session
    update it has already reviewed.
 3. It lists OpenCode sessions newer than that whose `metadata.aivi.origin` is
-   in `origins` (Discord conversations by default; add `slack` for a Slack
-   installation, as a Slack installation does; worker jobs are noise), takes
-   the oldest `maxSessions`, and pulls their new messages (user text and the
-   agent's answers; no tool output or reasoning).
+   in `origins` — an empty `origins` (the default) is **every channel module
+   registered when the run starts**, the module list and no word from a
+   schema, so a Slack-only home reviews Slack without editing anything
+   (worker jobs are noise), and a home with no channel named says so instead
+   of reviewing silence. It takes the oldest `maxSessions` and pulls their
+   new messages (user text and the agent's answers; no tool output or
+   reasoning).
 4. It writes one transcript file under `<stateDirectory>/dreaming/` and runs
    the dreamer agent through the session driver. The agent file is the
    boundary (the seeded dreamer denies edit, shell and subagents); the job
@@ -76,6 +79,10 @@ should be rules" is the intended workflow.
   "report": { "to": "channel", "module": "discord", "channel": "<channel id>", "on": "always" }
 }
 ```
+
+`origins` is omitted in the common case: empty means every channel module
+registered when the run starts, so this same job reviews Slack in a
+Slack-only home.
 
 `memoryDirectory` defaults to `<home>/memory`, the org memory, which is always
 a core `memory` source ([projects](projects.md)); another directory must be

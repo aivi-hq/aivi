@@ -26,6 +26,10 @@ export class Channels implements ChannelsApi {
   has(id: string): boolean {
     return this.modules.has(id);
   }
+  /** The platform ids registered now — dreaming's default review list, the module list and no word from a schema. */
+  ids(): string[] {
+    return [...this.modules.keys()];
+  }
   /** A channel module has this session as a conversation; it is one, whatever its origin says. */
   ownsSession(sessionId: string): boolean {
     return this.ownerOf(sessionId) !== undefined;
