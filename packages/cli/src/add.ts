@@ -220,13 +220,7 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
   // is its own last line. The list entry waits for the setup to have spoken,
   // so a stopped flow leaves the package installed but inert: no entry means
   // the server never imports it, and the block was never written.
-  let moduleId: string | undefined;
-  try {
-    moduleId = await io.setupPlugin(listed, options);
-  } catch (error) {
-    io.log(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  }
+  const moduleId = await setupOrSay(io, listed, options);
   if (process.exitCode) {
     io.log('Nothing joined the plugin list, and nothing was restarted.');
     return;
@@ -235,13 +229,7 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
   // The three facts land together: npm's dependency (above), the list entry,
   // and the block the plugin wrote. Then the editor sees the new shape.
   addPluginName(options.appDir, listed);
-  try {
-    await io.rebuildSchema(options.home, options.appDir);
-  } catch (error) {
-    io.warn(
-      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); the plugin is listed, and \`aivi add\` or \`aivi update\` rebuilds the cache once config.json loads again.`,
-    );
-  }
+  await rebuildSchemaOrSay(io, options.home, options.appDir);
 
   // With no service installed the CLI has nothing to add: a running
   // foreground server is the operator's to restart, and the setup flow has
@@ -250,4 +238,29 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
   const url = await io.healthUrl(options.home);
   const label = moduleId ? `${moduleId[0]!.toUpperCase()}${moduleId.slice(1)}` : listed;
   await restartAndReport(io, url, label, moduleId);
+}
+
+/** Run the plugin's own setup flow; its failure is said in the flow's own
+ *  last line and kept as the exit code — the caller reads that and stops. */
+async function setupOrSay(io: AddIo, listed: string, options: AddOptions): Promise<string | undefined> {
+  try {
+    return await io.setupPlugin(listed, options);
+  } catch (error) {
+    io.log(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+    return undefined;
+  }
+}
+
+/** The editor's schema rebuild after a join: a failure is said and never
+ *  fatal — the plugin is listed, and `aivi add` or `aivi update` rebuilds
+ *  the cache once config.json loads again. */
+async function rebuildSchemaOrSay(io: AddIo, home: string, appDir: string): Promise<void> {
+  try {
+    await io.rebuildSchema(home, appDir);
+  } catch (error) {
+    io.warn(
+      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); the plugin is listed, and \`aivi add\` or \`aivi update\` rebuilds the cache once config.json loads again.`,
+    );
+  }
 }

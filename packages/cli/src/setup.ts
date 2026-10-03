@@ -315,20 +315,11 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   // editor schema is rebuilt from the installed app's code, so the `$schema`
   // hint and the composed shape land together; a cache that cannot rebuild is
   // a warning, the truth of the home is config.json and the list.
-  try {
-    await io.rebuildSchema(home, appDir);
-  } catch (error) {
-    io.warn(
-      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); \`aivi add\` or \`aivi update\` rebuilds it once config.json loads again.`,
-    );
-  }
+  await rebuildSchemaOrSay(io, home, appDir);
 
   // The OpenCode shape of the home, before identity: the service finds its
   // agents and the plugin here whatever the sign-in path.
-  const version = await io.npmView('@aivi/opencode', 'version').catch(() => undefined);
-  if (!version)
-    io.warn('Could not resolve @aivi/opencode on npm; seeded the plugin unpinned (OpenCode installs the latest).');
-  seedHomeOpenCode(home, version ? `@aivi/opencode@${version}` : '@aivi/opencode');
+  await seedOpenCodeOrSay(io, home);
 
   // Identity is the installed app's own act: person and token are minted in
   // its store, and this-machine signs `~/.config/aivi.json` there.
@@ -345,6 +336,41 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
     );
     return;
   }
+  await serveInBackground(io, home, appDir, nodePath, identity);
+}
+
+/** The editor schema rebuilt from the installed app; a cache that cannot
+ *  rebuild is a warning — the truth of the home is config.json and the
+ *  list, and `aivi add` or `aivi update` rebuilds it once the config loads. */
+async function rebuildSchemaOrSay(io: SetupIo, home: string, appDir: string): Promise<void> {
+  try {
+    await io.rebuildSchema(home, appDir);
+  } catch (error) {
+    io.warn(
+      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); \`aivi add\` or \`aivi update\` rebuilds it once config.json loads again.`,
+    );
+  }
+}
+
+/** Seed the home's OpenCode plugin at the version npm names today; no
+ *  answer from npm seeds it unpinned and OpenCode installs the latest. */
+async function seedOpenCodeOrSay(io: SetupIo, home: string): Promise<void> {
+  const version = await io.npmView('@aivi/opencode', 'version').catch(() => undefined);
+  if (!version)
+    io.warn('Could not resolve @aivi/opencode on npm; seeded the plugin unpinned (OpenCode installs the latest).');
+  seedHomeOpenCode(home, version ? `@aivi/opencode@${version}` : '@aivi/opencode');
+}
+
+/** The background ending: the service is installed, gets its thirty seconds
+ *  to answer, and the client record signs in as the person the server says
+ *  it is — the whoami is the proof, never the install's return. */
+async function serveInBackground(
+  io: SetupIo,
+  home: string,
+  appDir: string,
+  nodePath: string,
+  identity: Identity,
+): Promise<void> {
   io.serviceInstall({ home, appDir, nodePath });
   if (!(await waitHealthy(identity.url, io)))
     throw new Error(`The server did not answer at ${identity.url} within 30 s. Check \`aivi service logs\`.`);

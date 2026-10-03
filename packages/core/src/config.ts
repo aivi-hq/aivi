@@ -243,12 +243,25 @@ export const laneOf = (project: Project, name: string): ProjectLane | undefined 
  *  with a ticket in hand); and the queue lane's rules — at most one per
  *  workflow, never with an agent of its own, and its next lane (by override
  *  or by order) must be a worker lane. All loud, all at load. */
-export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes, ctx) => {
+/** The lane rules speak through zod's issue door; this is that door typed
+ *  structurally, so each rule is a function of its own. */
+interface LaneIssues {
+  addIssue(issue: { code: 'custom'; message: string }): void;
+}
+
+/** Names unique: a lane configured twice is a load error, never a surprise. */
+function uniqueNames(lanes: ProjectLane[], ctx: LaneIssues): void {
   const names = new Set<string>();
   for (const lane of lanes) {
     if (names.has(lane.name)) ctx.addIssue({ code: 'custom', message: `lane "${lane.name}" is configured twice` });
     names.add(lane.name);
   }
+}
+
+/** Every `next`/`previous` names a lane of this very array: a typo is said at
+ *  load, never mid-run with a ticket in hand. */
+function targetsExist(lanes: ProjectLane[], ctx: LaneIssues): void {
+  const names = new Set(lanes.map(lane => lane.name));
   for (const lane of lanes)
     for (const [field, target] of [
       ['next', lane.next],
@@ -259,12 +272,21 @@ export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes,
           code: 'custom',
           message: `lane "${lane.name}" names ${field} "${target}", which is not a lane of this project`,
         });
+}
+
+/** At most one queue lane per workflow. */
+function singleQueue(lanes: ProjectLane[], ctx: LaneIssues): void {
   const queues = lanes.filter(lane => lane.queue);
   if (queues.length > 1)
     ctx.addIssue({
       code: 'custom',
       message: `${queues.length} lanes are marked queue; a workflow has at most one queue lane`,
     });
+}
+
+/** The queue's own rules: never with an agent of its own, and its next lane
+ *  (by override or by order) must be a worker lane. */
+function queueFeedsWorker(lanes: ProjectLane[], ctx: LaneIssues): void {
   for (const [at, lane] of lanes.entries()) {
     if (!lane.queue) continue;
     if (lane.agent !== undefined)
@@ -284,6 +306,15 @@ export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes,
         message: `queue lane "${lane.name}" feeds "${target.name}", which no agent works; the queue's next lane must be a worker lane`,
       });
   }
+}
+
+/** The written lane array, checked by the four rules above — all loud, all
+ *  at load. */
+export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes, ctx) => {
+  uniqueNames(lanes, ctx);
+  targetsExist(lanes, ctx);
+  singleQueue(lanes, ctx);
+  queueFeedsWorker(lanes, ctx);
 });
 
 /**

@@ -44,27 +44,41 @@ export interface Scripted {
   calls: () => string[];
 }
 
+/** The Request object when octokit handed one over; undefined when it
+ *  called the plain `fetch(url, init)` way. Both are accepted so the double
+ *  stays true whatever the transport decides. */
+const requestOf = (input: string | URL | Request, init?: RequestInit): Request | undefined =>
+  typeof input === 'object' && !init?.method ? (input as Request) : undefined;
+
+/** The body as text, from whichever shape carried it. */
+const bodyOf = async (request: Request | undefined, init?: RequestInit): Promise<string | undefined> =>
+  request ? request.clone().text() : typeof init?.body === 'string' ? init.body : undefined;
+
+/** One call as aivi's side saw it, read from whatever octokit's transport
+ *  handed over. */
+async function readCall(input: string | URL | Request, init?: RequestInit): Promise<Seen> {
+  const request = requestOf(input, init);
+  const url = new URL(request?.url ?? String(input));
+  const method = (request?.method ?? init?.method ?? 'GET').toUpperCase();
+  const headers = new Headers(request?.headers ?? init?.headers);
+  const authorization = headers.get('authorization') ?? undefined;
+  const body = await bodyOf(request, init);
+  return {
+    method,
+    path: url.pathname,
+    search: url.search,
+    ...(authorization ? { authorization } : {}),
+    ...(body ? { body } : {}),
+  };
+}
+
 export function scripted(routes: Record<string, (call: Seen) => Answer>): Scripted {
   const seen: Seen[] = [];
   const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    // octokit calls `fetch(url, init)`; a Request is accepted too so this stays
-    // true whatever octokit's transport decides to hand over.
-    const request = typeof input === 'object' && !init?.method ? (input as Request) : undefined;
-    const url = new URL(request?.url ?? String(input));
-    const method = (request?.method ?? init?.method ?? 'GET').toUpperCase();
-    const headers = new Headers(request?.headers ?? init?.headers);
-    const body = request ? await request.clone().text() : typeof init?.body === 'string' ? init.body : undefined;
-    const authorization = headers.get('authorization') ?? undefined;
-    const call: Seen = {
-      method,
-      path: url.pathname,
-      search: url.search,
-      ...(authorization ? { authorization } : {}),
-      ...(body ? { body } : {}),
-    };
+    const call = await readCall(input, init);
     seen.push(call);
-    const answer = routes[`${method} ${url.pathname}`];
-    if (!answer) throw new Error(`unasked-for call: ${method} ${url.pathname}${url.search}`);
+    const answer = routes[`${call.method} ${call.path}`];
+    if (!answer) throw new Error(`unasked-for call: ${call.method} ${call.path}${call.search}`);
     const { status, body: payload } = answer(call);
     if (status === 204) return new Response(null, { status });
     return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } });
