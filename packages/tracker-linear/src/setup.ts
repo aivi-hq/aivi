@@ -328,94 +328,9 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
         description: `Created by \`aivi add linear\` to test the webhook at ${webhookUrl}. The installer archives it when the test ends.`,
       });
       await ctx.prompts.log.message(`Created ${issue.identifier}.`);
-      // One live line, opened with what it waits for: clack animates one
-      // line at a time, and this flow only ever opens one while the
-      // previous has settled. `stop` closes it with clack's settled mark,
-      // a hollow green diamond; `cancel` with a red square.
-      // The webhooks wait first: Linear must post the ticket's creation
-      // to the URL before anything else has proof to stand on.
-      const webhooks = ctx.prompts.spinner();
-      webhooks.start(`webhooks: waiting for Linear to post about ${issue.identifier}…`);
-      let posted: Diaried;
-      try {
-        posted = await waitDiary(store, webhookPath, webhookSecret, issue.id, cursor, windowMs, isIssueEvent, line =>
-          webhooks.message(line),
-        );
-      } catch (error) {
-        webhooks.cancel('webhooks — a delivery arrived that did not verify');
-        throw error;
-      }
-      // A verdict is said on the live line and recorded for the summary,
-      // together, in every branch.
-      if (posted.mine) {
-        const detail = `${posted.mine} issue ${posted.mine === 1 ? 'delivery' : 'deliveries'} arrived and verified`;
-        webhooks.stop(`webhooks — ${detail}`);
-        checks.push({ name: 'webhooks', pass: true, detail });
-      } else if (posted.others) {
-        const detail = `deliveries arrived, but none about ${issue.identifier} — the categories ticked on the webhook decide what Linear posts`;
-        webhooks.cancel(`webhooks — ${detail}`);
-        checks.push({ name: 'webhooks', pass: false, detail });
-      } else {
-        const detail = `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not this one, the categories are off, or Linear cannot reach this machine`;
-        webhooks.cancel(`webhooks — ${detail}`);
-        checks.push({ name: 'webhooks', pass: false, detail });
-      }
-      // The agent-events wait needs a delegation of its own: becoming
-      // the delegate is what makes Linear create the session, and the
-      // session's own delivery proves the app is subscribed to those
-      // too. It is skipped only when the webhooks wait proved nothing
-      // arrives at all — the same silence waited out twice proves
-      // nothing new.
-      if (!posted.mine && !posted.others) {
-        await ctx.prompts.log.message(
-          'agent events: skipped — it waits on the same webhooks; with nothing arriving it could prove nothing.',
-        );
-        checks.push({
-          name: 'agent events',
-          pass: false,
-          detail: 'not tested — no webhook arrived for the webhooks check either',
-        });
-      } else {
-        const events = ctx.prompts.spinner();
-        events.start(`agent events: delegating ${issue.identifier} to the app…`);
-        let delegated: Diaried;
-        // Linear's own answer to the delegation names the session it
-        // created; its arrival is settled the instant the mutation lands.
-        let made = false;
-        try {
-          const answer = await client.setDelegate(issue.id, viewer);
-          made = answer.issue?.agentSessions.nodes.some(s => s.status === 'pending') ?? false;
-          events.message('Delegated — waiting for the session event…');
-          delegated = await waitDiary(
-            store,
-            webhookPath,
-            webhookSecret,
-            issue.id,
-            posted.last,
-            windowMs,
-            isAgentSessionEvent,
-            line => events.message(line),
-          );
-        } catch (error) {
-          events.cancel('agent events — stopped before the session event could be seen');
-          throw error;
-        }
-        if (delegated.mine) {
-          const detail = made
-            ? 'delegation created the session and its created event arrived'
-            : 'a created session event arrived though the delegate answer named no session';
-          events.stop(`agent events — ${detail}`);
-          checks.push({ name: 'agent events', pass: true, detail });
-        } else if (made) {
-          const detail = `the session was created but its event did not arrive in ${windowMs / 1000} s — tick Agent session events under App events on the app`;
-          events.cancel(`agent events — ${detail}`);
-          checks.push({ name: 'agent events', pass: false, detail });
-        } else {
-          const detail = 'no session at all — the app took the delegation but Linear made nothing to work from';
-          events.cancel(`agent events — ${detail}`);
-          checks.push({ name: 'agent events', pass: false, detail });
-        }
-      }
+      const probe = { ctx, client, viewer, windowMs, webhookPath, webhookSecret, checks };
+      const posted = await checkWebhookDeliveries(probe, store, issue, cursor);
+      await checkAgentSessionEvents(probe, store, issue, posted);
       // The installer made the ticket, so the installer tidies it — Linear's
       // delete archives it, off the board. A delete that fails is said, not
       // swallowed, so a ticket is never left without the operator knowing.
@@ -459,6 +374,118 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
       : `Linear is configured: ${outcome}. Restart aivi to load Linear.`,
   };
 };
+
+/** What the installer's two waits share: the app to delegate with, the
+ *  diary door to watch, and the checks list the verdicts land in. */
+interface WebhookProbe {
+  ctx: PluginSetupContext;
+  client: LinearClient;
+  viewer: string;
+  windowMs: number;
+  webhookPath: string;
+  webhookSecret: string;
+  checks: { name: string; pass: boolean; detail: string }[];
+}
+
+type TestIssue = Awaited<ReturnType<LinearClient['createIssue']>>;
+
+/** The first wait, on the live line: Linear must post the ticket's creation
+ *  to the URL before anything else has proof to stand on. `stop` closes a
+ *  line with clack's settled mark, a hollow green diamond; `cancel` with a
+ *  red square. A verdict is said on the live line and recorded for the
+ *  summary, together, in every branch. */
+async function checkWebhookDeliveries(
+  probe: WebhookProbe,
+  store: Store,
+  issue: TestIssue,
+  cursor: number,
+): Promise<Diaried> {
+  const { ctx, client, windowMs, webhookPath, webhookSecret, checks } = probe;
+  const webhooks = ctx.prompts.spinner();
+  webhooks.start(`webhooks: waiting for Linear to post about ${issue.identifier}…`);
+  let posted: Diaried;
+  try {
+    posted = await waitDiary(store, webhookPath, webhookSecret, issue.id, cursor, windowMs, isIssueEvent, line =>
+      webhooks.message(line),
+    );
+  } catch (error) {
+    webhooks.cancel('webhooks — a delivery arrived that did not verify');
+    throw error;
+  }
+  if (posted.mine) {
+    const detail = `${posted.mine} issue ${posted.mine === 1 ? 'delivery' : 'deliveries'} arrived and verified`;
+    webhooks.stop(`webhooks — ${detail}`);
+    checks.push({ name: 'webhooks', pass: true, detail });
+  } else if (posted.others) {
+    const detail = `deliveries arrived, but none about ${issue.identifier} — the categories ticked on the webhook decide what Linear posts`;
+    webhooks.cancel(`webhooks — ${detail}`);
+    checks.push({ name: 'webhooks', pass: false, detail });
+  } else {
+    const detail = `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not this one, the categories are off, or Linear cannot reach this machine`;
+    webhooks.cancel(`webhooks — ${detail}`);
+    checks.push({ name: 'webhooks', pass: false, detail });
+  }
+  return posted;
+}
+
+/** The second wait needs a delegation of its own: becoming the delegate is
+ *  what makes Linear create the session, and the session's own delivery
+ *  proves the app is subscribed to those too. It is skipped only when the
+ *  webhooks wait proved nothing arrives at all — the same silence waited
+ *  out twice proves nothing new. */
+async function checkAgentSessionEvents(probe: WebhookProbe, store: Store, issue: TestIssue, posted: Diaried) {
+  const { ctx, client, viewer, windowMs, webhookPath, webhookSecret, checks } = probe;
+  if (!posted.mine && !posted.others) {
+    await ctx.prompts.log.message(
+      'agent events: skipped — it waits on the same webhooks; with nothing arriving it could prove nothing.',
+    );
+    checks.push({
+      name: 'agent events',
+      pass: false,
+      detail: 'not tested — no webhook arrived for the webhooks check either',
+    });
+    return;
+  }
+  const events = ctx.prompts.spinner();
+  events.start(`agent events: delegating ${issue.identifier} to the app…`);
+  let delegated: Diaried;
+  // Linear's own answer to the delegation names the session it
+  // created; its arrival is settled the instant the mutation lands.
+  let made = false;
+  try {
+    const answer = await client.setDelegate(issue.id, viewer);
+    made = answer.issue?.agentSessions.nodes.some(s => s.status === 'pending') ?? false;
+    events.message('Delegated — waiting for the session event…');
+    delegated = await waitDiary(
+      store,
+      webhookPath,
+      webhookSecret,
+      issue.id,
+      posted.last,
+      windowMs,
+      isAgentSessionEvent,
+      line => events.message(line),
+    );
+  } catch (error) {
+    events.cancel('agent events — stopped before the session event could be seen');
+    throw error;
+  }
+  if (delegated.mine) {
+    const detail = made
+      ? 'delegation created the session and its created event arrived'
+      : 'a created session event arrived though the delegate answer named no session';
+    events.stop(`agent events — ${detail}`);
+    checks.push({ name: 'agent events', pass: true, detail });
+  } else if (made) {
+    const detail = `the session was created but its event did not arrive in ${windowMs / 1000} s — tick Agent session events under App events on the app`;
+    events.cancel(`agent events — ${detail}`);
+    checks.push({ name: 'agent events', pass: false, detail });
+  } else {
+    const detail = 'no session at all — the app took the delegation but Linear made nothing to work from';
+    events.cancel(`agent events — ${detail}`);
+    checks.push({ name: 'agent events', pass: false, detail });
+  }
+}
 
 /** What one delivery is about, and whether it names our test ticket. */
 const namesIssue = (payload: LinearWebhook, issueId: string): boolean =>

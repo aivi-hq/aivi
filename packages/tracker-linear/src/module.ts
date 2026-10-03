@@ -250,6 +250,31 @@ async function startLinear(
       }
     };
 
+    /** A worker the dispatcher could not kill, or a worker a person asked
+     *  to stop while OpenCode would not answer the interrupt (ruled
+     *  2026-10-02; the stop's twin 2026-10-03): the ticket carries the
+     *  human label and says plainly that a worker may still be running —
+     *  help is on the way, and a person goes looking. The claim "stopped
+     *  at your request" is never made here. Said once: `helped` is the
+     *  memory that this closing already cried it. */
+    const tellUnconfirmed = async (runId: string, conversation: string, entry: RunView): Promise<void> => {
+      if (
+        entry.outcome?.kind !== 'failure' ||
+        (entry.outcome.code !== 'kill-unconfirmed' && entry.outcome.code !== 'stop-unconfirmed') ||
+        helped.has(runId)
+      )
+        return;
+      helped.add(runId);
+      await tracker.comment(
+        conversation,
+        entry.outcome.code === 'stop-unconfirmed'
+          ? 'A person asked me to stop this worker, but my agent runtime would not answer the interrupt — it may still be running. I have marked this issue for a person.'
+          : 'The dispatcher could not stop my worker session, so one may still be loose. I have marked this issue for a person.',
+        'outcome',
+      );
+      await markForHuman(conversation, entry.ticketId);
+    };
+
     /**
      * One closing, driven against Linear's real state: the **result first** —
      * Linear's response completes the agent session and stops the "working"
@@ -280,27 +305,7 @@ async function startLinear(
         if (!(await tracker.resultShown(conversation)))
           await tracker.comment(conversation, words, entry.outcome?.kind === 'success' ? 'answer' : 'outcome');
         if (tracker.closingNote) await tracker.closingNote(conversation, entry.ticketId, words);
-        // A worker the dispatcher could not kill, or a worker a person asked
-        // to stop while OpenCode would not answer the interrupt (ruled
-        // 2026-10-02; the stop's twin 2026-10-03): the ticket carries the
-        // human label and says plainly that a worker may still be running —
-        // help is on the way, and a person goes looking. The claim "stopped
-        // at your request" is never made here.
-        if (
-          entry.outcome?.kind === 'failure' &&
-          (entry.outcome.code === 'kill-unconfirmed' || entry.outcome.code === 'stop-unconfirmed') &&
-          !helped.has(runId)
-        ) {
-          helped.add(runId);
-          await tracker.comment(
-            conversation,
-            entry.outcome.code === 'stop-unconfirmed'
-              ? 'A person asked me to stop this worker, but my agent runtime would not answer the interrupt — it may still be running. I have marked this issue for a person.'
-              : 'The dispatcher could not stop my worker session, so one may still be loose. I have marked this issue for a person.',
-            'outcome',
-          );
-          await markForHuman(conversation, entry.ticketId);
-        }
+        await tellUnconfirmed(runId, conversation, entry);
         await tracker.unassign(conversation, entry.ticketId).catch(error => log.warn('delegate.undone', { error }));
         closings.delete(runId);
         log.info('run.caughtup', { run: runId, ticket: entry.ticketId });
@@ -540,6 +545,108 @@ async function startLinear(
       engine?.tick();
     };
 
+    /** A stop signal: the run's stop goes to a person's hands on the board
+     *  *before* the run ends (ruled 2026-10-03) — "not that one again" is
+     *  the HITL label's memory, never one in a database — and the ending
+     *  releases the delegate and wakes the walk in the same breath. A stop
+     *  with no run stops the assistant's own turn, if one is running. */
+    const onStopSignal = async (conversation: string, run: RunView | undefined): Promise<void> => {
+      if (run) {
+        await markForHuman(conversation, run.ticketId);
+        await services.orchestrator.stop(run.id, `A person asked to stop ${run.ticketId} from the session.`);
+        return;
+      }
+      if (!store.has(conversation))
+        return refuse(
+          conversation,
+          'I do not know this session (it started before aivi did, or its state is gone). Delegate the issue to me again.',
+        );
+      const result = await stopRunningTurn(engine!, services.opencode, conversation);
+      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
+      if (!result.stopped) await say(conversation, 'Nothing is running right now.', 'answer');
+    };
+
+    /** An answer to a pending form: the orchestrator owns its delivery — the
+     *  slot may have been given back while the person thought, and an answer
+     *  that finds no capacity **reacquires** it, in the session's own pool,
+     *  queue included, before the same session resumes. OpenCode first, the
+     *  books second (ruled 2026-10-03): the worker gets the text, then the
+     *  form closes as the record. */
+    const deliverAnswer = async (conversation: string, run: RunView, text: string, formId: string): Promise<void> => {
+      let outcome: Awaited<ReturnType<typeof services.orchestrator.answer>>;
+      try {
+        outcome = await services.orchestrator.answer(run.sessionId!, text, formId);
+      } catch (error) {
+        // OpenCode would not take the answer. Nothing moved — the run
+        // is still parked, the question still stands — and the person
+        // hears that now, in these words, not by silence.
+        log.warn('answer.delivery.failed', { run: run.id, error });
+        return refuse(
+          conversation,
+          'I could not reach my agent runtime to wake the worker — the question still stands; answer it again once the runtime is back.',
+        );
+      }
+      if ('refused' in outcome)
+        return refuse(
+          conversation,
+          'The worker’s slot is gone and no capacity is free to wake it again — the pool behind its lane is full and its one queue place is taken. The question still stands: answer it again once a slot opens.',
+        );
+      if ('queued' in outcome)
+        await say(
+          conversation,
+          'I have your answer. No slot is free to wake that worker yet, so it wakes the moment one opens.',
+          'progress',
+        );
+      // Work resumes (now or when the slot opens): the progress stream resumes with it.
+      runProgress.get(run.id)?.start();
+      return log.info('run.answered', { run: run.id, form: formId, ...outcome });
+    };
+
+    /** An interjection steers (ruled 2026-10-01): the message lands between
+     *  turns and steers what comes next. With no turn to steer, the same
+     *  message queues instead — said in the log, never lost. */
+    const steerInterjection = async (
+      run: RunView,
+      client: Awaited<ReturnType<typeof services.opencode>>,
+      text: string,
+    ): Promise<void> => {
+      try {
+        await client.session.prompt({
+          sessionID: run.sessionId!,
+          id: `msg_${crypto.randomUUID()}`,
+          text,
+          delivery: 'steer',
+        });
+        return log.info('run.interjected', { run: run.id });
+      } catch (error) {
+        log.warn('run.steer.failed', { run: run.id, error });
+        await client.session.prompt({
+          sessionID: run.sessionId!,
+          id: `msg_${crypto.randomUUID()}`,
+          text,
+          delivery: 'queue',
+        });
+        return log.info('run.interjected.queued', { run: run.id });
+      }
+    };
+
+    /** The follow-up a finished run's conversation gets: the assistant
+     *  answers in its own session, with the ticket read afresh. */
+    const followUp = async (conversation: string, record: RunView, text: string): Promise<void> => {
+      const issue = await tracker.issue(conversation, record.ticketId);
+      const routed = projectForIssue(services.loaded, {
+        teamId: issue.teamId,
+        organizationId: await tracker.orgOf(conversation),
+      });
+      await startAssistant(
+        issue,
+        routed?.project,
+        conversation,
+        `[follow-up: the run on this ticket ended (${record.state})${record.outcome ? `: ${record.outcome.kind === 'success' ? record.outcome.summary : record.outcome.reason}` : ''}. The person now says: ${text}]`,
+      );
+      engine?.tick();
+    };
+
     /**
      * A person's message inside a session. If a run lives on the pair, the
      * **orchestrator is not in this path**: we post into the OpenCode session
@@ -559,112 +666,22 @@ async function startLinear(
       // finished one is the assistant's ground: a message into a completed
       // conversation is a follow-up, not an answer or an interjection.
       const run = record && !isTerminal(record.state) ? record : undefined;
-      if (event.signal === 'stop') {
-        if (run) {
-          // Stop means stop — and the stop has to **stick**. The ending
-          // releases the delegate and wakes the walk in the same breath, so
-          // the ticket must go to a person's hands on the board *before* the
-          // run ends (ruled 2026-10-03): "not that one again" is the HITL
-          // label's job, never a memory in a database — and now the label
-          // actually rides. Lifting it off is what lets the walk work the
-          // ticket again.
-          await markForHuman(conversation, run.ticketId);
-          await services.orchestrator.stop(run.id, `A person asked to stop ${run.ticketId} from the session.`);
-          return;
-        }
-        if (!store.has(conversation))
-          return refuse(
-            conversation,
-            'I do not know this session (it started before aivi did, or its state is gone). Delegate the issue to me again.',
-          );
-        const result = await stopRunningTurn(engine!, services.opencode, conversation);
-        if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-        if (!result.stopped) await say(conversation, 'Nothing is running right now.', 'answer');
-        return;
-      }
+      if (event.signal === 'stop') return onStopSignal(conversation, run);
       const text = event.body?.trim();
       if (!text) return;
       if (run?.sessionId) {
         const client = await services.opencode();
         const [form] = await client.session.form.list({ sessionID: run.sessionId });
-        if (form) {
-          // The orchestrator owns the answer's delivery: the slot may have
-          // been given back while the person thought, and an answer that
-          // finds no capacity **reacquires** it — in the session's own pool,
-          // queue included — before the same session resumes. OpenCode
-          // first, the books second (ruled 2026-10-03): the worker gets the
-          // text, then the form closes as the record.
-          let outcome: Awaited<ReturnType<typeof services.orchestrator.answer>>;
-          try {
-            outcome = await services.orchestrator.answer(run.sessionId, text, form.id);
-          } catch (error) {
-            // OpenCode would not take the answer. Nothing moved — the run
-            // is still parked, the question still stands — and the person
-            // hears that now, in these words, not by silence.
-            log.warn('answer.delivery.failed', { run: run.id, error });
-            return refuse(
-              conversation,
-              'I could not reach my agent runtime to wake the worker — the question still stands; answer it again once the runtime is back.',
-            );
-          }
-          if ('refused' in outcome)
-            return refuse(
-              conversation,
-              'The worker’s slot is gone and no capacity is free to wake it again — the pool behind its lane is full and its one queue place is taken. The question still stands: answer it again once a slot opens.',
-            );
-          if ('queued' in outcome)
-            await say(
-              conversation,
-              'I have your answer. No slot is free to wake that worker yet, so it wakes the moment one opens.',
-              'progress',
-            );
-          // Work resumes (now or when the slot opens): the progress stream resumes with it.
-          runProgress.get(run.id)?.start();
-          return log.info('run.answered', { run: run.id, form: form.id, ...outcome });
-        }
-        try {
-          // Interjections steer (ruled 2026-10-01): the message lands between
-          // turns and steers what comes next. With no turn to steer, the same
-          // message queues instead — said in the log, never lost.
-          await client.session.prompt({
-            sessionID: run.sessionId,
-            id: `msg_${crypto.randomUUID()}`,
-            text,
-            delivery: 'steer',
-          });
-          return log.info('run.interjected', { run: run.id });
-        } catch (error) {
-          log.warn('run.steer.failed', { run: run.id, error });
-          await client.session.prompt({
-            sessionID: run.sessionId,
-            id: `msg_${crypto.randomUUID()}`,
-            text,
-            delivery: 'queue',
-          });
-          return log.info('run.interjected.queued', { run: run.id });
-        }
+        if (form) return deliverAnswer(conversation, run, text, form.id);
+        return steerInterjection(run, client, text);
       }
       if (store.has(conversation)) {
         store.enqueue({ id: event.id, channel: conversation, user: 'linear', name: 'a person in Linear', text }, 100);
         return engine?.tick();
       }
       // The session belongs to a run that has ended: a person continuing a
-      // finished conversation is talking to us. The assistant answers in its
-      // own session, with the ticket read afresh.
-      if (record && isTerminal(record.state)) {
-        const issue = await tracker.issue(conversation, record.ticketId);
-        const routed = projectForIssue(services.loaded, {
-          teamId: issue.teamId,
-          organizationId: await tracker.orgOf(conversation),
-        });
-        await startAssistant(
-          issue,
-          routed?.project,
-          conversation,
-          `[follow-up: the run on this ticket ended (${record.state})${record.outcome ? `: ${record.outcome.kind === 'success' ? record.outcome.summary : record.outcome.reason}` : ''}. The person now says: ${text}]`,
-        );
-        return engine?.tick();
-      }
+      // finished conversation is talking to us.
+      if (record && isTerminal(record.state)) return followUp(conversation, record, text);
       return refuse(
         conversation,
         'I do not know this session (it started before aivi did, or its state is gone). Delegate the issue to me again.',

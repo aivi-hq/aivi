@@ -139,7 +139,72 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
       ],
     });
   };
-  /** One request: the canned routes answer from the url alone, the rest touch the state. */
+  /** One request: the canned routes answer from the url alone, the rest touch the state.
+   *  Each route is its own handler below — say whether it took the request —
+   *  and `respond` is only the order they are tried in. */
+  const onInterrupt = (url: string, res: ServerResponse): boolean => {
+    if (!url.endsWith('/interrupt')) return false;
+    if (ctl.interruptFails) {
+      res.writeHead(500).end('{"error":"OpenCode is down"}');
+      return true;
+    }
+    interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
+    res.end('{"interrupted":true}');
+    return true;
+  };
+  const onForm = (url: string, method: string, body: any, res: ServerResponse): boolean => {
+    if (!(url.startsWith('/api/session/') && url.endsWith('/form'))) return false;
+    const sessionID = decodeURIComponent(url.split('/').at(-2)!);
+    if (method === 'GET') {
+      const pending = forms.filter(f => !f.answered && f.sessionID === sessionID);
+      res.end(JSON.stringify({ data: pending.map(f => ({ id: f.id, sessionID, title: f.title, fields: [] })) }));
+      return true;
+    }
+    const form: FakeForm = {
+      id: `frm_test_${++formSeq}`,
+      sessionID,
+      title: String(body.title ?? ''),
+      answered: false,
+      fields: Array.isArray(body.fields) ? body.fields : [],
+    };
+    forms.push(form);
+    res.end(JSON.stringify({ data: { id: form.id, sessionID, title: form.title, fields: [] } }));
+    return true;
+  };
+  const onReply = (url: string, method: string, res: ServerResponse): boolean => {
+    if (!(url.endsWith('/reply') && method === 'POST')) return false;
+    const form = forms.find(f => f.id === decodeURIComponent(url.split('/').at(-2)!));
+    if (!form || form.answered) {
+      res.writeHead(409).end('{"error":"already answered"}');
+      return true;
+    }
+    form.answered = true;
+    res.end('{"data":{}}');
+    return true;
+  };
+  const onPrompt = (url: string, body: any, res: ServerResponse): boolean => {
+    if (!url.endsWith('/prompt')) return false;
+    if (ctl.promptFails) {
+      res.writeHead(500).end('{"error":"OpenCode is down"}');
+      return true;
+    }
+    prompts.push({ id: body.id, text: body.text, delivery: body.delivery, metadata: body.metadata });
+    res.end(JSON.stringify({ data: { id: body.id } }));
+    return true;
+  };
+  /** The replies that need no state: the url alone answers them. */
+  const cannedReply = (url: string, method: string): string | undefined => {
+    if (url.startsWith('/api/agent')) return '{"data":[{"id":"developer","name":"developer"}]}';
+    if (url.endsWith('/message')) return '{"data":[],"cursor":{"next":null}}';
+    if (url.endsWith('/permission') && method === 'GET') return '{"data":[]}';
+    return undefined;
+  };
+  const onSessionCreate = (url: string, method: string, body: any, res: ServerResponse): boolean => {
+    if (!(url === '/api/session' && method === 'POST')) return false;
+    sessions.set(body.id, { agent: body.agent, directory: body.location.directory });
+    res.end(JSON.stringify({ data: { id: body.id } }));
+    return true;
+  };
   const respond = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -147,53 +212,17 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
     const url = new URL(req.url!, 'http://x').pathname;
     const method = req.method ?? 'GET';
     res.setHeader('content-type', 'application/json');
-    if (url.startsWith('/api/agent')) return void res.end('{"data":[{"id":"developer","name":"developer"}]}');
-    if (url.endsWith('/message')) return void res.end('{"data":[],"cursor":{"next":null}}');
-    if (url.endsWith('/permission') && method === 'GET') return void res.end('{"data":[]}');
-    if (url.endsWith('/interrupt')) {
-      if (ctl.interruptFails) return void res.writeHead(500).end('{"error":"OpenCode is down"}');
-      interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
-      return void res.end('{"interrupted":true}');
-    }
-    if (url.startsWith('/api/session/') && url.endsWith('/form')) {
-      const sessionID = decodeURIComponent(url.split('/').at(-2)!);
-      if (method === 'GET')
-        return void res.end(
-          JSON.stringify({
-            data: forms
-              .filter(f => !f.answered && f.sessionID === sessionID)
-              .map(f => ({ id: f.id, sessionID: f.sessionID, title: f.title, fields: [] })),
-          }),
-        );
-      const form: FakeForm = {
-        id: `frm_test_${++formSeq}`,
-        sessionID,
-        title: String(body.title ?? ''),
-        answered: false,
-        fields: Array.isArray(body.fields) ? body.fields : [],
-      };
-      forms.push(form);
-      return void res.end(JSON.stringify({ data: { id: form.id, sessionID, title: form.title, fields: [] } }));
-    }
-    if (url.endsWith('/reply') && method === 'POST') {
-      const form = forms.find(f => f.id === decodeURIComponent(url.split('/').at(-2)!));
-      if (!form || form.answered) return void res.writeHead(409).end('{"error":"already answered"}');
-      form.answered = true;
-      return void res.end('{"data":{}}');
-    }
+    const canned = cannedReply(url, method);
+    if (canned !== undefined) return void res.end(canned);
+    if (onInterrupt(url, res)) return;
+    if (onForm(url, method, body, res)) return;
+    if (onReply(url, method, res)) return;
     // The turn machinery's real endpoints: a session update and the idle-wait
     // answer with no body (the /experimental wait is how a turn learns the
     // agent finished; 204 says it is done now).
     if (method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) return void res.writeHead(204).end();
-    if (url === '/api/session' && method === 'POST') {
-      sessions.set(body.id, { agent: body.agent, directory: body.location.directory });
-      return void res.end(JSON.stringify({ data: { id: body.id } }));
-    }
-    if (url.endsWith('/prompt')) {
-      if (ctl.promptFails) return void res.writeHead(500).end('{"error":"OpenCode is down"}');
-      prompts.push({ id: body.id, text: body.text, delivery: body.delivery, metadata: body.metadata });
-      return void res.end(JSON.stringify({ data: { id: body.id } }));
-    }
+    if (onSessionCreate(url, method, body, res)) return;
+    if (onPrompt(url, body, res)) return;
     if (url.endsWith('/context')) return void res.end(contextBody(url));
     const id = decodeURIComponent(url.split('/').at(-1)!);
     const session = sessions.get(id) ?? { agent: 'developer', directory: '/x' };

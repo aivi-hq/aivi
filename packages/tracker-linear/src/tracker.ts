@@ -30,7 +30,13 @@ import { LinearApiError, LinearClient } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { linearPrimarySecretNames, linearSecretNames, MODULE_ID, primaryLinearApp } from './config.ts';
 import { registerWebhookRoutes } from './routes.ts';
-import { isAgentSessionEvent, isIssueEvent, type LinearWebhook } from './webhook.ts';
+import {
+  type AgentSessionEventPayload,
+  type IssueEventPayload,
+  isAgentSessionEvent,
+  isIssueEvent,
+  type LinearWebhook,
+} from './webhook.ts';
 
 /** One Linear app, ready to speak: its client, its webhook secret, and who
  *  aivi is there (`userId`) and in which workspace (`orgId`), learned at
@@ -351,44 +357,50 @@ export class LinearPlatform implements Platform {
     const dispatch = async (appId: string, payload: LinearWebhook): Promise<void> => {
       const app = this.apps.get(appId);
       if (!app) return this.log.warn('webhook.unknown-app', { app: appId, type: payload.type, action: payload.action });
-      if (isAgentSessionEvent(payload)) {
-        const conversation = `${appId}:${payload.agentSession.id}`;
-        if (payload.action === 'created') {
-          const issueId = payload.agentSession.issue?.id;
-          if (!issueId) return this.log.warn('webhook.session-without-issue', { conversation });
-          return sink({
-            kind: 'started',
-            conversation,
-            issueId,
-            ...(payload.promptContext ? { promptContext: payload.promptContext } : {}),
-          });
-        }
-        const prompt = payload.agentActivity;
-        return sink({
-          kind: 'prompted',
-          id: prompt?.id ?? `seen:${payload.agentSession.id}`,
-          conversation,
-          ...(prompt?.content?.body ? { body: prompt.content.body } : {}),
-          ...(prompt?.signal !== undefined ? { signal: prompt.signal } : {}),
-        });
-      }
+      if (isAgentSessionEvent(payload)) return this.sessionEvent(appId, payload, sink);
       if (isIssueEvent(payload)) {
         if (appId !== this.primaryId) return this.misroute(appId, payload);
-        const changed: TrackerChange[] = [];
-        for (const [field, change] of [
-          ['stateId', 'state'],
-          ['labelIds', 'labels'],
-          ['delegateId', 'delegate'],
-          ['archivedAt', 'archive'],
-        ] as const)
-          if (payload.updatedFrom && field in payload.updatedFrom) changed.push(change);
         // A data change always arrives on the primary: its route carries
         // the workspace's feed, so the re-read speaks with the primary.
-        return sink({ kind: 'updated', conversation: `${this.primaryId}`, issueId: payload.data.id, changed });
+        return sink({
+          kind: 'updated',
+          conversation: `${this.primaryId}`,
+          issueId: payload.data.id,
+          changed: changedFields(payload),
+        });
       }
       this.log.debug('webhook.ignored', { app: appId, type: payload.type, action: payload.action });
     };
     return registerWebhookRoutes(this.routes, [...this.apps.values()], dispatch, this.log);
+  }
+
+  /** An agent-session event names a conversation: `created` is a session
+   *  begun on an issue — a session with no issue is noise, said — and later
+   *  activity is a person's message or a stop signal riding it. */
+  private async sessionEvent(
+    appId: string,
+    payload: AgentSessionEventPayload,
+    sink: (event: TrackerEvent) => Promise<void>,
+  ): Promise<void> {
+    const conversation = `${appId}:${payload.agentSession.id}`;
+    if (payload.action === 'created') {
+      const issueId = payload.agentSession.issue?.id;
+      if (!issueId) return this.log.warn('webhook.session-without-issue', { conversation });
+      return sink({
+        kind: 'started',
+        conversation,
+        issueId,
+        ...(payload.promptContext ? { promptContext: payload.promptContext } : {}),
+      });
+    }
+    const prompt = payload.agentActivity;
+    return sink({
+      kind: 'prompted',
+      id: prompt?.id ?? `seen:${payload.agentSession.id}`,
+      conversation,
+      ...(prompt?.content?.body ? { body: prompt.content.body } : {}),
+      ...(prompt?.signal !== undefined ? { signal: prompt.signal } : {}),
+    });
   }
 
   private misroute(endpoint: string, payload: LinearWebhook): void {
@@ -396,6 +408,22 @@ export class LinearPlatform implements Platform {
     if (this.logMisroutes) this.log.warn('webhook.misrouted', fields);
     else this.log.debug('webhook.misrouted', fields);
   }
+}
+
+/** The issue fields the webhook reports as changed, in the order the module
+ *  reads them: state, labels, delegate, archive. A field absent from
+ *  `updatedFrom` did not change — and the list is the whole contract of
+ *  what a data change can mean to aivi. */
+function changedFields(payload: IssueEventPayload): TrackerChange[] {
+  const changed: TrackerChange[] = [];
+  for (const [field, change] of [
+    ['stateId', 'state'],
+    ['labelIds', 'labels'],
+    ['delegateId', 'delegate'],
+    ['archivedAt', 'archive'],
+  ] as const)
+    if (payload.updatedFrom && field in payload.updatedFrom) changed.push(change);
+  return changed;
 }
 
 /** Build Linear's adapter: the config's shape is checked here and the

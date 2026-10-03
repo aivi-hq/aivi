@@ -6,8 +6,8 @@
  *  core writes on the project. Everything Linear-specific — apps, teams,
  *  workflow states — lives here; core only knows this plugin serves the
  *  `tracker` role. */
-import { getLogger, type ProjectLaneInput } from '@aivi/core';
-import { PluginSetupCancelled, type ProjectContributor } from '@aivi/plugin';
+import { getLogger, type Logger, type ProjectLaneInput } from '@aivi/core';
+import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
 import { type LinearTeam, resolveTeams } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { clientFor } from './tracker.ts';
@@ -64,119 +64,164 @@ export function markQueue(lanes: ProjectLaneInput[], chosen: string): string[] {
   return said;
 }
 
-const contributor: ProjectContributor = {
-  role: 'tracker',
-  async setup(ctx) {
-    const config = ctx.config as LinearConfig;
-    const appIds = Object.keys(config.apps ?? {});
-    let app: string | undefined;
-    if (appIds.length > 1) {
-      const picked = await ctx.prompts.select({
-        message: 'Ask which Linear app for teams',
-        options: appIds.map(name => ({ value: name, label: name })),
-      });
-      if (ctx.prompts.isCancel(picked)) throw new PluginSetupCancelled('no app chosen');
-      app = picked as string;
-    }
+/** The crossing to Linear the wizard needs: the teams it can list.
+ *  Production is `clientFor`; a test answers with its own teams, because
+ *  the wizard's questions, order and written config are the unit — the
+ *  GraphQL round trip is client.test.ts's subject, and the live gate's. */
+export type LinearTeamsClient = { listTeams(): Promise<LinearTeam[]> };
+export type MakeTeamsClient = (config: LinearConfig, app: string | undefined, log: Logger) => LinearTeamsClient;
 
-    const spinner = ctx.prompts.spinner();
-    spinner.start('Asking the app which teams it can see');
-    let teams: LinearTeam[];
-    try {
-      teams = await clientFor(config, app, log).listTeams();
-      spinner.stop(`The app can see ${teams.length} team${teams.length === 1 ? '' : 's'}`);
-    } catch (error) {
-      spinner.error(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-    if (!teams.length) throw new Error('that Linear app sees no teams — a private team needs the app added to it');
+/** The app to ask for teams: one app is never asked of the person,
+ *  several are. */
+async function pickApp(ctx: ProjectSetupContext, appIds: string[]): Promise<string | undefined> {
+  if (appIds.length <= 1) return undefined;
+  const picked = await ctx.prompts.select({
+    message: 'Ask which Linear app for teams',
+    options: appIds.map(name => ({ value: name, label: name })),
+  });
+  if (ctx.prompts.isCancel(picked)) throw new PluginSetupCancelled('no app chosen');
+  return picked as string;
+}
 
-    const pickedTeams = await ctx.prompts.multiselect({
-      message: 'Which teams may work in this project?',
-      options: teams.map(team => ({ value: team.id, label: `${team.key} — ${team.name}`, hint: team.id })),
-      required: true,
+/** The teams the app can see: the spinner says so, and a refusal ends the
+ *  setup — a wizard that went on after a dead app would be writing blind. */
+async function askedTeams(
+  ctx: ProjectSetupContext,
+  makeClient: MakeTeamsClient,
+  config: LinearConfig,
+  app: string | undefined,
+): Promise<LinearTeam[]> {
+  const spinner = ctx.prompts.spinner();
+  spinner.start('Asking the app which teams it can see');
+  let teams: LinearTeam[];
+  try {
+    teams = await makeClient(config, app, log).listTeams();
+    spinner.stop(`The app can see ${teams.length} team${teams.length === 1 ? '' : 's'}`);
+  } catch (error) {
+    spinner.error(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+  if (!teams.length) throw new Error('that Linear app sees no teams — a private team needs the app added to it');
+  return teams;
+}
+
+/** Which of the visible teams may work here: a pick-list, never typing. */
+async function pickTeams(ctx: ProjectSetupContext, teams: LinearTeam[]): Promise<string[]> {
+  const pickedTeams = await ctx.prompts.multiselect({
+    message: 'Which teams may work in this project?',
+    options: teams.map(team => ({ value: team.id, label: `${team.key} — ${team.name}`, hint: team.id })),
+    required: true,
+  });
+  if (ctx.prompts.isCancel(pickedTeams)) throw new PluginSetupCancelled('no teams picked');
+  return pickedTeams as string[];
+}
+
+/** One prompt per lane: who works it. "-- None --" leaves a human lane:
+ *  the orchestrator's silence, exactly as configured. */
+async function askLanes(
+  ctx: ProjectSetupContext,
+  states: LinearTeam['states'],
+  agentNames: string[],
+): Promise<ProjectLaneInput[]> {
+  const lanes: ProjectLaneInput[] = [];
+  for (const state of states) {
+    const answer = await ctx.prompts.select({
+      message: `Which OpenCode agent works the "${state.name}" lane?`,
+      options: [...agentNames.map(name => ({ value: name, label: name })), { value: '', label: '-- None --' }],
     });
-    if (ctx.prompts.isCancel(pickedTeams)) throw new PluginSetupCancelled('no teams picked');
-    const teamIds = pickedTeams as string[];
-    const chosen = teams.filter(team => teamIds.includes(team.id));
-
-    // The name: a tracker offers the first team's key, lower-cased, unless an
-    // earlier role (a forge) already settled it.
-    const suggested = (ctx.projectId ?? chosen[0]!.key).toLowerCase();
-    const idAnswer = await ctx.prompts.text({
-      message: "Project id — aivi's name for it; Linear never sees it.",
-      placeholder: suggested,
-    });
-    if (ctx.prompts.isCancel(idAnswer)) throw new PluginSetupCancelled('no project id given');
-    const id = (String(idAnswer).trim() || suggested).toLowerCase();
-
-    // Lanes: core's ordered workflow (`projects.<id>.lanes`), and the board
-    // is the order — the client returns a team's states in board order
-    // (type group, then position). One prompt per lane: who works it.
-    // "-- None --" leaves a human lane: the orchestrator's silence, exactly
-    // as configured.
-    const lanes: ProjectLaneInput[] = [];
-    // A pick-list, never typing: the agents OpenCode can run as a primary
-    // in this project's checkout. A service that answers with no agents
-    // means something is broken — aivi always ships at least two — so the
-    // setup says so and stops.
-    const agentNames = await ctx.agents(id);
-    if (!agentNames.length) throw new Error('Unable to configure lanes: there appear to be no agents available.');
-    for (const state of openStates(chosen.flatMap(team => team.states))) {
-      const answer = await ctx.prompts.select({
-        message: `Which OpenCode agent works the "${state.name}" lane?`,
-        options: [...agentNames.map(name => ({ value: name, label: name })), { value: '', label: '-- None --' }],
-      });
-      if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
-      const agent = String(answer).trim();
-      // A worked lane with git possible: does its work write files? Only a
-      // yes is written — core's default is false, and a key stating the
-      // default is noise. "No" is not a promise of read-only: that is the
-      // agent file's own deny, never aivi's. Without a forge there are no
-      // worktrees to promise, so nothing is asked.
-      let worktree = false;
-      if (agent && ctx.forgeConfigured) {
-        const writes = await ctx.prompts.select({
-          message: `Does work in the "${state.name}" lane write files (will use git worktrees)?`,
-          options: [
-            { value: 'yes', label: 'yes — it writes, give it its own worktree' },
-            { value: 'no', label: 'no — it works in the checkout itself' },
-          ],
-        });
-        if (ctx.prompts.isCancel(writes)) throw new PluginSetupCancelled('lane setup incomplete');
-        worktree = writes === 'yes';
-      }
-      lanes.push({ name: state.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
-    }
-    // The queue: ONE question for the whole workflow (ruled 2026-10-02,
-    // after every lane is configured — never a per-lane ask). "-- None --"
-    // leaves the workflow without a queue lane, which is the old shape.
-    const candidates = queueCandidates(lanes);
-    if (candidates.length) {
-      const answer = await ctx.prompts.select({
-        message: 'Which lane waits with work while the working lanes are full (the queue)?',
+    if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
+    const agent = String(answer).trim();
+    // A worked lane with git possible: does its work write files? Only a
+    // yes is written — core's default is false, and a key stating the
+    // default is noise. "No" is not a promise of read-only: that is the
+    // agent file's own deny, never aivi's. Without a forge there are no
+    // worktrees to promise, so nothing is asked.
+    let worktree = false;
+    if (agent && ctx.forgeConfigured) {
+      const writes = await ctx.prompts.select({
+        message: `Does work in the "${state.name}" lane write files (will use git worktrees)?`,
         options: [
-          ...candidates.map(lane => ({ value: lane.name, label: lane.name })),
-          { value: '', label: '-- None --' },
+          { value: 'yes', label: 'yes — it writes, give it its own worktree' },
+          { value: 'no', label: 'no — it works in the checkout itself' },
         ],
       });
-      if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
-      const chosen = String(answer).trim();
-      for (const line of chosen ? markQueue(lanes, chosen) : []) await ctx.prompts.log.message(line);
-    } else if (lanes.length)
-      await ctx.prompts.log.message(
-        'no lane sits before a working lane, so nothing can wait for a slot — a queue lane comes later with a worker lane',
-      );
+      if (ctx.prompts.isCancel(writes)) throw new PluginSetupCancelled('lane setup incomplete');
+      worktree = writes === 'yes';
+    }
+    lanes.push({ name: state.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
+  }
+  return lanes;
+}
 
-    if (!lanes.length)
-      await ctx.prompts.log.message(
-        'these teams have no workflow states yet — lanes get written once the board has some',
-      );
+/** The queue: ONE question for the whole workflow (ruled 2026-10-02,
+ *  after every lane is configured — never a per-lane ask). "-- None --"
+ *  leaves the workflow without a queue lane, which is the old shape. */
+async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Promise<void> {
+  const candidates = queueCandidates(lanes);
+  if (candidates.length) {
+    const answer = await ctx.prompts.select({
+      message: 'Which lane waits with work while the working lanes are full (the queue)?',
+      options: [
+        ...candidates.map(lane => ({ value: lane.name, label: lane.name })),
+        { value: '', label: '-- None --' },
+      ],
+    });
+    if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
+    const chosen = String(answer).trim();
+    for (const line of chosen ? markQueue(lanes, chosen) : []) await ctx.prompts.log.message(line);
+  } else if (lanes.length)
+    await ctx.prompts.log.message(
+      'no lane sits before a working lane, so nothing can wait for a slot — a queue lane comes later with a worker lane',
+    );
+}
 
-    const section: Record<string, unknown> = { teams: resolveTeams(teams, teamIds) };
-    return { id, section, ...(lanes.length ? { lanes } : {}), cloned: false };
-  },
-};
+/** The wizard, in its order: app, teams, the project's name, one agent per
+ *  board state, then the queue over the finished lanes. Each step is its
+ *  own question and its own honest failure; the whole is the ruling. */
+function makeContributor(makeClient: MakeTeamsClient = clientFor): ProjectContributor {
+  return {
+    role: 'tracker',
+    async setup(ctx) {
+      const config = ctx.config as LinearConfig;
+      const app = await pickApp(ctx, Object.keys(config.apps ?? {}));
+      const teams = await askedTeams(ctx, makeClient, config, app);
 
+      const teamIds = await pickTeams(ctx, teams);
+      const chosen = teams.filter(team => teamIds.includes(team.id));
+
+      // The name: a tracker offers the first team's key, lower-cased, unless an
+      // earlier role (a forge) already settled it.
+      const suggested = (ctx.projectId ?? chosen[0]!.key).toLowerCase();
+      const idAnswer = await ctx.prompts.text({
+        message: "Project id — aivi's name for it; Linear never sees it.",
+        placeholder: suggested,
+      });
+      if (ctx.prompts.isCancel(idAnswer)) throw new PluginSetupCancelled('no project id given');
+      const id = (String(idAnswer).trim() || suggested).toLowerCase();
+
+      // Lanes: core's ordered workflow (`projects.<id>.lanes`), and the board
+      // is the order — the client returns a team's states in board order
+      // (type group, then position).
+      // A pick-list, never typing: the agents OpenCode can run as a primary
+      // in this project's checkout. A service that answers with no agents
+      // means something is broken — aivi always ships at least two — so the
+      // setup says so and stops.
+      const agentNames = await ctx.agents(id);
+      if (!agentNames.length) throw new Error('Unable to configure lanes: there appear to be no agents available.');
+      const lanes = await askLanes(ctx, openStates(chosen.flatMap(team => team.states)), agentNames);
+      await askQueue(ctx, lanes);
+
+      if (!lanes.length)
+        await ctx.prompts.log.message(
+          'these teams have no workflow states yet — lanes get written once the board has some',
+        );
+
+      const section: Record<string, unknown> = { teams: resolveTeams(teams, teamIds) };
+      return { id, section, ...(lanes.length ? { lanes } : {}), cloned: false };
+    },
+  };
+}
+
+export const contributor = makeContributor();
+export { makeContributor };
 export default contributor;
-export { contributor };

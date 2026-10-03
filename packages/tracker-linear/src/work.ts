@@ -74,6 +74,11 @@ export function linearBoard(
   const read = (): LinearClient => (reader ??= openClient(primaryLinearApp(config) ?? ''));
   let board: LinearTeam[] | undefined;
   const teams = async (): Promise<LinearTeam[]> => (board ??= await read().listTeams());
+  /** A ticket the walk may start: not deleted between the listing and this
+   *  breath, not a person's to work, and nobody else already speaks for it —
+   *  not eligible, and never knocked twice. */
+  const walkable = (issue: Awaited<ReturnType<LinearClient['issuesIn']>>['issues'][number]): boolean =>
+    !issue.archivedAt && !issue.labels.some(l => l.name === config.humanLabel) && !issue.delegate;
   return {
     projects: () =>
       services.loaded.projects.filter(p => !p.removed && projectLinear(services.loaded, p.id)).map(p => p.id),
@@ -88,9 +93,7 @@ export function linearBoard(
         const page = await read().issuesIn(team.id, lane.id);
         if (page.truncated) log.warn('walk.board.truncated', { project: projectId, lane: state, team: team.key });
         for (const issue of page.issues) {
-          if (issue.archivedAt) continue; // deleted between the listing and this breath
-          if (issue.labels.some(l => l.name === config.humanLabel)) continue; // a person's to work
-          if (issue.delegate) continue; // someone already speaks for it: not eligible, not knocked twice
+          if (!walkable(issue)) continue;
           out.push({ id: issue.id, blocked: issue.blockedBy.some(b => !isClosed(b.state.type)) });
         }
       }
