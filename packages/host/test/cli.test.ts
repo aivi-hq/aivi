@@ -43,7 +43,7 @@ const listPlugins = async (home: string, names: unknown[]) => {
   await mkdir(join(home, 'app'), { recursive: true });
   await writeFile(
     join(home, 'app', 'package.json'),
-    JSON.stringify({ name: 'aivi-server', private: true, dependencies: {}, ['aivi-plugins']: names }),
+    JSON.stringify({ name: 'aivi-server', private: true, dependencies: {}, 'aivi-plugins': names }),
   );
 };
 

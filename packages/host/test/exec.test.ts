@@ -204,13 +204,13 @@ test('a PTY session runs the CLI on a terminal and reports its exit code', async
 });
 
 test('the start message sizes the terminal', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.4\nstty size\n');
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.15\nstty size\n');
   const done = await session(port, secret, { t: 'start', argv: ['winsize'], cols: 90, rows: 30 });
   assert.match(done.stdout, /30 90/, 'stty sees the window the client asked for');
 });
 
 test('a resize mid-session moves the PTY window', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.6\nstty size\n');
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.15\nstty size\n');
   const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
   const events: Record<string, unknown>[] = [];
   let stdout = '';
@@ -280,7 +280,7 @@ test('a missing aivi on PATH degrades the same honest way', async t => {
 });
 
 test('a second start on one connection answers an error, not a second child', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.3\necho done\n');
+  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.1\necho done\n');
   const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
   const events: Record<string, unknown>[] = [];
   ws.on('message', (data: Buffer, isBinary: boolean) => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -12,24 +12,44 @@ const run = promisify(execFile);
 const git = (cwd: string, ...args: string[]) =>
   run('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
 
-test('projects.sync fast-forwards clean checkouts and skips anything that needs a decision', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-sync-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+/** The board the sync tests start from — a clean `site`, a `dirty` checkout
+ *  with local edits, a `plain` directory that is no repository — built once
+ *  per file run and copied per test. A fixture that pays seven `git` spawns
+ *  per test pays for nothing; the copy plus `remote set-url` (a copy's
+ *  `origin` must name its own upstream) is the same starting point, and real
+ *  git stays where the assertions live.
+ */
+const template = (async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-sync-template-'));
   const upstream = join(root, 'upstream');
   await mkdir(join(upstream, 'docs'), { recursive: true });
   await writeFile(join(upstream, 'docs/a.md'), 'one');
   await run('git', ['init', '-q', '-b', 'main', upstream]);
   await git(upstream, 'add', '.');
   await git(upstream, 'commit', '-q', '-m', 'one');
+  await run('git', ['clone', '-q', upstream, join(root, 'projects/site/source')]);
+  await run('git', ['clone', '-q', upstream, join(root, 'projects/dirty/source')]);
+  await writeFile(join(root, 'projects/dirty/source', 'docs/a.md'), 'edited locally');
+  await mkdir(join(root, 'projects/plain/source'), { recursive: true });
+  return root;
+})();
+
+/** The fixture's projects under a fresh copy, `origin` re-pointed at it. */
+const copied = async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-sync-'));
+  await cp(await template, root, { recursive: true });
+  const upstream = join(root, 'upstream');
+  for (const name of ['site', 'dirty'])
+    await git(join(root, `projects/${name}/source`), 'remote', 'set-url', 'origin', upstream);
+  return { root, upstream };
+};
+
+test('projects.sync fast-forwards clean checkouts and skips anything that needs a decision', async t => {
+  const { root, upstream } = await copied();
+  t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'projects/site/source');
-  await mkdir(join(root, 'projects/site'), { recursive: true });
-  await run('git', ['clone', '-q', upstream, source]);
   const dirty = join(root, 'projects/dirty/source');
-  await mkdir(join(root, 'projects/dirty'), { recursive: true });
-  await run('git', ['clone', '-q', upstream, dirty]);
-  await writeFile(join(dirty, 'docs/a.md'), 'edited locally');
   const plain = join(root, 'projects/plain/source');
-  await mkdir(plain, { recursive: true });
 
   const projects = [
     { id: 'site', directory: source },
@@ -69,17 +89,9 @@ test('projects.sync fast-forwards clean checkouts and skips anything that needs 
 });
 
 test('a checkout whose remote a forge owns syncs through the forge, and only the forge', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-sync-forge-'));
+  const { root } = await copied();
   t.after(() => rm(root, { recursive: true, force: true }));
-  const upstream = join(root, 'upstream');
-  await mkdir(upstream);
-  await writeFile(join(upstream, 'a.md'), 'one');
-  await run('git', ['init', '-q', '-b', 'main', upstream]);
-  await git(upstream, 'add', '.');
-  await git(upstream, 'commit', '-q', '-m', 'one');
   const source = join(root, 'projects/site/source');
-  await mkdir(join(root, 'projects/site'), { recursive: true });
-  await run('git', ['clone', '-q', upstream, source]);
   const head = (await git(source, 'rev-parse', 'HEAD')).stdout.trim();
 
   const asked: string[] = [];

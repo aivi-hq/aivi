@@ -308,7 +308,6 @@ export const projectSchema = z.strictObject({
       'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to the `next` lane, failure to the `previous` one — neighbours by default, overridden per lane; a stop moves nothing. `queue: true` marks the workflow’s one queue lane, waiting fresh work for the worker lane it feeds; `pool` names the dispatcher pool the lane draws from (inert until the dispatcher is built). Closed states are never written: the tracker recognizes them by type.',
     ),
 });
-type ProjectEntry = z.infer<typeof projectSchema>;
 /**
  * The **roles** a project is set up against, in the order the setup walks
  * them: a forge first (it owns the checkout — it clones), a tracker second
@@ -1159,7 +1158,7 @@ async function manualSources(base: string): Promise<KnowledgeSource[]> {
   let list: unknown;
   try {
     const manifest = JSON.parse(await readFile(join(base, 'app', 'package.json'), 'utf8')) as {
-      ['aivi-plugins']?: unknown;
+      'aivi-plugins'?: unknown;
     };
     list = manifest['aivi-plugins'];
   } catch {

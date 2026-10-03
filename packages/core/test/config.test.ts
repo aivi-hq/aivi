@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -577,7 +577,7 @@ test('the install record seeds manual sources, in place, disabled plugins includ
     join(app, 'package.json'),
     JSON.stringify({
       name: 'aivi-server',
-      ['aivi-plugins']: ['@aivi/host', ['@aivi/dead', false], 'plain-no-docs'],
+      'aivi-plugins': ['@aivi/host', ['@aivi/dead', false], 'plain-no-docs'],
     }),
   );
   const loaded = await loadConfig(configPath);

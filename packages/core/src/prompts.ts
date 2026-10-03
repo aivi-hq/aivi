@@ -100,7 +100,7 @@ export async function installPrompts(home: string): Promise<PromptInstall> {
       // No file yet: the copy goes in below. Anything else than absence
       // would surface from the write itself.
     }
-    await writeFile(path, PROMPT_WARNING + promptDefaults[name] + '\n');
+    await writeFile(path, `${PROMPT_WARNING}${promptDefaults[name]}\n`);
     written.push(name);
   }
   return { written, kept };

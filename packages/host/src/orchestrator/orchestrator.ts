@@ -461,7 +461,7 @@ export class Orchestrator implements OrchestratorApi {
       // stopped or answered in the meantime, and the lease goes back.
       this.requested.delete(requestId); // the wait is over either way
       const run = work.runId ? this.deps.ledger.get(work.runId) : undefined;
-      if (!run || run.state !== 'awaiting_input' || !work.answer) {
+      if (run?.state !== 'awaiting_input' || !work.answer) {
         this.deps.dispatcher.release(lease.id);
         return;
       }
@@ -592,7 +592,7 @@ export class Orchestrator implements OrchestratorApi {
    */
   async #keepAliveExpired(runId: string): Promise<void> {
     const run = this.deps.ledger.get(runId);
-    if (!run || run.state !== 'awaiting_input') return; // answered, stopped or failed in the window
+    if (run?.state !== 'awaiting_input') return; // answered, stopped or failed in the window
     if (run.leaseId && this.deps.dispatcher.leases.get(run.leaseId)) {
       this.deps.dispatcher.release(run.leaseId);
       this.deps.ledger.clearLease(runId);
@@ -923,7 +923,7 @@ export class Orchestrator implements OrchestratorApi {
    */
   async #turnEnded(sessionId: string): Promise<void> {
     const run = this.deps.ledger.bySession(sessionId);
-    if (!run || run.state !== 'working') return;
+    if (run?.state !== 'working') return;
     try {
       const forms = (await this.deps.opencode()).session.form.list({ sessionID: sessionId });
       if ((await forms).length) {
@@ -1088,7 +1088,7 @@ export class Orchestrator implements OrchestratorApi {
    */
   async #feedbackGate(run: Run): Promise<void> {
     const feedback = run.feedback;
-    if (!feedback || !feedback.openThreadIds.length) return; // started clean: nothing is ever owed
+    if (!feedback?.openThreadIds.length) return; // started clean: nothing is ever owed
     const directory = run.worktree ?? this.deps.directory(run.projectId);
     const owned = await this.deps.forges.owner({ id: run.projectId, directory });
     const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
@@ -1098,7 +1098,7 @@ export class Orchestrator implements OrchestratorApi {
         'The feedback gate cannot read the pull request right now (this run has no forge or no branch to ask by); call aivi_work_complete again.',
       );
     const pr = await owned.forge.prForBranch(owned.repo, branch);
-    if (!pr || pr.state !== 'open') return; // the pull request closed: its threads died with it, nothing owed
+    if (pr?.state !== 'open') return; // the pull request closed: its threads died with it, nothing owed
     let facts: ReviewFacts;
     try {
       facts = await owned.forge.reviewFeedback(owned.repo, pr);
@@ -1401,7 +1401,7 @@ export class Orchestrator implements OrchestratorApi {
     const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
     if (!branch) throw new ToolError(409, 'This run sits on a detached HEAD; no branch, no pull request to read.');
     const pr = await owned.forge.prForBranch(owned.repo, branch);
-    if (!pr || pr.state !== 'open')
+    if (pr?.state !== 'open')
       throw new ToolError(
         409,
         `No open pull request stands for ${branch}${pr ? ` (the last one is ${pr.state})` : ''}: aivi_pr opens one when the work is ready.`,

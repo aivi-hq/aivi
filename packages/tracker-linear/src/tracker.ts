@@ -110,9 +110,7 @@ export function neutralIssue(issue: Awaited<ReturnType<LinearClient['issue']>>):
 export class LinearPlatform implements Platform {
   readonly id = MODULE_ID;
 
-  private readonly config: LinearConfig;
   private readonly routes: PublicRoutes;
-  private readonly clients: Map<string, LinearClient> | undefined;
   private readonly apps = new Map<string, LinearAppRuntime>();
   private readonly primaryId: string | undefined;
   private readonly logMisroutes: boolean;
@@ -127,10 +125,8 @@ export class LinearPlatform implements Platform {
     clients?: Map<string, LinearClient>,
     log: Logger = getLogger(['aivi', MODULE_ID]),
   ) {
-    this.config = config;
     this.log = log;
     this.routes = routes;
-    this.clients = clients;
     this.primaryId = primaryLinearApp(config);
     this.logMisroutes = config.logMisroutes;
     if (!Object.keys(config.apps).length)

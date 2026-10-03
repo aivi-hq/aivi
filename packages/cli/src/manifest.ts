@@ -5,12 +5,12 @@
  *  exists but stands down. The module id, the `plugins.<id>` config key, is
  *  not here: the package's own `./config` declaration carries it, and the host
  *  validates this list when it loads. */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 interface Manifest {
   dependencies?: Record<string, string>;
-  ['aivi-plugins']?: unknown;
+  'aivi-plugins'?: unknown;
   [key: string]: unknown;
 }
 

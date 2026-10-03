@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -31,9 +31,16 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 const AS = ['-c', 'user.email=dev@example.com', '-c', 'user.name=Dev'];
 
 /** A repository as a person leaves it: a bare `origin.git` holding `main` with
- *  one commit, and a clean `source/` checkout of it. */
-async function checkout(): Promise<{ root: string; origin: string; source: string }> {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-forge-'));
+ *  one commit, and a clean `source/` checkout of it.
+ *
+ *  Built once per file run and copied per test: a test that pays ten `git`
+ *  spawns to build a fixture pays them for nothing — a copy plus one
+ *  `remote set-url` (the copy's `origin` must name its own directory, not the
+ *  template's) is the same fixture in a fraction of the time. Real git stays
+ *  where it earns its keep: in the assertions.
+ */
+const template = (async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-forge-template-'));
   const origin = join(root, 'origin.git');
   await run('git', ['init', '--bare', '--initial-branch=main', origin]);
   const seed = join(root, 'seed');
@@ -43,7 +50,16 @@ async function checkout(): Promise<{ root: string; origin: string; source: strin
   await git(seed, ...AS, 'commit', '--quiet', '-m', 'first');
   await git(seed, 'push', '--quiet', origin, 'HEAD:refs/heads/main');
   await run('git', ['clone', '--quiet', origin, join(root, 'source')]);
-  return { root, origin, source: join(root, 'source') };
+  return root;
+})();
+
+async function checkout(): Promise<{ root: string; origin: string; source: string }> {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-forge-'));
+  await cp(await template, root, { recursive: true });
+  const origin = join(root, 'origin.git');
+  const source = join(root, 'source');
+  await git(source, 'remote', 'set-url', 'origin', origin);
+  return { root, origin, source };
 }
 
 /** One commit added to the far side, as a person pushing from elsewhere. */
@@ -547,7 +563,7 @@ test('openPr opens the pull request on the repository’s own default branch, si
 });
 
 test('a second pull request over a branch is the platform’s refusal to say, not aivi’s to smooth over', async () => {
-  const { origin, source } = await checkout();
+  const { origin } = await checkout();
   const api = await forgeWith({
     'GET /repos/acme/widget': () => ({ status: 200, body: { default_branch: 'main', name: 'widget' } }),
     'POST /repos/acme/widget/pulls': () => ({

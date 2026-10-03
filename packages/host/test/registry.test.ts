@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -13,7 +13,7 @@ async function home(...entries: unknown[]): Promise<string> {
   await mkdir(join(root, 'app'), { recursive: true });
   await writeFile(
     join(root, 'app', 'package.json'),
-    JSON.stringify({ name: 'aivi-server', private: true, dependencies: {}, ['aivi-plugins']: entries }),
+    JSON.stringify({ name: 'aivi-server', private: true, dependencies: {}, 'aivi-plugins': entries }),
   );
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1 }));
   return root;
@@ -65,7 +65,7 @@ test('a registry read after the list changed sees the change: add’s own sequen
       name: 'aivi-server',
       private: true,
       dependencies: { '@aivi/channel-slack': '*' },
-      ['aivi-plugins']: ['@aivi/channel-slack'],
+      'aivi-plugins': ['@aivi/channel-slack'],
     }),
   );
   const loaded = await loadComposedConfig(root, join(root, 'config.json'));
@@ -135,6 +135,6 @@ test('a listed package npm does not hold is named with the command that fixes it
 test('a malformed list is said as the list, with its file', async () => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-registry-'));
   await mkdir(join(root, 'app'), { recursive: true });
-  await writeFile(join(root, 'app', 'package.json'), JSON.stringify({ ['aivi-plugins']: [{ bad: true }] }));
+  await writeFile(join(root, 'app', 'package.json'), JSON.stringify({ 'aivi-plugins': [{ bad: true }] }));
   await assert.rejects(pluginRegistry(root), /aivi-plugins list in .*app\/package\.json is malformed/);
 });

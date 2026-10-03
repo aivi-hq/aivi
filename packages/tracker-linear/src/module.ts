@@ -25,7 +25,6 @@
 import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
 import {
   ChannelEngine,
-  ConfigurationError,
   ConversationStore,
   createTurnRunner,
   isTerminal,
@@ -40,7 +39,7 @@ import { RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue, projectLinear } from './projects.ts';
 import { RunProgress } from './runprogress.ts';
-import { createLinearPlatform, LinearPlatform } from './tracker.ts';
+import { createLinearPlatform } from './tracker.ts';
 import type { LinearBoard } from './work.ts';
 import { issueDossier, linearBoard } from './work.ts';
 
@@ -521,7 +520,6 @@ async function startLinear(
         // of whichever delivery mentioned one.
         organizationId: await tracker.orgOf(conversation),
       });
-      const lane = routed && laneOf(routed.project, issue.state.name);
       if (issue.delegateId === tracker.ownerOf(conversation)) {
         // A delegation not initiated by us (ruled 2026-10-02): our own
         // initWork delegation was folded away by the redelivery guard above,

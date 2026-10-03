@@ -304,4 +304,21 @@ temp-file-plus-rename is three lines in each place.
   ([plans/orchestrator.md](../plans/orchestrator.md)), no clock bounds a
   turn; a hung assistant turn holds one of `maxConcurrent` slots and dies
   with OpenCode's own errors or shutdown.
+- **Biome diagnostics and suite slowness — fixed 2026-10-03** (the
+  operator's order: "Biome has a bunch of issues you did not fix. And the
+  tests are slow as fuck... I expect no more than 100ms per test. I
+  tolerate a couple of 1s tests because they are truly valuable.").
+  `biome check .` reports nothing: the leftovers of the dead-code sweep
+  (its `--write` pass had skipped the unsafe fixes) are reviewed and
+  applied one by one. The suite went 21s → 11s wall and no test waits a
+  real second any more by construction: the dispatcher and the
+  keep-alive take **numbers** at the unit (the duration strings stay the
+  config's surface), the GitHub client no longer carries octokit's
+  throttling plugin (a Bottleneck that held *every* write one full
+  second, rate limit or not), and the git fixtures are built once per
+  file and copied per test instead of ten `git` spawns each. What
+  remains over 100ms is real git and real child processes — the
+  end-to-end forge, worktree and CLI tests the operator named as the
+  valuable kind — measured per file, they are a few hundred ms each,
+  inflated in a full parallel run by CPU contention.
 - The rest: operator's call on each.

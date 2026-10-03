@@ -48,7 +48,7 @@ function readList(appManifest: string): [string, boolean][] {
   if (!existsSync(appManifest)) return [];
   let listed: unknown;
   try {
-    const manifest = JSON.parse(readFileSync(appManifest, 'utf8')) as { ['aivi-plugins']?: unknown };
+    const manifest = JSON.parse(readFileSync(appManifest, 'utf8')) as { 'aivi-plugins'?: unknown };
     listed = manifest['aivi-plugins'] ?? [];
   } catch (error) {
     throw new Error(`${appManifest} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);

@@ -31,12 +31,12 @@ function printRecord(record: ClientConfig): void {
   const who = person ? (person.name ?? person.id ?? 'unnamed') : 'nobody signed in';
   const roles = person?.roles?.length ? ` (${person.roles.join(', ')})` : '';
   process.stdout.write(
-    [
+    `${[
       `host:    ${record.url ?? 'not set'}`,
       `home:    ${record.home ?? 'not set (this machine drives another host)'}`,
       `app dir: ${record.appDir ?? 'not set'}`,
       `person:  ${who}${roles}`,
-    ].join('\n') + '\n',
+    ].join('\n')}\n`,
   );
 }
 

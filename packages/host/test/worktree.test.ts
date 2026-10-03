@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -13,17 +13,32 @@ const git = (cwd: string, ...args: string[]) =>
 /** A commit as whoever runs it: no `-c` overrides, so the worktree's own settings decide. */
 const bare = (cwd: string, ...args: string[]) => run('git', ['-C', cwd, ...args]);
 const BOT = { name: 'aivi-agent[bot]', email: '331678708+aivi-agent[bot]@users.noreply.github.com' };
-/** A checkout with an upstream, both with one commit. */
-async function checkout(root: string) {
+/** A checkout with an upstream, both with one commit.
+ *
+ *  The repository is built once per file run and copied per test: a fixture
+ *  that pays six `git` spawns per test pays them for nothing — a copy plus
+ *  one `remote set-url` (the copy's `origin` must name its own upstream, not
+ *  the template's) is the same starting point. Real git stays where it earns
+ *  its keep: in the assertions.
+ */
+const template = (async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-worktree-template-'));
   const upstream = join(root, 'upstream');
   await mkdir(upstream);
   await writeFile(join(upstream, 'README.md'), 'one');
   await run('git', ['init', '-q', '-b', 'main', upstream]);
   await git(upstream, 'add', '.');
   await git(upstream, 'commit', '-q', '-m', 'one');
-  const source = join(root, 'projects/site/source');
   await mkdir(join(root, 'projects/site'), { recursive: true });
-  await run('git', ['clone', '-q', upstream, source]);
+  await run('git', ['clone', '-q', upstream, join(root, 'projects/site/source')]);
+  return root;
+})();
+
+async function checkout(root: string) {
+  await cp(await template, root, { recursive: true });
+  const upstream = join(root, 'upstream');
+  const source = join(root, 'projects/site/source');
+  await git(source, 'remote', 'set-url', 'origin', upstream);
   return { upstream, source };
 }
 /** The effective value of a config key, or `''` when it is unset. */

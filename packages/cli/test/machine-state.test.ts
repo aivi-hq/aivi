@@ -187,7 +187,7 @@ test('a broken record is exactly what configure is for', async t => {
 });
 
 test('a person block survives the rescue only when its token survives', async t => {
-  const directory = await machine(t, undefined);
+  await machine(t, undefined);
   await writeFile(process.env.AIVI_CONFIG!, JSON.stringify({ configVersion: 1, url: 42, person: { name: 'Ada' } }));
   await run(['configure', '--url', 'http://127.0.0.1:4100']);
   const record = JSON.parse(await readFile(process.env.AIVI_CONFIG!, 'utf8')) as Record<string, unknown>;

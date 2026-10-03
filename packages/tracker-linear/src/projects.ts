@@ -41,7 +41,7 @@ export function projectLinear(loaded: LoadedConfig, projectId: string): ProjectL
 export function linearTeamCollisions(loaded: LoadedConfig): string[] {
   const owners = new Map<string, string>();
   const collisions: string[] = [];
-  for (const [project, entry] of Object.entries(loaded.config.projects))
+  for (const project of Object.keys(loaded.config.projects))
     for (const team of writtenLinear(loaded, project)?.teams ?? []) {
       const owner = owners.get(team);
       if (owner && owner !== project)
@@ -109,7 +109,7 @@ export async function writeProjectLinear(
     // belong to another project too. Collisions between other projects are
     // not this write's doing; the module's start check says those.
     const mine = new Set(linear.teams as string[]);
-    for (const [other, entry] of Object.entries(loaded.config.projects)) {
+    for (const other of Object.keys(loaded.config.projects)) {
       if (other === id) continue;
       const shared = (writtenLinear(loaded, other)?.teams ?? []).filter(team => mine.has(team));
       if (shared.length)
