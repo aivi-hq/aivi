@@ -76,8 +76,10 @@ export type RunOutcome = { kind: 'success'; summary: string } | { kind: 'failure
  *  tracker renders help for its platform from the code, never by reading
  *  English. `kill-unconfirmed`: the dispatcher struck the session the
  *  configured number of times and it would not die; the person watching
- *  the ticket should know a worker may still be loose. */
-export type FailureCode = 'kill-unconfirmed';
+ *  the ticket should know a worker may still be loose.
+ *  `stop-unconfirmed`: a person asked to stop and OpenCode would not answer
+ *  the interrupt at all, so the same may be true of a stop. */
+export type FailureCode = 'kill-unconfirmed' | 'stop-unconfirmed';
 
 /**
  * A run as anyone outside the orchestrator may read it: enough to speak

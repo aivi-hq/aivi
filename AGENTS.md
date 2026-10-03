@@ -33,8 +33,12 @@ Rules for the worker/Linear lifecycle (built: `docs/linear.md`; what is left:
   gets its own git worktree once a forge gives them. A lane that writes is
   never read-only by aivi — that is its agent file's own permission deny.
 - Stop means stop: a stop request, the HITL label or a lane change ends the
-  worker and releases the issue; the worktree and the native transcript stay
-  for inspection. `blocked` is only for a stop that cannot be verified.
+  worker and releases the issue. A stop cleans up its own attempt: the run's
+  worktree goes with its uncommitted work and local commits (what was
+  pushed stays pushed); the native transcript stays for inspection. The
+  stopped ticket carries the HITL label when the person's own move did not
+  already mark it — the board is the stop's memory, never a line in a
+  database. `blocked` is only for a stop that cannot be verified.
   Graceful agent-first cleanup is a later upgrade, not a precondition.
 - Linear lanes select OpenCode agents directly; one app (the primary) does the
   receiving, and the assistant (`linear.agent`) answers what people mention it

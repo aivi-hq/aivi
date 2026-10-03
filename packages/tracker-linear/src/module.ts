@@ -281,14 +281,23 @@ async function startLinear(
         if (!(await tracker.resultShown(conversation)))
           await tracker.comment(conversation, words, entry.outcome?.kind === 'success' ? 'answer' : 'outcome');
         if (tracker.closingNote) await tracker.closingNote(conversation, entry.ticketId, words);
-        // A worker the dispatcher could not kill (ruled 2026-10-02): the
-        // ticket carries the human label and says plainly that one may still
-        // be loose — help is on the way, and a person goes looking.
-        if (entry.outcome?.kind === 'failure' && entry.outcome.code === 'kill-unconfirmed' && !helped.has(runId)) {
+        // A worker the dispatcher could not kill, or a worker a person asked
+        // to stop while OpenCode would not answer the interrupt (ruled
+        // 2026-10-02; the stop's twin 2026-10-03): the ticket carries the
+        // human label and says plainly that a worker may still be running —
+        // help is on the way, and a person goes looking. The claim "stopped
+        // at your request" is never made here.
+        if (
+          entry.outcome?.kind === 'failure' &&
+          (entry.outcome.code === 'kill-unconfirmed' || entry.outcome.code === 'stop-unconfirmed') &&
+          !helped.has(runId)
+        ) {
           helped.add(runId);
           await tracker.comment(
             conversation,
-            'The dispatcher could not stop my worker session, so one may still be loose. I have marked this issue for a person.',
+            entry.outcome.code === 'stop-unconfirmed'
+              ? 'A person asked me to stop this worker, but my agent runtime would not answer the interrupt — it may still be running. I have marked this issue for a person.'
+              : 'The dispatcher could not stop my worker session, so one may still be loose. I have marked this issue for a person.',
             'outcome',
           );
           await markForHuman(conversation, entry.ticketId);
@@ -554,8 +563,14 @@ async function startLinear(
       const run = record && !isTerminal(record.state) ? record : undefined;
       if (event.signal === 'stop') {
         if (run) {
-          // Stop means stop: the worker is interrupted and the run ends
-          // cancelled; the ending's catch-up renders Linear's final activity.
+          // Stop means stop — and the stop has to **stick**. The ending
+          // releases the delegate and wakes the walk in the same breath, so
+          // the ticket must go to a person's hands on the board *before* the
+          // run ends (ruled 2026-10-03): "not that one again" is the HITL
+          // label's job, never a memory in a database — and now the label
+          // actually rides. Lifting it off is what lets the walk work the
+          // ticket again.
+          await markForHuman(conversation, run.ticketId);
           await services.orchestrator.stop(run.id, `A person asked to stop ${run.ticketId} from the session.`);
           return;
         }
@@ -701,8 +716,13 @@ async function startLinear(
         link &&
         changed.includes('delegate') &&
         issue.delegateId !== tracker.ownerOf(tracker.idFor(link.agentSession))
-      )
+      ) {
+        // A person took the issue back: it carries their hands' label **before**
+        // the stop wakes the walk (ruled 2026-10-03), or aivi would re-delegate
+        // itself in the same breath the human un-delegated it.
+        await markForHuman(tracker.idFor(link.agentSession), issue.id);
         await services.orchestrator.stop(run.id, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
+      }
     };
 
     const onIssue = async (event: Extract<TrackerEvent, { kind: 'updated' }>) => {

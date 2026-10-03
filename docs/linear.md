@@ -36,7 +36,7 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `elicitation` (a worker's question, with its `select` signal when there are options), `response` (the answer, which **ends** the agent session) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
 | lane | One entry of the **core** ordered array `projects.<id>.lanes` — `{ name, agent?, queue?, pool?, worktree?, next?, previous? }`. A lane naming an `agent` is worked; naming none is worked by humans; `queue: true` marks the workflow's one queue lane (owner: [orchestrator.md](orchestrator.md)). Success moves a ticket to the **next** entry, failure to the **previous** one — overridden per lane by `next`/`previous`; a stop moves nothing |
 | tracker | What the Linear module is to the orchestrator: ONE `Tracker` (`@aivi/plugin`) — the board the eligibility walk reads (`projects`, `tickets`, `moveTo`, idempotent) and the stages every run walks through (`initWork`, `ready`, `question`, `plan`, `endWork`). It records the pair (agent session ↔ OpenCode session ↔ ticket) in **its own table**, posts people's messages into the worker's session itself, and retries **its own** closings at wake and boot. The orchestrator never learns what Linear is |
-| worker | The run's OpenCode session (`ses_run_…`): the lane's agent, working in the project's checkout — kept for the whole run and left there after a stop for inspection. Git worktrees wait for a forge to give them; the module's worktree helpers stay exported for that day |
+| worker | The run's OpenCode session (`ses_run_…`): the lane's agent, working in the project's checkout or, on a `worktree: true` lane, its own git worktree on the ticket's branch. The session is kept for the whole run and stays after a stop for inspection; a stopped **worktree** does not — the stop tears the attempt down, commits of the stopped attempt and all |
 
 ## What happens
 
@@ -123,8 +123,10 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    the form is answered as the record. With nothing open
    the same message **steers** the running turn (ruled 2026-10-01); with no
    turn to steer it queues instead, said in the log, never lost. "Send stop
-   request" arrives as `signal: "stop"`: the orchestrator interrupts the
-   worker and ends the run cancelled — see 7.
+   request" arrives as `signal: "stop"`: the ticket first carries the human
+   label — the stop must stick, and the ending wakes the walk in the same
+   breath — then the orchestrator interrupts the worker, ends the run
+   cancelled and tears down the worktree it made — see 7.
 7. **The ending.** Only a tool call ends a run: the completion tool records
    the outcome and the **target lane** the project's lane order chose
    (success → the **next** entry, failure → the **previous**, per-lane
@@ -154,24 +156,31 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    why — the move lands and the slot comes back anyway, and the closing stays
    owed to the next wake and the next boot (the label stands until a person
    removes it). And when the dispatcher gives up on killing a stubborn worker
-   (`dispatcher.killAttempts`, `kill-unconfirmed`), the ticket carries the
-   human label and says plainly that a worker may still be loose.
+   (`dispatcher.killAttempts`, `kill-unconfirmed`), or OpenCode would not
+   answer the interrupt for a person's stop (`stop-unconfirmed`), the ticket
+   carries the human label and says plainly that a worker may still be
+   running — the closing never claims "stopped at your request" then.
 8. **One worker per ticket.** The orchestrator's guard: a ticket with a run
-   still **active** never gets a second one. An ending **releases**: a ticket
-   still sitting in a worked lane after its run is fresh work again — the
-   walk starts it anew, and only a person's move or the human label says
-   otherwise (a stop remembers nothing, ruled 2026-10-02). There is no
-   per-project lock: workers share the checkout (worktrees isolate them once
-   a forge is wired), and capacity arrives with the dispatcher. The walk does
-   not pick up an issue blocked by unfinished issues (Linear's native
+   still **active** never gets a second one. An ending **releases**: a
+   ticket still sitting unmarked in a worked lane after its run is fresh
+   work again — the walk starts it anew, and only a person's move or the
+   human label says otherwise (a stop remembers nothing, ruled 2026-10-02;
+   the stopped ticket carries that label from the stop itself, 2026-10-03,
+   and lifting it is what resumes the work). There is no per-project lock:
+   workers share the checkout or are isolated in their own worktrees
+   (`worktree: true`), and capacity arrives with the dispatcher. The walk
+   does not pick up an issue blocked by unfinished issues (Linear's native
    blocking).
 9. **Issue changes** (the **Issues** data-change category, on the primary's
    route). When an issue with a **live run** gains the HITL label, moves to a
    lane that names another agent (or no agent), loses the app as delegate,
    **or is deleted** (Linear's archive arrives as an `archive` change; ruled
    2026-10-02: the webhook is the trigger to end the job gracefully),
-   the orchestrator interrupts the worker and ends the run cancelled; the
-   `endWork` stage says the reason as an `error` activity — and a stop moves
+   the orchestrator interrupts the worker and ends the run cancelled — on a
+   delegate removal the human label rides onto the ticket **before** the
+   stop, or the walk the ending wakes would re-delegate the issue the person
+   just took back (ruled 2026-10-03). The `endWork` stage says the reason
+   as an `error` activity — and a stop moves
    nothing, because the person who stopped it left the ticket where they
    wanted it. A lane change between two lanes naming the same agent changes
    nothing. Every other lane or label change is a **wake and nothing more**
@@ -193,7 +202,9 @@ A **worker** ends through the orchestrator's states, and each ending is
 visible: a completion or failure moves the ticket and posts its activity
 (7); a premature turn end earns bounded nudges and then fails visibly; a
 run still `preparing` when aivi died fails at boot saying so. A stopped
-worker's OpenCode session stays for inspection.
+worker's OpenCode session stays for inspection; its worktree does not — a
+stop tears down the attempt it made, uncommitted work and local commits
+with it, while anything pushed stays pushed (ruled 2026-10-03).
 
 An **assistant** conversation turn (the channel machinery,
 [channels](channels.md)) keeps these rules:

@@ -92,7 +92,7 @@ For example, both a development lane and a review lane may select the same Linea
 
 Every worker runs in its own git worktree of the project, on the branch name Linear computes for the issue; the project's clean checkout is never a working directory. That isolation is what makes stopping cheap.
 
-Stop means stop, as for a cancelled CI job. A stop request from Linear, the human-needed marker added during execution, the issue leaving its mapped lane, or the delegate being removed all end the worker the same way: the running turn is interrupted, one final activity in the agent session says what happened and where the OpenCode session and the worktree are, the worker ends `stopped` and the project lock is released. The worktree and the native transcript stay for inspection; nothing is silently discarded and nothing is rolled back automatically.
+Stop means stop, as for a cancelled CI job. A stop request from Linear, the human-needed marker added during execution, the issue leaving its mapped lane, or the delegate being removed all end the worker the same way: the running turn is interrupted, one final activity in the agent session says what happened and where the OpenCode session is, the worker ends `stopped` and the project lock is released. The stopped ticket carries the human-needed marker when the person's own move did not already mark it — the board is the stop's memory, never a line in a database, and lifting the marker is what lets the work be taken again. A stop tears down the worktree its run made, uncommitted work and local commits with it (what was pushed stays pushed); the native transcript stays for inspection. The v2 shape is a pause that keeps the attempt resumable ([backlog](../backlog/linear-worktree-lifecycle.md)).
 
 `blocked` (the lock held until an operator resolves it) is reserved for a stop that cannot be verified: OpenCode unreachable while interrupting, or a restart finding a worker whose session still shows work in progress. Local host state decides that, regardless of what the delegate or the visible agent session state says.
 
@@ -107,7 +107,7 @@ Graceful agent-first cleanup (steering the worker to undo effects a worktree doe
 | Situation | Behavior |
 | --- | --- |
 | New-session command | Archive the old conversation and retain its searchability. Memory persists. Explicit deletion is a separate action. |
-| Stop request, HITL label added, lane left its mapping, delegate removed | Interrupt the worker, post one final activity, end `stopped`, release the issue. Worktree and session stay for inspection. |
+| Stop request, HITL label added, lane left its mapping, delegate removed | Interrupt the worker, post one final activity, end `stopped`, release the issue. Tear the run's worktree down (local commits go with it; pushed work stays); the session stays for inspection. The stopped ticket carries the human marker unless the person's own move already marked it. |
 | Stop cannot be verified | End `blocked`; the issue is held until an operator resolves it after inspecting the session. |
 | HITL label present | No automatic delegation; a hand delegation is refused with an explanation. |
 

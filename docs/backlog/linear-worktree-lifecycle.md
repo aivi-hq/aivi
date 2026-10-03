@@ -27,7 +27,16 @@ the sweep.)
   Otherwise KEEP: stage in SQLite (a table, not marker files), comment on the
   Linear issue, post to configured channels, warn-log. After
   `linear.worktreeRetentionDays` (default 7) the sweep force-removes and
-  notes it. Stop / HITL / lane-change keep everything: stop ≠ done.
+  notes it. **Amended 2026-10-03:** a *stop* now tears its own run's
+  worktree down immediately — uncommitted work and local commits with it,
+  what was pushed stays pushed (the orchestrator's `removeWorktree`); a
+  *failed* run keeps its worktree for a person to inspect. What stays open
+  here is the age sweep over kept worktrees and the terminal-lane pass.
+- A stop's teardown is lossy (ruled 2026-10-03, v1): the person who stopped
+  gets a clean board, not a half-finished attempt. The v2 shape is a
+  **pause**: keep the worktree and the branch on a stop, resume the same
+  attempt when the person lifts the mark — the stopped commit as the
+  starting point instead of a discard. Same teardown code, one flag away.
 - The sweep is its own operation `linear.sweep`, claimed by the linear
   module and seeded as a **daily system job** through `AiviModule.jobs`.
   (Plan v3 had it ride the hourly `projects.sync`; the owner chose its own

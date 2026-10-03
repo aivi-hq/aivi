@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { ensureWorktree, worktreePathFor } from '../src/orchestrator/worktree.ts';
+import { ensureWorktree, removeWorktree, worktreePathFor } from '../src/orchestrator/worktree.ts';
 
 const run = promisify(execFile);
 const git = (cwd: string, ...args: string[]) =>
@@ -170,4 +170,58 @@ test('a worktree kept from an earlier session is marked when a worker continues 
   );
   assert.equal(await config(path, 'agent.autonomous'), 'true');
   assert.equal(await config(path, 'user.email'), BOT.email);
+});
+
+test('removeWorktree takes a stopped attempt down: the directory goes, the local branch goes with it', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-worktree-rm-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { source } = await checkout(root);
+  const path = worktreePathFor(source, 'as_stop');
+  await ensureWorktree({ source, path, branch: 'me/eng-9', identity: BOT });
+  // Half a feature, committed — exactly what a stop must not leave behind.
+  await writeFile(join(path, 'half.txt'), 'half a feature');
+  await git(path, 'add', '.');
+  await git(path, 'commit', '-q', '-m', 'half a feature');
+
+  assert.equal(await removeWorktree(source, path), undefined, 'the branch went with the worktree');
+  assert.equal(await stat(path).catch(() => null), null, 'the worktree directory is gone');
+  assert.equal((await git(source, 'branch', '--list', 'me/eng-9')).stdout.trim(), '', 'the local branch is gone');
+  // The stopped commit is unreachable: nothing of the attempt stands.
+  await git(source, 'rev-parse', '--verify', 'me/eng-9').then(
+    () => assert.fail('the branch still exists'),
+    () => {},
+  );
+  // Removing what is already gone is quiet, and leaves git's registration
+  // forgetten: the next ensureWorktree starts from the clone's truth.
+  assert.equal(await removeWorktree(source, path), undefined, 'a worktree already gone is no error');
+});
+
+test('a detached worktree loses its directory and holds no branch to delete', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-worktree-rmdet-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { source } = await checkout(root);
+  const path = worktreePathFor(source, 'as_det');
+  await ensureWorktree({ source, path, branch: 'me/eng-10', identity: BOT });
+  await git(path, 'checkout', '-q', '--detach');
+
+  assert.equal(await removeWorktree(source, path), undefined);
+  assert.equal(await stat(path).catch(() => null), null);
+  // Detached, the worktree owns no branch: me/eng-10 stands, unowned by it.
+  assert.match((await git(source, 'branch', '--list', 'me/eng-10')).stdout, /me\/eng-10/);
+});
+
+test('a branch held by another worktree is named by the teardown, never swallowed', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-worktree-rmheld-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { source } = await checkout(root);
+  const path = worktreePathFor(source, 'as_held');
+  await ensureWorktree({ source, path, branch: 'me/eng-11', identity: BOT });
+  // Someone else's worktree steals the branch: the stopped one may still
+  // lose its directory, but the branch is not its call to make.
+  const other = join(root, 'projects/site/worktrees/other');
+  await git(source, 'worktree', 'add', '-q', '-f', other, 'me/eng-11');
+
+  assert.equal(await removeWorktree(source, path), 'me/eng-11', 'the leftover branch is answered');
+  assert.equal(await stat(path).catch(() => null), null, 'the worktree itself still went');
+  assert.match((await git(source, 'branch', '--list', 'me/eng-11')).stdout, /me\/eng-11/);
 });

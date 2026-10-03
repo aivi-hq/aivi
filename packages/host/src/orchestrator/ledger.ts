@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { RunOutcome, RunState, RunView } from '@aivi/plugin/run';
+import type { FailureCode, RunOutcome, RunState, RunView } from '@aivi/plugin/run';
 import type { Store } from '../store.ts';
 
 /**
@@ -387,12 +387,15 @@ export class RunLedger {
     return this.#require(id);
   }
 
-  /** A stop ended the run without an outcome of the worker's; the ticket stays. */
-  cancel(id: string, reason: string, now = Date.now()): Run {
+  /** A stop ended the run without an outcome of the worker's; the ticket
+   *  stays. `code` marks the stop that could not be verified — AGENTS.md
+   *  reserves the blocked words for exactly that one, and the tracker says
+   *  them from the code, never by guessing at English. */
+  cancel(id: string, reason: string, code?: FailureCode, now = Date.now()): Run {
     return this.core.transaction(() => {
       this.core.db
         .prepare(`UPDATE orchestrator_runs SET outcome=?, target_lane=NULL, state='cancelled', updated_at=? WHERE id=?`)
-        .run(JSON.stringify({ kind: 'failure', reason } satisfies RunOutcome), now, id);
+        .run(JSON.stringify({ kind: 'failure', reason, ...(code ? { code } : {}) } satisfies RunOutcome), now, id);
       return this.#require(id);
     });
   }

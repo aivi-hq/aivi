@@ -20,7 +20,7 @@ import type { Dispatcher, DispatcherLease } from '../dispatcher/dispatcher.ts';
 import { ToolError } from '../tools.ts';
 import type { Run, RunLedger } from './ledger.ts';
 import { view } from './ledger.ts';
-import { ensureWorktree, worktreePathFor } from './worktree.ts';
+import { ensureWorktree, removeWorktree, worktreePathFor } from './worktree.ts';
 
 /**
  * The orchestrator: the one authority that turns a ticket into a **run**. It
@@ -700,6 +700,16 @@ export class Orchestrator implements OrchestratorApi {
         this.deps.log.error('endwork.failed', { run: ended.id, ticket: ended.ticketId, error });
       }
     } else this.deps.log.warn('endwork.no-tracker', { run: ended.id, tracker: ended.trackerId });
+    // A stop cleans up after itself (ruled 2026-10-03): the worktree goes —
+    // uncommitted work and local commits alike — so a stopped attempt leaves
+    // nothing half-finished for the next worker to trip over. Pushed work
+    // stays pushed; the native session stays for inspection. A *failed* run
+    // keeps its worktree: a person may still want to look. The `worktree`
+    // column names where the worker worked — the checkout itself for a
+    // checkout lane, which no stop may touch; the same test as the worker's
+    // first prompt draws the line.
+    if (ended.state === 'cancelled' && ended.worktree && ended.worktree !== this.deps.directory(ended.projectId))
+      await this.#cleanWorktree(ended, ended.worktree);
     if (ended.targetLane) await this.#move(ended);
     this.#releaseLease(ended);
     // A run that lived wakes the walk: its slot is free and its ticket may
@@ -709,6 +719,20 @@ export class Orchestrator implements OrchestratorApi {
     // claim). The next human event wakes the retry, the same way a person
     // retrying a job does.
     if (ended.sessionId) this.#wakeAfter(ended);
+  }
+
+  /** The stop's teardown of one worktree: directory, then local branch. The
+   *  failure is named by path, the surviving branch by name — never silence,
+   *  and never a retry clock: the next boot's `ensureWorktree` finds whatever
+   *  stands and reuses or replaces it as it always has. */
+  async #cleanWorktree(run: Run, worktree: string): Promise<void> {
+    try {
+      const left = await removeWorktree(this.deps.directory(run.projectId), worktree, this.deps.signal);
+      if (left) this.deps.log.warn('worktree.branch.left', { run: run.id, branch: left, path: worktree });
+      else this.deps.log.info('worktree.cleaned', { run: run.id, path: worktree });
+    } catch (error) {
+      this.deps.log.error('worktree.cleanup.failed', { run: run.id, path: worktree, error });
+    }
   }
 
   /** Perform the ending move, retrying at known instants — a self-rearming
@@ -893,10 +917,15 @@ export class Orchestrator implements OrchestratorApi {
 
   /** A stop: interrupt the worker and end the run as cancelled. A stopped
    *  ticket stays where it is — the person who stopped it left it where they
-   *  wanted it. */
+   *  wanted it. An interrupt that OpenCode would not answer ends the run
+   *  carrying `stop-unconfirmed` (AGENTS.md: the blocked words are for stops
+   *  that cannot be verified, and no closing may then claim "stopped at your
+   *  request"); the run still ends, because its lease, its clocks and its
+   *  worktree are ours to take back whatever OpenCode says. */
   async stop(runId: string, reason: string): Promise<void> {
     const run = this.deps.ledger.get(runId);
     if (!run || (run.state !== 'working' && run.state !== 'awaiting_input')) return;
+    let unconfirmed = false;
     try {
       if (run.sessionId) {
         const client = await this.deps.opencode();
@@ -904,8 +933,9 @@ export class Orchestrator implements OrchestratorApi {
       }
     } catch (error) {
       this.deps.log.warn('run.interrupt.failed', { run: runId, error });
+      unconfirmed = true;
     }
-    const ended = this.deps.ledger.cancel(runId, reason);
+    const ended = this.deps.ledger.cancel(runId, reason, unconfirmed ? 'stop-unconfirmed' : undefined);
     await this.#finishRun(ended);
   }
 

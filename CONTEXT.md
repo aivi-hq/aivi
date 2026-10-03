@@ -218,10 +218,11 @@ runs in one process; adapters are optional modules with a start/stop contract.
   messages posted straight into the OpenCode session, the open form the
   discriminator between answer and steer. A hand delegation gets one fixed
   refusal: work reaches the orchestrator through the board. The **assistant**
-  still rides the channel machinery; worktrees wait for a forge. Stop means
-  stop: the worker is interrupted and the run cancelled, its session kept for
-  inspection; the delegate stays sitting so the trail is readable, and the
-  ticket goes back to the board — a stop remembers nothing
+  still rides the channel machinery; worktrees were built 2026-10-02. Stop
+  means stop: the worker is interrupted and the run cancelled, the run's
+  worktree torn down with its local commits and its session kept for
+  inspection; the ending releases the delegate, and the stopped ticket
+  carries the human label — a stop remembers nothing; the board does
   ([linear](docs/linear.md); what is left: [plans/linear.md](docs/plans/linear.md)).
 - **One Linear app, one persona, lanes pick agents.** The primary app carries
   the workspace's data feed and every agent-session webhook on one route and

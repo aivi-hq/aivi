@@ -250,7 +250,9 @@ test('the walk reads the board right to left, the queue bottom last, and moves a
   // The stop-memory answer goes on the board **before** the stop: the
   // ending wakes the walk in the same breath, and a pass must never read
   // the stopped ticket back — the module marks its stop synchronously for
-  // exactly this reason.
+  // exactly this reason (the real tracker-linear now does, ruled
+  // 2026-10-03; the fake retires the ticket the same way the HITL label
+  // does on a real board).
   feed.retire('t-review');
   await orchestrator.stop(review.id, 'the test is done with it');
   await until(() => fake.prompts.length === 2, 'the ending wakes the walk again');

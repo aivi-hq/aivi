@@ -88,9 +88,14 @@ Lane semantics as built (folded from the follower-era design doc, 2026-10-02):
   there, and a ticket whose run is working there goes **silent** — the run
   stops and no further updates are sent for it.
 - **A stop moves nothing.** A person who stopped the work left the ticket
-  where they wanted it; the orchestrator does not second-guess them.
-- A lane may say `worktree: true`: its worker gets its own git worktree once
-  a forge gives them. Default false — the worker works in the project's
+  where they wanted it; the orchestrator does not second-guess them. What a
+  stop does take back is its own: a worktree the run made is torn down
+  (ruled 2026-10-03) — uncommitted work and local commits go with it, what
+  was pushed stays pushed — and the worker's OpenCode session stays for
+  inspection.
+- A lane may say `worktree: true`: its worker gets its own git worktree on
+  the ticket's branch (built 2026-10-02; the crossing to `origin` is the
+  forge's, injected). Default false — the worker works in the project's
   checkout itself.
 - Whether a ticket (or a blocker) is **finished** travels on the neutral
   contract as a boolean verdict; each tracker decides which of its states
@@ -494,14 +499,22 @@ platform's ordering leaks into another's.
 
 If the dispatcher ends a lease, the orchestrator clears the corresponding claim.
 
-**Ruled and built 2026-10-02 (P1).** A stop **releases** the ticket back
-to the board: nothing anywhere remembers it. The stop's ending is said,
-the ticket stays where the person left it — and if that lane is worked,
-the walk may start it again. "Not that one again" is said on the board
-itself: the HITL label — a person's mark for human hands — is the only
-thing that keeps a ticket off the walk's list, exactly like a person
-moving it back to the human lanes. A stop-memory in a database would be
-a second, invisible board state; the board is the state.
+**Ruled and built 2026-10-02 (P1), amended 2026-10-03.** A stop **releases**
+the ticket back to the board: nothing anywhere remembers it. The stop's
+ending is said, the ticket stays where the person left it. "Not that one
+again" is said on the board itself: the HITL label — a person's mark for
+human hands — is the only thing that keeps a ticket off the walk's list,
+exactly like a person moving it back to the human lanes. A stop-memory in
+a database would be a second, invisible board state; the board is the
+state. The amendment made the tracker live up to that sentence: a stop it
+takes from a conversation or from a delegate removal puts the label on the
+ticket **before** the run ends — the ending wakes the walk in the same
+breath, and an unmarked stopped ticket in a worked lane came straight back.
+A stop OpenCode would not answer the interrupt for ends
+`stop-unconfirmed`: the run still ends — its lease and worktree are aivi's
+to take back whatever OpenCode says — but the closing says a worker may
+still be running and marks the ticket for a person, instead of claiming
+"stopped at your request".
 
 **Ruled and built 2026-10-02 (P6, P8).** The walk is the only door for
 board work, and every run that gets a worker gets a real agent session:

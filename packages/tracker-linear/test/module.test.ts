@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -95,6 +95,10 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
   const sessions = new Map<string, { agent: string; directory: string }>();
   const forms: FakeForm[] = [];
   const interrupted: string[] = [];
+  // The dials a test turns while the server runs: `interruptFails` makes the
+  // service answer 500 to an interrupt — the OpenCode-down moment a stop has
+  // to tell honestly instead of claiming "stopped at your request".
+  const ctl = { interruptFails: false };
   let formSeq = 0;
   /** The context of the last prompt. The transcript names the agent that ran;
    *  finalAnswer verifies it against the session's. */
@@ -128,6 +132,7 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
     if (url.endsWith('/message')) return void res.end('{"data":[],"cursor":{"next":null}}');
     if (url.endsWith('/permission') && method === 'GET') return void res.end('{"data":[]}');
     if (url.endsWith('/interrupt')) {
+      if (ctl.interruptFails) return void res.writeHead(500).end('{"error":"OpenCode is down"}');
       interrupted.push(decodeURIComponent(url.split('/').at(-2)!));
       return void res.end('{"interrupted":true}');
     }
@@ -179,7 +184,7 @@ async function fakeOpenCode(t: { after(fn: () => Promise<void>): void }, answer:
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  return { url: `http://127.0.0.1:${address.port}`, prompts, sessions, forms, interrupted };
+  return { url: `http://127.0.0.1:${address.port}`, prompts, sessions, forms, interrupted, ctl };
 }
 
 /**
@@ -304,6 +309,13 @@ class FakeTracker implements Platform {
         name: update.lane,
         type: update.lane === 'Done' ? 'completed' : 'started',
       };
+    // A label lands on the issue, as Linear really does: the board's own
+    // eligibility reads labels on the next walk, and a fake that only
+    // *recorded* the mark would let the tests pretend a stop sticks.
+    if (update.kind === 'label' && issue)
+      issue.labels = update.on
+        ? [...issue.labels, { id: `lbl-${update.label}`, name: update.label }]
+        : issue.labels.filter(l => l.name !== update.label);
   }
   events(sink: (event: TrackerEvent) => Promise<void>): () => void {
     this.sink = sink;
@@ -371,7 +383,11 @@ const emptyBoard: LinearBoard = {
  *  a move lands on the issue itself so the next read says what Linear was
  *  told. `shownAtMove` records whether the closing words had been posted
  *  when each move was performed: the proof that the tracker speaks first. */
-function fakeBoard(tracker: FakeTracker, projectId: string): LinearBoard & { moves: string[]; shownAtMove: boolean[] } {
+function fakeBoard(
+  tracker: FakeTracker,
+  projectId: string,
+  branchName = '', // Linear names the ticket's branch; '' where no lane is worktree:true
+): LinearBoard & { moves: string[]; shownAtMove: boolean[] } {
   const moves: string[] = [];
   const shownAtMove: boolean[] = [];
   return {
@@ -399,7 +415,7 @@ function fakeBoard(tracker: FakeTracker, projectId: string): LinearBoard & { mov
         description: found.description,
         teamId: found.teamId,
         stateName: found.state.name,
-        branchName: '', // the fake board names no branch: no lane here is worktree:true
+        branchName, // named by the harness: '' where no lane here is worktree:true
       };
     },
   };
@@ -1123,7 +1139,7 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
   store.close();
 });
 
-async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
+async function walkHarness(t: { after(fn: () => Promise<void>): void }, opts: { worktree?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = await checkout(root, 'website');
@@ -1137,7 +1153,7 @@ async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
         lanes: [
           { name: 'Backlog' },
           { name: 'Todo', queue: true },
-          { name: 'In Progress', agent: 'developer' },
+          { name: 'In Progress', agent: 'developer', ...(opts.worktree ? { worktree: true } : {}) },
           { name: 'Done' },
         ],
       },
@@ -1153,14 +1169,23 @@ async function walkHarness(t: { after(fn: () => Promise<void>): void }) {
   };
   const tracker = new FakeTracker(linearBlock(config));
   tracker.issues.set('eng-1', issue('eng-1', { delegateId: null }));
-  const board = fakeBoard(tracker, 'website');
+  const board = fakeBoard(tracker, 'website', opts.worktree ? 'me/eng-1' : '');
   const store = new Store(':memory:');
   const abort = new AbortController();
   const services = makeServices(loaded, store, abort);
-  return { tracker, config, store, services, board, opencode, orchestrator: services.orchestrator as Orchestrator };
+  return {
+    tracker,
+    config,
+    store,
+    services,
+    board,
+    opencode,
+    source,
+    orchestrator: services.orchestrator as Orchestrator,
+  };
 }
 
-test('a picked-up run’s ending is said in the session its own delegation opened, and a stop releases the ticket', async t => {
+test('a picked-up run’s ending is said in the session its own delegation opened — and a stop sticks: the ticket waits for a person', async t => {
   const { tracker, config, store, services, board, opencode, orchestrator } = await walkHarness(t);
   const running = await createLinearModule(
     linearBlock(config),
@@ -1177,24 +1202,129 @@ test('a picked-up run’s ending is said in the session its own delegation opene
   await orchestrator.wake('website');
   await until(() => opencode.prompts.length === 1, 'the walk started the worker');
   assert.match(opencode.prompts[0]!.text, /<issue identifier="ENG-1">/);
-  const run = orchestrator.activeRun('tracker-linear', 'eng-1')!;
 
-  // The person stops it: the reason lands as the session's error activity
-  // and as a closing note on the ticket, and nothing moves — a stop moves
-  // nothing.
-  await orchestrator.stop(run.id, 'a person asked to stop eng-1 from the session.');
+  // The person stops the worker from its own conversation. The stop has to
+  // **stick** (ruled 2026-10-03): the ticket goes to a person's hands on the
+  // board — the HITL label rides *before* the run ends — the closing says
+  // the reason, and nothing moves. This test used to pin the opposite: the
+  // walk taking the stopped ticket straight back, "a stop is no memory".
+  // The ruling kept the board as the only memory; now the label actually
+  // rides, so the walk reads a ticket that is no longer its work.
+  await tracker.drive({ kind: 'prompted', id: 'act-stop', conversation: 'dev:as-auto-1', signal: 'stop' });
   await until(() => tracker.closingNotes.length === 1, 'the ticket heard its ending');
   assert.deepEqual(tracker.closingNotes[0], {
     conversation: 'dev:as-auto-1',
     issueId: 'eng-1',
-    text: 'a person asked to stop eng-1 from the session.',
+    text: 'A person asked to stop eng-1 from the session.',
   });
   assert.deepEqual(board.moves, [], 'a stop moves nothing');
+  assert.ok(
+    tracker.moves.some(
+      m => m.issueId === 'eng-1' && m.update.kind === 'label' && m.update.label === 'needs-human' && m.update.on,
+    ),
+    'the stop marked the ticket for a person on the board',
+  );
 
-  // And the walk that very ending woke takes the ticket straight back: a
-  // stop is no memory (ruled 2026-10-02) — "not that one again" is said by
-  // the HITL label on the board, never by a line in somebody's database.
-  await until(() => opencode.prompts.length === 2, 'stop releases the ticket back to the board');
+  // The ending woke the walk itself; one more wake is the same read: a
+  // stopped ticket is not its work again until a person lifts the mark.
+  await orchestrator.wake('website');
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'a stop is not a restart: the walk does not re-claim');
+  assert.equal(orchestrator.activeRun('tracker-linear', 'eng-1'), undefined, 'no run is alive on the ticket');
+
+  // Lifting the mark is what resumes: the walk works the ticket again from
+  // the board's truth, never from somebody's memory.
+  tracker.issues.get('eng-1')!.labels = [];
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 2, 'lifting the mark is what resumes the work');
+});
+
+test('a stop the runtime would not answer ends *unconfirmed*: the honest words, the mark, no re-claim', async t => {
+  const { tracker, config, store, services, board, opencode, orchestrator } = await walkHarness(t);
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+  const runId = orchestrator.activeRun('tracker-linear', 'eng-1')!.id;
+
+  // OpenCode goes down at the exact moment of the stop. The run still ends —
+  // its lease, its clocks and its worktree are aivi's to take back whatever
+  // OpenCode says — but it carries the machine-readable truth, because
+  // AGENTS.md reserves the blocked words for stops that cannot be verified.
+  opencode.ctl.interruptFails = true;
+  await tracker.drive({ kind: 'prompted', id: 'act-stop', conversation: 'dev:as-auto-1', signal: 'stop' });
+  await until(() => tracker.closingNotes.length === 1, 'the ending landed over the dead interrupt');
+  assert.deepEqual(new RunLedger(store).get(runId)!.outcome, {
+    kind: 'failure',
+    reason: 'A person asked to stop eng-1 from the session.',
+    code: 'stop-unconfirmed',
+  });
+  await until(
+    () => tracker.ofKind('outcome').some(c => /may still be running/.test(c.text)),
+    'the closing says a worker may still be alive, and never claims "stopped at your request"',
+  );
+  assert.ok(
+    tracker.moves.some(m => m.issueId === 'eng-1' && m.update.kind === 'label' && m.update.on),
+    'the ticket carries the mark for a person',
+  );
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'the walk does not read the stopped ticket back');
+});
+
+test('a stop in a worktree lane tears the attempt down: worktree gone, local commits gone, ticket marked', async t => {
+  const { tracker, config, store, services, board, opencode, source, orchestrator } = await walkHarness(t, {
+    worktree: true,
+  });
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+  assert.match(opencode.prompts[0]!.text, /git worktree of the project at .+\/worktrees\//);
+  const run = orchestrator.activeRun('tracker-linear', 'eng-1')!;
+  const worktree = run.worktree!;
+  assert.ok((await stat(worktree)).isDirectory(), 'the lane got its own worktree');
+
+  // The worker commits half a feature — exactly the half-finished state a
+  // stop must not leave for the next worker to trip over.
+  await writeFile(join(worktree, 'note.txt'), 'half a feature');
+  await git(worktree, 'add', '.');
+  await git(worktree, 'commit', '-q', '-m', 'half a feature');
+  assert.match((await git(source, 'branch', '--list', 'me/eng-1')).stdout, /me\/eng-1/, 'the branch exists');
+
+  // Stop means stop, teardown included (ruled 2026-10-03): the worktree
+  // goes, the local branch goes with it — the commit goes unreachable —
+  // and the ticket carries the human mark. Anything pushed would stay
+  // pushed: a stop ends this machine's attempt, not the remote's truth.
+  await tracker.drive({ kind: 'prompted', id: 'act-stop', conversation: 'dev:as-auto-1', signal: 'stop' });
+  await until(() => tracker.closingNotes.length === 1, 'the ticket heard its ending');
+  assert.equal(await stat(worktree).catch(() => null), null, 'the stopped attempt’s directory is gone');
+  assert.equal(
+    (await git(source, 'branch', '--list', 'me/eng-1')).stdout.trim(),
+    '',
+    'and the local branch with its stopped commit goes with it',
+  );
+  assert.ok(
+    tracker.moves.some(m => m.issueId === 'eng-1' && m.update.kind === 'label' && m.update.on),
+    'the ticket carries the human mark',
+  );
+  assert.deepEqual(board.moves, [], 'a stop moves nothing');
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'and the walk does not start a fresh attempt on the stopped ticket');
 });
 
 test('a closing that failed to land is found at boot from the pair we keep — and the failed ticket is work again', async t => {
@@ -1227,8 +1357,8 @@ test('a closing that failed to land is found at boot from the pair we keep — a
     'the failed closing informed a person at once',
   );
 
-  // While the closing is owed the delegate sits, and a delegated ticket is
-  // not eligible: the walk waits — Linear is unreachable for a fresh
+  // While the closing is owed both the sitting delegate and the help mark
+  // keep the ticket out of the walk — Linear is unreachable for a fresh
   // delegation anyway (ruled 2026-10-02, composed with eligibility).
   await orchestrator.wake('website');
   await new Promise(r => setTimeout(r, 50));
@@ -1259,11 +1389,21 @@ test('a closing that failed to land is found at boot from the pair we keep — a
     'and the failure was said in the session that opened it',
   );
 
-  // Failed work is work again: the paid closing released the delegate, and
-  // the walk takes the ticket fresh from the queue lane the failure moved it
-  // to — endings release, they do not blacklist (ruled 2026-10-02).
+  // The paid closing released the delegate, but the mark it had to make
+  // when reporting failed **stays**: needs-human is a person's lever — the
+  // module adds it and never lifts it, and it could not tell its own mark
+  // from a human's anyway. (Revealed 2026-10-03 when the fake learned to
+  // mutate labels: this tail used to walk the ticket straight back — a
+  // re-claim that lived only because the fake lied.)
   await orchestrator.wake('website');
-  await until(() => opencode.prompts.length === 2, 'the closing paid, the failure is work again: the walk takes it');
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'the marked ticket waits for the person it was marked for');
+
+  // Lifting the mark is what makes the failed work walk again: the walk
+  // takes it fresh from the queue lane the failure moved it to.
+  tracker.issues.get('eng-1')!.labels = [];
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 2, 'lifting the mark is what resumes the failed work');
 });
 
 test('a deleted ticket ends the run that still works it: a graceful stop, said where people read', async t => {

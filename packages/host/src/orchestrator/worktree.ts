@@ -147,6 +147,40 @@ export function worktreeHolding(porcelain: string, branch: string): string | nul
   return null;
 }
 
+/**
+ * Tear down the worktree a **stopped** run worked in (ruled 2026-10-03): a
+ * stop cleans up after itself — the uncommitted work goes with the worktree
+ * and the local branch goes with it, so the stopped attempt's commits go too
+ * and the next worker starts from the remote's truth, not from a
+ * half-finished state. What was already **pushed** stays pushed: a stop ends
+ * this machine's attempt, it does not rewrite the remote. A detached HEAD
+ * loses its directory and holds no branch to delete. Returns the branch name
+ * when the worktree went but the branch would not (checked out elsewhere —
+ * the caller says so, never silence); removal itself throws on failure and
+ * the caller names the path that stayed. A run that **failed** keeps its
+ * worktree: that one a person may still want to inspect — and a worktree
+ * left by a stop that crashed before cleaning is found by the next run's
+ * `ensureWorktree`, which reuses the holder of the branch as it always has.
+ */
+export async function removeWorktree(source: string, path: string, signal?: AbortSignal): Promise<string | undefined> {
+  const git = (...args: string[]) => gitIn(source, args, signal);
+  if (!(await stat(join(path, '.git')).catch(() => null))) {
+    // Not a live worktree: let git forget its registration if it still holds one.
+    await git('worktree', 'prune');
+    return undefined;
+  }
+  const branch = await gitIn(path, ['rev-parse', '--abbrev-ref', '--quiet', 'HEAD'], signal).catch(() => '');
+  await git('worktree', 'remove', '--force', path);
+  if (branch && branch !== 'HEAD') {
+    try {
+      await git('branch', '-D', branch);
+    } catch {
+      return branch;
+    }
+  }
+  return undefined;
+}
+
 /** `origin/HEAD`'s target when known, else the checked-out branch's upstream, else HEAD. */
 async function defaultBase(git: (...args: string[]) => Promise<string>): Promise<string> {
   const head = await git('symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD').catch(() => '');
