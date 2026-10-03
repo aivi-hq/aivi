@@ -400,7 +400,7 @@ async function checkWebhookDeliveries(
   issue: TestIssue,
   cursor: number,
 ): Promise<Diaried> {
-  const { ctx, client, windowMs, webhookPath, webhookSecret, checks } = probe;
+  const { ctx, windowMs, webhookPath, webhookSecret, checks } = probe;
   const webhooks = ctx.prompts.spinner();
   webhooks.start(`webhooks: waiting for Linear to post about ${issue.identifier}…`);
   let posted: Diaried;
