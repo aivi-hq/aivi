@@ -33,7 +33,7 @@ export type Refusal = 'full' | 'pool-gone' | 'waiting';
 /** A lease request waiting in the pool's in-memory queue: not a lease,
  *  holding no capacity, deliberate to lose — a restart simply lets the
  *  callers ask again for work that is still relevant. */
-export interface QueuedRequest {
+interface QueuedRequest {
   id: string;
   service: string;
   pool: string;
@@ -200,12 +200,6 @@ export class Dispatcher {
    *  every request is granted — unlimited, the intended default. */
   get moderated(): boolean {
     return Object.keys(this.pools).length > 0;
-  }
-
-  /** The idle timeout's reading: silence on an attached session may not
-   *  pass this; an activity signal restarts it. */
-  get idleTimeoutMs(): number {
-    return this.idleMs;
   }
 
   /**

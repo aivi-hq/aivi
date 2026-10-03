@@ -74,6 +74,9 @@ export const plugin: AiviPlugin<SlackConfig> = {
   id: MODULE_ID,
   configSchema: slackConfigSchema,
   createModule: (config, home) =>
+    // The cycle back into this file (the module imports its own schema) is
+    // that lazy design, not a tangle.
+    // fallow-ignore-next-line circular-dependency
     import('./module.ts').then(m =>
       m.createSlackModule({ ...config, directory: absolutePath(home, config.directory) }),
     ),

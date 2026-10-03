@@ -1,5 +1,7 @@
 import { Cron } from 'croner';
-import { ISO_INSTANT } from './config.ts';
+
+/** An ISO 8601 instant; `Date.parse` alone accepts too much. */
+export const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 
 export function nextOccurrence(pattern: string, timezone: string, after: number): number {
   const cron = new Cron(pattern, { timezone, paused: true });

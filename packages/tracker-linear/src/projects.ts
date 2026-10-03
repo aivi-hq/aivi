@@ -11,7 +11,7 @@ import { linearProjectSchema } from './config.ts';
 /** The module id, which is also the key of this plugin's section under every
  *  project and under `projectDefaults`: core writes what it is keyed by, so one
  *  word names both and a person never guesses which is which. */
-export const SECTION = 'tracker-linear';
+const SECTION = 'tracker-linear';
 
 /** The `tracker-linear` section of a project entry as written — typed, or
  *  undefined. Core passes the section through; reading it is this plugin's

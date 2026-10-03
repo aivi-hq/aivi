@@ -87,7 +87,7 @@ export function openLinearStore(store: Store): ConversationStore {
 
 /** Where the module's tracker comes from: Linear's adapter by default, a
  *  fake tracker in a test of the decisions below. */
-type MakeTracker = (services: AiviServices) => Promise<Platform>;
+export type MakeTracker = (services: AiviServices) => Promise<Platform>;
 
 /**
  * The module, built on a tracker. What lives here is routing and Linear's
@@ -98,7 +98,7 @@ type MakeTracker = (services: AiviServices) => Promise<Platform>;
  */
 /** The board, pull-shaped, for the orchestrator's walk; a test hands its own
  *  lanes the way it hands its own tracker. */
-type MakeBoard = (services: AiviServices) => LinearBoard;
+export type MakeBoard = (services: AiviServices) => LinearBoard;
 
 export function createLinearModule(config: LinearConfig, makeTracker?: MakeTracker, makeBoard?: MakeBoard): AiviModule {
   return {

@@ -308,32 +308,30 @@ export class RunLedger {
     });
   }
 
-  /** The gate refused a success: one more strike. Without a snapshot there
-   *  is nothing to count — the caller checked, and silence here would be a
-   *  bug's hiding place, so the row comes back untouched and unreadable
-   *  callers are the orchestrator's problem to not have. */
-  countFeedback(id: string, now = Date.now()): Run {
+  /** One guarded patch to the feedback column: absent feedback stays
+   *  absent — the callers checked, and silence here would be a bug's hiding
+   *  place, so the row comes back untouched and unreadable callers are the
+   *  orchestrator's problem to not have. */
+  #patchFeedback(id: string, patch: (previous: RunFeedback) => Partial<RunFeedback>, now: number): Run {
     return this.core.transaction(() => {
       const previous = this.#require(id).feedback;
       if (previous)
         this.core.db
           .prepare('UPDATE orchestrator_runs SET feedback=?, updated_at=? WHERE id=?')
-          .run(JSON.stringify({ ...previous, attempts: previous.attempts + 1 } satisfies RunFeedback), now, id);
+          .run(JSON.stringify({ ...previous, ...patch(previous) } satisfies RunFeedback), now, id);
       return this.#require(id);
     });
+  }
+
+  /** The gate refused a success: one more strike. */
+  countFeedback(id: string, now = Date.now()): Run {
+    return this.#patchFeedback(id, previous => ({ attempts: previous.attempts + 1 }), now);
   }
 
   /** The escalation form stands: recorded with its id, so a second gate
    *  never doubles it and the answer that lands can be checked against it. */
   markEscalated(id: string, formId: string, now = Date.now()): Run {
-    return this.core.transaction(() => {
-      const previous = this.#require(id).feedback;
-      if (previous)
-        this.core.db
-          .prepare('UPDATE orchestrator_runs SET feedback=?, updated_at=? WHERE id=?')
-          .run(JSON.stringify({ ...previous, escalated: true, formId } satisfies RunFeedback), now, id);
-      return this.#require(id);
-    });
+    return this.#patchFeedback(id, () => ({ escalated: true, formId }), now);
   }
 
   /** The person answered the escalation: the strikes reset. Their words were
@@ -341,14 +339,7 @@ export class RunLedger {
    *  (ruled in the walkthrough); the escalated flag stays — the form was
    *  made once, and making it twice would be noise. */
   resetFeedback(id: string, now = Date.now()): Run {
-    return this.core.transaction(() => {
-      const previous = this.#require(id).feedback;
-      if (previous)
-        this.core.db
-          .prepare('UPDATE orchestrator_runs SET feedback=?, updated_at=? WHERE id=?')
-          .run(JSON.stringify({ ...previous, attempts: 0 } satisfies RunFeedback), now, id);
-      return this.#require(id);
-    });
+    return this.#patchFeedback(id, () => ({ attempts: 0 }), now);
   }
 
   /**

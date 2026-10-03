@@ -138,7 +138,7 @@ export async function ensureWorktree(input: WorktreeInput): Promise<{ path: stri
 }
 
 /** The worktree path that has `branch` checked out, from `git worktree list --porcelain`. */
-export function worktreeHolding(porcelain: string, branch: string): string | null {
+function worktreeHolding(porcelain: string, branch: string): string | null {
   for (const block of porcelain.split('\n\n')) {
     const lines = block.split('\n');
     const path = lines.find(l => l.startsWith('worktree '))?.slice('worktree '.length);

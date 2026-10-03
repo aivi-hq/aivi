@@ -154,15 +154,6 @@ export class LeaseStore {
     return row && map(row);
   }
 
-  /** The lease a session occupies: how activity finds its monitor, and how
-   *  one prompt per active lease is recognised (no new slot needed). */
-  bySession(sessionId: string): DispatcherLease | undefined {
-    const row = this.core.db
-      .prepare("SELECT * FROM dispatcher_leases WHERE session_id=? AND state IN ('active','expiring')")
-      .get(sessionId) as Row | undefined;
-    return row && map(row);
-  }
-
   /** Provide the lease with its session: preparing → active. Only a lease
    *  that has no session yet is provided — one that already has a session
    *  keeps it (a session keeps its pool for life). */

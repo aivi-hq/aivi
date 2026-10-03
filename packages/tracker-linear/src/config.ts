@@ -190,5 +190,10 @@ export const plugin: AiviPlugin<LinearConfig> = {
   configSchema: linearSchema,
   projectSchema: linearProjectSchema,
   projectDefaultsSchema: linearProjectDefaultsSchema,
+  // The lazy load is the design: the CLI reads this file's schema without
+  // pulling the host's world in, and the module arrives only when the host
+  // actually builds. The cycle back into this file (the module imports its
+  // own schema) is that design, not a tangle.
+  // fallow-ignore-next-line circular-dependency
   createModule: config => import('./module.ts').then(m => m.createLinearModule(config)),
 };

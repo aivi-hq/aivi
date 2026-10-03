@@ -13,6 +13,17 @@ import type { Store } from './module.ts';
 /** A prompt the person cancelled; the runner says it stopped and writes nothing further. */
 export class PluginSetupCancelled extends Error {}
 
+/** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
+ *  nothing — neither is an answer. The flow stops with
+ *  `PluginSetupCancelled` and the runner says the one cancel line; prompts
+ *  that must not be empty say so in their `validate`, so clack re-asks
+ *  before this ever sees the gap. */
+export function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNullable<T>, symbol> {
+  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
+  if (answer === undefined) throw new PluginSetupCancelled('a prompt was submitted empty');
+  return answer as Exclude<NonNullable<T>, symbol>;
+}
+
 export interface PluginSetupContext {
   /** The aivi home that owns `config.json` and `.env`. */
   home: string;

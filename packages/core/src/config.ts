@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import { z } from 'zod';
-import { parseDuration } from './clock.ts';
+import { ISO_INSTANT, parseDuration } from './clock.ts';
 import type { ProjectSummary } from './contracts.ts';
 import type { KnowledgeKind } from './kinds.ts';
 import { knowledgeKindHelp, knowledgeKindNames } from './kinds.ts';
@@ -124,8 +124,6 @@ export const reportSchema = z.discriminatedUnion('to', [
   z.strictObject({ to: z.literal('channel'), module: id, channel: z.string().min(1), on: reportOn }),
 ]);
 export type Report = z.infer<typeof reportSchema>;
-/** An ISO 8601 instant; `Date.parse` alone accepts too much. */
-export const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 const misfireSchema = z.strictObject({
   graceSeconds: z
     .number()

@@ -336,14 +336,6 @@ export class ConversationStore implements ConversationStoreApi {
     ).map(r => String(r.channel));
   }
 
-  /** Move a bound conversation's directory before its session exists (the worktree ended up elsewhere). */
-  rebind(channel: string, binding: { directory: string }): void {
-    const result = this.core.db
-      .prepare(`UPDATE ${this.n.sessions} SET directory=? WHERE channel=? AND ready=0`)
-      .run(binding.directory, channel);
-    if (!Number(result.changes)) throw new Error(`${this.platform.label} conversation ${channel} cannot be rebound`);
-  }
-
   /**
    * The conversation whose pending turn keeps `channel`'s next turn waiting: the same
    * issue busy elsewhere; null when nothing stands in the way.

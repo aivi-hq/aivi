@@ -57,7 +57,7 @@ const DESTRUCTURE = /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*tools\b/g;
 const QUERY = /^\s*\{[^}]*?\bquery\s*:\s*(["'`])((?:\\.|(?!\1).)*)\1/;
 const dotted = (path: string) => path.replaceAll(/\[["']([\w-]+)["']\]/g, '.$1').replace(/^\./, '');
 
-type ToolDescription = { name: string; detail?: string };
+export type ToolDescription = { name: string; detail?: string };
 
 /** The aivi tools a codemode `execute`'s code calls, in call order, each shown once. */
 function codemodeCalls(code: string): ToolDescription[] {

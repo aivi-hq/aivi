@@ -19,13 +19,7 @@
  */
 import { createServer } from 'node:http';
 import { configSchema, errorMessage, hostUrl, PROJECT_ID } from '@aivi/core';
-import {
-  type PluginSetup,
-  PluginSetupCancelled,
-  type PluginSetupContext,
-  type PluginSetupResult,
-  type Store,
-} from '@aivi/plugin';
+import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, type Store, settled } from '@aivi/plugin';
 import { LinearClient, type LinearTeam } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { linearPrimarySecretNames, MODULE_ID } from './config.ts';
@@ -38,18 +32,6 @@ import { isAgentSessionEvent, isIssueEvent, type LinearWebhook, verifyWebhook } 
  *  shorten the window; people get the honest cap. */
 const DEFAULT_WINDOW_MS = 90_000;
 const probeWindowMs = () => Number(process.env.AIVI_PROBE_WINDOW_MS ?? DEFAULT_WINDOW_MS);
-
-/** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
- *  nothing — neither is an answer. The flow stops with
- *  `PluginSetupCancelled` and the runner says the one cancel line; prompts
- *  that must not be empty say so in their `validate`, so clack re-asks
- *  before this ever sees the gap. Named by what it decides: did the
- *  prompt settle? */
-function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNullable<T>, symbol> {
-  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
-  if (answer === undefined) throw new PluginSetupCancelled('a prompt was submitted empty');
-  return answer as Exclude<NonNullable<T>, symbol>;
-}
 
 /** What the install asks Linear to let the app do; `app:assignable` is
  *  what lets it be a delegate. See `authorizeUrl` for the link itself. */

@@ -9,19 +9,8 @@
  * every id matches the platform's shape, and a config.json that no longer
  * loads is restored to its old bytes.
  */
-import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
+import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, settled } from '@aivi/plugin';
 import { MODULE_ID } from './config.ts';
-
-/** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
- *  nothing — neither is an answer. The flow stops with
- *  `PluginSetupCancelled` and the runner says the one cancel line; prompts
- *  that must not be empty say so in their `validate`, so clack re-asks
- *  before this ever sees the gap. */
-function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNullable<T>, symbol> {
-  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
-  if (answer === undefined) throw new PluginSetupCancelled('a prompt was submitted empty');
-  return answer as Exclude<NonNullable<T>, symbol>;
-}
 
 /** Discord ids are snowflakes: 17–20 digits (the config schema checks them too). */
 const SNOWFLAKE = /^\d{17,20}$/;

@@ -6,17 +6,8 @@
  * plugin never sees an `aivi_browser` tool.
  */
 
-import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
+import { type PluginSetup, type PluginSetupResult, settled } from '@aivi/plugin';
 import { browserConfigSchema } from './config.ts';
-
-/** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
- *  nothing — neither is an answer. The flow stops with
- *  `PluginSetupCancelled` and the runner says the one cancel line. */
-function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNullable<T>, symbol> {
-  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('a prompt was cancelled');
-  if (answer === undefined) throw new PluginSetupCancelled('a prompt was submitted empty');
-  return answer as Exclude<NonNullable<T>, symbol>;
-}
 
 const LAUNCH_BLOCK = { connection: { mode: 'launch', userDataDir: 'state/chrome' } } as const;
 

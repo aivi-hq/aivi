@@ -124,7 +124,7 @@ function packageDir(appDir: string, pkg: string): string {
  *  a development home installs its workspace builds. The directory's own
  *  package.json says the name npm installs it under; any other spec is
  *  already that name (a trailing `@version` is npm's, not the name's). */
-export function packageOfSpec(appDir: string, spec: string): string {
+function packageOfSpec(appDir: string, spec: string): string {
   const bare = spec.startsWith('file:') ? spec.slice('file:'.length) : spec;
   if (!(bare.startsWith('.') || bare.startsWith('/')))
     return spec.lastIndexOf('@') > 0 ? spec.slice(0, spec.lastIndexOf('@')) : spec;
@@ -163,7 +163,7 @@ function installPackage(io: AddIo, spec: string, pkg: string, appDir: string): v
  *  had nothing to add because the package was there — the dependency that
  *  already points at it (a trailing `@version` is npm's, not the name's).
  *  The list holds names; npm was handed the specs. */
-export function dependencyFor(appDir: string, spec: string, before: string[]): string {
+function dependencyFor(appDir: string, spec: string, before: string[]): string {
   const added = pluginDependencies(appDir).filter(name => !before.includes(name));
   if (added.length === 1) return added[0]!;
   if (added.length > 1)

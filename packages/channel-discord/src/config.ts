@@ -75,6 +75,9 @@ export const plugin: AiviPlugin<DiscordConfig> = {
   id: MODULE_ID,
   configSchema: discordConfigSchema,
   createModule: (config, home) =>
+    // The cycle back into this file (the module imports its own schema) is
+    // that lazy design, not a tangle.
+    // fallow-ignore-next-line circular-dependency
     import('./module.ts').then(m =>
       m.createDiscordModule({ ...config, directory: absolutePath(home, config.directory) }),
     ),
