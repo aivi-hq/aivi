@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import type { KnowledgeService, LoadedConfig } from '@aivi/core';
-import { configSchema, getLogger, parseDuration } from '@aivi/core';
+import { configSchema, getLogger } from '@aivi/core';
 import type { SessionEvents } from '@aivi/host';
 import {
   Channels,
@@ -58,16 +58,32 @@ const git = (cwd: string, ...args: string[]) =>
   run('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
 
 /** A clone of a one-commit upstream, as every scenario's project checkout. */
-async function checkout(root: string, project: string): Promise<string> {
+/** A checkout with an upstream, both with one commit. The repository is
+ *  built once per project name per file run and copied per test: a fixture
+ *  that pays six `git` spawns per test pays them for nothing — a copy plus
+ *  one `remote set-url` (the copy's `origin` must name its own upstream) is
+ *  the same starting point. Real git stays where it earns its keep.
+ */
+async function buildRepo(project: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-template-'));
   const upstream = join(root, 'upstream');
   await mkdir(upstream, { recursive: true });
   await writeFile(join(upstream, 'README.md'), 'r');
   await run('git', ['init', '-q', '-b', 'main', upstream]);
   await git(upstream, 'add', '.');
   await git(upstream, 'commit', '-q', '-m', 'init');
-  const source = join(root, 'home/projects', project, 'source');
   await mkdir(join(root, 'home/projects', project), { recursive: true });
-  await run('git', ['clone', '-q', upstream, source]);
+  await run('git', ['clone', '-q', upstream, join(root, 'home/projects', project, 'source')]);
+  return root;
+}
+
+const repoTemplates = new Map<string, Promise<string>>();
+
+async function checkout(root: string, project: string): Promise<string> {
+  const built = repoTemplates.get(project) ?? repoTemplates.set(project, buildRepo(project)).get(project)!;
+  await cp(await built, root, { recursive: true });
+  const source = join(root, 'home/projects', project, 'source');
+  await git(source, 'remote', 'set-url', 'origin', join(root, 'upstream'));
   return source;
 }
 
@@ -371,14 +387,6 @@ const issue = (id: string, extra: Partial<TrackerIssue> = {}): TrackerIssue => (
 });
 
 const noEvents: SessionEvents = { watch: () => () => {} };
-/** A board with no projects on it: these tests drive runs through webhooks
- *  and the tools, and the eligibility walk never asks a Linear installation. */
-const emptyBoard: LinearBoard = {
-  projects: () => [],
-  tickets: async () => [],
-  moveTo: async () => {},
-  issue: async () => undefined,
-};
 
 /** The board the walk reads, backed by the fake's issues — the same answers
  *  `linearBoard` gives: eligible means alive, unlabeled, un-delegated and
@@ -397,13 +405,13 @@ function fakeBoard(
     moves,
     shownAtMove,
     projects: () => [projectId],
-    tickets: async (p, lane) =>
+    tickets: async (_p, lane) =>
       [...tracker.issues.values()]
         .filter(
           i => !i.archived && i.state.name === lane && !i.labels.some(l => l.name === 'needs-human') && !i.delegateId, // ruled 2026-10-02: a delegated ticket is not eligible
         )
         .map(i => ({ id: i.id, blocked: i.blockedBy.some(b => !b.completed) })),
-    moveTo: async (p, ticketId, lane) => {
+    moveTo: async (_p, ticketId, lane) => {
       shownAtMove.push([...tracker.shown].length > 0);
       moves.push(`${ticketId}->${lane}`);
       const moved = tracker.issues.get(ticketId);
@@ -447,16 +455,19 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
       return project.directory;
     },
     // No pools configured here: the dispatcher tracks every lease and grants
-    // every request — the same capacity the tests always had.
+    // every request — the same capacity the tests always had. Clocks in ms:
+    // long enough that no test is struck by a clock it is not watching.
     dispatcher: new Dispatcher({
       leases: new LeaseStore(store),
       dispatcher: loaded.config.dispatcher,
+      idleMs: 60_000,
+      prepareMs: 300_000,
       opencode,
       signal: abort.signal,
     }),
     forges: new Forges(),
     identity: async () => ({ name: 't', email: 't@t' }),
-    keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
+    keepAliveMs: 300_000,
   });
   return {
     loaded,

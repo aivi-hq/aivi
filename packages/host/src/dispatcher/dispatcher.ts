@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { type Config, errorMessage, getLogger, type Logger, parseDuration } from '@aivi/core';
+import { type Config, errorMessage, getLogger, type Logger } from '@aivi/core';
 import type { OpenCodeClient } from '@aivi/plugin/module';
 import type { FailureCode } from '@aivi/plugin/run';
 import { agentModel, type NativeModel } from '../session.ts';
@@ -47,8 +47,15 @@ export type LeaseCallback = (requestId: string, lease: DispatcherLease) => void;
 
 export interface DispatcherDeps {
   leases: LeaseStore;
-  /** The config root's `dispatcher` block: pools and timeouts, as loaded. */
+  /** The config root's `dispatcher` block: pools and killAttempts, as loaded. */
   dispatcher: Config['dispatcher'];
+  /** Milliseconds, the numbers the config load parsed from its durations:
+   *  the two clocks every lease watches. The unit takes numbers and waits
+   *  on numbers — the strings are a person's config surface, not this
+   *  unit's, and a test runs these clocks at 30ms without touching the
+   *  duration grammar. */
+  idleMs: number;
+  prepareMs: number;
   opencode: () => Promise<OpenCodeClient>;
   /** Host-wide: every OpenCode call dies with the host, not on a watch of its own. */
   signal?: AbortSignal;
@@ -101,8 +108,8 @@ export class Dispatcher {
     this.leases = deps.leases;
     this.log = (deps.log ?? getLogger(['aivi', 'dispatcher'])).with({});
     this.pools = deps.dispatcher.pools ?? {};
-    this.idleMs = parseDuration(deps.dispatcher.timeouts.idle);
-    this.prepareMs = parseDuration(deps.dispatcher.timeouts.prepare);
+    this.idleMs = deps.idleMs;
+    this.prepareMs = deps.prepareMs;
     this.killAttempts = deps.dispatcher.killAttempts;
     // A pool model is checked at startup, not at the grant that would need it.
     for (const pool of Object.values(this.pools)) if (pool.model !== undefined) parseModelSpec(pool.model);
@@ -446,11 +453,7 @@ export class Dispatcher {
    * longer spending — the slot stays held, because capacity that may still
    * be working must not be double-booked.
    */
-  async expire(
-    leaseId: string,
-    reason: string,
-    now = Date.now(),
-  ): Promise<{ ended: DispatcherLease } | { pending: DispatcherLease }> {
+  async expire(leaseId: string, reason: string): Promise<{ ended: DispatcherLease } | { pending: DispatcherLease }> {
     const lease = this.leases.require(leaseId);
     if (!lease.sessionId) {
       this.#free(lease);

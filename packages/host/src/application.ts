@@ -143,6 +143,10 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   const dispatcher = new Dispatcher({
     leases: new LeaseStore(store),
     dispatcher: loaded.config.dispatcher,
+    // The unit's clocks: the durations were strings in the config, numbers
+    // here, parsed once at load like everything else that waits.
+    idleMs: parseDuration(loaded.config.dispatcher.timeouts.idle),
+    prepareMs: parseDuration(loaded.config.dispatcher.timeouts.prepare),
     opencode,
     signal: abort.signal,
     log,

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { configSchema, type Logger, type ProjectLane, type PromptName, parseDuration, readPrompt } from '@aivi/core';
+import { configSchema, type Logger, type ProjectLane, type PromptName, readPrompt } from '@aivi/core';
 import type { Tracker } from '@aivi/plugin';
 import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
@@ -132,8 +132,9 @@ function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boo
     moveDepths: [],
     stages: [],
     projects: () => ['p'],
-    tickets: async (projectId, state) => (lanes.get(state) ?? []).map(t => ({ id: t.id, blocked: t.blocked ?? false })),
-    moveTo: async (projectId, ticketId, state) => {
+    tickets: async (_projectId, state) =>
+      (lanes.get(state) ?? []).map(t => ({ id: t.id, blocked: t.blocked ?? false })),
+    moveTo: async (_projectId, ticketId, state) => {
       scripted.moves.push(`move:${ticketId}->${state}`);
       scripted.moveDepths.push(fake.prompts.length);
       scripted.stages.push(`move:${ticketId}->${state}`);
@@ -187,11 +188,20 @@ function harness(
   directory: (projectId: string) => string = () => '/checkout',
   prompt?: (name: PromptName) => Promise<string>,
 ) {
+  // The unit's clocks, in ms: a test that watches the keep-alive expire
+  // writes `clocks: { keepAliveMs: 30 }` into the harness block instead of
+  // a config duration — the strings are the person's surface, numbers are
+  // the unit's. Whatever is left goes to the config schema untouched.
+  const { clocks = {}, ...configWritten } = written as {
+    clocks?: { idleMs?: number; prepareMs?: number; keepAliveMs?: number };
+  } & Record<string, unknown>;
   const store = new Store(':memory:');
   const ledger = new RunLedger(store);
   const dispatcher = new Dispatcher({
     leases: new LeaseStore(store),
-    dispatcher: configSchema.parse({ version: 1, ...written }).dispatcher,
+    dispatcher: configSchema.parse({ version: 1, ...configWritten }).dispatcher,
+    idleMs: clocks.idleMs ?? 60_000,
+    prepareMs: clocks.prepareMs ?? 300_000,
     opencode: async () => fake.client,
     signal: abort.signal,
     // The application's wiring: the dispatcher ends a lease, and the claim
@@ -205,7 +215,7 @@ function harness(
     log: quiet,
     signal: abort.signal,
     lanes: () => lanes,
-    keepAliveMs: parseDuration(configSchema.parse({ version: 1, ...written }).orchestrator.elicitationKeepAlive),
+    keepAliveMs: clocks.keepAliveMs ?? 300_000,
     directory,
     identity: async () => ({ name: 't', email: 't@t' }),
     dispatcher,
@@ -440,7 +450,7 @@ test('an open elicitation holds its slot for the keep-alive, then gives the slot
   const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
   const { ledger, dispatcher, orchestrator } = harness(
     [lane('Doing', { agent: 'dev', pool: 'a' })],
-    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { keepAliveMs: 30 } },
     feed,
     fake,
   );
@@ -483,7 +493,7 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
     [lane('Doing', { agent: 'dev', pool: 'a' })],
     {
       dispatcher: { pools: { a: { capacity: 1, fallback: 'b' }, b: { capacity: 5 } } },
-      orchestrator: { elicitationKeepAlive: '1s' },
+      clocks: { keepAliveMs: 30 },
     },
     feed,
     fake,
@@ -534,7 +544,7 @@ test('an answer OpenCode will not take leaves the run parked: the books did not 
   const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
   const { ledger, dispatcher, orchestrator } = harness(
     [lane('Doing', { agent: 'dev', pool: 'a' })],
-    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { keepAliveMs: 30 } },
     feed,
     fake,
   );
@@ -579,7 +589,7 @@ test('a queued answer whose delivery fails: the slot goes back, the run parks ag
   const feed = boardFeed(fake, {});
   const { ledger, dispatcher, orchestrator } = harness(
     [lane('Doing', { agent: 'dev', pool: 'a' })],
-    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { keepAliveMs: 30 } },
     feed,
     fake,
   );
@@ -640,7 +650,7 @@ test('two answers in the same instant: both persons’ words reach the worker, t
   const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
   const { ledger, orchestrator } = harness(
     [lane('Doing', { agent: 'dev', pool: 'a' })],
-    { dispatcher: { pools: { a: { capacity: 1 } } }, orchestrator: { elicitationKeepAlive: '1s' } },
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { keepAliveMs: 30 } },
     feed,
     fake,
   );
@@ -777,9 +787,14 @@ function localForge(
 }
 
 /** A project, a run on a ticket branch, and the git tools' registry. */
-async function pushFixture(t: { after: (fn: () => Promise<unknown>) => void }, name: string) {
-  const root = await mkdtemp(join(tmpdir(), `aivi-${name}-`));
-  t.after(() => rm(root, { recursive: true, force: true }));
+/** The two repository fixtures, each built once per file run and copied per
+ *  test: a fixture that pays eleven `git` spawns per test pays them for
+ *  nothing — a copy plus one `remote set-url` (the copy's `origin` must name
+ *  its own upstream) is the same starting point. Real git stays where it
+ *  earns its keep: the merges, conflicts and pushes the assertions watch.
+ */
+async function buildRepo(name: string, branch: string, widget: boolean) {
+  const root = await mkdtemp(join(tmpdir(), `aivi-${name}-template-`));
   const upstream = join(root, 'upstream');
   await mkdir(upstream);
   await writeFile(join(upstream, 'README.md'), 'one');
@@ -794,10 +809,30 @@ async function pushFixture(t: { after: (fn: () => Promise<unknown>) => void }, n
   await git(source, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   await git(source, 'config', 'user.email', 'dev@example.com');
   await git(source, 'config', 'user.name', 'Dev');
-  await git(source, 'checkout', '-q', '-b', 'me/eng-9-widget');
-  await writeFile(join(source, 'widget.md'), 'a widget');
-  await git(source, 'add', '.');
-  await git(source, 'commit', '-q', '-m', 'the widget');
+  await git(source, 'checkout', '-q', '-b', branch);
+  if (widget) {
+    await writeFile(join(source, 'widget.md'), 'a widget');
+    await git(source, 'add', '.');
+    await git(source, 'commit', '-q', '-m', 'the widget');
+  }
+  return root;
+}
+
+/** The template as a fresh copy, `origin` re-pointed at its own upstream. */
+async function copiedRepo(template: Promise<string>, name: string, t: { after: (fn: () => Promise<unknown>) => void }) {
+  const root = await mkdtemp(join(tmpdir(), `aivi-${name}-`));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(await template, root, { recursive: true });
+  const upstream = join(root, 'upstream');
+  await git(join(root, 'site'), 'remote', 'set-url', 'origin', upstream);
+  return { root, upstream, source: join(root, 'site') };
+}
+
+const pushTemplate = buildRepo('push', 'me/eng-9-widget', true);
+const gateTemplate = buildRepo('gate', 'me/t-gate', false);
+
+async function pushFixture(t: { after: (fn: () => Promise<unknown>) => void }, name: string) {
+  const { root, upstream, source } = await copiedRepo(pushTemplate, name, t);
 
   const fake = fakeOpenCode();
   const lanes = [lane('In Progress', { agent: 'dev' })];
@@ -1038,7 +1073,7 @@ test('a worktree lane gets its own git worktree on the ticket’s branch, crossi
 
   const run = ledger.activeByTicket('test-tracker', 't-1')!;
   assert.ok(run.worktree, 'the run records where the worker works');
-  assert.ok(run.worktree!.startsWith(join(root, 'worktrees') + '/'), run.worktree);
+  assert.ok(run.worktree!.startsWith(`${join(root, 'worktrees')}/`), run.worktree);
   assert.equal((await git(run.worktree!, 'symbolic-ref', '--quiet', '--short', 'HEAD')).stdout.trim(), 'me/t-1');
   assert.equal(await readFile(join(run.worktree!, 'README.md'), 'utf8'), 'one', 'made from the refs the clone holds');
   assert.deepEqual(fetches, ['me/t-1'], 'the crossing to origin went through the forge, injected');
@@ -1091,22 +1126,9 @@ async function gateFixture(
   openThreads: Record<string, { path?: string; question: string }>,
   prompt?: (name: PromptName) => Promise<string>,
 ) {
-  const root = await mkdtemp(join(tmpdir(), `aivi-${name}-`));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const upstream = join(root, 'upstream');
-  await mkdir(upstream);
-  await writeFile(join(upstream, 'README.md'), 'one');
-  await git(upstream, 'init', '-q', '-b', 'main');
-  await git(upstream, 'add', '.');
-  await git(upstream, 'commit', '-q', '-m', 'one');
-  const source = join(root, 'site');
-  await git(root, 'clone', '-q', 'upstream', 'site');
-  await git(source, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
-  await git(source, 'config', 'user.email', 'dev@example.com');
-  await git(source, 'config', 'user.name', 'Dev');
+  const { root, upstream, source } = await copiedRepo(gateTemplate, name, t);
   // The run works in the checkout, on the ticket's branch: that is the
   // branch the gate and the review tools ask the forge about.
-  await git(source, 'checkout', '-q', '-b', 'me/t-gate');
 
   const fake = fakeOpenCode();
   const lanes = [lane('Todo', { queue: true }), lane('In Progress', { agent: 'dev' })];

@@ -66,12 +66,21 @@ function fakeOpenCode(agentModel: unknown = { providerID: 'agentprov', id: 'agen
 const dispatcherConfig = (written: Record<string, unknown>): Config['dispatcher'] =>
   configSchema.parse({ version: 1, ...written }).dispatcher;
 
-function harness(written: Record<string, unknown>, fake = fakeOpenCode()) {
+/** The unit's clocks, in milliseconds: a test that watches a timeout fires
+ *  hands 30ms straight in, one that does not never gets an unexpected strike. */
+interface Clocks {
+  idleMs?: number;
+  prepareMs?: number;
+}
+
+function harness(written: Record<string, unknown>, fake = fakeOpenCode(), clocks: Clocks = {}) {
   const leases = new LeaseStore(new Store(':memory:'));
   const ended: { id: string; reason: string; code?: string }[] = [];
   const dispatcher = new Dispatcher({
     leases,
     dispatcher: dispatcherConfig(written),
+    idleMs: clocks.idleMs ?? 60_000,
+    prepareMs: clocks.prepareMs ?? 300_000,
     opencode: async () => fake.client,
     onEnded: (lease, reason, code) => ended.push({ id: lease.id, reason, ...(code ? { code } : {}) }),
   });
@@ -210,12 +219,7 @@ test('a lease without a session is revoked past the prepare timeout, and no inte
   });
   const granted = dispatcher.request({ service: 'orchestrator' });
   if (!('lease' in granted)) throw assert.fail('granted');
-  const future = Date.now() + 5 * 60_000 + 1; // the prepare default is 5m
-  const result = await dispatcher.expire(
-    granted.lease.id,
-    'no session was provided within the prepare timeout',
-    future,
-  );
+  const result = await dispatcher.expire(granted.lease.id, 'no session was provided within the prepare timeout');
   assert.equal('ended' in result, true);
   assert.deepEqual(fake.interrupted, [], 'there was no session to kill');
   assert.equal(leases.held('default'), 0);
@@ -236,7 +240,7 @@ test('boot reconcile: gone sessions release, alive ones stand, expired kills con
     agent: 'dev',
     directory: '/w',
   });
-  const waiting = mustGrant(dispatcher.request({ service: 'orchestrator' })); // preparing, no session
+  mustGrant(dispatcher.request({ service: 'orchestrator' })); // preparing, no session
   // A kill that never got confirmed: the session ignored the interrupt.
   fake.busy.add(dying.sessionId!);
   fake.killWorks.value = false;
@@ -373,8 +377,8 @@ const until = async (check: () => boolean, what: string) => {
 };
 
 test('the idle monitor kills a silent worker, confirms the kill, and frees the slot', async () => {
-  const { dispatcher, ended, fake } = harness({
-    dispatcher: { pools: { default: { capacity: 1 } }, timeouts: { idle: '1s', prepare: '5m' } },
+  const { dispatcher, ended, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } }, undefined, {
+    idleMs: 30,
   });
   const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
   await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
@@ -388,8 +392,8 @@ test('the idle monitor kills a silent worker, confirms the kill, and frees the s
 });
 
 test('an unconfirmed kill keeps the slot unavailable and tries again at a known instant', async () => {
-  const { dispatcher, ended, fake } = harness({
-    dispatcher: { pools: { default: { capacity: 1 } }, timeouts: { idle: '1s', prepare: '5m' } },
+  const { dispatcher, ended, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } }, undefined, {
+    idleMs: 30,
   });
   const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
   await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
@@ -407,13 +411,16 @@ test('an unconfirmed kill keeps the slot unavailable and tries again at a known 
 });
 
 test('a session that will not die is given up on at the configured strikes — and the ending says so in machine-readable words', async () => {
-  const { dispatcher, ended, fake } = harness({
-    dispatcher: {
-      pools: { default: { capacity: 1 } },
-      timeouts: { idle: '1s', prepare: '5m' },
-      killAttempts: 2,
+  const { dispatcher, ended, fake } = harness(
+    {
+      dispatcher: {
+        pools: { default: { capacity: 1 } },
+        killAttempts: 2,
+      },
     },
-  });
+    undefined,
+    { idleMs: 30 },
+  );
   const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
   await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
   const sessionId = dispatcher.leases.require(granted.id).sessionId!;
@@ -428,8 +435,8 @@ test('a session that will not die is given up on at the configured strikes — a
 });
 
 test('the prepare timeout revokes a lease nobody provided a session for — capacity counted or not', async () => {
-  const { dispatcher, ended, fake } = harness({ dispatcher: { timeouts: { prepare: '1s' } } });
-  const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  const { dispatcher, ended, fake } = harness({}, undefined, { prepareMs: 30 });
+  mustGrant(dispatcher.request({ service: 'orchestrator' }));
   await until(() => ended.length === 1, 'the preparation window closes');
   assert.match(ended[0]!.reason, /prepare timeout/);
   assert.equal(dispatcher.leases.held(UNLIMITED), 0, 'the slot is given back');
@@ -437,8 +444,8 @@ test('the prepare timeout revokes a lease nobody provided a session for — capa
 });
 
 test('activity re-arms the clock: a worker that keeps talking never dies of silence', async () => {
-  const { dispatcher, ended, fake } = harness({
-    dispatcher: { pools: { default: { capacity: 1 } }, timeouts: { idle: '1s', prepare: '5m' } },
+  const { dispatcher, ended, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } }, undefined, {
+    idleMs: 30,
   });
   const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
   await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
@@ -446,7 +453,7 @@ test('activity re-arms the clock: a worker that keeps talking never dies of sile
   fake.busy.add(sessionId);
 
   for (let at = 0; at < 6; at++) {
-    await new Promise(r => setTimeout(r, 300)); // 1.8s: past the idle timeout in total
+    await new Promise(r => setTimeout(r, 10)); // 60ms: past the idle clock in total
     dispatcher.activity(granted.id); // each sign of life restarts the silence clock
   }
   assert.deepEqual(ended, [], 'the worker lived through every instant the clock once pointed at');
