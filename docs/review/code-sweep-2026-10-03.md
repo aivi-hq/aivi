@@ -42,54 +42,6 @@ the operator to decide on.
 
 (by package, in reading order)
 
-### B3. One broken symlink in `<home>/projects` kills boot with an error that names nothing
-
-`subdirectories()` (core/config.ts:1085-1092) guards `readdir` with
-`.catch(() => [])` but calls `stat(join(root, name))` unguarded. A dangling
-symlink — or an entry removed between readdir and stat — makes `stat` reject
-with a bare ENOENT that escapes `loadConfig`; the host fails to start with an
-error that names no project and no remedy. `discoverProjects` is careful to
-catch its own stats (`has()` at :1120); the function one level below it is
-not. The docs promise the loud, helpful messages ("a project directory must be
-named like…") — a broken symlink gets none of them.
-
-### B4. `runTurn`'s `fail` permission policy can hang the turn forever
-
-session.ts:241-247 races `session.wait` against the parked-abort with
-`addEventListener('abort', …, { once: true })` — registered *after* the
-already-pending check at :238-239. If a permission was pending before the
-prompt, `failWith` aborts `parked` synchronously in that loop, and the
-listener added afterwards never fires (abort already happened): the race has
-only `session.wait` left, which is parked on that very permission. The turn
-hangs instead of failing. Reachable through job config (`onPermission: "fail"`
-is a documented choice) on any session with a pre-parked permission; jobs
-normally create fresh session ids, which is the only reason it has not bitten.
-
-### B5. `Dispatcher.release()` bypasses its own unconfirmed-kill hold
-
-`expire` deliberately keeps the slot `expiring` — "capacity that may still be
-spending must not be double-booked" — but `release()` (dispatcher.ts:439-445)
-deletes any lease it is handed, including an `expiring` one, and drains the
-pool: a caller that still holds the lease id (the orchestrator's
-`#releaseLease` happily releases an expiring lease when its run ends) hands
-the slot to the queue while the kill was never confirmed. It also never
-clears `strikes` for that lease (only `#free` does), so the strikes map keeps
-a stale entry per released-mid-expiry lease for the life of the process.
-
-### B6. Dreaming's session walk ends on an ordering the API may not promise
-
-`changedSessions` (host/dreaming.ts:133-151) pages `session.list` in `order: 'desc'`
-and stops at the **first session whose `time.updated <= since`** — an
-assumption that the list is sorted by **update** time. OpenCode's own issue
-anomalyco/opencode#13569 exists precisely because v1's `Session.list` did **not**
-order by `time_updated DESC`. If v2's list orders by creation instead, the walk
-misses work: a session created *earlier* but updated since the cursor sits
-behind a recently-created, not-recently-updated one, the walk stops early, and
-when the cursor advances to the max of the collected updates, the missed
-conversation is skipped **permanently**. If the API does order by update time,
-the code is correct — this needs one honest verification (or a defensive walk
-that filters instead of stops), not a comment.
-
 ### B8. `--lane` hard-codes `worktree: true` — and so does `--unlane`
 
 `readLaneFlag`/`readUnlaneFlag` (tracker-linear/projects.ts:155,164) write
@@ -239,8 +191,9 @@ temp-file-plus-rename is three lines in each place.
   pinned, in code or against the live API.
 - **No test that repeated wrong `/link` guesses are refused (D7)** — because
   nothing refuses them.
-- **`runTurn`'s `fail`-policy hang (B4)** is untested; the policy is a
-  documented config choice with no test of its failure path.
+- **Closed 2026-10-03 — `runTurn`'s fail-policy hang is pinned**: the fake
+  now parks its `wait` as the real server parks it on a pending permission,
+  and the standing verdict is tested to fail the turn at once.
 - **Crash-mid-write (E6)** has no test anywhere; the restore tests only cover
   the clean validation failure.
 
@@ -248,10 +201,7 @@ temp-file-plus-rename is three lines in each place.
 
 1. **The claims that promise what is not there (D9, D10, D11)** — *done
    2026-10-03, see Disposition.*
-2. **B3, B4, B5, B6** — each needs a decision more than a patch (what should
-   boot say about a broken symlink; whether `fail` policy stays advertised;
-   whether release-mid-expiry or the strikes map is the wrong half; whether
-   the session list is update-ordered — one live call answers B6).
+2. **B4, B5 — fixed 2026-10-03; B3, B6 — closed** (see Disposition). **B8** remains.
 3. **D1/D4 together** (one reader of app/package.json, named loudly), D5-D8,
    E1-E5 — small honest fixes.
 4. **E6 and C1** — the atomic-write trio and the error-classes-into-kit move
@@ -260,6 +210,23 @@ temp-file-plus-rename is three lines in each place.
 
 ## Disposition
 
+- **B4, B5 — fixed 2026-10-03.** `runTurn` says a `fail` verdict that
+  already stands **before** arming the wait: the park is an abort that only
+  fires forward, so a permission pending from before the prompt used to
+  hang the turn on the very wait that permission holds (the policy stays
+  advertised; the fake now parks its `wait` as the real server does and
+  the turn is pinned to fail in words). `Dispatcher.release()` takes the
+  same rule as every other ending (the operator's ruling: *confirm kill
+  before release*): an expiring lease is confirmed through `expire` before
+  the slot is freed — unconfirmed, the slot stays held, the lease stays
+  expiring, and the strike clock keeps trying; the stale `strikes` entry a
+  released-mid-expiry lease used to leave is cleared on every release.
+- **B3, B6 — closed 2026-10-03, no code touched** (the operator's rulings).
+  B3: "we do not just remove dirs" — the readdir-to-stat window is a state
+  nobody creates. B6: one live call answered it — OpenCode 2.0.18 answers
+  `session.list` with `order: 'desc'` strictly descending by `time.updated`
+  on 50 live sessions (creation order visibly is not), so the dreaming
+  walk's early stop is correct as written.
 - **D9, D10, D11 — fixed 2026-10-03.** The closing note's idempotence marker
   is a trailer aivi controls and reads only as a comment's last line, so a
   worker quoting its session id in prose no longer silences the closing

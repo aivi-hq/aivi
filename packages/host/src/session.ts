@@ -239,6 +239,14 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
       await permissions.answer(p.id, p.action, [...p.resources]);
     // The context can trail `wait` by a moment; every step of a session emits events, so the next one is the re-check.
     while (true) {
+      // A verdict that already stands answers **before** the wait: the
+      // park is an abort that only fires forward, so a `fail` verdict
+      // given before this race — a permission pending from before the
+      // prompt — has no future event to deliver, and the wait would park
+      // on that very permission forever. The same verdict the race
+      // answers with, said at once.
+      const standing = permissions.failure();
+      if (standing) throw standing;
       await Promise.race([
         client.session.wait({ sessionID }, request),
         new Promise<never>((_, reject) =>

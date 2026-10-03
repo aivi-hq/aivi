@@ -427,22 +427,43 @@ export class Dispatcher {
     return attached;
   }
 
+  /**
+   * The caller is done with its slot. Ending a lease never deletes the
+   * session — the session outlives turns and leases, and whether it is
+   * kept is nobody's business here. The freed slot goes to the queue.
+   *
+   * An **expiring** lease takes the same rule as every other ending (ruled
+   * 2026-10-03): the dispatcher was already killing its session, and
+   * capacity that may still be spending is never double-booked — so the
+   * kill is **confirmed before the slot is released**. Confirmed, the slot
+   * ends through the usual door and the queue is woken; unconfirmed, the
+   * slot stays held, the lease stays expiring, and the same strike clock
+   * the idle monitor uses keeps trying, ending loudly with
+   * `kill-unconfirmed` when the attempts run out.
+   */
+  async release(leaseId: string): Promise<{ ended: DispatcherLease } | { pending: DispatcherLease }> {
+    const lease = this.leases.get(leaseId);
+    if (!lease) throw new Error(`Lease ${leaseId} was already gone`);
+    if (lease.state !== 'expiring') {
+      this.#disarm(leaseId);
+      this.strikes.delete(leaseId);
+      this.leases.release(leaseId);
+      this.#drain(lease.pool);
+      return { ended: lease };
+    }
+    const outcome = await this.expire(leaseId, 'the caller released a lease whose kill was not yet confirmed');
+    if ('ended' in outcome) return outcome;
+    // Untouched means not ended, not unwatched: the confirmation keeps its
+    // known-instant retries, the same clock an idle expiry re-arms on.
+    this.#arm(leaseId, Date.now() + this.idleMs);
+    return outcome;
+  }
+
   /** A sign of life on the lease's session: the idle monitor's clock
    *  restarts here, whatever the caller was doing. */
   activity(leaseId: string, now = Date.now()): void {
     this.leases.touch(leaseId, now);
     if (this.leases.get(leaseId)) this.#arm(leaseId, now + this.idleMs, now);
-  }
-
-  /** The caller is done with its slot. Ending a lease never deletes the
-   *  session — the session outlives turns and leases, and whether it is
-   *  kept is nobody's business here. The freed slot goes to the queue. */
-  release(leaseId: string): void {
-    const lease = this.leases.get(leaseId);
-    if (!lease) throw new Error(`Lease ${leaseId} was already gone`);
-    this.#disarm(leaseId);
-    this.leases.release(leaseId);
-    this.#drain(lease.pool);
   }
 
   /**

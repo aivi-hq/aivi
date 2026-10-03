@@ -104,7 +104,7 @@ test('unlimited mode grants everything, and the agent file alone decides the mod
     'no pool names one: the agent file wins',
   );
 
-  dispatcher.release(lease.id);
+  await dispatcher.release(lease.id);
   assert.equal(leases.held(UNLIMITED), 0);
   assert.equal(fake.sessions.size, 1, 'ending a lease never deletes the session');
 });
@@ -156,7 +156,7 @@ test('a session keeps its pool for life: a resume returns to the original pool e
   if (!('lease' in first)) throw assert.fail('granted');
   const provided = await dispatcher.provide(first.lease.id, { agent: 'dev', directory: '/w' });
   const sessionId = provided.sessionId!;
-  dispatcher.release(first.lease.id);
+  await dispatcher.release(first.lease.id);
 
   // The session goes quiet; its lease is over. Someone else takes the one home slot.
   const other = dispatcher.request({ service: 'orchestrator', pool: 'home' });
@@ -168,7 +168,7 @@ test('a session keeps its pool for life: a resume returns to the original pool e
   const resume = dispatcher.request({ service: 'orchestrator', resume: sessionId });
   assert.deepEqual(resume, { refused: 'full', pool: 'home' });
 
-  dispatcher.release(other.lease.id);
+  await dispatcher.release(other.lease.id);
   const back = dispatcher.request({ service: 'orchestrator', resume: sessionId });
   if (!('lease' in back)) throw assert.fail('granted');
   assert.equal(back.lease.pool, 'home', 'back to its own pool');
@@ -211,6 +211,44 @@ test('expire kills before it frees: an unconfirmed kill holds the slot, the conf
   assert.equal('ended' in done, true);
   assert.equal(leases.held('default'), 0);
   assert.deepEqual(ended, [{ id: provided.id, reason: 'idle beyond the timeout' }], 'the owner is told');
+});
+
+test('a release mid-expiry confirms the kill first — an unconfirmed release never hands the slot to the queue', async () => {
+  const { dispatcher, leases, ended, fake } = harness(
+    { dispatcher: { pools: { default: { capacity: 1 } } } },
+    undefined,
+    { idleMs: 3_600_000 }, // the release re-arms its confirmation clock; this test is the one that reads it
+  );
+  const granted = dispatcher.request({ service: 'orchestrator' });
+  if (!('lease' in granted)) throw assert.fail('granted');
+  const provided = await dispatcher.provide(granted.lease.id, { agent: 'dev', directory: '/w' });
+  fake.busy.add(provided.sessionId!);
+  fake.killWorks.value = false; // the dispatcher began its kill; the session ignores it
+  const pending = await dispatcher.expire(provided.id, 'idle beyond the timeout');
+  assert.equal('pending' in pending, true);
+
+  // The run ends while the kill stands unconfirmed — the old release took
+  // the lease at face value and drained the pool: the queue got a slot
+  // whose session was still spending. Now the release confirms first.
+  const told = registrar(dispatcher, 'other');
+  const waiting = dispatcher.request({ service: 'other' });
+  assert.ok('queued' in waiting, 'the pool is full: the next ask waits');
+  const outcome = await dispatcher.release(provided.id);
+  assert.equal('pending' in outcome, true, 'unconfirmed: the release stays a pending');
+  assert.equal(leases.require(provided.id).state, 'expiring', 'the lease stays where the retry can find it');
+  assert.equal(leases.held('default'), 1, 'the slot never went to the queue');
+  assert.deepEqual(told, [], 'the waiter heard nothing: no slot was handed out');
+  assert.deepEqual(ended, [], 'nothing was announced yet');
+
+  fake.killWorks.value = true; // the same kill, confirmed this time
+  const done = await dispatcher.expire(provided.id, 'the confirmation lands');
+  assert.equal('ended' in done, true);
+  assert.equal(told.length, 1, 'the confirmed kill is what opens the slot to the queue');
+  const [second] = leases.all().filter(l => l.pool === 'default' && l.id !== provided.id);
+  assert.ok(second, 'the waiter got its own fresh lease');
+  assert.equal(second.state, 'preparing');
+  await dispatcher.release(second.id);
+  assert.equal(leases.held('default'), 0, 'and both leases are off the books now');
 });
 
 test('a lease without a session is revoked past the prepare timeout, and no interrupt is sent for nothing', async () => {
@@ -274,8 +312,8 @@ test('a lease is provided once: a second session for the same lease is refused a
   const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
   await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
   await assert.rejects(dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' }), /only a preparing lease/);
-  dispatcher.release(granted.id);
-  assert.throws(() => dispatcher.release(granted.id), /already gone/);
+  await dispatcher.release(granted.id);
+  await assert.rejects(dispatcher.release(granted.id), /already gone/);
 });
 
 test('an unknown pool is said at the request, not silently treated as pressure', () => {
@@ -306,7 +344,7 @@ const queuedId = (r: { queued?: string }) => {
   throw assert.fail('expected a queued request');
 };
 
-test('a full pool accepts into its queue, one place per service, and the service is told with its request id', () => {
+test('a full pool accepts into its queue, one place per service, and the service is told with its request id', async () => {
   const { dispatcher } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
   const told = registrar(dispatcher, 'caller');
   const first = mustGrant(dispatcher.request({ service: 'first' }), 'a free slot grants at once');
@@ -318,14 +356,14 @@ test('a full pool accepts into its queue, one place per service, and the service
     { refused: 'waiting', pool: 'default' },
     'a service holds one queue place per pool: the second ask is refused',
   );
-  dispatcher.release(first.id);
+  await dispatcher.release(first.id);
   assert.equal(told.length, 1, 'the callback is the wake: it hears when the request becomes a lease');
   assert.equal(told[0]!.request, queuedId(waiting), 'told with the very request id it asked under');
   assert.equal(told[0]!.pool, 'default');
   assert.equal(dispatcher.leases.held('default'), 1, 'the freed slot went straight to the queue');
 });
 
-test('the queue walks in order, and a cancelled request only loses its place', () => {
+test('the queue walks in order, and a cancelled request only loses its place', async () => {
   const { dispatcher } = harness({ dispatcher: { pools: { default: { capacity: 2 } } } });
   const heard = registrar(dispatcher, 'second');
   registrar(dispatcher, 'third');
@@ -336,13 +374,13 @@ test('the queue walks in order, and a cancelled request only loses its place', (
   const third = dispatcher.request({ service: 'third' });
   assert.ok('queued' in second && 'queued' in third, 'the full pool takes both asks');
   dispatcher.cancel(queuedId(third));
-  dispatcher.release(one.id);
+  await dispatcher.release(one.id);
   assert.equal(heard.length, 1, 'the one still waiting walks in; the cancelled one does not');
   assert.equal(heard[0]!.request, queuedId(second));
   assert.equal(dispatcher.leases.held('default'), 2, 'second took the slot; the cancelled third stayed out');
   const after = dispatcher.request({ service: 'later' });
   assert.ok('queued' in after, 'and the queue goes on taking asks in the order they come');
-  dispatcher.release(two.id);
+  await dispatcher.release(two.id);
   assert.equal(heard.length, 1, 'second was already told: the drain went to the next, not twice to one');
   void after;
 });
@@ -363,7 +401,7 @@ test('a resume waits in its own pool and returns there, never into the fallback 
   const waiting = dispatcher.request({ service: 'orchestrator', resume: sessionId });
   assert.ok('queued' in waiting, 'a full original pool queues the resume — the fallback is not its answer');
 
-  dispatcher.release(own.id);
+  await dispatcher.release(own.id);
   assert.equal(told.length, 1, 'the resume walks in the moment its own pool opens');
   assert.equal(told[0]!.pool, 'home', 'back into its own pool, where its model and cache live');
   assert.equal(leases.held('home'), 1);

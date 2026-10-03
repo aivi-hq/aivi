@@ -180,7 +180,7 @@ export class Orchestrator implements OrchestratorApi {
       void this.#fulfill(requestId, lease).catch(error => {
         this.deps.log.warn('fulfill.failed', { request: requestId, error });
         try {
-          this.deps.dispatcher.release(lease.id);
+          void this.deps.dispatcher.release(lease.id);
         } catch {
           // 'already gone': fulfill released it before failing elsewhere.
         }
@@ -276,7 +276,7 @@ export class Orchestrator implements OrchestratorApi {
       agent: request.agent,
     });
     if (!created) {
-      this.deps.dispatcher.release(grant.lease.id);
+      await this.deps.dispatcher.release(grant.lease.id);
       return { runId: run.id, created: false };
     }
     this.deps.ledger.setLease(run.id, grant.lease.id);
@@ -435,7 +435,7 @@ export class Orchestrator implements OrchestratorApi {
       agent: lane.agent!,
     });
     if (!created) {
-      this.deps.dispatcher.release(leaseId);
+      await this.deps.dispatcher.release(leaseId);
       return;
     }
     this.deps.ledger.setLease(run.id, leaseId);
@@ -464,7 +464,7 @@ export class Orchestrator implements OrchestratorApi {
   ): Promise<void> {
     const tracker = this.trackers.get(run.trackerId);
     if (!tracker) {
-      this.deps.dispatcher.release(leaseId);
+      await this.deps.dispatcher.release(leaseId);
       await this.#fail(run.id, 'No tracker is registered for this work.');
       return;
     }
@@ -473,7 +473,7 @@ export class Orchestrator implements OrchestratorApi {
       try {
         await tracker.moveTo(run.projectId, run.ticketId, run.lane);
       } catch (error) {
-        this.deps.dispatcher.release(leaseId);
+        await this.deps.dispatcher.release(leaseId);
         await this.#fail(run.id, `Could not enter the worker lane: ${errorMessage(error)}`);
         return;
       }
@@ -484,7 +484,7 @@ export class Orchestrator implements OrchestratorApi {
       try {
         entry = await tracker.initWork(view(run));
       } catch (error) {
-        this.deps.dispatcher.release(leaseId);
+        await this.deps.dispatcher.release(leaseId);
         await this.#fail(run.id, `Could not open the ticket on its platform: ${errorMessage(error)}`);
         return;
       }
@@ -512,7 +512,7 @@ export class Orchestrator implements OrchestratorApi {
       this.requested.delete(requestId); // the wait is over either way
       const run = work.runId ? this.deps.ledger.get(work.runId) : undefined;
       if (run?.state !== 'awaiting_input' || !work.answer) {
-        this.deps.dispatcher.release(lease.id);
+        await this.deps.dispatcher.release(lease.id);
         return;
       }
       this.deps.ledger.setLease(run.id, lease.id);
@@ -527,7 +527,7 @@ export class Orchestrator implements OrchestratorApi {
         // clock: silence until the next boot.
         this.deps.log.warn('answer.delivery.failed', { run: run.id, ticket: run.ticketId, error });
         this.deps.ledger.clearLease(run.id);
-        this.deps.dispatcher.release(lease.id);
+        await this.deps.dispatcher.release(lease.id);
         this.#armElicitation(run.id);
         return;
       }
@@ -536,7 +536,7 @@ export class Orchestrator implements OrchestratorApi {
     }
     if (!work) {
       // Nobody remembers asking. The lease has no work: give the slot back.
-      this.deps.dispatcher.release(lease.id);
+      await this.deps.dispatcher.release(lease.id);
       return;
     }
     // No eligibility re-check: a ticket that moved, became blocked or was
@@ -549,7 +549,7 @@ export class Orchestrator implements OrchestratorApi {
     if (!lane) {
       // The config changed under the wait: the lane is gone, the work has
       // nowhere to enter. Said loudly; the board offers the ticket again.
-      this.deps.dispatcher.release(lease.id);
+      await this.deps.dispatcher.release(lease.id);
       this.deps.log.warn('fulfill.lane-gone', { request: requestId, ticket: work.ticketId, lane: work.lane });
       return;
     }
@@ -563,7 +563,7 @@ export class Orchestrator implements OrchestratorApi {
         agent: lane.agent!,
       });
       if (!created) {
-        this.deps.dispatcher.release(lease.id);
+        await this.deps.dispatcher.release(lease.id);
         return;
       }
       this.deps.ledger.setLease(run.id, lease.id);
@@ -644,7 +644,7 @@ export class Orchestrator implements OrchestratorApi {
     const run = this.deps.ledger.get(runId);
     if (run?.state !== 'awaiting_input') return; // answered, stopped or failed in the window
     if (run.leaseId && this.deps.dispatcher.leases.get(run.leaseId)) {
-      this.deps.dispatcher.release(run.leaseId);
+      await this.deps.dispatcher.release(run.leaseId);
       this.deps.ledger.clearLease(runId);
       this.deps.log.info('elicitation.waiting', { run: runId, ticket: run.ticketId });
       void this.wake(run.projectId);
@@ -751,12 +751,12 @@ export class Orchestrator implements OrchestratorApi {
     this.deps.log.info('run.answered', { run: run.id, ...(formId ? { form: formId } : {}) });
   }
 
-  #releaseLease(run: Run): void {
+  async #releaseLease(run: Run): Promise<void> {
     this.#clearElicitation(run.id); // a terminal run holds no clocks
     this.cancelWaiting(run.trackerId, run.ticketId); // nor queue places — a waiting answer reacquisition included
     if (!run.leaseId) return;
     if (!this.deps.dispatcher.leases.get(run.leaseId)) return; // the dispatcher already ended it
-    this.deps.dispatcher.release(run.leaseId);
+    await this.deps.dispatcher.release(run.leaseId);
   }
 
   /** The one event rule, used at start and at boot: every event says the
@@ -801,7 +801,7 @@ export class Orchestrator implements OrchestratorApi {
     if (ended.state === 'cancelled' && ended.worktree && ended.worktree !== this.deps.directory(ended.projectId))
       await this.#cleanWorktree(ended, ended.worktree);
     if (ended.targetLane) await this.#move(ended);
-    this.#releaseLease(ended);
+    await this.#releaseLease(ended);
     // A run that lived wakes the walk: its slot is free and its ticket may
     // have moved. An early failure — no worker ever came up — does **not**:
     // the pass that claimed it is still walking and asks the rest itself,
