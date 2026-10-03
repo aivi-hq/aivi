@@ -197,7 +197,7 @@ async function startLinear(
     };
     engine = new ChannelEngine(
       store,
-      { resource: config.resource, maxConcurrent: 8, turnTimeoutMs: config.turnTimeoutMs },
+      { resource: config.resource, maxConcurrent: 8 },
       services.loaded.config.scheduler,
       ask,
       delivery,

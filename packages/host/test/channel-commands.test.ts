@@ -30,7 +30,7 @@ import { Store } from '../src/store.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 const scheduler = configSchema.parse({ version: 1 }).scheduler;
-const limits = { resource: 'local-model', maxConcurrent: 1, turnTimeoutMs: 300_000 };
+const limits = { resource: 'local-model', maxConcurrent: 1 };
 const binding = { agent: 'assistant', directory: '/home' };
 const message = (id: string, channel = 'dm-a') => ({
   id,

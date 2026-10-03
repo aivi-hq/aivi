@@ -90,17 +90,6 @@ conversation is skipped **permanently**. If the API does order by update time,
 the code is correct — this needs one honest verification (or a defensive walk
 that filters instead of stops), not a comment.
 
-### B7. `turnTimeoutMs` promises to stop a worker turn; nothing bounds a worker turn
-
-The config's own words (tracker-linear/config.ts:96): "A worker turn longer
-than this is interrupted and ends stopped." The value is handed to exactly one
-place — the `ChannelEngine` (module.ts:200) — which bounds **assistant** turns.
-The orchestrator's worker turns have no clock at all: the dispatcher's idle
-timeout times *silence* and every event re-arms it, so a worker that keeps
-emitting tool events can run forever and nothing interrupts it. On Linear
-"worker" is the name of the role — the description promises a feature the
-worker does not have.
-
 ### B8. `--lane` hard-codes `worktree: true` — and so does `--unlane`
 
 `readLaneFlag`/`readUnlaneFlag` (tracker-linear/projects.ts:155,164) write
@@ -280,7 +269,7 @@ temp-file-plus-rename is three lines in each place.
 
 ## Suggested order of repair
 
-1. **The claims that promise what is not there (B7, D9, D10, D11)** — either
+1. **The claims that promise what is not there (D9, D10, D11)** — either
    build the bound/cap/signature or fix the sentence; each is small.
 2. **B3, B4, B5, B6** — each needs a decision more than a patch (what should
    boot say about a broken symlink; whether `fail` policy stays advertised;
@@ -305,4 +294,14 @@ temp-file-plus-rename is three lines in each place.
   miss answers `undefined` and says `answer.duplicate` instead of
   pretending; the double prompt itself stays by design (both are true
   answers), pinned by test.
+- **B7 — removed 2026-10-03** (the operator's ruling: "remove that timeout
+  option entirely and then in a future ticket we can add one to the
+  dispatcher"). `turnTimeoutMs` is gone from Discord, Slack and Linear
+  configs and from the `ChannelEngine`: it bounded chat turns only while
+  its Linear description promised a worker-turn bound that never existed
+  (worker turns were never bounded — the dispatcher's idle clock times
+  silence, not turns). Until the dispatcher grows a turn bound
+  ([plans/orchestrator.md](../plans/orchestrator.md)), no clock bounds a
+  turn; a hung assistant turn holds one of `maxConcurrent` slots and dies
+  with OpenCode's own errors or shutdown.
 - The rest: operator's call on each.

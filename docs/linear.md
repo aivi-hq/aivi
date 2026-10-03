@@ -212,7 +212,7 @@ An **assistant** conversation turn (the channel machinery,
 | --- | --- | --- |
 | Stop request, host shutdown | one `error`: stopped; the OpenCode session kept | turn discarded with the reason; capacity released |
 | OpenCode unreachable before the prompt | one `error`: nothing started, try again | turn discarded, capacity released |
-| Turn longer than `linear.turnTimeoutMs` or an unverifiable failure | one `error`: an operator has been notified, the issue waits | `blocked`; `aivi linear resolve ID --reason … --confirm-stopped` after inspecting the OpenCode session |
+| An unverifiable failure | one `error`: an operator has been notified, the issue waits | `blocked`; `aivi linear resolve ID --reason … --confirm-stopped` after inspecting the OpenCode session |
 | aivi restarted mid-turn | one `error`: restarted while working, operator must resolve | `blocked` (nobody knows whether the agent stopped) |
 
 `aivi linear status` lists the assistant conversations and what each is

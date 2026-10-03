@@ -198,8 +198,10 @@ for DMs and bot mentions.
 The shared machinery is described in [channels](channels.md#what-a-module-inherits);
 Discord's parameters: message ids are snowflakes and deduplicate gateway
 replays, replies are split at 1900 UTF-16 units, the binding that rotates
-sessions when it changes is `{ applicationId, agent, directory }`, and the
-turn timeout is `turnTimeoutMs`. `maxConcurrent` adds a Discord-specific upper
+sessions when it changes is `{ applicationId, agent, directory }`. Turn
+bounding waits for the dispatcher (the platform `turnTimeoutMs` options were
+removed 2026-10-03: they bounded chat turns only and lied about worker
+turns). `maxConcurrent` adds a Discord-specific upper
 bound on concurrent turns; `maxPending` bounds the inbox. The application lock
 prevents duplicate hosts; a module lock also protects the Discord inbox.
 

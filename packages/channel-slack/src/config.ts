@@ -49,7 +49,6 @@ export const slackConfigSchema = z
     progress: z.enum(['silent', 'status', 'tools']).default('status'),
     maxConcurrent: z.number().int().min(1).max(32).default(1),
     maxPending: z.number().int().min(1).max(1000).default(100),
-    turnTimeoutMs: z.number().int().min(1000).max(3600000).default(300000),
   })
   .superRefine((config, ctx) => {
     for (const [i, channel] of config.access.channels.entries())

@@ -87,13 +87,6 @@ export const linearSchema = z
       .enum(['silent', 'status', 'tools'])
       .default('tools')
       .describe('What the ephemeral activities in the agent session show while a worker runs.'),
-    turnTimeoutMs: z
-      .number()
-      .int()
-      .min(60_000)
-      .max(24 * 3_600_000)
-      .default(2 * 3_600_000)
-      .describe('A worker turn longer than this is interrupted and ends stopped.'),
   })
   .superRefine((config, ctx) => {
     // Several apps need a named primary, and the primary must be one of the configured apps.

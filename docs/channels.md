@@ -65,7 +65,7 @@ conversation-binding names — travel to plugin authors as
   different binding (agent, directory, application) acts as `/new` for every
   conversation, refused while any turn is queued or blocked.
 - **`ChannelEngine`**: claims queued turns within `maxConcurrent` and shared
-  capacity, calls the turn runner with a timeout, splits the reply at
+  capacity, calls the turn runner, splits the reply at
   `replyLimit` (UTF-16 units, surrogate pairs intact) and sends it, records
   `sent`; `TurnNotStarted` → the turn is discarded and the person asked to
   resend. Anything else depends on the platform's `effects`: a reply-only
@@ -73,8 +73,12 @@ conversation-binding names — travel to plugin authors as
   with the reason; a platform whose turns have effects beyond the reply
   (`effects: 'work'`, which is how Linear's assistant turns run) ends
   `blocked` with "an operator has been notified" — its side effects may
-  stand, so the turn is not quietly retried. Each
-  launched turn has its own abort besides the engine's and the timeout:
+  stand, so the turn is not quietly retried. No turn is bounded by a clock
+  here (2026-10-03): the platform `turnTimeoutMs` options bounded chat
+  turns only and lied about worker turns, so they are gone; the bound's
+  right home is the dispatcher, which watches every session
+  ([plans/orchestrator.md](plans/orchestrator.md)). Each
+  launched turn has its own abort besides the engine's:
   `stopTurn(conversation)` aborts the one running there (`/stop`), which is
   then discarded as "Stopped at the person's request" and the conversation
   hears "Stopped at your request."; a reply already being delivered is not

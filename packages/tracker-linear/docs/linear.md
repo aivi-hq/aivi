@@ -17,8 +17,7 @@ speaks for it.
       "logMisroutes": true,
       "humanLabel": "needs-human",
       "resource": "local-model",
-      "progress": "tools",
-      "turnTimeoutMs": 7200000
+      "progress": "tools"
     }
   }
 }
@@ -34,7 +33,6 @@ speaks for it.
 | `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
 | `mcp` | On by default: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app; `false` disables it |
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
-| `turnTimeoutMs` | A worker turn longer than this is interrupted and ends `stopped` (default two hours) |
 
 The project entry routes by Linear **team** (a repository may list several
 teams — one checkout, several teams; a team belongs to at most one project;

@@ -99,5 +99,10 @@ stages; the round below is the one that counts.
 
 Tracked deliberately later (not this build): folding `scheduler.resources`
 (jobs, turns, dreamer) into the dispatcher's pools — the one-pool
-unification; GitHub Issues and Jira adapters. (Worktree and forge prep was on
+unification; a **turn bound on the dispatcher**, where the turn-lease design
+already sketches its shape — a hung or silent turn would end by the
+dispatcher's rule, not by a per-platform setting (the platform
+`turnTimeoutMs` options were removed 2026-10-03: they bounded chat turns only
+and lied about worker turns; until this lands no clock bounds a turn);
+GitHub Issues and Jira adapters. (Worktree and forge prep was on
 this list until it built on 2026-10-02.)

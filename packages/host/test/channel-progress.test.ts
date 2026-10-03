@@ -18,7 +18,7 @@ import { ConversationStore } from '../src/channel/store.ts';
 import { Store } from '../src/store.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
-const limits = { resource: 'local-model', maxConcurrent: 1, turnTimeoutMs: 300_000 };
+const limits = { resource: 'local-model', maxConcurrent: 1 };
 const scheduler = configSchema.parse({ version: 1 }).scheduler;
 const S = 'ses_discord_a';
 const ev = (type: string, data: Record<string, unknown> = {}): SessionEvent => ({
@@ -290,7 +290,7 @@ test('progress: a placeholder is posted, edited at most once per window, and rep
   const session2 = enqueue(store, 'two');
   const engine2 = new ChannelEngine(
     store,
-    { ...limits, turnTimeoutMs: 1000 },
+    limits,
     scheduler,
     async () => `${'a'.repeat(1900)}tail`,
     noDelete.delivery,

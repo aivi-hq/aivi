@@ -189,8 +189,7 @@ whole setup:
       "progress": "status",
       "resource": "local-model",
       "maxConcurrent": 1,
-      "maxPending": 100,
-      "turnTimeoutMs": 300000
+      "maxPending": 100
     }
   }
 }
@@ -216,9 +215,10 @@ on its own; it never stops the host.
 ## Queue and recovery
 
 Shared: [channels](channels.md#what-a-module-inherits). Slack's parameters:
-turn ids are `channel:ts`, replies are split at 3900, the binding that
-rotates sessions when it changes is `{ agent, directory }`, and the turn
-timeout is `turnTimeoutMs`.
+turn ids are `channel:ts`, replies are split at 3900, and the binding that
+rotates sessions when it changes is `{ agent, directory }`. Turn bounding
+waits for the dispatcher (the platform `turnTimeoutMs` options were removed
+2026-10-03: they bounded chat turns only and lied about worker turns).
 
 ```sh
 npm run aivi -- slack status
