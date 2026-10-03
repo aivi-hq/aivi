@@ -5,7 +5,7 @@ Status: idea, agreed 2026-09-15. Do it once, right before the first release.
 ## Idea
 
 While aivi is unreleased, every schema change is an additive migration step
-(host `PRAGMA user_version` 1→7, channel namespace steps 1→3). That history is
+(host `PRAGMA user_version` 1→11, channel namespace steps 1→5). That history is
 noise for anyone installing a released version: they will never have a v1
 database. At release, collapse the steps into one `CREATE TABLE` set per
 namespace and start counting from 1 again.

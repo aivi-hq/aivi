@@ -205,7 +205,8 @@ temp-file-plus-rename is three lines in each place.
    removed 2026-10-03.**
 3. **D1/D4 — fixed 2026-10-03** (one reader's answer, named loudly). D8
    fixed. **D7 — closed 2026-10-03** (operator's ruling, see Disposition);
-   D5, D6 are the operator's calls. **E1-E5 — fixed 2026-10-03.**
+   **D6 — moved to a plan** (see Disposition); D5 is the operator's call.
+   **E1-E5 — fixed 2026-10-03.**
 4. **E6 — fixed 2026-10-03** (every durable write lands whole or not at all).
    **C1 — the easy half done 2026-10-03**: the two error classes live in the
    kit now; the engine/store half waits for its own plan.
@@ -329,4 +330,8 @@ temp-file-plus-rename is three lines in each place.
   guess a live `/link` code an attacker must already be a channel user
   *and* know a link is open right now; the platform throttles their own
   client. A non-issue.
+- **D6 — moved out of the board 2026-10-03** (the operator's call): the
+  nightly transcripts' retention is a knowledge improvement, not a sweep
+  fix. It waits, with room to grow, at
+  [plans/knowledge-improvements.md](../plans/knowledge-improvements.md).
 - The rest: operator's call on each.

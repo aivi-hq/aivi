@@ -1,9 +1,10 @@
 # The database file does everything; it belongs below the kit
 
 Status: parked by the operator to start right after the
-[CLI refactor](../plans/cli-refactor/index.md) ends. The *how* is the
-operator's — they already have a split in mind; write it here when the work
-starts. This page records the why and the payoff.
+[CLI refactor](../plans/cli-refactor/index.md) ends; the refactor merged
+2026-10-03, so the parking lot is open. The *how* is the operator's — they
+already have a split in mind; write it here when the work starts. This page
+records the why and the payoff.
 
 ## The problem
 

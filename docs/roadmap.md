@@ -63,9 +63,11 @@ only when idle stays an idea
    dispatcher with its pools and leases, the **templates program's**
    scaffolding and self-knowledge (2026-10-03). What is left: the **forge
    walkthrough and live round trip** on the operator's host (one real PR,
-   one thread resolved, the stop and the feedback loop seen live) →
-   **knowledge as a plugin** → **a last look at jobs** → tag v1 rc, on the
-   operator's explicit word. The
+   one thread resolved, the stop and the feedback loop seen live) → **a
+   last look at jobs** → tag v1 rc, on the operator's explicit word.
+   **Knowledge as a plugin is off the line** (ruled 2026-10-03): knowledge
+   stays a core concept until different knowledge adapters are real, and
+   nothing waits on the move. The
    reversal: forge had been moved in front so review facts would exist
    for the orchestrator; the operator ruled it the other way —
    pre-designing the forge-carved system is harder than building,
