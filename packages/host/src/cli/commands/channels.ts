@@ -23,8 +23,8 @@ import { pluginRegistry } from '../registry.ts';
 function pluginCliContext(machine: MachineStatus): PluginCliContext {
   return {
     machine,
-    home,
-    configPath,
+    home: home(),
+    configPath: configPath(),
     loaded: async (): Promise<LoadedConfig> => (await context()).loaded,
     withStore: async <T>(fn: (store: Store) => T | Promise<T>) => withStore((await context()).loaded, fn),
     print,
@@ -43,7 +43,7 @@ function pluginCliContext(machine: MachineStatus): PluginCliContext {
 export async function registerChannels(program: Command, machine: MachineStatus): Promise<void> {
   let entries: PluginEntry[];
   try {
-    entries = (await pluginRegistry(home)).entries;
+    entries = (await pluginRegistry(home())).entries;
   } catch (error) {
     console.error(`aivi: the plugin list did not load (${errorMessage(error)}); plugin commands are absent.`);
     return;

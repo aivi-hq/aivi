@@ -21,7 +21,7 @@ async function startForge(config: ForgeGithubConfig, services: AiviServices): Pr
   // Every failure here is a ConfigurationError naming what to fix on GitHub or
   // in .env: the module goes to error, `/status` says so, and nothing retries.
   const app = await GitHubApp.connect(config, { log });
-  const unregister = services.forges.register(createGitHubForge(app, log));
+  const unregister = services.forges.register(createGitHubForge(app, { log }));
   log.info('ready', {
     installation: app.installationId,
     account: app.accountLogin,

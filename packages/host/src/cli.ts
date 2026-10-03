@@ -68,7 +68,7 @@ export async function registerCommands(program: Command, machine: MachineStatus)
       closeLogging = await configureLogging({
         level: level as 'debug' | 'info' | 'warn' | 'error',
         format: (format === 'auto' ? (isTty(process.stderr) ? 'pretty' : 'json') : format) as 'pretty' | 'json',
-        logFile: resolve(home, 'state', 'logs', 'aivi.log'),
+        logFile: resolve(home(), 'state', 'logs', 'aivi.log'),
       });
     })
     // The same close the direct bin's finally does, for the mounted case;

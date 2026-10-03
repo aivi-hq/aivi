@@ -8,6 +8,20 @@ import type { Forges } from '@aivi/plugin/forge';
 
 const run = promisify(execFile);
 
+/** One git execution: the plain path's crossing to disk. Tests answer this
+ *  instead of spawning git — the decision whether to fast-forward, skip or
+ *  report is the unit; whether git really moves files is git's own unit and
+ *  the live gate's subject. */
+export type ProjectGit = (directory: string, args: string[], signal?: AbortSignal) => Promise<string>;
+
+const realGit: ProjectGit = async (directory, args, signal) =>
+  (
+    await run('git', ['-C', directory, ...args], {
+      maxBuffer: 4 * 1024 * 1024,
+      ...(signal ? { signal } : {}),
+    })
+  ).stdout.trim();
+
 export interface ProjectSyncOutcome {
   id: string;
   /** `updated` when the checkout moved, `current` when it already matched upstream, `skipped` with a reason otherwise. */
@@ -30,12 +44,14 @@ export interface ProjectSyncOutcome {
  * `source/` is the clean checkout that gets indexed, not a working
  * directory.
  */
-async function syncProject(project: Project, forges: Forges, signal?: AbortSignal): Promise<ProjectSyncOutcome> {
+async function syncProject(
+  project: Project,
+  forges: Forges,
+  signal: AbortSignal | undefined,
+  runner: ProjectGit,
+): Promise<ProjectSyncOutcome> {
   const { id, directory } = project;
-  const git = async (...args: string[]) =>
-    (
-      await run('git', ['-C', directory, ...args], { maxBuffer: 4 * 1024 * 1024, ...(signal ? { signal } : {}) })
-    ).stdout.trim();
+  const git = (...args: string[]) => runner(directory, args, signal);
   if (!(await stat(join(directory, '.git')).catch(() => null)))
     return { id, state: 'skipped', reason: 'not a git checkout' };
   try {
@@ -74,12 +90,13 @@ export async function syncProjects(
   projects: Project[],
   forges: Forges,
   signal?: AbortSignal,
+  git?: ProjectGit,
 ): Promise<ProjectSyncOutcome[]> {
   const outcomes: ProjectSyncOutcome[] = [];
   for (const project of projects) {
     if (project.removed) continue;
     signal?.throwIfAborted();
-    outcomes.push(await syncProject(project, forges, signal));
+    outcomes.push(await syncProject(project, forges, signal, git ?? realGit));
   }
   return outcomes;
 }

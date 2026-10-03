@@ -52,6 +52,16 @@ export interface ExecDeps {
   /** Injectable for tests: the PTY loader and the command on PATH. */
   importPty?: (() => Promise<typeof import('node-pty')>) | undefined;
   command?: string | undefined;
+  /** The pipe-mode process factory. The door's protocol — the closed env it
+   *  hands a child, the frames it relays, the kill on disconnect, the one
+   *  child per session — is the unit under test here; whether the OS can
+   *  spawn a process is the live gate's subject, so a test drives this seam
+   *  instead of paying a real child. Defaults to node's own spawn. */
+  spawnPipe?: (
+    command: string,
+    argv: string[],
+    options: { cwd: string; env: Record<string, string> },
+  ) => ChildProcessWithoutNullStreams;
 }
 
 /** One live exec session: exactly one child, whichever mode the client asked for. */
@@ -77,6 +87,7 @@ export function attachExec(server: Server, deps: ExecDeps): void {
   const { store, loaded, log } = deps;
   const importPty = deps.importPty ?? (() => import('node-pty'));
   const command = deps.command ?? EXEC_COMMAND;
+  const spawnPipe = deps.spawnPipe ?? ((name, argv, options) => spawnChild(name, argv, options));
   const home = dirname(loaded.path);
   const wss = new WebSocketServer({ noServer: true });
   const sessions = new Map<WebSocket, Session>();
@@ -240,7 +251,7 @@ export function attachExec(server: Server, deps: ExecDeps): void {
     };
 
     const pipeSession = (argv: string[], env: Record<string, string>): void => {
-      const child = spawnChild(command, argv, { cwd: home, env });
+      const child = spawnPipe(command, argv, { cwd: home, env });
       session.pipe = child;
       send({ t: 'ready', pid: child.pid });
       child.stdout.on('data', (chunk: Buffer) => {

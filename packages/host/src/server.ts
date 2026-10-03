@@ -23,7 +23,7 @@ export async function startServer(): Promise<void> {
   // The `aivi-plugins` list in app/package.json says which modules run; the
   // config block is configuration only. Packages were read at context load
   // (their ./config declarations); the module code itself loads here.
-  const modules: AiviModule[] = await buildModules(registry, loaded, home);
+  const modules: AiviModule[] = await buildModules(registry, loaded, home());
   const abort = new AbortController();
   // Stop means stop, and the operator sees it: the drains after this can
   // take seconds (idle keep-alive sockets expire on their own), so silence
@@ -46,7 +46,7 @@ export async function startServer(): Promise<void> {
         protectedEnv,
         // The composed closed schema the boot itself loaded against: this
         // is the referee `aivi_config` re-validates every write with.
-        compose: configPath => loadComposedConfig(home, configPath),
+        compose: configPath => loadComposedConfig(home(), configPath),
         log,
         signal: abort.signal,
         resources: () => createResources(loaded, log),
@@ -86,7 +86,7 @@ if (import.meta.main) {
   const closeLogging = await configureLogging({
     level: 'info',
     format: isTty(process.stderr) ? 'pretty' : 'json',
-    logFile: resolve(home, 'state', 'logs', 'aivi.log'),
+    logFile: resolve(home(), 'state', 'logs', 'aivi.log'),
   });
   startServer()
     .catch(error => {

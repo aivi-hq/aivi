@@ -11,48 +11,52 @@ import { Store } from '@aivi/host';
 import { createHostClient } from '@aivi/plugin/api';
 import { loadComposedConfig, type PluginRegistry, pluginRegistry } from './registry.ts';
 
-/** One home holds everything: config.json, .env, state/. Paths in the config resolve against it. */
-export const home = resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
-export const configPath = resolve(home, 'config.json');
+/** One home holds everything: config.json, .env, state/. Paths in the config resolve against it.
+ *  Read at call, not frozen at import: the env names the home, and a module-level constant
+ *  would pin the process to whatever env the first importer had. The bin runs one command
+ *  per process and never notices; the test suite drives many homes through one process,
+ *  exactly the way the bin drives them one at a time. */
+export const home = () => resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
+export const configPath = () => resolve(home(), 'config.json');
 
-let contextPromise:
-  | Promise<{
-      loaded: LoadedConfig;
-      registry: PluginRegistry;
-      protectedEnv: string[];
-      log: Logger;
-      poke: () => Promise<void>;
-    }>
-  | undefined;
-
-/** Everything an action needs from the home, loaded once, lazily: logging is
- *  configured by the preAction hook in cli.ts, so an action that asks for the
+/** Everything an action needs from the home, read fresh at every call: logging
+ *  is configured by the preAction hook in cli.ts, so an action that asks for the
  *  context gets a ready log. `server create` runs before any config exists and
  *  never asks for the context. The config is validated against the **composed**
  *  schema — core's fields plus the block of every plugin in the home's list —
- *  so the registry arrives with it. */
-export const context = () =>
-  (contextPromise ??= (async () => {
-    if (!existsSync(configPath))
-      throw new Error(`No config.json in ${home}. Create one, or point AIVI_HOME at a directory that has one.`);
-    const log = getLogger(['aivi']);
-    // .env is loaded without overriding existing variables, so `fnox exec` and CI overrides behave.
-    const protectedEnv = loadEnvFile(resolve(home, '.env'), log);
-    const loaded = await loadComposedConfig(home, configPath);
-    const registry = await pluginRegistry(home);
-    // The CLI writes to SQLite directly; the running host learns about it through this poke and
-    // nothing else, so a poke that cannot be delivered is said out loud rather than swallowed.
-    const poke = async () => {
-      await createHostClient(hostUrl(loaded))
-        .wake()
-        .catch(error =>
-          console.error(
-            `Note: could not wake the host (${errorMessage(error)}). Saved; it takes effect when the host next dispatches (a due job, or \`aivi serve\` starting).`,
-          ),
-        );
-    };
-    return { loaded, registry, protectedEnv, log, poke };
-  })());
+ *  so the registry arrives with it. Nothing is memoized: one command is one
+ *  process in production, and a context cached across commands would show a
+ *  later command stale disk state — the bin re-reads for every command, and so
+ *  does the suite that drives many commands through one process. */
+export const context = async (): Promise<{
+  loaded: LoadedConfig;
+  registry: PluginRegistry;
+  protectedEnv: string[];
+  log: Logger;
+  poke: () => Promise<void>;
+}> => {
+  const at = home();
+  const config = configPath();
+  if (!existsSync(config))
+    throw new Error(`No config.json in ${at}. Create one, or point AIVI_HOME at a directory that has one.`);
+  const log = getLogger(['aivi']);
+  // .env is loaded without overriding existing variables, so `fnox exec` and CI overrides behave.
+  const protectedEnv = loadEnvFile(resolve(at, '.env'), log);
+  const loaded = await loadComposedConfig(at, config);
+  const registry = await pluginRegistry(at);
+  // The CLI writes to SQLite directly; the running host learns about it through this poke and
+  // nothing else, so a poke that cannot be delivered is said out loud rather than swallowed.
+  const poke = async () => {
+    await createHostClient(hostUrl(loaded))
+      .wake()
+      .catch(error =>
+        console.error(
+          `Note: could not wake the host (${errorMessage(error)}). Saved; it takes effect when the host next dispatches (a due job, or \`aivi serve\` starting).`,
+        ),
+      );
+  };
+  return { loaded, registry, protectedEnv, log, poke };
+};
 
 /** What a command puts on stdout: `data` is the machine form every pipe gets;
  *  `output` is the readable form a terminal gets. One function, so app commands

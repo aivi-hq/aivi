@@ -316,9 +316,16 @@ temp-file-plus-rename is three lines in each place.
   config's surface), the GitHub client no longer carries octokit's
   throttling plugin (a Bottleneck that held *every* write one full
   second, rate limit or not), and the git fixtures are built once per
-  file and copied per test instead of ten `git` spawns each. What
-  remains over 100ms is real git and real child processes — the
-  end-to-end forge, worktree and CLI tests the operator named as the
-  valuable kind — measured per file, they are a few hundred ms each,
-  inflated in a full parallel run by CPU contention.
+  file and copied per test instead of ten `git` spawns each. The tests
+  that still bought their answers by spawning git and child processes —
+  the forge, the worktree teardown, the project sync, the git tools, the
+  CLI mechanism, the exec relay — are **units** now (ruled 2026-10-03:
+  "make those testable as units... we do not have to test the libraries
+  we use"): each git and child crossing is an injected answer, every
+  call is on record, and what the tests pin is our decisions — which
+  argv where, which refusal means what. Whether git really merges and
+  moves files stays git's own unit and the live gate's subject
+  (`npm run smoke`). The suite runs 515 tests in about 3.5s; the one
+  test that waits a real second is the shell timeout's blocking
+  classification, a floor our own schema sets (`timeoutMs ≥ 1000`).
 - The rest: operator's call on each.

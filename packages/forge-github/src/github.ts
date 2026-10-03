@@ -184,6 +184,13 @@ export class GitHubApp {
 /** A shell git, run for the forge. `env` is what the transport puts in — the
  *  credential rides in the environment, never in argv, where anyone listing
  *  processes could read it. */
+/** One git execution: the forge's only crossing to disk. Tests answer this
+ *  instead of spawning git — whether git really moves the bytes is git's own
+ *  unit, and the live gate's subject; what the unit tests pin is the forge's
+ *  decisions: the refspecs it names, the credential it carries, the failures
+ *  it classifies and says in a person's words. */
+export type GitRunner = typeof runGit;
+
 export async function runGit(
   directory: string,
   args: string[],

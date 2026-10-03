@@ -48,5 +48,8 @@
     "node-pty": "1.1.0",
     "ws": "8.22.0",
     "zod": "4.1.13"
+  },
+  "devDependencies": {
+    "@logtape/logtape": "2.3.6"
   }
 }

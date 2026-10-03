@@ -20,8 +20,8 @@ export function registerGettingStarted(program: Command): void {
     .action(async values => {
       print(
         await serverCreate({
-          home: home,
-          configPath,
+          home: home(),
+          configPath: configPath(),
           use: values.use,
           name: values.name,
           public: values.public,
@@ -37,6 +37,6 @@ export function registerGettingStarted(program: Command): void {
     .action(async spec => {
       if (!spec) throw new Error('plugin setup needs the installed package.');
       const { loaded } = await context();
-      await pluginSetup(spec, { home: home, configPath, identityName: loaded.config.identity.name });
+      await pluginSetup(spec, { home: home(), configPath: configPath(), identityName: loaded.config.identity.name });
     });
 }

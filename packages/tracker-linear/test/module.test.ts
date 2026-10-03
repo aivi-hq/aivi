@@ -26,6 +26,7 @@ import {
   Forges,
   LeaseStore,
   Orchestrator,
+  type OrchestratorGit,
   PublicRoutes,
   RunLedger,
   Store,
@@ -440,7 +441,7 @@ const knowledge: KnowledgeService = { search: async () => [], index: async () =>
 /** The services a module starts with: the **real** orchestrator over the same
  *  Store, watching nothing (no live turn ends; the tools drive the run). The
  *  boot-reconcile test passes the same orchestrator to a second module. */
-function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController): AiviServices {
+function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController, git?: OrchestratorGit): AiviServices {
   const opencode = () => connectOpenCode(loaded.config.opencode, {});
   const orchestrator = new Orchestrator({
     ledger: new RunLedger(store),
@@ -468,6 +469,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
     forges: new Forges(),
     identity: async () => ({ name: 't', email: 't@t' }),
     keepAliveMs: 300_000,
+    ...(git ? { git } : {}),
   });
   return {
     loaded,
@@ -1153,7 +1155,10 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
   store.close();
 });
 
-async function walkHarness(t: { after(fn: () => Promise<void>): void }, opts: { worktree?: boolean } = {}) {
+async function walkHarness(
+  t: { after(fn: () => Promise<void>): void },
+  opts: { worktree?: boolean; git?: OrchestratorGit } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = await checkout(root, 'website');
@@ -1186,7 +1191,7 @@ async function walkHarness(t: { after(fn: () => Promise<void>): void }, opts: { 
   const board = fakeBoard(tracker, 'website', opts.worktree ? 'me/eng-1' : '');
   const store = new Store(':memory:');
   const abort = new AbortController();
-  const services = makeServices(loaded, store, abort);
+  const services = makeServices(loaded, store, abort, opts.git);
   return {
     tracker,
     config,
@@ -1290,6 +1295,80 @@ test('a stop the runtime would not answer ends *unconfirmed*: the honest words, 
   );
   await new Promise(r => setTimeout(r, 50));
   assert.equal(opencode.prompts.length, 1, 'the walk does not read the stopped ticket back');
+});
+
+test('a stop in a worktree lane tears the attempt down: worktree gone, local commits gone, ticket marked', async t => {
+  // git as the worktree machinery sees it: every call on record, and the two
+  // calls that a person would watch a filesystem answer for — `worktree add`
+  // leaves a directory, `worktree remove` takes it away. What the machinery
+  // decides — which ref to start from, what a stop deletes, what it names
+  // when it cannot delete — is the unit; whether git really unlinks a
+  // checkout is git's own unit and the live gate's subject.
+  const calls: { cwd: string; args: string[] }[] = [];
+  const git: OrchestratorGit = async (cwd, args) => {
+    calls.push({ cwd, args });
+    const key = args.join(' ');
+    if (key === 'worktree prune' || key === 'worktree list --porcelain') return { ok: true, stdout: '' };
+    if (key.startsWith('rev-parse --verify --quiet refs/')) return { ok: false, message: 'no such ref' };
+    if (key === 'symbolic-ref --quiet --short refs/remotes/origin/HEAD') return { ok: true, stdout: 'origin/main' };
+    if (key === 'rev-parse --abbrev-ref --quiet HEAD') return { ok: true, stdout: 'me/eng-1' };
+    if (key.startsWith('worktree add')) {
+      // removeWorktree asks the real filesystem whether the path is a live
+      // worktree before it decides to tear one down: the add leaves the
+      // directory that honest stat looks for. Nothing else here touches disk.
+      await mkdir(join(args[5]!, '.git'), { recursive: true });
+      return { ok: true, stdout: '' };
+    }
+    if (key.startsWith('worktree remove')) return { ok: true, stdout: '' };
+    if (key.startsWith('branch -D') || key.startsWith('config')) return { ok: true, stdout: '' };
+    throw new Error(`the worktree machinery ran git ${key}; the test scripted no answer`);
+  };
+  const { tracker, config, store, services, board, opencode, source, orchestrator } = await walkHarness(t, {
+    worktree: true,
+    git,
+  });
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => board,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+
+  await orchestrator.wake('website');
+  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
+  assert.match(opencode.prompts[0]!.text, /git worktree of the project at .+\/worktrees\//);
+  const run = orchestrator.activeRun('tracker-linear', 'eng-1')!;
+  const worktree = run.worktree!;
+  assert.ok(worktree, 'the run records where the worker works');
+  assert.ok(
+    calls.some(call => call.args.join(' ') === `worktree add --quiet -b me/eng-1 ${worktree} origin/main`),
+    'the branch was nowhere, so the worktree started from the remote default',
+  );
+
+  // Stop means stop, teardown included (ruled 2026-10-03): the worktree
+  // goes, the local branch goes with it — the half-finished commits go
+  // unreachable — and the ticket carries the human mark. Anything pushed
+  // would stay pushed: a stop ends this machine's attempt, not the remote's truth.
+  await tracker.drive({ kind: 'prompted', id: 'act-stop', conversation: 'dev:as-auto-1', signal: 'stop' });
+  await until(() => tracker.closingNotes.length === 1, 'the ticket heard its ending');
+  assert.ok(
+    calls.some(call => call.cwd === source && call.args.join(' ') === `worktree remove --force ${worktree}`),
+    'the directory went first, forced, by git’s hand',
+  );
+  assert.ok(
+    calls.some(call => call.cwd === source && call.args.join(' ') === 'branch -D me/eng-1'),
+    'and the local branch with its stopped commits goes with it',
+  );
+  assert.ok(
+    tracker.moves.some(m => m.issueId === 'eng-1' && m.update.kind === 'label' && m.update.on),
+    'the ticket carries the human mark',
+  );
+  assert.deepEqual(board.moves, [], 'a stop moves nothing');
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opencode.prompts.length, 1, 'and the walk does not start a fresh attempt on the stopped ticket');
 });
 
 test('an answer OpenCode will not take is spoken, not silence: the run stays parked and the answer is giveable again', async t => {

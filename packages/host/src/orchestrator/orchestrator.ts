@@ -104,6 +104,11 @@ export interface OrchestratorDeps {
    *  instant restoration. Absent dep: the built-in defaults, which is what
    *  a host with no home on disk (a test, a CLI boot) speaks anyway. */
   prompt?: (name: PromptName) => Promise<string>;
+  /** The git crossing the tools read through (and the worktree machinery
+   *  builds through). Production leaves the real git; a test answers it, so
+   *  the tools' decisions — which argv where, which refusal means what —
+   *  are units, not git simulations. */
+  git?: OrchestratorGit;
 }
 
 /** Refused completions before the person is asked, in their words: "a max
@@ -119,17 +124,27 @@ const clip = (text: string, max = 500): string => {
 
 const exec = promisify(execFile);
 
-/** Local git reads for the push tool: trimmed stdout, `''` when git has no
- *  answer. Nothing here reaches a remote — crossing the boundary is the
- *  forge's, and `aivi_pr` hands the transfer over below. */
-const localGit = async (cwd: string, ...args: string[]): Promise<string> =>
-  (await exec('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 }).catch(() => null))?.stdout.trim() ?? '';
+/** One git execution: the git tools' crossing to disk for their reads and
+ *  their merge. Tests answer this instead of spawning git — which argv the
+ *  tool sends where, and how it classifies each refusal, is the unit; whether
+ *  git really merges and moves files is git's own unit and the live gate's
+ *  subject. */
+export type OrchestratorGit = (
+  cwd: string,
+  args: string[],
+  signal?: AbortSignal,
+) => Promise<{ ok: true; stdout: string } | { ok: false; message: string }>;
 
-/** A read whose failure must not look like an empty answer: `null` says
- *  git refused, and the caller says so instead of deciding on a silence. */
-const gitRead = async (cwd: string, ...args: string[]): Promise<string | null> => {
-  const done = await exec('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 }).catch(() => null);
-  return done === null ? null : done.stdout.trim();
+const realGit: OrchestratorGit = async (cwd, args, signal) => {
+  try {
+    const { stdout } = await exec('git', ['-C', cwd, ...args], {
+      maxBuffer: 1024 * 1024,
+      ...(signal ? { signal } : {}),
+    });
+    return { ok: true, stdout: stdout.trim() };
+  } catch (error) {
+    return { ok: false, message: errorMessage(error) };
+  }
 };
 
 /** The rules of the game, sent with the ticket at the start of every run.
@@ -767,7 +782,12 @@ export class Orchestrator implements OrchestratorApi {
    *  stands and reuses or replaces it as it always has. */
   async #cleanWorktree(run: Run, worktree: string): Promise<void> {
     try {
-      const left = await removeWorktree(this.deps.directory(run.projectId), worktree, this.deps.signal);
+      const left = await removeWorktree(
+        this.deps.directory(run.projectId),
+        worktree,
+        this.deps.signal,
+        this.#worktreeGit,
+      );
       if (left) this.deps.log.warn('worktree.branch.left', { run: run.id, branch: left, path: worktree });
       else this.deps.log.info('worktree.cleaned', { run: run.id, path: worktree });
     } catch (error) {
@@ -850,6 +870,7 @@ export class Orchestrator implements OrchestratorApi {
           identity: await this.deps.identity(),
           ...(owned ? { fetchBranch: (b: string) => owned.forge.fetchBranch(owned.repo, source, b) } : {}),
           signal: this.deps.signal,
+          git: this.#worktreeGit,
         });
         dir = made.path;
         log.info('worktree.ready', { branch, base: made.base, ...(owned ? { forge: owned.repo.id } : {}) });
@@ -1091,7 +1112,7 @@ export class Orchestrator implements OrchestratorApi {
     if (!feedback?.openThreadIds.length) return; // started clean: nothing is ever owed
     const directory = run.worktree ?? this.deps.directory(run.projectId);
     const owned = await this.deps.forges.owner({ id: run.projectId, directory });
-    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    const branch = await this.#localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
     if (!owned || !branch)
       throw new ToolError(
         502,
@@ -1231,14 +1252,37 @@ export class Orchestrator implements OrchestratorApi {
     return { run, directory, owned };
   }
 
+  /** Local git reads for the git tools: trimmed stdout, `''` when git has no
+   *  answer. Nothing here reaches a remote — crossing the boundary is the
+   *  forge's, and `aivi_pr` hands the transfer over below. */
+  async #localGit(cwd: string, ...args: string[]): Promise<string> {
+    const done = await (this.deps.git ?? realGit)(cwd, args);
+    return done.ok ? done.stdout : '';
+  }
+
+  /** A read whose failure must not look like an empty answer: `null` says
+   *  git refused, and the caller says so instead of deciding on a silence. */
+  async #gitRead(cwd: string, ...args: string[]): Promise<string | null> {
+    const done = await (this.deps.git ?? realGit)(cwd, args);
+    return done.ok ? done.stdout : null;
+  }
+
+  /** The worktree machinery speaks a rejecting git: a refusal is a thrown
+   *  message, and its callers decide on it. */
+  #worktreeGit = (cwd: string, args: string[], signal?: AbortSignal): Promise<string> =>
+    (this.deps.git ?? realGit)(cwd, args, signal).then(done => {
+      if (!done.ok) throw new Error(done.message);
+      return done.stdout;
+    });
+
   /** The branch HEAD sits on, refused when it is not a branch a pull
    *  request could stand for. */
   async #workerBranch(directory: string): Promise<string> {
-    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    const branch = await this.#localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
     if (!branch) throw new ToolError(409, 'This run sits on a detached HEAD; there is no branch to move.');
     // `--short` says a remote ref as `origin/main`; the guard wants the name.
     const defaultBranch = (
-      await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
+      await this.#localGit(directory, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
     ).replace(/^origin\//, '');
     if (defaultBranch && branch === defaultBranch)
       throw new ToolError(409, `${branch} is the project's default branch: this work needs a branch of its own.`);
@@ -1261,13 +1305,13 @@ export class Orchestrator implements OrchestratorApi {
   async #pushBranch(owned: ForgeOwner, directory: string, branch: string): Promise<'pushed' | 'already'> {
     await owned.forge.fetchBranch(owned.repo, directory, branch);
     const remoteRef = `refs/remotes/origin/${branch}`;
-    const remoteSha = await localGit(directory, 'rev-parse', '--verify', '--quiet', remoteRef);
+    const remoteSha = await this.#localGit(directory, 'rev-parse', '--verify', '--quiet', remoteRef);
     if (!remoteSha) {
       await owned.forge.push(owned.repo, directory, branch);
       return 'pushed';
     }
-    const ahead = await gitRead(directory, 'rev-list', '--count', `${remoteRef}..HEAD`);
-    const behind = await gitRead(directory, 'rev-list', '--count', `HEAD..${remoteRef}`);
+    const ahead = await this.#gitRead(directory, 'rev-list', '--count', `${remoteRef}..HEAD`);
+    const behind = await this.#gitRead(directory, 'rev-list', '--count', `HEAD..${remoteRef}`);
     if (ahead === null || behind === null)
       throw new ToolError(500, `This directory does not read as a git checkout: ${directory}`);
     if (ahead === '0') return 'already';
@@ -1278,16 +1322,15 @@ export class Orchestrator implements OrchestratorApi {
     // Diverged. Whose commits are they? `git cherry HEAD <remote>` marks a
     // remote commit `-` when HEAD carries its patch-equivalent: all `-` is
     // a rebase, any `+` is a person's work.
-    const cherry = await gitRead(directory, 'cherry', 'HEAD', remoteRef);
+    const cherry = await this.#gitRead(directory, 'cherry', 'HEAD', remoteRef);
     if (cherry === null || cherry.split('\n').some(line => line.startsWith('+'))) {
-      const merged = await exec('git', ['-C', directory, 'merge', '--no-edit', '--quiet', remoteRef], {
-        maxBuffer: 1024 * 1024,
-      }).then(
-        () => null,
-        (error: unknown) => errorMessage(error),
+      const merged = await (this.deps.git ?? realGit)(directory, ['merge', '--no-edit', '--quiet', remoteRef]).then(
+        done => (done.ok ? null : done.message),
       );
       if (merged !== null) {
-        const files = (await localGit(directory, 'diff', '--name-only', '--diff-filter=U')).split('\n').filter(Boolean);
+        const files = (await this.#localGit(directory, 'diff', '--name-only', '--diff-filter=U'))
+          .split('\n')
+          .filter(Boolean);
         throw new ToolError(
           409,
           files.length
@@ -1320,7 +1363,7 @@ export class Orchestrator implements OrchestratorApi {
     const branch = await this.#workerBranch(directory);
     const moved = await this.#pushBranch(owned, directory, branch);
     if (moved === 'already') {
-      const behind = await localGit(directory, 'rev-list', '--count', `HEAD..refs/remotes/origin/${branch}`);
+      const behind = await this.#localGit(directory, 'rev-list', '--count', `HEAD..refs/remotes/origin/${branch}`);
       throw new ToolError(
         409,
         `Nothing to push: origin/${branch} already has every commit here${
@@ -1341,17 +1384,17 @@ export class Orchestrator implements OrchestratorApi {
   readonly syncTool: ToolHandler = async call => {
     const { run, directory, owned } = await this.#forgeRun(call, 'aivi_sync');
     await owned.forge.fetchRefs(owned.repo, directory);
-    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    const branch = await this.#localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
     if (!branch) return { synced: true, note: 'detached HEAD: refs are fresh, no branch to count against' };
     const remoteRef = `refs/remotes/origin/${branch}`;
-    const known = await localGit(directory, 'rev-parse', '--verify', '--quiet', remoteRef);
+    const known = await this.#localGit(directory, 'rev-parse', '--verify', '--quiet', remoteRef);
     // "main moved" is worth knowing before a rebase is even considered.
     const defaultBranch = (
-      await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
+      await this.#localGit(directory, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
     ).replace(/^origin\//, '');
     const defaultBehind =
       defaultBranch && defaultBranch !== branch
-        ? await localGit(directory, 'rev-list', '--count', `HEAD..refs/remotes/origin/${defaultBranch}`)
+        ? await this.#localGit(directory, 'rev-list', '--count', `HEAD..refs/remotes/origin/${defaultBranch}`)
         : '0';
     this.deps.log.info('run.synced', { run: run.id, branch, repo: owned.repo.id });
     return {
@@ -1359,8 +1402,8 @@ export class Orchestrator implements OrchestratorApi {
       branch,
       ...(known
         ? {
-            behind: await localGit(directory, 'rev-list', '--count', `HEAD..${remoteRef}`),
-            ahead: await localGit(directory, 'rev-list', '--count', `${remoteRef}..HEAD`),
+            behind: await this.#localGit(directory, 'rev-list', '--count', `HEAD..${remoteRef}`),
+            ahead: await this.#localGit(directory, 'rev-list', '--count', `${remoteRef}..HEAD`),
           }
         : { remoteBranch: 'absent' }),
       ...(defaultBehind && defaultBehind !== '0' ? { defaultBranch, defaultBehind } : {}),
@@ -1398,7 +1441,7 @@ export class Orchestrator implements OrchestratorApi {
   /** The branch's **open** pull request, said plainly when there is none:
    *  the reading and answering tools all start from this fact. */
   async #openPull(owned: ForgeOwner, directory: string): Promise<{ branch: string; pr: PrFacts }> {
-    const branch = await localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
+    const branch = await this.#localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
     if (!branch) throw new ToolError(409, 'This run sits on a detached HEAD; no branch, no pull request to read.');
     const pr = await owned.forge.prForBranch(owned.repo, branch);
     if (pr?.state !== 'open')

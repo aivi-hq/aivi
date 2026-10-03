@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 import { promisify } from 'node:util';
 import { configSchema, type Logger, type ProjectLane, type PromptName, readPrompt } from '@aivi/core';
 import type { Tracker } from '@aivi/plugin';
@@ -12,7 +12,7 @@ import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { Forges } from '../src/forges.ts';
 import { RunLedger } from '../src/orchestrator/ledger.ts';
-import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
+import { Orchestrator, type OrchestratorGit } from '../src/orchestrator/orchestrator.ts';
 import { Store } from '../src/store.ts';
 import { ToolError } from '../src/tools.ts';
 
@@ -186,6 +186,7 @@ function harness(
   forges = new Forges(),
   directory: (projectId: string) => string = () => '/checkout',
   prompt?: (name: PromptName) => Promise<string>,
+  git?: OrchestratorGit,
 ) {
   // The unit's clocks, in ms: a test that watches the keep-alive expire
   // writes `clocks: { keepAliveMs: 30 }` into the harness block instead of
@@ -220,6 +221,7 @@ function harness(
     dispatcher,
     forges,
     ...(prompt ? { prompt } : {}),
+    ...(git ? { git } : {}),
   });
   orchestrator.addTracker(work);
   return { ledger, dispatcher, orchestrator, fake, forges };
@@ -861,6 +863,444 @@ test('no forge is a plain answer, not a failure: every git tool says who is miss
       (error: unknown) => error instanceof ToolError && /no forge for its remote/.test(String(error)),
       'a research project gets its plain answer',
     );
+});
+
+/** git as the tools' units see it: every call on record — the directory and
+ *  the argv — and every answer scripted. A call nobody scripted fails loudly:
+ *  the record is the assertion. Whether git really merges or moves files is
+ *  git's own unit and the live gate's subject (`npm run smoke`); what these
+ *  tests pin is which command each tool sends where, and what its refusal
+ *  means in the worker's words. */
+const scriptedGit = (answer: (cwd: string, args: string[]) => string | { fail: string } | undefined) => {
+  const calls: { cwd: string; args: string[] }[] = [];
+  const runner: OrchestratorGit = async (cwd, args) => {
+    calls.push({ cwd, args });
+    const reply = answer(cwd, args);
+    if (reply === undefined) throw new Error(`the git tools ran ${args.join(' ')}; the test scripted no answer`);
+    return typeof reply === 'string' ? { ok: true, stdout: reply } : { ok: false, message: reply.fail };
+  };
+  return { runner, calls };
+};
+
+/** The forge as these units see it: every crossing recorded, no bytes. */
+const recordingForge = (
+  seen: { pushes: { branch: string; lease?: string }[]; opens: string[]; fetches: string[]; refs: number },
+  prs: Map<string, string>,
+  pushFail?: string,
+) => ({
+  async repoFor(project: { id: string }) {
+    return project.id === 'site' ? { id: 'acme/site', remote: 'https://github.com/acme/site.git' } : undefined;
+  },
+  async fetchBranch(_repo: unknown, _directory: string, branch: string) {
+    seen.fetches.push(branch);
+  },
+  async fetchRefs() {
+    seen.refs++;
+  },
+  async push(_repo: unknown, _directory: string, branch: string, options?: { lease?: string }) {
+    if (pushFail) throw new Error(pushFail);
+    seen.pushes.push({ branch, ...(options?.lease ? { lease: options.lease } : {}) });
+  },
+  async prForBranch(_repo: unknown, branch: string) {
+    const state = prs.get(branch);
+    return state
+      ? { id: 'pr-1', url: 'https://github.com/acme/site/pull/1', title: 'Widget', state, branch }
+      : undefined;
+  },
+  async openPr(_repo: unknown, branch: string) {
+    seen.opens.push(branch);
+    prs.set(branch, 'open');
+    return { id: 'pr-1', url: 'https://github.com/acme/site/pull/1', title: 'Widget', state: 'open', branch };
+  },
+});
+
+/** A run on a ticket branch, its checkout a word away: the tools, a scripted
+ *  git, and a forge that only records. */
+const toolUnits = async (
+  t: TestContext,
+  answer: (cwd: string, args: string[]) => string | { fail: string } | undefined,
+  options: { pushFail?: string; prs?: Map<string, string> } = {},
+) => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-tool-units-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'site');
+  await mkdir(source, { recursive: true });
+  const { runner, calls } = scriptedGit(answer);
+  const seen = {
+    pushes: [] as { branch: string; lease?: string }[],
+    opens: [] as string[],
+    fetches: [] as string[],
+    refs: 0,
+  };
+  const prs = options.prs ?? new Map<string, string>();
+  const forges = new Forges();
+  forges.register(recordingForge(seen, prs, options.pushFail) as never);
+  const fake = fakeOpenCode();
+  const lanes = [lane('In Progress', { agent: 'dev' })];
+  const { ledger, orchestrator } = harness(
+    lanes,
+    {},
+    boardFeed(fake, {}),
+    fake,
+    new AbortController(),
+    forges,
+    () => source,
+    undefined,
+    runner,
+  );
+  const { run } = ledger.request({
+    projectId: 'site',
+    trackerId: 'linear',
+    ticketId: 't-pr',
+    lane: 'In Progress',
+    agent: 'dev',
+  });
+  ledger.attachSession(run.id, 'ses_git', source);
+  const call = (input: Record<string, unknown>) => ({ sessionId: 'ses_git', input });
+  return { seen, prs, calls, orchestrator, call, source };
+};
+
+/** The answers every tool reads first: on the ticket branch, main is default. */
+const onBranch = (_cwd: string, args: string[]): string | { fail: string } | undefined => {
+  const key = args.join(' ');
+  if (key === 'symbolic-ref --quiet --short HEAD') return 'me/eng-9-widget';
+  if (key === 'symbolic-ref --quiet --short refs/remotes/origin/HEAD') return 'origin/main';
+  return undefined;
+};
+
+test('aivi_push fast-forwards, refuses to repeat itself, merges a person’s work in, and lets a conflict be resolved', async t => {
+  // First push: the remote has no branch yet. The fresh view is asked of the
+  // forge, never of origin, and the push rides the forge too.
+  const first = await toolUnits(t, (cwd, args) => {
+    const base = onBranch(cwd, args);
+    if (base !== undefined) return base;
+    if (args.join(' ') === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return { fail: '' };
+    return undefined;
+  });
+  assert.deepEqual(await first.orchestrator.pushTool(first.call({})), { pushed: true, branch: 'me/eng-9-widget' });
+  assert.deepEqual(first.seen.fetches, ['me/eng-9-widget'], 'the fresh view arrives by crossing the forge');
+  assert.deepEqual(first.seen.pushes, [{ branch: 'me/eng-9-widget' }], 'plain push: the remote fast-forwards');
+
+  // Nothing to push: every commit is already there — said, not pushed twice.
+  const again = await toolUnits(t, (cwd, args) => {
+    const base = onBranch(cwd, args);
+    if (base !== undefined) return base;
+    const key = args.join(' ');
+    if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-tip';
+    if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '0';
+    if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '2';
+    return undefined;
+  });
+  await assert.rejects(
+    () => again.orchestrator.pushTool(again.call({})),
+    (error: unknown) =>
+      error instanceof ToolError &&
+      /Nothing to push: origin\/me\/eng-9-widget already has every commit here, and you are behind by 2/.test(
+        String(error),
+      ),
+  );
+  assert.deepEqual(again.seen.pushes, [], 'said, not pushed');
+
+  // Real divergence with a person's commit in it: merge it in, then push —
+  // the person's work stands on the remote, not overwritten.
+  const merged = await toolUnits(t, (cwd, args) => {
+    const base = onBranch(cwd, args);
+    if (base !== undefined) return base;
+    const key = args.join(' ');
+    if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-tip';
+    if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '2';
+    if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '1';
+    if (key === 'cherry HEAD refs/remotes/origin/me/eng-9-widget') return '+ abc111\n+ def222';
+    if (key === 'merge --no-edit --quiet refs/remotes/origin/me/eng-9-widget') return '';
+    return undefined;
+  });
+  assert.deepEqual(await merged.orchestrator.pushTool(merged.call({})), {
+    pushed: true,
+    branch: 'me/eng-9-widget',
+  });
+  assert.ok(
+    merged.calls.some(call => call.args.join(' ') === 'merge --no-edit --quiet refs/remotes/origin/me/eng-9-widget'),
+    'a merge commit is asked before the push',
+  );
+  assert.deepEqual(merged.seen.pushes, [{ branch: 'me/eng-9-widget' }], 'merged in and pushed, no force');
+
+  // And a real conflict: it is named with its files and left in progress —
+  // resolving them is git the worker already knows; nothing is aborted.
+  const conflicted = await toolUnits(t, (cwd, args) => {
+    const base = onBranch(cwd, args);
+    if (base !== undefined) return base;
+    const key = args.join(' ');
+    if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-tip';
+    if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '2';
+    if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '1';
+    if (key === 'cherry HEAD refs/remotes/origin/me/eng-9-widget') return '+ abc111';
+    if (args[0] === 'merge') return { fail: 'Automatic merge failed' };
+    if (key === 'diff --name-only --diff-filter=U') return 'widget.md';
+    return undefined;
+  });
+  await assert.rejects(
+    () => conflicted.orchestrator.pushTool(conflicted.call({})),
+    (error: unknown) =>
+      error instanceof ToolError &&
+      /conflicts in widget\.md/.test(String(error)) &&
+      /resolve them/.test(String(error)) &&
+      /call aivi_push again/.test(String(error)),
+    'the conflict is named, with the file',
+  );
+  assert.deepEqual(conflicted.seen.pushes, [], 'nothing pushed over an unresolved conflict');
+});
+
+test('a rebased branch pushes through: the rewrite is patch-equivalent, so the force goes through quietly on its lease', async t => {
+  // Every remote commit patch-equivalent per `git cherry` (all `-`): a
+  // rebase, not a person's work — the force rides a lease keyed on the sha
+  // just fetched, so a person's newer commit could never burn.
+  const rebased = await toolUnits(t, (cwd, args) => {
+    const base = onBranch(cwd, args);
+    if (base !== undefined) return base;
+    const key = args.join(' ');
+    if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-fetched-tip';
+    if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '2';
+    if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '2';
+    if (key === 'cherry HEAD refs/remotes/origin/me/eng-9-widget') return '- abc111\n- def222';
+    return undefined;
+  });
+  assert.deepEqual(await rebased.orchestrator.pushTool(rebased.call({})), {
+    pushed: true,
+    branch: 'me/eng-9-widget',
+  });
+  assert.deepEqual(rebased.seen.pushes, [{ branch: 'me/eng-9-widget', lease: 'the-fetched-tip' }]);
+
+  // A lease that no longer matches — the remote moved under the worker — is
+  // said with its meaning and the next move: sync, integrate, push again.
+  const stale = await toolUnits(
+    t,
+    (cwd, args) => {
+      const base = onBranch(cwd, args);
+      if (base !== undefined) return base;
+      const key = args.join(' ');
+      if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-fetched-tip';
+      if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '2';
+      if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '2';
+      if (key === 'cherry HEAD refs/remotes/origin/me/eng-9-widget') return '- abc111';
+      return undefined;
+    },
+    { pushFail: 'stale info' },
+  );
+  await assert.rejects(
+    () => stale.orchestrator.pushTool(stale.call({})),
+    (error: unknown) =>
+      error instanceof ToolError &&
+      /The remote moved while you worked/.test(String(error)) &&
+      /Call aivi_sync, integrate, and push again/.test(String(error)),
+  );
+});
+
+test('aivi_sync answers behind and ahead through the forge, and guards name what a pull request cannot stand for', async t => {
+  // The remote branch is not there yet: the sync says `absent`, not a count.
+  const absent = await toolUnits(t, (cwd, args) => {
+    const base = onBranch(cwd, args);
+    if (base !== undefined) return base;
+    const key = args.join(' ');
+    if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return { fail: '' };
+    if (key === 'rev-list --count HEAD..refs/remotes/origin/main') return '0';
+    return undefined;
+  });
+  assert.deepEqual(await absent.orchestrator.syncTool(absent.call({})), {
+    synced: true,
+    branch: 'me/eng-9-widget',
+    remoteBranch: 'absent',
+  });
+  assert.equal(absent.seen.refs, 1, 'the refs came in through the forge: all branches, pruned, nothing checked out');
+
+  // Both sides moved, and main moved under everyone: the numbers worth knowing
+  // before a rebase is weighed.
+  const counts = await toolUnits(t, (_cwd, args) => {
+    const key = args.join(' ');
+    if (key === 'symbolic-ref --quiet --short HEAD') return 'me/eng-9-widget';
+    if (key === 'symbolic-ref --quiet --short refs/remotes/origin/HEAD') return 'origin/main';
+    if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-tip';
+    if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '1';
+    if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '1';
+    if (key === 'rev-list --count HEAD..refs/remotes/origin/main') return '3';
+    return undefined;
+  });
+  assert.deepEqual(await counts.orchestrator.syncTool(counts.call({})), {
+    synced: true,
+    branch: 'me/eng-9-widget',
+    behind: '1',
+    ahead: '1',
+    defaultBranch: 'main',
+    defaultBehind: '3',
+  });
+
+  // The guards the smart push never bargains past: the default branch and a
+  // detached HEAD are named before anything is asked of the forge.
+  const onDefault = await toolUnits(t, (_cwd, args) => {
+    const key = args.join(' ');
+    if (key === 'symbolic-ref --quiet --short HEAD') return 'main';
+    if (key === 'symbolic-ref --quiet --short refs/remotes/origin/HEAD') return 'origin/main';
+    return undefined;
+  });
+  await assert.rejects(
+    () => onDefault.orchestrator.pushTool(onDefault.call({})),
+    (error: unknown) => error instanceof ToolError && /default branch/.test(String(error)),
+  );
+  assert.deepEqual(onDefault.seen.fetches, [], 'the guard answers before the boundary is crossed');
+  const detached = await toolUnits(t, (cwd, args) => {
+    if (args.join(' ') === 'symbolic-ref --quiet --short HEAD') return { fail: '' };
+    return onBranch(cwd, args);
+  });
+  await assert.rejects(
+    () => detached.orchestrator.pushTool(detached.call({})),
+    (error: unknown) => error instanceof ToolError && /detached HEAD/.test(String(error)),
+    'git refused the read, and the tool says what that means',
+  );
+});
+
+test('aivi_pr opens the pull request, answers an open one instead of doubling it, and opens fresh after a merge', async t => {
+  // The opening: the push comes first, the pull request on the branch after.
+  const opened = await toolUnits(t, (cwd, args) => {
+    const base = onBranch(cwd, args);
+    if (base !== undefined) return base;
+    if (args.join(' ') === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return { fail: '' };
+    return undefined;
+  });
+  assert.deepEqual(await opened.orchestrator.prTool(opened.call({ title: 'Widget', body: 'Adds the widget.' })), {
+    pushed: true,
+    pull: 'https://github.com/acme/site/pull/1',
+    state: 'open',
+  });
+  assert.deepEqual(opened.seen.opens, ['me/eng-9-widget'], 'the forge opened it');
+  assert.equal(opened.seen.pushes.length, 1, 'and the push came first');
+
+  // An open pull request is answered with, not doubled — even as new commits
+  // ride along with the answer.
+  const existing = new Map([['me/eng-9-widget', 'open']]);
+  const again = await toolUnits(
+    t,
+    (cwd, args) => {
+      const base = onBranch(cwd, args);
+      if (base !== undefined) return base;
+      const key = args.join(' ');
+      if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-tip';
+      if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '1';
+      if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '0';
+      return undefined;
+    },
+    { prs: existing },
+  );
+  assert.deepEqual(await again.orchestrator.prTool(again.call({ title: 'Widget' })), {
+    pull: 'https://github.com/acme/site/pull/1',
+    state: 'open',
+    commitsPushed: true,
+  });
+  assert.deepEqual(again.seen.opens, [], 'one pull request over a branch is enough');
+
+  // The person merged; nothing new stands for a fresh one: said, not doubled.
+  const mergedPr = new Map([['me/eng-9-widget', 'merged']]);
+  const nothingNew = await toolUnits(
+    t,
+    (cwd, args) => {
+      const base = onBranch(cwd, args);
+      if (base !== undefined) return base;
+      const key = args.join(' ');
+      if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-tip';
+      if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '0';
+      if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '0';
+      return undefined;
+    },
+    { prs: mergedPr },
+  );
+  await assert.rejects(
+    () => nothingNew.orchestrator.prTool(nothingNew.call({ title: 'Widget' })),
+    (error: unknown) => error instanceof ToolError && /no new commits/.test(String(error)),
+  );
+
+  // Merged plus new commits: a fresh pull request over the branch.
+  const freshPr = new Map([['me/eng-9-widget', 'merged']]);
+  const roundTwo = await toolUnits(
+    t,
+    (cwd, args) => {
+      const base = onBranch(cwd, args);
+      if (base !== undefined) return base;
+      const key = args.join(' ');
+      if (key === 'rev-parse --verify --quiet refs/remotes/origin/me/eng-9-widget') return 'the-tip';
+      if (key === 'rev-list --count refs/remotes/origin/me/eng-9-widget..HEAD') return '1';
+      if (key === 'rev-list --count HEAD..refs/remotes/origin/me/eng-9-widget') return '0';
+      return undefined;
+    },
+    { prs: freshPr },
+  );
+  assert.deepEqual(
+    await roundTwo.orchestrator.prTool(roundTwo.call({ title: 'Widget again', body: 'The second round.' })),
+    {
+      pushed: true,
+      pull: 'https://github.com/acme/site/pull/1',
+      state: 'open',
+    },
+  );
+  assert.deepEqual(freshPr.get('me/eng-9-widget'), 'open');
+  assert.deepEqual(roundTwo.seen.opens, ['me/eng-9-widget'], 'merged + new commits: a fresh pull request');
+});
+
+test('a worktree lane gets its own git worktree on the ticket’s branch, crossing to origin only through the injected forge', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-wt-units-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  await mkdir(source, { recursive: true });
+  const fetches: string[] = [];
+  const forges = new Forges();
+  forges.register({
+    async repoFor(project: { id: string }) {
+      return project.id === 'p' ? { id: 'acme/site', remote: 'https://github.com/acme/site' } : undefined;
+    },
+    async fetchBranch(_repo: unknown, _directory: string, branch: string) {
+      fetches.push(branch);
+    },
+  } as never);
+  // The worktree machinery's git, answered: no refs held anywhere, main is the
+  // default, and every call the machinery makes is on record.
+  const { runner, calls } = scriptedGit((_cwd, args) => {
+    const key = args.join(' ');
+    if (key === 'worktree prune' || key === 'worktree list --porcelain') return '';
+    if (key.startsWith('rev-parse --verify --quiet refs/')) return { fail: 'no such ref' };
+    if (key === 'symbolic-ref --quiet --short refs/remotes/origin/HEAD') return 'origin/main';
+    if (key.startsWith('worktree add') || key.startsWith('config')) return '';
+    return undefined;
+  });
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Todo: [{ id: 't-1' }] });
+  const lanes = [lane('Todo', { queue: true }), lane('In Progress', { agent: 'dev', worktree: true })];
+  const { ledger, orchestrator } = harness(
+    lanes,
+    { dispatcher: { pools: { default: { capacity: 1 } } } },
+    feed,
+    fake,
+    new AbortController(),
+    forges,
+    () => source,
+    undefined,
+    runner,
+  );
+  await orchestrator.wake('p');
+  await until(() => fake.prompts.length === 1, 'the queued ticket starts in the worktree lane');
+
+  const run = ledger.activeByTicket('test-tracker', 't-1')!;
+  assert.ok(run.worktree, 'the run records where the worker works');
+  assert.ok(run.worktree!.startsWith(join(root, 'worktrees')), run.worktree);
+  assert.ok(
+    calls.some(
+      call =>
+        call.cwd === source && call.args.join(' ') === `worktree add --quiet -b me/t-1 ${run.worktree} origin/main`,
+    ),
+    'a branch nowhere yet: the worktree is made from the remote default, the refs the clone holds',
+  );
+  assert.deepEqual(fetches, ['me/t-1'], 'the crossing to origin went through the forge, injected');
+  assert.match(fake.prompts[0]!.text, /git worktree of the project at/);
+  assert.ok(
+    [...fake.sessions.values()].some(s => s.directory === run.worktree),
+    'the session was created in the worktree, not the checkout',
+  );
 });
 
 test('a worktree lane whose tracker named no branch fails the run visibly and says so', async t => {

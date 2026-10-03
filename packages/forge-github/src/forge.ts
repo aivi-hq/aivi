@@ -25,7 +25,7 @@ import type {
   ReviewFacts,
   ReviewThread,
 } from '@aivi/plugin/forge';
-import { type GitHubApp, gitCredential, runGit } from './github.ts';
+import { type GitHubApp, type GitRunner, gitCredential, runGit } from './github.ts';
 import { httpsRemote, isGitHub, parseRemote } from './remote.ts';
 import { parseWorker, signComment } from './signature.ts';
 
@@ -195,10 +195,12 @@ function openThread(node: GraphThread): ReviewThread | undefined {
 export class GitHubForge implements Forge {
   readonly app: GitHubApp;
   private readonly log: Logger;
+  private readonly git: GitRunner;
 
-  constructor(app: GitHubApp, log: Logger = getLogger(['aivi', 'forge-github'])) {
+  constructor(app: GitHubApp, options: { log?: Logger; git?: GitRunner } = {}) {
     this.app = app;
-    this.log = log;
+    this.log = options.log ?? getLogger(['aivi', 'forge-github']);
+    this.git = options.git ?? runGit;
   }
 
   /** The checkout's own `origin`, read locally: a project aivi has never
@@ -206,7 +208,7 @@ export class GitHubForge implements Forge {
    *  repository — another host, a local path, no remote at all — is answered
    *  with silence, because the answer belongs to another forge or to nobody. */
   async repoFor(project: ForgeProject): Promise<RepoRef | undefined> {
-    const origin = await runGit(project.directory, ['remote', 'get-url', 'origin']);
+    const origin = await this.git(project.directory, ['remote', 'get-url', 'origin']);
     if (!origin.ok) return undefined;
     const remote = parseRemote(origin.stdout);
     if (!remote || !isGitHub(remote)) return undefined;
@@ -364,25 +366,25 @@ export class GitHubForge implements Forge {
   async syncSource(repo: RepoRef, directory: string): Promise<ForgeSync> {
     if (!(await stat(join(directory, '.git')).catch(() => null)))
       return { state: 'held', reason: 'not a git checkout' };
-    const branch = await runGit(directory, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    const branch = await this.git(directory, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     if (!branch.ok || !branch.stdout) return { state: 'held', reason: 'detached HEAD' };
-    const dirty = await runGit(directory, ['status', '--porcelain']);
+    const dirty = await this.git(directory, ['status', '--porcelain']);
     if (!dirty.ok) return { state: 'held', reason: dirty.message };
     if (dirty.stdout) return { state: 'held', reason: 'local changes in source/' };
     const name = `refs/remotes/origin/${branch.stdout}`;
     const transport = await this.transfer(repo);
-    const fetched = await runGit(directory, ['fetch', '--quiet', transport.url, `+${branch.stdout}:${name}`], {
+    const fetched = await this.git(directory, ['fetch', '--quiet', transport.url, `+${branch.stdout}:${name}`], {
       env: transport.env,
     });
     if (!fetched.ok) return { state: 'held', reason: `fetch failed: ${fetched.message}` };
-    const from = await runGit(directory, ['rev-parse', 'HEAD']);
+    const from = await this.git(directory, ['rev-parse', 'HEAD']);
     if (!from.ok) return { state: 'held', reason: from.message };
-    const to = await runGit(directory, ['rev-parse', name]);
+    const to = await this.git(directory, ['rev-parse', name]);
     if (!to.ok) return { state: 'held', reason: `branch ${branch.stdout} has no upstream` };
     if (from.stdout === to.stdout) return { state: 'current', from: from.stdout, to: to.stdout };
-    const ahead = await runGit(directory, ['merge-base', '--is-ancestor', 'HEAD', name]);
+    const ahead = await this.git(directory, ['merge-base', '--is-ancestor', 'HEAD', name]);
     if (!ahead.ok) return { state: 'held', reason: `${branch.stdout} and ${name} have diverged; a person must decide` };
-    const merged = await runGit(directory, ['merge', '--ff-only', '--quiet', name]);
+    const merged = await this.git(directory, ['merge', '--ff-only', '--quiet', name]);
     if (!merged.ok) return { state: 'held', reason: merged.message };
     this.log.info('source.synced', { repo: repo.id, from: from.stdout, to: to.stdout });
     return { state: 'updated', from: from.stdout, to: to.stdout };
@@ -399,7 +401,7 @@ export class GitHubForge implements Forge {
    */
   async fetchBranch(repo: RepoRef, directory: string, branch: string): Promise<void> {
     const transport = await this.transfer(repo);
-    const fetched = await runGit(
+    const fetched = await this.git(
       directory,
       ['fetch', '--quiet', transport.url, `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
       { env: transport.env },
@@ -421,7 +423,7 @@ export class GitHubForge implements Forge {
    */
   async push(repo: RepoRef, worktree: string, branch: string, options: { lease?: string } = {}): Promise<void> {
     const transport = await this.transfer(repo);
-    const pushed = await runGit(
+    const pushed = await this.git(
       worktree,
       [
         'push',
@@ -472,7 +474,7 @@ export class GitHubForge implements Forge {
    *  nothing left in the checkout's config. */
   async fetchRefs(repo: RepoRef, directory: string): Promise<void> {
     const transport = await this.transfer(repo);
-    const fetched = await runGit(
+    const fetched = await this.git(
       directory,
       ['fetch', '--prune', '--quiet', transport.url, '+refs/heads/*:refs/remotes/origin/*'],
       { env: transport.env },
@@ -482,6 +484,8 @@ export class GitHubForge implements Forge {
 }
 
 /** The forge for one installed app. */
-export function createGitHubForge(app: GitHubApp, log?: Logger): GitHubForge {
-  return new GitHubForge(app, log);
+/** The forge over one authenticated app: the API reads and the git transfers.
+ *  `git` is the disk crossing a test answers; production leaves it alone. */
+export function createGitHubForge(app: GitHubApp, options: { log?: Logger; git?: GitRunner } = {}): GitHubForge {
+  return new GitHubForge(app, options);
 }

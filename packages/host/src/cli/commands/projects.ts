@@ -29,13 +29,13 @@ export function registerProjects(program: Command): void {
     .command('add [name]')
     .description('set a project up: the configured forge clones it, the configured tracker maps it')
     .action(async (name?: string) => {
-      await runProjectSetup({ home, configPath, ...(name ? { name } : {}) });
+      await runProjectSetup({ home: home(), configPath: configPath(), ...(name ? { name } : {}) });
     });
   projects
     .command('remove <id>')
     .description('Delete the checkout; memory stays and the project is listed as removed')
     .action(async id => {
-      print(await removeProject(configPath, id));
+      print(await removeProject(configPath(), id));
       console.error('Memory kept; the project is listed as removed until `aivi projects purge`. Restart `aivi serve`.');
     });
   projects
@@ -43,7 +43,7 @@ export function registerProjects(program: Command): void {
     .description("Delete the project's memory (and checkout); without --confirm only shows what would go")
     .option('--confirm', 'really delete; memory cannot be recovered')
     .action(async (id, values) => {
-      const purge = await purgeProject(configPath, id, { confirm: values.confirm ?? false });
+      const purge = await purgeProject(configPath(), id, { confirm: values.confirm ?? false });
       print(purge);
       if (!purge.purged) {
         console.error('Nothing deleted. Re-run with --confirm to delete these paths; memory cannot be recovered.');

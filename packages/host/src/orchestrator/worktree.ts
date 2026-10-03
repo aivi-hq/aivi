@@ -7,6 +7,13 @@ import { projectLayout } from '@aivi/core';
 
 const run = promisify(execFile);
 
+/** One git execution: the worktree machinery's only crossing to disk. Tests
+ *  answer this instead of spawning git — the decisions are the unit: which
+ *  ref a worktree starts from, which holder a second session continues, what
+ *  a stop deletes and what it names when it cannot. Whether git really checks
+ *  files out is git's own unit and the live gate's subject. */
+export type WorktreeGit = (cwd: string, args: string[], signal?: AbortSignal) => Promise<string>;
+
 /** Run git in one directory; answers its trimmed stdout, rejects with its stderr. */
 const gitIn = async (cwd: string, args: string[], signal: AbortSignal | undefined): Promise<string> =>
   (
@@ -15,6 +22,9 @@ const gitIn = async (cwd: string, args: string[], signal: AbortSignal | undefine
       ...(signal ? { signal } : {}),
     })
   ).stdout.trim();
+
+/** Production leaves the crossing the real git. */
+const realGit: WorktreeGit = (cwd, args, signal) => gitIn(cwd, args, signal);
 
 /**
  * The machine's own git config, which is where the second source of the commit
@@ -42,6 +52,8 @@ export interface WorktreeInput {
    *  reaches `origin` itself. */
   fetchBranch?: (branch: string) => Promise<void>;
   signal?: AbortSignal;
+  /** The git crossing; production leaves it real, a test answers it. */
+  git?: WorktreeGit;
 }
 
 /**
@@ -64,17 +76,18 @@ export interface WorktreeInput {
  * commit as whoever owns the machine — and push as them too.
  */
 async function markWorktree(
+  git: WorktreeGit,
   source: string,
   path: string,
   identity: GitIdentity,
   signal: AbortSignal | undefined,
 ): Promise<void> {
-  await gitIn(source, ['config', 'extensions.worktreeConfig', 'true'], signal);
-  await gitIn(path, ['config', '--worktree', 'user.name', identity.name], signal);
-  await gitIn(path, ['config', '--worktree', 'user.email', identity.email], signal);
-  await gitIn(path, ['config', '--worktree', 'agent.autonomous', 'true'], signal);
-  await gitIn(path, ['config', '--worktree', 'credential.helper', ''], signal);
-  await gitIn(path, ['config', '--worktree', 'core.sshCommand', 'false'], signal);
+  await git(source, ['config', 'extensions.worktreeConfig', 'true'], signal);
+  await git(path, ['config', '--worktree', 'user.name', identity.name], signal);
+  await git(path, ['config', '--worktree', 'user.email', identity.email], signal);
+  await git(path, ['config', '--worktree', 'agent.autonomous', 'true'], signal);
+  await git(path, ['config', '--worktree', 'credential.helper', ''], signal);
+  await git(path, ['config', '--worktree', 'core.sshCommand', 'false'], signal);
 }
 
 /** Where one run's worker works: `<project>/worktrees/<name>`. The
@@ -95,10 +108,11 @@ export const worktreePathFor = (sourceDirectory: string, name: string) =>
  * (`markWorktree`). Returns the path actually used and the branch's base.
  */
 export async function ensureWorktree(input: WorktreeInput): Promise<{ path: string; branch: string; base: string }> {
-  const git = (...args: string[]) => gitIn(input.source, args, input.signal);
+  const run = input.git ?? realGit;
+  const git = (...args: string[]) => run(input.source, args, input.signal);
   /** A worktree a worker may commit in is marked with who launched it. */
   const ready = async (path: string): Promise<string> => {
-    await markWorktree(input.source, path, input.identity, input.signal);
+    await markWorktree(run, input.source, path, input.identity, input.signal);
     return path;
   };
   if (await stat(join(input.path, '.git')).catch(() => null)) {
@@ -162,14 +176,19 @@ function worktreeHolding(porcelain: string, branch: string): string | null {
  * left by a stop that crashed before cleaning is found by the next run's
  * `ensureWorktree`, which reuses the holder of the branch as it always has.
  */
-export async function removeWorktree(source: string, path: string, signal?: AbortSignal): Promise<string | undefined> {
-  const git = (...args: string[]) => gitIn(source, args, signal);
+export async function removeWorktree(
+  source: string,
+  path: string,
+  signal?: AbortSignal,
+  runner: WorktreeGit = realGit,
+): Promise<string | undefined> {
+  const git = (...args: string[]) => runner(source, args, signal);
   if (!(await stat(join(path, '.git')).catch(() => null))) {
     // Not a live worktree: let git forget its registration if it still holds one.
     await git('worktree', 'prune');
     return undefined;
   }
-  const branch = await gitIn(path, ['rev-parse', '--abbrev-ref', '--quiet', 'HEAD'], signal).catch(() => '');
+  const branch = await runner(path, ['rev-parse', '--abbrev-ref', '--quiet', 'HEAD'], signal).catch(() => '');
   await git('worktree', 'remove', '--force', path);
   if (branch && branch !== 'HEAD') {
     try {

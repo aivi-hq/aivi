@@ -63,8 +63,8 @@ export function registerJobs(program: Command): void {
       } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
       // Paths in task files resolve against the home, like paths in config.json.
       // Invocation args belong to the claimant: they resolve when the operation runs.
-      if (task.kind === 'prompt') task.directory = resolve(home, task.directory);
-      if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home, task.cwd);
+      if (task.kind === 'prompt') task.directory = resolve(home(), task.directory);
+      if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home(), task.cwd);
       const resource = values.resource ?? fileResource ?? 'local-model';
       if (!(resource in loaded.config.scheduler.resources)) throw new Error(`Unknown resource pool: ${resource}`);
       if (values.at && values.cron) throw new Error('Choose --at (one-off) or --cron (recurring)');

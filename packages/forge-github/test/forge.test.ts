@@ -1,9 +1,13 @@
-/** The `Forge` answers over the API, read against a GitHub that only says what
- *  was written here. The git transfers are not tested in this file: they are
- *  real git doing real byte-moving, which is git's own unit — and the live
- *  gate's subject (`npm run smoke` drives the real bin against real remotes),
- *  not a unit test's. What would need a source seam to fake, this file does
- *  not carry.
+/** The `Forge` answers, tested at both halves of the boundary they sit on: the
+ *  facts read over the API against a GitHub that only says what was written
+ *  here, and the transfers against a scripted git — every call the forge makes
+ *  is on record with the environment it was handed, every answer belongs to the
+ *  test. What these units pin is the forge's own decisions: the refspecs it
+ *  names, the credential it carries in the environment and never in argv, the
+ *  failures it classifies in a person's words. Whether git really moves the
+ *  bytes is git's own unit and the live gate's subject (`npm run smoke`); a
+ *  unit test that pays ten git spawns to learn git behaves like git pays for
+ *  nothing.
  */
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp } from 'node:fs/promises';
@@ -12,12 +16,65 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { RepoRef } from '@aivi/plugin/forge';
 import { createGitHubForge, type GitHubForge } from '../src/forge.ts';
+import type { GitRunner } from '../src/github.ts';
 import { GitHubApp } from '../src/index.ts';
 import type { Answer, Seen } from './github-api.ts';
 import { installationToken, scripted } from './github-api.ts';
 
-/** A GitHub that answers the app's own reads, plus whatever the test writes. */
-async function forgeWith(routes: Record<string, (call: Seen) => Answer>): Promise<{
+/** git as the forge sees it: every call on record — the argv and the
+ *  environment it was handed — and every answer scripted by the test. A call
+ *  nobody scripted is a loud failure, not silence. */
+type GitReply = string | { fail: string };
+const scriptedGit = (respond: (directory: string, args: string[]) => GitReply | undefined) => {
+  const calls: { args: string[]; env?: Record<string, string> }[] = [];
+  const git: GitRunner = async (directory, args, options = {}) => {
+    calls.push({ args, ...(options.env ? { env: options.env } : {}) });
+    const reply = respond(directory, args);
+    if (reply === undefined) throw new Error(`the forge ran git ${args.join(' ')}; the test scripted no answer`);
+    return typeof reply === 'string' ? { ok: true, stdout: reply } : { ok: false, message: reply.fail };
+  };
+  return { git, calls };
+};
+
+/** The credential as it must travel: per-invocation config in the environment,
+ *  the person's own helper switched off, and never a word of the token in argv
+ *  where a process list would read it. */
+const assertCredential = (env: Record<string, string> | undefined, args: string[]) => {
+  assert.ok(env?.GIT_CONFIG_COUNT, 'the transfer carries its config in the environment');
+  assert.equal(env?.GIT_CONFIG_KEY_0, 'http.extraHeader');
+  assert.match(String(env?.GIT_CONFIG_VALUE_0), /^Authorization: Basic /);
+  assert.match(
+    Buffer.from(String(env?.GIT_CONFIG_VALUE_0).replace('Authorization: Basic ', ''), 'base64').toString('utf8'),
+    /^x-access-token:ghs_token/,
+    'the installation token speaks, as Basic auth over HTTPS',
+  );
+  assert.equal(env?.GIT_CONFIG_KEY_1, 'credential.helper');
+  assert.equal(
+    env?.GIT_CONFIG_VALUE_1,
+    '',
+    "the person's stored credential is switched off, so no transfer attributes to them",
+  );
+  assert.ok(
+    !args.some(arg => arg.includes('ghs_token') || arg.includes('x-access-token')),
+    'the token never rides in argv',
+  );
+};
+
+/** A directory that is a checkout as far as the forge's own stat can tell —
+ *  `.git` exists. Everything past that line belongs to the scripted runner. */
+const checkoutDir = async (): Promise<{ root: string; source: string }> => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-forge-'));
+  const source = join(root, 'source');
+  await mkdir(join(source, '.git'), { recursive: true });
+  return { root, source };
+};
+
+/** A GitHub that answers the app's own reads, plus whatever the test writes;
+ *  `git` is the transfer half the same test scripts. */
+async function forgeWith(
+  routes: Record<string, (call: Seen) => Answer>,
+  git?: GitRunner,
+): Promise<{
   forge: GitHubForge;
   calls: () => string[];
   seen: Seen[];
@@ -29,7 +86,7 @@ async function forgeWith(routes: Record<string, (call: Seen) => Answer>): Promis
     ...routes,
   });
   const app = await GitHubApp.connect({ app: 7 }, { fetch: api.fetch });
-  return { forge: createGitHubForge(app), calls: api.calls, seen: api.seen };
+  return { forge: git ? createGitHubForge(app, { git }) : createGitHubForge(app), calls: api.calls, seen: api.seen };
 }
 
 /** The pull request as GitHub's REST answer carries it. */
@@ -44,6 +101,50 @@ function pull(number = 12, ref = 'feat/retry') {
 }
 
 const REPO: RepoRef = { id: 'acme/widget', remote: 'https://github.com/acme/widget.git' };
+
+/** One syncSource answer as the two words a person hears: state and reason. */
+async function held(forge: GitHubForge, repo: RepoRef, directory: string): Promise<(string | undefined)[]> {
+  const answer = await forge.syncSource(repo, directory);
+  return [answer.state, answer.reason];
+}
+
+test('a project is the repository its origin names, and the URL aivi reaches it by is HTTPS', async () => {
+  const origins = new Map([
+    ['/ssh-checkout', 'git@github.com:acme/widget.git'],
+    ['/https-checkout', 'https://github.com/acme/widget.git'],
+  ]);
+  const { git } = scriptedGit((directory, args) =>
+    args[0] === 'remote' ? (origins.get(directory) ?? { fail: 'error: No such remote' }) : undefined,
+  );
+  const forge = (await forgeWith({}, git)).forge;
+  assert.deepEqual(
+    await forge.repoFor({ id: 'widget', directory: '/ssh-checkout' }),
+    { id: 'acme/widget', remote: 'https://github.com/acme/widget.git' },
+    'an ssh origin is said in HTTPS: the person chose that transport for themselves, aivi transfers go over HTTPS regardless',
+  );
+  assert.deepEqual(await forge.repoFor({ id: 'widget', directory: '/https-checkout' }), {
+    id: 'acme/widget',
+    remote: 'https://github.com/acme/widget.git',
+  });
+});
+
+test('a checkout that names no GitHub repository is not this forge’s, and is not an error', async () => {
+  const origins = new Map([
+    // a local path: a checkout with nothing remote about it
+    ['/local-path', '/people/own/origin.git'],
+    // another host: another forge's turn
+    ['/gitlab', 'https://gitlab.com/acme/widget.git'],
+  ]);
+  const { git } = scriptedGit((directory, args) =>
+    args[0] === 'remote' ? (origins.get(directory) ?? { fail: 'error: No such remote' }) : undefined,
+  );
+  const forge = (await forgeWith({}, git)).forge;
+  assert.equal(await forge.repoFor({ id: 'local', directory: '/local-path' }), undefined);
+  assert.equal(await forge.repoFor({ id: 'gitlab', directory: '/gitlab' }), undefined);
+  // a repository with no remote at all, and a directory that is not a checkout
+  assert.equal(await forge.repoFor({ id: 'none', directory: '/no-remote' }), undefined);
+  assert.equal(await forge.repoFor({ id: 'plain', directory: '/plain' }), undefined);
+});
 
 test('the pull request over a branch is asked for across every state, newest first', async () => {
   const forge = (await forgeWith({ 'GET /repos/acme/widget/pulls': () => ({ status: 200, body: [pull()] }) })).forge;
@@ -298,10 +399,95 @@ test('a review lands on the lines themselves, and APPROVE is not a thing aivi ca
   assert.ok(!('comments' in (posted[1] ?? {})), 'no findings, no comments field');
 });
 
-async function held(forge: GitHubForge, repo: RepoRef, directory: string): Promise<(string | undefined)[]> {
-  const answer = await forge.syncSource(repo, directory);
-  return [answer.state, answer.reason];
-}
+test('a clean checkout is brought up to date by a fast-forward and nothing else', async () => {
+  const { source } = await checkoutDir();
+  let head = 'aaa111';
+  const { git, calls } = scriptedGit((_directory, args) => {
+    switch (args[0]) {
+      case 'symbolic-ref':
+        return 'main';
+      case 'status':
+        return ''; // clean: the checkout is aivi's to move
+      case 'fetch':
+        return '';
+      case 'rev-parse':
+        return args[1] === 'HEAD' ? head : 'bbb222';
+      case 'merge-base':
+        return ''; // HEAD is an ancestor of the fetched tip: a fast-forward stands
+      case 'merge':
+        head = 'bbb222';
+        return '';
+    }
+  });
+  const forge = (await forgeWith({}, git)).forge;
+
+  const updated = await forge.syncSource(REPO, source);
+  assert.deepEqual(updated, { state: 'updated', from: 'aaa111', to: 'bbb222' });
+  const fetch = calls.find(call => call.args[0] === 'fetch');
+  assert.deepEqual(
+    fetch?.args,
+    ['fetch', '--quiet', REPO.remote, '+main:refs/remotes/origin/main'],
+    'the fetch names its refspec instead of trusting origin’s, over the HTTPS url aivi authenticates',
+  );
+  assertCredential(fetch?.env, fetch?.args ?? []);
+  assert.ok(
+    calls.some(call => call.args.join(' ') === 'merge --ff-only --quiet refs/remotes/origin/main'),
+    'a fast-forward is the only merge aivi performs',
+  );
+
+  // The same sync again: the tip has arrived, so the answer is “current” and
+  // no merge is asked of git a second time.
+  const again = await forge.syncSource(REPO, source);
+  assert.deepEqual(again, { state: 'current', from: 'bbb222', to: 'bbb222' });
+  assert.equal(calls.filter(call => call.args[0] === 'merge').length, 1, 'current says current: nothing runs');
+});
+
+test('what aivi’s transfers carry: the credential in the environment, never in argv, never as a config write', async () => {
+  const { source } = await checkoutDir();
+  const { git, calls } = scriptedGit((_directory, args) => (args[0] === 'push' ? '' : undefined));
+  const forge = (await forgeWith({}, git)).forge;
+  await forge.push(REPO, source, 'feat/retry');
+  assert.equal(calls.length, 1);
+  assertCredential(calls[0]?.env, calls[0]?.args ?? []);
+  assert.ok(
+    !calls.some(call => call.args[0] === 'config' || call.args.includes('-c')),
+    'no git config is ever written: the checkout keeps the shape its owner left it',
+  );
+});
+
+test('anything that would need a decision is reported, never forced', async () => {
+  const { source } = await checkoutDir();
+  const heldBy = async (respond: (directory: string, args: string[]) => GitReply | undefined) =>
+    held((await forgeWith({}, scriptedGit(respond).git)).forge, REPO, source);
+
+  // a person's uncommitted edit: nothing is stashed, nothing is discarded
+  assert.deepEqual(
+    await heldBy((_directory, args) =>
+      args[0] === 'symbolic-ref' ? 'main' : args[0] === 'status' ? '?? notes.md\n' : undefined,
+    ),
+    ['held', 'local changes in source/'],
+  );
+
+  // history that has diverged: a local commit and an upstream one. The
+  // fast-forward test fails, and aivi stops there — no merge, no rebase.
+  assert.deepEqual(
+    await heldBy((_directory, args) => {
+      if (args[0] === 'symbolic-ref') return 'main';
+      if (args[0] === 'status') return '';
+      if (args[0] === 'fetch') return '';
+      if (args[0] === 'rev-parse') return args[1] === 'HEAD' ? 'aaa111' : 'bbb222';
+      if (args[0] === 'merge-base') return { fail: 'not a git commit -- bbb222' };
+      return undefined;
+    }),
+    ['held', 'main and refs/remotes/origin/main have diverged; a person must decide'],
+  );
+
+  // a detached HEAD, which has no branch to fast-forward
+  assert.deepEqual(await heldBy((_directory, args) => (args[0] === 'symbolic-ref' ? { fail: '' } : undefined)), [
+    'held',
+    'detached HEAD',
+  ]);
+});
 
 test('a directory that is not a checkout is held with that reason, not a git complaint', async () => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-forge-'));
@@ -314,6 +500,56 @@ test('a directory that is not a checkout is held with that reason, not a git com
   ]);
 });
 
+test('fetchBranch carries one branch’s remote tip into the checkout’s refs and moves nothing else', async () => {
+  const { git, calls } = scriptedGit((_directory, args) => (args[0] === 'fetch' ? '' : undefined));
+  const forge = (await forgeWith({}, git)).forge;
+  // A person pushed a ticket branch from elsewhere; one fetch names it.
+  await forge.fetchBranch(REPO, '/checkout', 'me/eng-7-fix');
+  assert.equal(calls.length, 1, 'one fetch is the whole crossing: no file moves, nothing is checked out');
+  assert.deepEqual(
+    calls[0]?.args,
+    ['fetch', '--quiet', REPO.remote, '+refs/heads/me/eng-7-fix:refs/remotes/origin/me/eng-7-fix'],
+    'the refspec names the branch and nothing else arrives; the checkout stays on its own branch',
+  );
+  assertCredential(calls[0]?.env, calls[0]?.args ?? []);
+});
+
+test('a remote without that branch is an answer, not a failure — and a failed fetch is said', async () => {
+  // “couldn't find remote ref” is the ordinary news of a ticket branch never
+  // pushed: said quietly in the log, no ref left behind — and there is no
+  // second git call that could leave one, which is what the record shows.
+  const absent = scriptedGit(() => ({ fail: "fatal: couldn't find remote ref me/eng-8-never" }));
+  const forge = (await forgeWith({}, absent.git)).forge;
+  await forge.fetchBranch(REPO, '/checkout', 'me/eng-8-never');
+  assert.equal(absent.calls.length, 1, 'the answer is quiet: nothing else ran to clean up after it');
+
+  // Anything else is a failed transfer. The caller cannot tell a stale tip
+  // from an absent one, so this failure is not swallowed.
+  const failing = scriptedGit(() => ({ fail: 'fatal: unable to access the remote' }));
+  const other = (await forgeWith({}, failing.git)).forge;
+  await assert.rejects(
+    () => other.fetchBranch(REPO, '/checkout', 'me/eng-7'),
+    /fetching me\/eng-7 from acme\/widget failed: fatal: unable to access/,
+  );
+});
+
+test('a push moves aivi’s commits to the remote, and the platform’s API is not so much as glanced at', async () => {
+  const { git, calls } = scriptedGit((_directory, args) => (args[0] === 'push' ? '' : undefined));
+  const api = await forgeWith({}, git);
+  await api.forge.push(REPO, '/checkout', 'main');
+  assert.deepEqual(
+    calls[0]?.args,
+    ['push', '--quiet', REPO.remote, 'HEAD:refs/heads/main'],
+    'plain when the remote fast-forwards: the refspec names the branch, the url is the one this forge named',
+  );
+  assertCredential(calls[0]?.env, calls[0]?.args ?? []);
+  assert.deepEqual(
+    api.seen.filter(call => call.method === 'POST').map(call => `${call.method} ${call.path}`),
+    ['POST /app/installations/99/access_tokens'],
+    'nothing was posted to GitHub beyond the token',
+  );
+});
+
 test('openPr opens the pull request on the repository’s own default branch, signed by the worker who wrote it', async () => {
   let created: Record<string, unknown> | undefined;
   const api = await forgeWith({
@@ -323,6 +559,7 @@ test('openPr opens the pull request on the repository’s own default branch, si
       return { status: 201, body: pull(31, 'feat/retry') };
     },
   });
+
   const facts = await api.forge.openPr(REPO, 'feat/retry', {
     author: 'implement',
     title: 'Retry the header',
@@ -360,5 +597,65 @@ test('a second pull request over a branch is the platform’s refusal to say, no
       body: 'again',
     }),
     /already open/,
+  );
+});
+
+test('a rebased branch forces through on its lease, and a stale lease is refused, not swallowed', async () => {
+  // A ticket branch the worker rewrote: a plain push is refused where the
+  // remote will not fast-forward, a push keyed on the fetched tip goes
+  // through — the force replaces exactly that commit and nothing a person
+  // added since.
+  const { git, calls } = scriptedGit((_directory, args) =>
+    args[0] !== 'push'
+      ? undefined
+      : args.some(arg => arg.startsWith('--force-with-lease'))
+        ? ''
+        : { fail: 'rejected (non-fast-forward)' },
+  );
+  const forge = (await forgeWith({}, git)).forge;
+  await assert.rejects(() => forge.push(REPO, '/checkout', 'feat/retry'), /pushing feat\/retry to acme\/widget failed/);
+  await forge.push(REPO, '/checkout', 'feat/retry', { lease: 'the-fetched-tip' });
+  assert.deepEqual(
+    calls[1]?.args,
+    [
+      'push',
+      '--quiet',
+      '--force-with-lease=refs/heads/feat/retry:the-fetched-tip',
+      REPO.remote,
+      'HEAD:refs/heads/feat/retry',
+    ],
+    'the rewrite stands on the remote through a lease keyed on the commit the caller just fetched',
+  );
+
+  // A lease that no longer matches — the remote moved under the caller, as a
+  // person's own push makes the push non-fast-forward again — is said with
+  // its meaning, and a fresh lease from the next fetch gets the worker moving.
+  const stale = scriptedGit(() => ({ fail: 'stale info' }));
+  const other = (await forgeWith({}, stale.git)).forge;
+  await assert.rejects(
+    () => other.push(REPO, '/checkout', 'feat/retry', { lease: 'the-old-tip' }),
+    /lease no longer matches: the remote moved since the last fetch/,
+  );
+});
+
+test('fetchRefs brings every branch in, prunes the deleted, and moves no files', async () => {
+  const { git, calls } = scriptedGit((_directory, args) => (args[0] === 'fetch' ? '' : undefined));
+  const forge = (await forgeWith({}, git)).forge;
+  await forge.fetchRefs(REPO, '/checkout');
+  assert.equal(calls.length, 1, 'one fetch is the whole crossing: nothing was checked out, no file moved');
+  assert.deepEqual(
+    calls[0]?.args,
+    ['fetch', '--prune', '--quiet', REPO.remote, '+refs/heads/*:refs/remotes/origin/*'],
+    'every branch in, the deleted pruned away — a branch that dies upstream leaves the checkout’s refs too',
+  );
+  assertCredential(calls[0]?.env, calls[0]?.args ?? []);
+});
+
+test('a push that the remote refuses is said with git’s words, not swallowed', async () => {
+  const { git } = scriptedGit(() => ({ fail: 'remote: Permission to acme/widget.git denied to aivi-agent[bot]' }));
+  const forge = (await forgeWith({}, git)).forge;
+  await assert.rejects(
+    () => forge.push(REPO, '/checkout', 'main'),
+    /pushing main to acme\/widget failed: remote: Permission/,
   );
 });

@@ -122,7 +122,7 @@ export type { DiscoveredEndpoint } from './opencode.ts';
 export { connectOpenCode, discoverTolerant } from './opencode.ts';
 export type { Run, RunRequest } from './orchestrator/ledger.ts';
 export { RunLedger, view } from './orchestrator/ledger.ts';
-export type { OrchestratorDeps } from './orchestrator/orchestrator.ts';
+export type { OrchestratorDeps, OrchestratorGit } from './orchestrator/orchestrator.ts';
 export { Orchestrator } from './orchestrator/orchestrator.ts';
 export { describeOutcome, reentryPrompt, reportTarget, SESSION_DESTINATION, shouldReport } from './reports.ts';
 export type { ExecutorDeps } from './runtime.ts';
