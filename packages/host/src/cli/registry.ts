@@ -165,20 +165,25 @@ export interface ProjectContributorEntry {
  * is the caller's to decide — it needs the loaded config, which this does not
  * read.
  */
+/** The package's `./setupProject` contributor, imported lazily. A package
+ *  without the subpath — or not installed at all — serves no project role
+ *  and answers `undefined`; a real import error is left to stand. */
+async function importContributor(name: string): Promise<unknown | undefined> {
+  try {
+    return (await import(import.meta.resolve(`${name}/setupProject`))).contributor;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_MODULE_NOT_FOUND') return undefined;
+    throw error;
+  }
+}
+
 export async function projectContributors(home: string): Promise<ProjectContributorEntry[]> {
   const found: ProjectContributorEntry[] = [];
   for (const entry of (await pluginRegistry(home)).entries) {
     if (!entry.enabled) continue;
-    let declared: unknown;
-    try {
-      declared = (await import(import.meta.resolve(`${entry.name}/setupProject`))).contributor;
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      // No such subpath, or the package is not installed: either way this
-      // plugin serves no project role. A real import error is left to stand.
-      if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_MODULE_NOT_FOUND') continue;
-      throw error;
-    }
+    const declared = await importContributor(entry.name);
+    if (declared === undefined) continue;
     const contributor = declared as Partial<ProjectContributor> | undefined;
     if (!contributor || typeof contributor.setup !== 'function')
       throw new Error(`${entry.name}/setupProject exports no contributor (a { role?, setup } object).`);

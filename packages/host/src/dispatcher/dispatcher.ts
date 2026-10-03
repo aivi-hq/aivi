@@ -230,23 +230,7 @@ export class Dispatcher {
     input: { service: string; pool?: string; resume?: string },
     now = Date.now(),
   ): { lease: DispatcherLease } | { queued: string } | { refused: Refusal; pool: string } {
-    if (!this.moderated) {
-      // No capacity check exists to fail: the grant always lands. The
-      // timeouts still watch — a silent worker dies at its idle clock
-      // whether or not anyone is counting slots.
-      const lease = this.leases.grant(
-        {
-          kind: 'session',
-          service: input.service,
-          pool: UNLIMITED,
-          ...(input.resume ? { sessionId: input.resume } : {}),
-        },
-        () => {},
-        now,
-      )!;
-      this.#armFrom(lease, now);
-      return { lease };
-    }
+    if (!this.moderated) return this.#grantUnlimited(input, now);
     // A session's own pool outranks whatever the caller asks for; only when
     // the session is unknown here does the asked-for pool decide, and an
     // unknown *name* is a caller bug said as such, not pressure.
@@ -260,24 +244,57 @@ export class Dispatcher {
     // A resume gets its session's own pool and nothing else; a new session
     // walks the fallback chain, which the config load proved cycle-free.
     const targets = input.resume ? [recorded ?? asked] : this.#chain(asked);
+    const lease = this.#grantOnTargets(input, targets, now);
+    if (lease) {
+      if (input.resume) this.leases.record(input.resume, lease.pool, now);
+      return { lease };
+    }
+    return this.#queue(input.service, recorded ?? asked, input.resume);
+  }
+
+  /** The first pool on the targets that has a slot: grant it and arm the
+   *  lease's clocks. No target has one — the answer callers act on. */
+  #grantOnTargets(
+    what: { service: string; resume?: string },
+    targets: string[],
+    now = Date.now(),
+  ): DispatcherLease | undefined {
     for (const pool of targets) {
       const lease = this.leases.grant(
         {
           kind: 'session',
-          service: input.service,
+          service: what.service,
           pool,
           capacity: this.pools[pool]!.capacity,
-          ...(input.resume ? { sessionId: input.resume } : {}),
+          ...(what.resume ? { sessionId: what.resume } : {}),
         },
         () => {},
         now,
       );
-      if (!lease) continue;
-      if (input.resume) this.leases.record(input.resume, lease.pool, now);
-      this.#armFrom(lease, now);
-      return { lease };
+      if (lease) {
+        this.#armFrom(lease, now);
+        return lease;
+      }
     }
-    return this.#queue(input.service, recorded ?? asked, input.resume);
+    return undefined;
+  }
+
+  /** Unmoderated: no capacity check exists to fail, so the grant always
+   *  lands. The timeouts still watch — a silent worker dies at its idle
+   *  clock whether or not anyone is counting slots. */
+  #grantUnlimited(input: { service: string; resume?: string }, now: number): { lease: DispatcherLease } {
+    const lease = this.leases.grant(
+      {
+        kind: 'session',
+        service: input.service,
+        pool: UNLIMITED,
+        ...(input.resume ? { sessionId: input.resume } : {}),
+      },
+      () => {},
+      now,
+    )!;
+    this.#armFrom(lease, now);
+    return { lease };
   }
 
   /** Take the queue place, or say this service holds it already. */
@@ -358,24 +375,7 @@ export class Dispatcher {
     while (waiting.length > 0) {
       const next = waiting[0]!;
       const targets = next.resume ? [this.leases.sessionPool(next.resume) ?? next.pool] : this.#chain(next.pool);
-      let granted: DispatcherLease | undefined;
-      for (const name of targets) {
-        const lease = this.leases.grant(
-          {
-            kind: 'session',
-            service: next.service,
-            pool: name,
-            capacity: this.pools[name]!.capacity,
-            ...(next.resume ? { sessionId: next.resume } : {}),
-          },
-          () => {},
-        );
-        if (lease) {
-          granted = lease;
-          this.#armFrom(lease);
-          break;
-        }
-      }
+      const granted = this.#grantOnTargets(next, targets);
       if (!granted) return; // full again: the rest of the queue keeps waiting
       waiting.shift();
       if (waiting.length === 0) this.waiting.delete(pool);
@@ -505,28 +505,8 @@ export class Dispatcher {
       return { ended: [], deferred: true };
     }
     for (const lease of this.leases.all()) {
-      let reason: string | undefined;
-      if (this.moderated && !(lease.pool in this.pools)) reason = 'its pool is no longer configured';
-      else if (!lease.sessionId) {
-        if (now - lease.createdAt >= this.prepareMs) reason = 'no session was provided within the prepare timeout';
-      } else if (lease.state === 'expiring') {
-        if (await this.#spent(client, lease.sessionId, request)) reason = 'the kill was confirmed';
-        else {
-          const retry = await this.expire(lease.id, 'the kill is being retried after the boot pass');
-          if ('ended' in retry) ended.push({ lease: retry.ended, reason: 'the kill was confirmed on retry' });
-        }
-      } else {
-        const alive = await client.session
-          .get({ sessionID: lease.sessionId }, request)
-          .then(() => true)
-          .catch(() => false);
-        if (!alive) reason = 'its OpenCode session is gone';
-      }
-      if (reason) {
-        this.#free(lease);
-        ended.push({ lease, reason });
-        this.deps.onEnded?.(lease, reason);
-      }
+      const verdict = await this.#verdict(lease, now, client, request);
+      if (verdict) ended.push(...(await this.#endedBy(lease, verdict, client, request)));
     }
     for (const { lease, reason } of ended) this.log.info('lease.reconciled', { lease: lease.id, reason });
     // The survivors get their clocks re-armed from their stored activity:
@@ -534,6 +514,53 @@ export class Dispatcher {
     // started, not from the boot that read it.
     for (const lease of this.leases.all()) this.#armFrom(lease, now);
     return { ended, deferred: false };
+  }
+
+  /** Why this lease stands no more, in the words the person hears — or
+   *  nothing yet. An expiring lease is passed back untouched for the
+   *  caller's kill-confirmation dance: its ending rides on OpenCode's
+   *  answer, not on this read. */
+  async #verdict(
+    lease: DispatcherLease,
+    now: number,
+    client: OpenCodeClient,
+    request: { signal: AbortSignal },
+  ): Promise<{ reason: string } | { expiring: true } | undefined> {
+    if (this.moderated && !(lease.pool in this.pools)) return { reason: 'its pool is no longer configured' };
+    if (!lease.sessionId)
+      return now - lease.createdAt >= this.prepareMs
+        ? { reason: 'no session was provided within the prepare timeout' }
+        : undefined;
+    if (lease.state === 'expiring') return { expiring: true };
+    const alive = await client.session
+      .get({ sessionID: lease.sessionId }, request)
+      .then(() => true)
+      .catch(() => false);
+    return alive ? undefined : { reason: 'its OpenCode session is gone' };
+  }
+
+  /** Apply a verdict: the books free the lease, the service is told, and
+   *  what ended comes back for the pass's record. An expiring lease is the
+   *  kill-confirmation dance: confirmed it ends here, unconfirmed it is
+   *  retried through `expire`, which may itself end it. */
+  async #endedBy(
+    lease: DispatcherLease,
+    verdict: { reason: string } | { expiring: true },
+    client: OpenCodeClient,
+    request: { signal: AbortSignal },
+  ): Promise<{ lease: DispatcherLease; reason: string }[]> {
+    if ('expiring' in verdict) {
+      if (await this.#spent(client, lease.sessionId!, request)) {
+        this.#free(lease);
+        this.deps.onEnded?.(lease, 'the kill was confirmed');
+        return [{ lease, reason: 'the kill was confirmed' }];
+      }
+      const retry = await this.expire(lease.id, 'the kill is being retried after the boot pass');
+      return 'ended' in retry ? [{ lease: retry.ended, reason: 'the kill was confirmed on retry' }] : [];
+    }
+    this.#free(lease);
+    this.deps.onEnded?.(lease, verdict.reason);
+    return [{ lease, reason: verdict.reason }];
   }
 
   /** Is this session done spending? Absent from the active set — killed,

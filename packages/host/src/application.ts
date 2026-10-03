@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
+import type { KnowledgeService, LoadedConfig, Logger, Run } from '@aivi/core';
 import { getLogger, gitIdentity, parseDuration, readPrompt, systemJobs } from '@aivi/core';
 import type { AiviModule, AiviServices } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
@@ -80,6 +80,25 @@ export interface RunHostOptions {
    *  referee); supplied by the boot, which alone may load the plugin registry. */
   compose?: (configPath: string) => Promise<unknown>;
   onReady?: (address: unknown) => void;
+}
+
+/** The report's words: the outcome as `describeOutcome` speaks it, and for
+ *  a streak of failures the line that tells a person — a third one in a row
+ *  says so. (Ruled: failures stay silent until three, then a person is
+ *  asked to fix, pause or remove.) */
+function reportText(
+  store: Store,
+  run: Run,
+  state: 'succeeded' | 'failed' | 'blocked' | 'missed',
+  result: unknown,
+  reason: string,
+): string {
+  const words = describeOutcome(run, state, result, reason);
+  if (state !== 'failed' && state !== 'blocked') return words;
+  const streak = store.failureStreak(run.jobId);
+  return streak >= FAILURE_NUDGE_AT
+    ? `${words}\nThis job has failed ${streak} times in a row. Fix it, pause it, or remove it.`
+    : words;
 }
 
 /** Composition and ownership only: no service locator, decorators, or plugin registry. */
@@ -310,12 +329,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         // Capacity was released: queued work may be claimable now.
         wake.notify();
         if (!shouldReport(run.report, state)) return;
-        let text = describeOutcome(run, state, result, reason);
-        if (state === 'failed' || state === 'blocked') {
-          const streak = store.failureStreak(run.jobId);
-          if (streak >= FAILURE_NUDGE_AT)
-            text += `\nThis job has failed ${streak} times in a row. Fix it, pause it, or remove it.`;
-        }
+        const text = reportText(store, run, state, result, reason);
         try {
           await channels.deliver(run.report, text, { run, state });
           store.note(run.id, 'reported', reportTarget(run.report));
@@ -346,13 +360,28 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   } catch (error) {
     errors.push(error);
   } finally {
+    errors.push(...(await shutdown()));
+    if (acquired) store.releaseDaemon(owner);
+    signal.removeEventListener('abort', stop);
+    log.info('host.stopped', { errors: errors.length });
+  }
+  // The first entry is the failure that ended the host; cleanup failures follow it, never replace it.
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, 'Application shutdown failed');
+
+  /** The ordered close: wakes stop, modules drain before in-flight HTTP,
+   *  HTTP drains before knowledge closes, and the daemon lock goes last.
+   *  Every failure is collected — none of them replaces the failure that
+   *  ended the host. */
+  async function shutdown(): Promise<unknown[]> {
+    const cleanup: unknown[] = [];
     stop();
     scheduler?.stop();
-    if (supervisor) errors.push(...(await supervisor.stop()));
+    if (supervisor) cleanup.push(...(await supervisor.stop()));
     try {
       await scheduler?.drain();
     } catch (error) {
-      errors.push(error);
+      cleanup.push(error);
     }
     if (server?.listening) {
       const http = server;
@@ -362,15 +391,10 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     try {
       await knowledge?.close();
     } catch (error) {
-      errors.push(error);
+      cleanup.push(error);
     }
-    if (acquired) store.releaseDaemon(owner);
-    signal.removeEventListener('abort', stop);
-    log.info('host.stopped', { errors: errors.length });
+    return cleanup;
   }
-  // The first entry is the failure that ended the host; cleanup failures follow it, never replace it.
-  if (errors.length === 1) throw errors[0];
-  if (errors.length) throw new AggregateError(errors, 'Application shutdown failed');
 }
 
 function isLoopback(address: string): boolean {

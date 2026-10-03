@@ -62,27 +62,34 @@ async function syncProject(
         ? { id, state: 'skipped', ...(sync.reason ? { reason: sync.reason } : {}) }
         : { id, state: sync.state, ...(sync.from ? { from: sync.from } : {}), ...(sync.to ? { to: sync.to } : {}) };
     }
-    if (await git('status', '--porcelain')) return { id, state: 'skipped', reason: 'local changes in source/' };
-    const branch = await git('symbolic-ref', '--quiet', '--short', 'HEAD').catch(() => '');
-    if (!branch) return { id, state: 'skipped', reason: 'detached HEAD' };
-    await git('fetch', '--quiet', '--prune');
-    const upstream = await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => '');
-    if (!upstream) return { id, state: 'skipped', reason: `branch ${branch} has no upstream` };
-    const from = await git('rev-parse', 'HEAD');
-    const to = await git('rev-parse', upstream);
-    if (from === to) return { id, state: 'current', from, to };
-    if (
-      (await git('merge-base', '--is-ancestor', 'HEAD', upstream).then(
-        () => true,
-        () => false,
-      )) === false
-    )
-      return { id, state: 'skipped', reason: `${branch} and ${upstream} have diverged` };
-    await git('merge', '--ff-only', '--quiet', upstream);
-    return { id, state: 'updated', from, to };
+    return await plainSync(id, git);
   } catch (error) {
     return { id, state: 'skipped', reason: errorMessage(error) };
   }
+}
+
+/** The plain path's decision — the whole rule in one read: fast-forward
+ *  when the checkout can move forward as it stands; skip with the reason
+ *  when anything would need a decision. */
+async function plainSync(id: string, git: (...args: string[]) => Promise<string>): Promise<ProjectSyncOutcome> {
+  if (await git('status', '--porcelain')) return { id, state: 'skipped', reason: 'local changes in source/' };
+  const branch = await git('symbolic-ref', '--quiet', '--short', 'HEAD').catch(() => '');
+  if (!branch) return { id, state: 'skipped', reason: 'detached HEAD' };
+  await git('fetch', '--quiet', '--prune');
+  const upstream = await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => '');
+  if (!upstream) return { id, state: 'skipped', reason: `branch ${branch} has no upstream` };
+  const from = await git('rev-parse', 'HEAD');
+  const to = await git('rev-parse', upstream);
+  if (from === to) return { id, state: 'current', from, to };
+  if (
+    (await git('merge-base', '--is-ancestor', 'HEAD', upstream).then(
+      () => true,
+      () => false,
+    )) === false
+  )
+    return { id, state: 'skipped', reason: `${branch} and ${upstream} have diverged` };
+  await git('merge', '--ff-only', '--quiet', upstream);
+  return { id, state: 'updated', from, to };
 }
 
 /** Sync every checked-out project in turn; removed projects have nothing to sync. */

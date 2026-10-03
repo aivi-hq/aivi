@@ -335,47 +335,82 @@ export class Orchestrator implements OrchestratorApi {
     for (let at = lanes.length - 1; at >= 0; at--) {
       const lane = lanes[at]!;
       if (!lane.agent || lane.queue) continue; // humans work there; a queue is read as the bottom of its worker
-      const asked = lane.pool ?? 'default';
-      const fresh =
-        queueAt >= 0 && this.#feedsQueue(lanes, queueAt, lane.name)
-          ? await tracker.tickets(projectId, lanes[queueAt]!.name)
-          : [];
-      const list = [
-        ...(await tracker.tickets(projectId, lane.name)).map(t => ({ ...t, fromQueue: false })),
-        ...fresh.map(t => ({ ...t, fromQueue: true })),
-      ];
-      for (const ticket of list) {
-        if (ticket.blocked) continue; // a person's move is awaited, not capacity
-        if (this.deps.ledger.activeByTicket(trackerId, ticket.id)) continue; // claimed already — one worker per ticket
-        if (spent.has(asked)) continue; // this pass stopped asking that pool
-        const grant = this.deps.dispatcher.request({
-          service: 'orchestrator',
-          ...(lane.pool ? { pool: lane.pool } : {}),
-        });
-        if ('refused' in grant) {
-          spent.add(grant.pool);
-          continue;
-        }
-        if ('queued' in grant) {
-          // The pool is full and this ticket holds its one queue place —
-          // the next ticket's `waiting` refusal will stop this pool for the
-          // pass. When a slot opens, #fulfill takes the key for this one.
-          this.requested.set(grant.queued, {
-            kind: 'walk',
-            trackerId,
-            projectId,
-            ticketId: ticket.id,
-            lane: lane.name,
-            fromQueue: ticket.fromQueue,
-          });
-          continue;
-        }
-        // Still eligible after the awaits — the ledger's guard is the claim:
-        // a ticket that took a run while this pass was reading never takes
-        // a second worker.
-        await this.#claimAndStart(trackerId, projectId, ticket.id, lane, ticket.fromQueue, grant.lease.id);
-      }
+      await this.#workLane(
+        trackerId,
+        projectId,
+        lane,
+        spent,
+        await this.#laneTickets(lanes, tracker, projectId, lane, queueAt),
+      );
     }
+  }
+
+  /** The lane's tickets top to bottom: eligible ones ask for a slot, and a
+   *  pool that refused once stays refused for the rest of the pass. */
+  async #workLane(
+    trackerId: string,
+    projectId: string,
+    lane: ProjectLane,
+    spent: Set<string>,
+    tickets: { id: string; blocked: boolean; fromQueue: boolean }[],
+  ): Promise<void> {
+    for (const ticket of tickets) {
+      if (ticket.blocked) continue; // a person's move is awaited, not capacity
+      if (this.deps.ledger.activeByTicket(trackerId, ticket.id)) continue; // claimed already — one worker per ticket
+      if (spent.has(lane.pool ?? 'default')) continue; // this pass stopped asking that pool
+      const refused = await this.#grantFor(trackerId, projectId, ticket, lane);
+      if (refused !== undefined) spent.add(refused);
+    }
+  }
+
+  /** One ticket's ask for a slot. Started, or held for a slot that opens
+   *  (the queue place is this ticket's alone until #fulfill takes the
+   *  key), or the pool said full — answered back so the pass stops asking
+   *  it. Still eligible after the awaits: the ledger's guard is the claim. */
+  async #grantFor(
+    trackerId: string,
+    projectId: string,
+    ticket: { id: string; fromQueue: boolean },
+    lane: ProjectLane,
+  ): Promise<string | undefined> {
+    const grant = this.deps.dispatcher.request({
+      service: 'orchestrator',
+      ...(lane.pool ? { pool: lane.pool } : {}),
+    });
+    if ('refused' in grant) return grant.pool;
+    if ('queued' in grant) {
+      this.requested.set(grant.queued, {
+        kind: 'walk',
+        trackerId,
+        projectId,
+        ticketId: ticket.id,
+        lane: lane.name,
+        fromQueue: ticket.fromQueue,
+      });
+      return undefined;
+    }
+    await this.#claimAndStart(trackerId, projectId, ticket.id, lane, ticket.fromQueue, grant.lease.id);
+    return undefined;
+  }
+
+  /** The lane's tickets in walk order: its own first, then — and only for
+   *  the worker lane the queue feeds — the queue's, which sit at this
+   *  lane's bottom. */
+  async #laneTickets(
+    lanes: ProjectLane[],
+    tracker: Tracker,
+    projectId: string,
+    lane: ProjectLane,
+    queueAt: number,
+  ): Promise<{ id: string; blocked: boolean; fromQueue: boolean }[]> {
+    const queue =
+      queueAt >= 0 && this.#feedsQueue(lanes, queueAt, lane.name)
+        ? await tracker.tickets(projectId, lanes[queueAt]!.name)
+        : [];
+    return [
+      ...(await tracker.tickets(projectId, lane.name)).map(t => ({ ...t, fromQueue: false })),
+      ...queue.map(t => ({ ...t, fromQueue: true })),
+    ];
   }
 
   /**
@@ -851,30 +886,40 @@ export class Orchestrator implements OrchestratorApi {
    *  decides its model (the pool's, or the agent file's where no pool names
    *  one); the orchestrator only ever says agent and directory. Any failure
    *  fails the run visibly, never silently, and gives the slot back. */
+  /** Where this run works: a worktree lane gets its own git worktree on the
+   *  ticket's branch, made from the checkout and crossed to origin only
+   *  through the forge; every other lane works in the checkout itself. */
+  async #worktreeOrCheckout(
+    run: Run,
+    directory: string,
+    branch: string | undefined,
+    owned: Awaited<ReturnType<Forges['owner']>>,
+    log: Logger,
+  ): Promise<string> {
+    const lane = this.deps.lanes(run.projectId).find(l => l.name === run.lane);
+    if (!lane?.worktree) return directory;
+    if (!branch) throw new Error('this lane works in its own worktree, and the tracker named no branch for the ticket');
+    const source = directory;
+    const made = await ensureWorktree({
+      source,
+      path: worktreePathFor(source, run.id),
+      branch,
+      identity: await this.deps.identity(),
+      ...(owned ? { fetchBranch: (b: string) => owned.forge.fetchBranch(owned.repo, source, b) } : {}),
+      signal: this.deps.signal,
+      git: this.#worktreeGit,
+    });
+    log.info('worktree.ready', { branch, base: made.base, ...(owned ? { forge: owned.repo.id } : {}) });
+    return made.path;
+  }
+
   async #prepare(runId: string, summary: string, directory: string, leaseId: string, branch?: string): Promise<void> {
     const log = this.deps.log.with({ run: runId });
     try {
       const run = this.deps.ledger.get(runId);
       if (!run) return;
-      let dir = directory;
-      const lane = this.deps.lanes(run.projectId).find(l => l.name === run.lane);
       const owned = await this.deps.forges.owner({ id: run.projectId, directory });
-      if (lane?.worktree) {
-        if (!branch)
-          throw new Error('this lane works in its own worktree, and the tracker named no branch for the ticket');
-        const source = directory;
-        const made = await ensureWorktree({
-          source,
-          path: worktreePathFor(source, runId),
-          branch,
-          identity: await this.deps.identity(),
-          ...(owned ? { fetchBranch: (b: string) => owned.forge.fetchBranch(owned.repo, source, b) } : {}),
-          signal: this.deps.signal,
-          git: this.#worktreeGit,
-        });
-        dir = made.path;
-        log.info('worktree.ready', { branch, base: made.base, ...(owned ? { forge: owned.repo.id } : {}) });
-      }
+      const dir = await this.#worktreeOrCheckout(run, directory, branch, owned, log);
       // The feedback gather at start; see #gatherFeedback. Warned, never
       // fatal: unreadable at start means started-clean.
       let feedback = '';
@@ -1810,6 +1855,17 @@ function parseRespond(input: Record<string, unknown>): { threadId?: string; body
 
 /** `aivi_submit_review`: a review verdict and inline findings. APPROVE is
  *  not in the state list and no string will ever talk this code into it. */
+/** One review finding: the file it names, optionally a line, and what was
+ *  found there — a finding without file or words is refused in the worker's
+ *  own grammar. */
+function parseFinding(finding: unknown): { path: string; line?: number; body: string } {
+  const f = finding as Record<string, unknown>;
+  const path = typeof f.path === 'string' ? f.path : '';
+  const text = typeof f.body === 'string' ? f.body.trim() : '';
+  if (!path || !text) throw new ToolError(400, 'each finding needs a path and a body: what you found, on which file.');
+  return { path, ...(typeof f.line === 'number' ? { line: f.line } : {}), body: text };
+}
+
 function parseReview(input: Record<string, unknown>): {
   body: string;
   state: 'COMMENT' | 'REQUEST_CHANGES';
@@ -1819,15 +1875,7 @@ function parseReview(input: Record<string, unknown>): {
   if (!body) throw new ToolError(400, 'body is required: the review, in words a human reads.');
   if (input.state !== 'COMMENT' && input.state !== 'REQUEST_CHANGES')
     throw new ToolError(400, 'state is required: COMMENT or REQUEST_CHANGES. Approval stays a human button.');
-  const findings: { path: string; line?: number; body: string }[] = [];
   const raw = Array.isArray(input.findings) ? input.findings : [];
-  for (const finding of raw) {
-    const f = finding as Record<string, unknown>;
-    const path = typeof f.path === 'string' ? f.path : '';
-    const text = typeof f.body === 'string' ? f.body.trim() : '';
-    if (!path || !text)
-      throw new ToolError(400, 'each finding needs a path and a body: what you found, on which file.');
-    findings.push({ path, ...(typeof f.line === 'number' ? { line: f.line } : {}), body: text });
-  }
+  const findings = raw.map(parseFinding);
   return { body, state: input.state, ...(findings.length ? { comments: findings } : {}) };
 }

@@ -20,29 +20,60 @@ import { registerCommands } from '../src/cli.ts';
 /** One command run, as the bin runs it: env first (the child inherited it),
  *  a fresh tree per argv, exit code read back. stdin is pinned to “pipe” so
  *  a terminal running the suite cannot turn a script's refusal into a prompt. */
-const run = async (
-  args: string[],
-  env: NodeJS.ProcessEnv,
-): Promise<{ status: number; stdout: string; stderr: string }> => {
+/** The process's pipes and env, swapped for one command run; `restore`
+ *  gives everything back and answers with what the run said and its code. */
+const captureProcess = (env: NodeJS.ProcessEnv) => {
   const savedEnv = { ...process.env };
   const savedExitCode = process.exitCode;
   const savedTty = process.stdin.isTTY;
   Object.assign(process.env, env);
   for (const key of Object.keys(savedEnv)) if (!(key in env)) delete process.env[key];
-  let stdout = '';
-  let stderr = '';
+  const pipes = { stdout: '', stderr: '' };
   const out = process.stdout.write.bind(process.stdout);
   const err = process.stderr.write.bind(process.stderr);
   process.stdout.write = (chunk: string | Uint8Array): boolean => {
-    stdout += String(chunk);
+    pipes.stdout += String(chunk);
     return true;
   };
   process.stderr.write = (chunk: string | Uint8Array): boolean => {
-    stderr += String(chunk);
+    pipes.stderr += String(chunk);
     return true;
   };
   Object.defineProperty(process.stdin, 'isTTY', { value: undefined, configurable: true });
   process.exitCode = 0;
+  return {
+    pipes,
+    restore: (): { status: number; stdout: string; stderr: string } => {
+      const status = typeof process.exitCode === 'number' ? process.exitCode : 0;
+      process.exitCode = savedExitCode;
+      process.stdout.write = out;
+      process.stderr.write = err;
+      Object.defineProperty(process.stdin, 'isTTY', { value: savedTty, configurable: true });
+      for (const key of new Set([...Object.keys(savedEnv), ...Object.keys(process.env)]))
+        process.env[key] = savedEnv[key];
+      return { status, ...pipes };
+    },
+  };
+};
+
+/** The bin's exit rule: showing help or the version is success, a commander
+ *  refusal carries its own code, and anything else is the printed crash. */
+const failureCode = (error: unknown): number => {
+  if (error instanceof CommanderError)
+    return error.code === 'commander.help' ||
+      error.code === 'commander.helpDisplayed' ||
+      error.code === 'commander.version'
+      ? 0
+      : error.exitCode;
+  console.error(error instanceof Error ? error.message : String(error));
+  return 1;
+};
+
+const run = async (
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<{ status: number; stdout: string; stderr: string }> => {
+  const capture = captureProcess(env);
   const clientConfig =
     process.env.AIVI_CONFIG ?? join(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
   const program = new Command('aivi').exitOverride();
@@ -54,32 +85,15 @@ const run = async (
   try {
     await program.parseAsync(args, { from: 'user' });
   } catch (error) {
-    if (error instanceof CommanderError) {
-      // Commander has written its message already; showing help or the version is success.
-      if (
-        error.code !== 'commander.help' &&
-        error.code !== 'commander.helpDisplayed' &&
-        error.code !== 'commander.version'
-      )
-        process.exitCode = error.exitCode;
-    } else {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exitCode = 1;
-    }
+    process.exitCode = failureCode(error);
   }
-  const status = typeof process.exitCode === 'number' ? process.exitCode : 0;
   // `serve`'s hook wires LogTape for its run; a run whose action refused
   // never reaches the flush hook, so the wiring would outlive it and the
   // next serve would find LogTape configured. The driver is the one process
   // that runs serve twice, so the driver is the one that clears it —
   // production keeps LogTape's own refusal of a second wiring.
   await resetLogging();
-  process.exitCode = savedExitCode;
-  process.stdout.write = out;
-  process.stderr.write = err;
-  Object.defineProperty(process.stdin, 'isTTY', { value: savedTty, configurable: true });
-  for (const key of new Set([...Object.keys(savedEnv), ...Object.keys(process.env)])) process.env[key] = savedEnv[key];
-  return { status, stdout, stderr };
+  return capture.restore();
 };
 
 const scratch = async () => {

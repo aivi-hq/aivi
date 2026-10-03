@@ -9,7 +9,14 @@
  *  says so. */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { errorMessage, type ProjectLaneInput, type ProjectRole, print, projectRoles } from '@aivi/core';
+import {
+  errorMessage,
+  type LoadedConfig,
+  type ProjectLaneInput,
+  type ProjectRole,
+  print,
+  projectRoles,
+} from '@aivi/core';
 import { PluginSetupCancelled, type ProjectSetupContext } from '@aivi/plugin';
 import * as p from '@clack/prompts';
 import { connectOpenCode } from '../opencode.ts';
@@ -81,6 +88,21 @@ async function writeProjectSections(
  * tracker's team name); the rest keep it. Returns the settled id, or
  * undefined when the flow stopped.
  */
+/** Who could work a lane, listed from the project's own checkout. The
+ *  checkout is created here before anything asks, so it always exists when
+ *  OpenCode is pointed at it. `ensure`: when no service answers, start one —
+ *  a wizard that cannot list agents is a broken wizard, so a failure here is
+ *  said, not swallowed. A lane runs its agent as the session's primary;
+ *  OpenCode says which agents can be (`mode`), so the subagent-only ones
+ *  never show up as a lane's worker. */
+async function listLaneAgents(home: string, loaded: LoadedConfig, projectId: string): Promise<string[]> {
+  const source = join(home, 'projects', projectId, 'source');
+  await mkdir(source, { recursive: true });
+  const client = await connectOpenCode({ ...loaded.config.opencode, lifecycle: 'ensure' });
+  const listed = await client.agent.list({ location: { directory: source } });
+  return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
+}
+
 export async function runProjectSetup(options: {
   home: string;
   configPath: string;
@@ -99,94 +121,110 @@ export async function runProjectSetup(options: {
     moduleId => (loaded.config.plugins as Record<string, unknown>)[moduleId] !== undefined,
   );
 
-  let projectId: string | undefined = options.name;
-  const sections: Record<string, Record<string, unknown>> = {};
-  let lanes: ProjectLaneInput[] | undefined;
-  let cloned = false;
-
-  /** Run one contributor, folding its answer in: the first to name the
-   *  project settles it, later ones keep it; its section is written whole. */
-  const run = async (chosen: ProjectContributorEntry): Promise<void> => {
-    const ctx: ProjectSetupContext = {
-      home: options.home,
-      configPath: options.configPath,
-      config: (loaded.config.plugins as Record<string, unknown>)[chosen.moduleId] as Record<string, unknown>,
-      print: (value, output) => print(value, output),
-      prompts: p,
-      fetch: (url, init) => fetch(url, init),
-      // Whether a checkout with git is possible here: a plugin serving
-      // core's `forge` role is configured. Core's fact, never a plugin name.
-      forgeConfigured: plan.roles.some(r => r.role === 'forge' && r.candidates.length > 0),
-      // Who could work a lane, listed from the project's own checkout.
-      // The checkout is created here before anything asks, so it always
-      // exists when OpenCode is pointed at it. `ensure`: when no service
-      // answers, start one — a wizard that cannot list agents is a broken
-      // wizard, so a failure here is said, not swallowed.
-      async agents(projectId: string): Promise<string[]> {
-        const source = join(options.home, 'projects', projectId, 'source');
-        await mkdir(source, { recursive: true });
-        const client = await connectOpenCode({ ...loaded.config.opencode, lifecycle: 'ensure' });
-        const listed = await client.agent.list({ location: { directory: source } });
-        // A lane runs its agent as the session's primary; OpenCode says
-        // which agents can be (`mode`), so the subagent-only ones never
-        // show up as a lane's worker.
-        return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
-      },
-      async withStore(fn) {
-        return withStore((await context()).loaded, fn);
-      },
-    };
-    const defaults = (loaded.config.projectDefaults as Record<string, unknown>)[chosen.moduleId];
-    if (defaults !== undefined) ctx.projectDefaults = defaults as Record<string, unknown>;
-    if (projectId !== undefined) ctx.projectId = projectId;
-    const result = await chosen.contributor.setup(ctx);
-    projectId ??= result.id;
-    if (result.section) sections[chosen.moduleId] = result.section;
-    // One workflow per project: the tracker role offers the lane array it
-    // read from its board; a second contributor offering one is a conflict,
-    // never a merge.
-    if (result.lanes) {
-      if (lanes) throw new Error(`${chosen.moduleId} also named a lane array; a project has one workflow`);
-      lanes = result.lanes;
-    }
-    cloned ||= result.cloned === true;
-  };
+  const answers: SetupAnswers = { sections: {}, cloned: false };
+  if (options.name !== undefined) answers.projectId = options.name;
 
   try {
     for (const { role, candidates } of plan.roles) {
       if (!candidates.length) continue;
-      const chosen = await pickForRole(role, candidates);
-      await run(chosen);
+      await runContributor(await pickForRole(role, candidates), options, loaded, plan, answers);
     }
-    for (const extra of plan.extras) await run(extra);
+    for (const extra of plan.extras) await runContributor(extra, options, loaded, plan, answers);
 
-    if (!projectId) {
-      const answer = await p.text({ message: 'Project name', placeholder: 'e.g. research' });
-      if (p.isCancel(answer)) throw new PluginSetupCancelled('no project name');
-      projectId = String(answer).trim() || undefined;
-    }
-    if (!projectId) throw new Error('no project name and no configured plugin to offer one');
+    if (!answers.projectId) answers.projectId = await askProjectName();
+    if (!answers.projectId) throw new Error('no project name and no configured plugin to offer one');
+    const projectId = answers.projectId;
 
-    // The checkout must exist before the config names the project: a project
-    // directory with neither source/ nor memory/ is a mistake, not a project.
-    if (!cloned) {
-      const source = join(options.home, 'projects', projectId, 'source');
-      await mkdir(source, { recursive: true });
-      await writeFile(join(source, 'AGENTS.md'), UNTRACKED_NOTE, { flag: 'wx' }).catch(() => {});
-    }
-    await writeProjectSections(options.configPath, projectId, sections, lanes);
-    p.outro(
-      cloned
-        ? `${projectId} is set up.${sectionsTrailing(sections)} Restart \`aivi serve\` to index it.`
-        : `${projectId} has no source host (no forge configured); its directory is untracked and holds a note. ${sectionsTrailing(sections)}Restart \`aivi serve\` to index it.`,
-    );
+    // The checkout must exist before the config names the project.
+    if (!answers.cloned) await ensureUntrackedSource(options.home, projectId);
+    await writeProjectSections(options.configPath, projectId, answers.sections, answers.lanes);
+    p.outro(outroFor(projectId, answers));
     return projectId;
   } catch (error) {
-    if (error instanceof PluginSetupCancelled) p.cancel('Setup stopped. Nothing was written.');
-    else p.cancel(`Setup stopped: ${errorMessage(error)}. Nothing further was written.`);
-    process.exitCode = 1;
+    sayStopped(error);
     return undefined;
   }
+}
+
+/** The project's name, asked of the person once when no contributor named
+ *  one: a cancel stops the wizard, blank is no answer. */
+async function askProjectName(): Promise<string | undefined> {
+  const answer = await p.text({ message: 'Project name', placeholder: 'e.g. research' });
+  if (p.isCancel(answer)) throw new PluginSetupCancelled('no project name');
+  return String(answer).trim() || undefined;
+}
+
+/** The wizard's last line, per the state of the checkout: a forge brought
+ *  the source, or the directory is untracked and says so. */
+function outroFor(projectId: string, answers: SetupAnswers): string {
+  if (answers.cloned)
+    return `${projectId} is set up.${sectionsTrailing(answers.sections)} Restart \`aivi serve\` to index it.`;
+  return `${projectId} has no source host (no forge configured); its directory is untracked and holds a note. ${sectionsTrailing(answers.sections)}Restart \`aivi serve\` to index it.`;
+}
+
+/** The wizard's stop: the person's cancel is said short, a failure with its
+ *  reason; either way nothing was written and the exit code says so. */
+function sayStopped(error: unknown): void {
+  if (error instanceof PluginSetupCancelled) p.cancel('Setup stopped. Nothing was written.');
+  else p.cancel(`Setup stopped: ${errorMessage(error)}. Nothing further was written.`);
+  process.exitCode = 1;
+}
+
+/** What the contributors have answered so far: the project the first one
+ *  named, each one's section whole, the one lane array, and whether any of
+ *  them brought a checkout. */
+interface SetupAnswers {
+  projectId?: string | undefined;
+  sections: Record<string, Record<string, unknown>>;
+  lanes?: ProjectLaneInput[];
+  cloned: boolean;
+}
+
+/** Run one contributor with its configured context, folding its answer into
+ *  the ones so far (decision above: `SetupAnswers`). */
+async function runContributor(
+  chosen: ProjectContributorEntry,
+  options: { home: string; configPath: string },
+  loaded: LoadedConfig,
+  plan: ProjectSetupPlan,
+  answers: SetupAnswers,
+): Promise<void> {
+  const ctx: ProjectSetupContext = {
+    home: options.home,
+    configPath: options.configPath,
+    config: (loaded.config.plugins as Record<string, unknown>)[chosen.moduleId] as Record<string, unknown>,
+    print: (value, output) => print(value, output),
+    prompts: p,
+    fetch: (url, init) => fetch(url, init),
+    // Whether a checkout with git is possible here: a plugin serving
+    // core's `forge` role is configured. Core's fact, never a plugin name.
+    forgeConfigured: plan.roles.some(r => r.role === 'forge' && r.candidates.length > 0),
+    // Who could work a lane, listed from the project's own checkout.
+    agents: projectId => listLaneAgents(options.home, loaded, projectId),
+    async withStore(fn) {
+      return withStore((await context()).loaded, fn);
+    },
+  };
+  const defaults = (loaded.config.projectDefaults as Record<string, unknown>)[chosen.moduleId];
+  if (defaults !== undefined) ctx.projectDefaults = defaults as Record<string, unknown>;
+  if (answers.projectId !== undefined) ctx.projectId = answers.projectId;
+  const result = await chosen.contributor.setup(ctx);
+  answers.projectId ??= result.id;
+  if (result.section) answers.sections[chosen.moduleId] = result.section;
+  if (result.lanes) {
+    if (answers.lanes) throw new Error(`${chosen.moduleId} also named a lane array; a project has one workflow`);
+    answers.lanes = result.lanes;
+  }
+  answers.cloned ||= result.cloned === true;
+}
+
+/** The checkout the wizard itself made: a directory with a note saying it is
+ *  untracked, so a project without a forge is a known state and not a lost
+ *  clone. The note is written once and never overwritten. */
+async function ensureUntrackedSource(home: string, projectId: string): Promise<void> {
+  const source = join(home, 'projects', projectId, 'source');
+  await mkdir(source, { recursive: true });
+  await writeFile(join(source, 'AGENTS.md'), UNTRACKED_NOTE, { flag: 'wx' }).catch(() => {});
 }
 
 /** The one contributor for a role: none, the only one, or a pick when several
