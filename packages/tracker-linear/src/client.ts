@@ -277,6 +277,51 @@ export class LinearClient {
     if (!data.issueUpdate.success) throw new LinearApiError('issueUpdate was not successful', 200);
   }
 
+  /** The label id a name stands for on a team: the team's own label wins over
+   *  the workspace's when both carry the name (the API applies any label to
+   *  any issue, so the disambiguation lives here), and a name no label
+   *  answers is **created on the team** — the human label must be applicable
+   *  without a visit to settings first. (schema:
+   *  `issueLabels(filter: {name: {eq}})`, `issueLabelCreate(input:)`.) */
+  async labelIdForTeam(teamId: string, name: string): Promise<string> {
+    const data = await this.graphql<{
+      issueLabels: { nodes: { id: string; team: { id: string } | null }[] };
+    }>(
+      `query($name: String!) { issueLabels(filter: { name: { eq: $name } }, first: 25) { nodes { id team { id } } } }`,
+      { name },
+    );
+    const eligible = data.issueLabels.nodes.filter(l => l.team === null || l.team.id === teamId);
+    const existing = eligible.find(l => l.team?.id === teamId) ?? eligible[0];
+    if (existing) return existing.id;
+    const created = await this.graphql<{ issueLabelCreate: { success: boolean; issueLabel: { id: string } } }>(
+      `mutation($input: IssueLabelCreateInput!) { issueLabelCreate(input: $input) { success issueLabel { id } } }`,
+      { input: { name, teamId } },
+    );
+    if (!created.issueLabelCreate.success) throw new LinearApiError(`label "${name}" was not created`, 200);
+    return created.issueLabelCreate.issueLabel.id;
+  }
+
+  /** Put a label on an issue — how the human label marks a ticket: a stop,
+   *  a failed closing, a stop the runtime would not answer. (schema:
+   *  `issueAddLabel(id: String!, labelId: String!)`.) */
+  async addLabel(issueId: string, labelId: string): Promise<void> {
+    const data = await this.graphql<{ issueAddLabel: { success: boolean } }>(
+      `mutation($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }`,
+      { id: issueId, labelId },
+    );
+    if (!data.issueAddLabel.success) throw new LinearApiError('issueAddLabel was not successful', 200);
+  }
+
+  /** Take a label off an issue — the lift that lets the walk work a marked
+   *  ticket again. (schema: `issueRemoveLabel(id: String!, labelId: String!)`.) */
+  async removeLabel(issueId: string, labelId: string): Promise<void> {
+    const data = await this.graphql<{ issueRemoveLabel: { success: boolean } }>(
+      `mutation($id: String!, $labelId: String!) { issueRemoveLabel(id: $id, labelId: $labelId) { success } }`,
+      { id: issueId, labelId },
+    );
+    if (!data.issueRemoveLabel.success) throw new LinearApiError('issueRemoveLabel was not successful', 200);
+  }
+
   /** A comment on the **issue** itself, not the agent session's activity:
    *  the closing note a person reads without opening the session. Posted
    *  with the app's token, so it stands as the app's comment. */

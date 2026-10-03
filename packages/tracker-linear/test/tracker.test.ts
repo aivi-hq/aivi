@@ -96,6 +96,23 @@ class FakeLinear extends LinearClient {
     this.posted.push({ issueId, body });
     this.commentsByIssue.set(issueId, [...(this.commentsByIssue.get(issueId) ?? []), body]);
   }
+  labelCalls: { issueId: string; labelId: string; on: boolean }[] = [];
+  /** The team's label catalogue: only needs-human stands, anything else
+   *  exercises the create-on-miss path. */
+  labelIds = new Map<string, string>([['needs-human', 'lbl-needs-human']]);
+  override async labelIdForTeam(_teamId: string, name: string): Promise<string> {
+    const existing = this.labelIds.get(name);
+    if (existing) return existing;
+    const made = `lbl-${name}`;
+    this.labelIds.set(name, made);
+    return made;
+  }
+  override async addLabel(issueId: string, labelId: string): Promise<void> {
+    this.labelCalls.push({ issueId, labelId, on: true });
+  }
+  override async removeLabel(issueId: string, labelId: string): Promise<void> {
+    this.labelCalls.push({ issueId, labelId, on: false });
+  }
 }
 
 const linearIssue = (id: string, extra: Partial<LinearIssue> = {}): LinearIssue => ({
@@ -392,4 +409,19 @@ test('the closing note stands on the ticket once: linked to its session, never p
   client.sessionsByIssue.set('eng-2', [{ id: 'as-2', status: 'active' }]);
   await tracker.closingNote!('dev:as-2', 'eng-2', 'Stopped: a person takes over.');
   assert.equal(client.posted[1]!.body, 'Stopped: a person takes over.\n\n— aivi · agent session `as-2`');
+});
+
+test('the human label rides: apply adds the named label to the issue and lifts it back', async t => {
+  // The branch the quality scan's dead-code report exposed as a throw: the
+  // module has asked for this update on every stop and failed closing since
+  // the stop-sticks ruling, and only the fake ever delivered it.
+  const { client, tracker } = await wired(t);
+  client.issues.set('eng-9', linearIssue('eng-9'));
+  await tracker.apply('dev:as-9', 'eng-9', { kind: 'label', label: 'needs-human', on: true });
+  assert.deepEqual(client.labelCalls, [{ issueId: 'eng-9', labelId: 'lbl-needs-human', on: true }]);
+  await tracker.apply('dev:as-9', 'eng-9', { kind: 'label', label: 'needs-human', on: false });
+  assert.deepEqual(client.labelCalls.at(-1), { issueId: 'eng-9', labelId: 'lbl-needs-human', on: false });
+  // A name the catalogue does not carry is created on the team, then rides.
+  await tracker.apply('dev:as-9', 'eng-9', { kind: 'label', label: 'blocked-on-person', on: true });
+  assert.deepEqual(client.labelCalls.at(-1), { issueId: 'eng-9', labelId: 'lbl-blocked-on-person', on: true });
 });

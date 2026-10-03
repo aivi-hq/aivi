@@ -145,13 +145,6 @@ export class LinearPlatform implements Platform {
       });
   }
 
-  /** The app that carries the data feed and authorises the Linear MCP. */
-  get primary(): LinearAppRuntime {
-    const primary = this.primaryId ? this.apps.get(this.primaryId) : undefined;
-    if (!primary) throw new ConfigurationError('Linear: no primary app is ready');
-    return primary;
-  }
-
   /** Learn who aivi is in each app's workspace; bad credentials are a setup
    *  error the operator fixes, not a retry. `createLinearPlatform` awaits
    *  this; it is public so a caller may re-learn the identities. */
@@ -328,12 +321,22 @@ export class LinearPlatform implements Platform {
    * the issue's team — the names come from the project's lane config, which
    * is core's decision; Linear is only ever asked to transition, and only
    * when the issue is not in that state already (the boot pass may re-drive
-   * a move that already landed). Labels wait for their own mutation work;
-   * nothing on today's path asks for one.
+   * a move that already landed). A `label` resolves the name against the
+   * team's labels (created there when none carries it) and adds or lifts
+   * (2026-10-03: this branch used to throw "cannot apply label yet" while
+   * the module's stop and failed-closing marks asked for one every time —
+   * the label never rode in production, only in the fake that had learned
+   * to mutate labels; the quality scan's dead-code report exposed it).
    */
   async apply(conversation: string, issueId: string, update: TrackerUpdate): Promise<void> {
     if (update.kind === 'comment') return void (await this.comment(conversation, update.text, 'note'));
-    if (update.kind !== 'move') throw new Error(`Linear cannot apply "${update.kind}" yet`);
+    if (update.kind === 'label') {
+      const client = this.of(conversation).client;
+      const issue = await client.issue(issueId);
+      const labelId = await client.labelIdForTeam(issue.team.id, update.label);
+      return update.on ? client.addLabel(issueId, labelId) : client.removeLabel(issueId, labelId);
+    }
+    if (update.kind !== 'move') throw new Error('Linear cannot apply this update yet');
     const client = this.of(conversation).client;
     const issue = await client.issue(issueId);
     const teams = await client.listTeams();
