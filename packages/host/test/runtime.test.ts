@@ -468,6 +468,10 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
     taskSchema.parse({
       kind: 'shell',
       command: [process.execPath, '-e', 'setTimeout(()=>{}, 10000)'],
+      // The schema's floor is 1000ms, so this test pays one second waiting
+      // for a real deadline: it pins `blocked` (a task that outlived its
+      // timeout) apart from `failed`, which is what the board's memory rides
+      // on. One of the few second-long tests, and it earns it.
       timeoutMs: 1000,
     }),
     'local-model',

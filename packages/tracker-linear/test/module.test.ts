@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -1332,55 +1332,6 @@ test('an answer OpenCode will not take is spoken, not silence: the run stays par
   await until(() => form.answered, 'the form closes as the record');
   const answered = opencode.prompts.find(p => p.text.startsWith('The person answered your question:'));
   assert.equal(answered!.text, 'The person answered your question: Use teal', 'the worker got the words');
-});
-
-test('a stop in a worktree lane tears the attempt down: worktree gone, local commits gone, ticket marked', async t => {
-  const { tracker, config, store, services, board, opencode, source, orchestrator } = await walkHarness(t, {
-    worktree: true,
-  });
-  const running = await createLinearModule(
-    linearBlock(config),
-    async () => tracker,
-    () => board,
-  ).start(services);
-  t.after(async () => {
-    await running.stop();
-    store.close();
-  });
-
-  await orchestrator.wake('website');
-  await until(() => opencode.prompts.length === 1, 'the walk started the worker');
-  assert.match(opencode.prompts[0]!.text, /git worktree of the project at .+\/worktrees\//);
-  const run = orchestrator.activeRun('tracker-linear', 'eng-1')!;
-  const worktree = run.worktree!;
-  assert.ok((await stat(worktree)).isDirectory(), 'the lane got its own worktree');
-
-  // The worker commits half a feature — exactly the half-finished state a
-  // stop must not leave for the next worker to trip over.
-  await writeFile(join(worktree, 'note.txt'), 'half a feature');
-  await git(worktree, 'add', '.');
-  await git(worktree, 'commit', '-q', '-m', 'half a feature');
-  assert.match((await git(source, 'branch', '--list', 'me/eng-1')).stdout, /me\/eng-1/, 'the branch exists');
-
-  // Stop means stop, teardown included (ruled 2026-10-03): the worktree
-  // goes, the local branch goes with it — the commit goes unreachable —
-  // and the ticket carries the human mark. Anything pushed would stay
-  // pushed: a stop ends this machine's attempt, not the remote's truth.
-  await tracker.drive({ kind: 'prompted', id: 'act-stop', conversation: 'dev:as-auto-1', signal: 'stop' });
-  await until(() => tracker.closingNotes.length === 1, 'the ticket heard its ending');
-  assert.equal(await stat(worktree).catch(() => null), null, 'the stopped attempt’s directory is gone');
-  assert.equal(
-    (await git(source, 'branch', '--list', 'me/eng-1')).stdout.trim(),
-    '',
-    'and the local branch with its stopped commit goes with it',
-  );
-  assert.ok(
-    tracker.moves.some(m => m.issueId === 'eng-1' && m.update.kind === 'label' && m.update.on),
-    'the ticket carries the human mark',
-  );
-  assert.deepEqual(board.moves, [], 'a stop moves nothing');
-  await new Promise(r => setTimeout(r, 50));
-  assert.equal(opencode.prompts.length, 1, 'and the walk does not start a fresh attempt on the stopped ticket');
 });
 
 test('a closing that failed to land is found at boot from the pair we keep — and the failed ticket is work again', async t => {

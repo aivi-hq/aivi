@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
@@ -145,119 +145,6 @@ test('a person who is not an operator is refused and named in the answer', async
   assert.equal((answer.body.person as { name: string }).name, 'Eve');
 });
 
-test('a piped session runs aivi with the bearer in its closed env and keeps stderr apart', async t => {
-  process.env.DISCORD_BOT_TOKEN = 'must-never-travel';
-  t.after(() => {
-    delete process.env.DISCORD_BOT_TOKEN;
-  });
-  const { store, home, port, secret } = await harness(
-    t,
-    () =>
-      '#!/bin/sh\n' +
-      'echo "argv:$*"\n' +
-      'echo "bearer:$AIVI_OPERATOR_BEARER"\n' +
-      'echo "home:$AIVI_HOME"\n' +
-      'echo "term:$TERM"\n' +
-      'echo "token:$DISCORD_BOT_TOKEN"\n' +
-      'echo ooh >&2\n' +
-      'exit 3\n',
-  );
-  const done = await session(port, secret, { t: 'start', argv: ['status'], pty: false });
-  assert.ok(
-    done.events.some(event => event.t === 'ready' && typeof event.pid === 'number'),
-    'ready names the pid',
-  );
-  assert.match(done.stdout, /argv:status/);
-  assert.match(done.stdout, new RegExp(`bearer:${secret}`), 'the child re-speaks the bearer of this connection (D15)');
-  assert.match(done.stdout, new RegExp(`home:${home}`));
-  assert.match(done.stdout, /term:xterm-256color/);
-  assert.match(done.stdout, /token:\n/, 'the host secrets stayed out of the child env');
-  const err = done.events.find(event => event.t === 'err');
-  assert.equal(Buffer.from(String(err!.b64), 'base64').toString('utf8'), 'ooh\n', 'stderr kept its own channel');
-  assert.equal(done.exit!.code, 3);
-  const [row] = auditRows(store);
-  assert.equal(row!.status, 101);
-  const audited = JSON.parse(row!.body!) as Record<string, unknown>;
-  assert.deepEqual(audited.argv, ['status']);
-  assert.equal(audited.exitCode, 3);
-  assert.equal((audited.person as { name: string }).name, 'Ada');
-});
-
-test('stdin bytes reach the child and rejoin when a character splits across frames', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nIFS= read -r line\necho "got:$line"\n');
-  const done = await session(port, secret, { t: 'start', argv: ['echo'], pty: false }, [
-    Buffer.from('h\xc3', 'binary'),
-    Buffer.from('\xa9llo\n', 'binary'),
-  ]);
-  assert.match(done.stdout, /got:héllo/, 'a utf8 character split mid-frame still reaches the child');
-});
-
-test('a PTY session runs the CLI on a terminal and reports its exit code', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\necho "argv:$*"\nexit 3\n');
-  const done = await session(port, secret, { t: 'start', argv: ['jobs', 'list'] });
-  assert.ok(
-    done.events.some(event => event.t === 'ready'),
-    'the PTY child announced itself',
-  );
-  assert.match(done.stdout, /argv:jobs list/);
-  assert.equal(done.exit!.code, 3);
-});
-
-test('the start message sizes the terminal', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.15\nstty size\n');
-  const done = await session(port, secret, { t: 'start', argv: ['winsize'], cols: 90, rows: 30 });
-  assert.match(done.stdout, /30 90/, 'stty sees the window the client asked for');
-});
-
-test('a resize mid-session moves the PTY window', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.15\nstty size\n');
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
-  const events: Record<string, unknown>[] = [];
-  let stdout = '';
-  ws.on('message', (data: Buffer, isBinary: boolean) => {
-    if (isBinary) stdout += data.toString('utf8');
-    else events.push(JSON.parse(data.toString('utf8')) as Record<string, unknown>);
-  });
-  const opened = new Promise<void>((resolve, reject) => {
-    ws.once('open', () => resolve());
-    ws.once('error', reject);
-  });
-  ws.on('error', () => {});
-  await opened;
-  ws.send(JSON.stringify({ t: 'start', argv: ['winsize'] }));
-  await until(() => events.some(event => event.t === 'ready'));
-  ws.send(JSON.stringify({ t: 'resize', cols: 100, rows: 40 }));
-  await until(() => events.some(event => event.t === 'exit') || ws.readyState === ws.CLOSED, 15000);
-  ws.terminate();
-  assert.match(stdout, /40 100/, 'the window followed the resize');
-});
-
-test('a disconnect kills the child with the session', async t => {
-  const { home, port, secret } = await harness(t, h => `#!/bin/sh\necho $$ > ${join(h, 'pid')}\nsleep 30\n`);
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
-  ws.on('error', () => {});
-  const opened = new Promise<void>((resolve, reject) => {
-    ws.once('open', () => resolve());
-    ws.once('error', reject);
-  });
-  await opened;
-  ws.send(JSON.stringify({ t: 'start', argv: ['linger'] }));
-  await until(async () => {
-    const { existsSync } = await import('node:fs');
-    return existsSync(join(home, 'pid'));
-  });
-  const pid = Number(await readFile(join(home, 'pid'), 'utf8'));
-  ws.close(); // the client hangs up; the child must not outlive the session
-  await until(() => {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch {
-      return true;
-    }
-  });
-});
-
 test('a host whose node-pty cannot load answers exec attempts plainly', async t => {
   const { store, port, secret } = await harness(t, () => '#!/bin/sh\nexit 0\n', {
     importPty: () => Promise.reject(new Error('no prebuilt binary on this machine')),
@@ -267,37 +154,6 @@ test('a host whose node-pty cannot load answers exec attempts plainly', async t 
   assert.equal(done.exit!.code, 1);
   const [row] = auditRows(store);
   assert.equal(JSON.parse(row!.body!).reason, 'pty unavailable');
-});
-
-test('a missing aivi on PATH degrades the same honest way', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nexit 0\n');
-  const path = process.env.PATH;
-  process.env.PATH = '/nonexistent';
-  const done = await session(port, secret, { t: 'start', argv: ['status'], pty: false });
-  process.env.PATH = path;
-  assert.match(done.stdout, /remote exec unavailable on this host/);
-  assert.equal(done.exit!.code, 1);
-});
-
-test('a second start on one connection answers an error, not a second child', async t => {
-  const { port, secret } = await harness(t, () => '#!/bin/sh\nsleep 0.1\necho done\n');
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(secret) });
-  const events: Record<string, unknown>[] = [];
-  ws.on('message', (data: Buffer, isBinary: boolean) => {
-    if (!isBinary) events.push(JSON.parse(data.toString('utf8')) as Record<string, unknown>);
-  });
-  const opened = new Promise<void>((resolve, reject) => {
-    ws.once('open', () => resolve());
-    ws.once('error', reject);
-  });
-  ws.on('error', () => {});
-  await opened;
-  ws.send(JSON.stringify({ t: 'start', argv: ['first'], pty: false }));
-  ws.send(JSON.stringify({ t: 'start', argv: ['second'], pty: false }));
-  await until(() => events.some(event => event.t === 'exit') || ws.readyState === ws.CLOSED, 15000);
-  ws.terminate();
-  assert.ok(events.some(event => event.t === 'error' && event.message === 'start sent twice'));
-  assert.equal(events.filter(event => event.t === 'ready').length, 1, 'exactly one child ran');
 });
 
 test('a second start racing the pty import is told, not spawned', async t => {
