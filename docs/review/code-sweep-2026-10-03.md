@@ -203,8 +203,9 @@ temp-file-plus-rename is three lines in each place.
    2026-10-03, see Disposition.*
 2. **B4, B5 — fixed 2026-10-03; B3, B6 — closed** (see Disposition). **B8 —
    removed 2026-10-03.**
-3. **D1/D4 — fixed 2026-10-03** (one reader's answer, named loudly). D5-D8 —
-   D8 fixed; D5, D6, D7 are the operator's calls. **E1-E5 — fixed 2026-10-03.**
+3. **D1/D4 — fixed 2026-10-03** (one reader's answer, named loudly). D8
+   fixed. **D7 — closed 2026-10-03** (operator's ruling, see Disposition);
+   D5, D6 are the operator's calls. **E1-E5 — fixed 2026-10-03.**
 4. **E6 — fixed 2026-10-03** (every durable write lands whole or not at all).
    **C1 — the easy half done 2026-10-03**: the two error classes live in the
    kit now; the engine/store half waits for its own plan.
@@ -324,4 +325,8 @@ temp-file-plus-rename is three lines in each place.
   (`@aivi/plugin`) and re-exported by the host, so the five plugin
   packages no longer import them from `@aivi/host`. The engine and the
   store remain real imports — that half waits for its own plan.
+- **D7 — closed 2026-10-03, no code touched** (the operator's ruling). To
+  guess a live `/link` code an attacker must already be a channel user
+  *and* know a link is open right now; the platform throttles their own
+  client. A non-issue.
 - The rest: operator's call on each.
