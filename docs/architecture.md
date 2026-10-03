@@ -95,9 +95,8 @@ described for operators in [operations](operations.md).
 
 SQLite stores job definitions (`jobs`), their runs (`runs`: task snapshot,
 ownership, result, timing), leases and audit history. The host schema is
-versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 7, where definitions
-and executions were separated and every one-off got a definition of its own)
-and adapters version their own namespaced tables through `Store.migrate`.
+versioned (`HOST_SCHEMA_VERSION` in `store.ts`; today 11) and adapters
+version their own namespaced tables through `Store.migrate`.
 Channel modules store their inbox and session mappings in the same database
 that way (`<module>_turns`, `<module>_sessions`; [channels](channels.md));
 a turn claim and its lease are atomic.
@@ -163,16 +162,17 @@ thread, and must start within seconds. Folding them into the job table would
 teach the scheduler what a conversation is. What the two share is capacity:
 every turn takes a resource lease from the same pools as jobs
 (`Store.acquireLease`), so the `local-model` limit holds across both. These
-pools are the follower-era interim: they become the dispatcher's
-`dispatcher.pools` with the work-pull-flow build
+pools are what jobs and channel turns still draw; **ticket work** draws the
+dispatcher's `dispatcher.pools` — the two systems coexist, and folding one
+into the other is tracked deliberately-later
 ([orchestrator](orchestrator.md)).
 
 Linear workers are conversations of the same machinery, one per
 agent session, working in the project's checkout (a lane that says
-`worktree: true` gets its own git worktree once a forge gives them);
+`worktree: true` gets its own git worktree on the ticket's branch);
 a stop ends the worker and
 releases the issue, and only an unverifiable stop is `blocked`
-([plans/linear.md](plans/linear.md)).
+([linear](linear.md)).
 
 ## Knowledge and permissions
 
@@ -194,8 +194,9 @@ knowledge, not per-human private memory.
 
 The API listens on `host.bind` (loopback by default; a tailnet or LAN address
 for a shared knowledge server) and exposes status, source discovery, scoped
-knowledge search, optional permission-gated browser operations, and one job
-mutation: `POST /jobs`, the back end of the `aivi_jobs` tool.
+knowledge search, optional permission-gated browser operations, and the job
+mutation `POST /jobs` (the `aivi_jobs` tool is dispatched over `POST /tools`
+like every served tool; this is the same operation for API clients).
 `/health` and module webhook routes (`AiviServices.routes`, verified by the
 platform's own signature) are public; everything else is open too — a bearer
 token only identifies the caller for association, it never locks a route. The jobs route is a deliberate revision of the
@@ -233,13 +234,16 @@ fnox configuration. aivi does not implement a vault.
 
 ## OpenCode connection
 
-Verified against OpenCode 2.0.3 (see [opencode.md](opencode.md)): the background
-service lives on a random port with basic auth, so the host uses the SDK's
-`Service.discover()` instead of a configured URL, once per job or conversation
-turn. Bearer tokens are rejected. Every session aivi creates carries
-`metadata.aivi = { origin, … }` so dreaming and future conversation indexing
-select sessions by origin (`discord`, `job`, `dreaming`, later `linear`)
-without inspecting content. Messages aivi submits carry the same shape; a job
+Verified against the pinned `@opencode/*` family (today 2.0.18; see
+[opencode.md](opencode.md)): the background service lives on a random port
+with basic auth, so the host uses aivi's own tolerant discovery — a server is
+alive when it answers HTTP on its registered endpoint, whatever its version —
+once per job or conversation
+turn. Bearer tokens are rejected. The sessions aivi's channel turns, jobs and
+dreaming create carry `metadata.aivi = { origin, … }` so dreaming selects
+them by origin (`discord`, `slack`, `linear`, `job`, `dreaming`)
+without inspecting content; worker sessions carry none — they are known by
+the orchestrator's run rows. Messages aivi submits carry the same shape; a job
 outcome brought back into a conversation is a message with origin `job-result`.
 
 ## Jobs and runs

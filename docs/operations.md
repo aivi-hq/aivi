@@ -67,7 +67,7 @@ Each wake first materializes due job occurrences into runs. An occurrence
 found later than its misfire grace (`scheduler.misfire.graceSeconds`, per-job
 `misfire`) is recorded as one `missed` run for the whole gap and reported like
 a failure; nothing is executed for it and the job moves to its next future
-occurrence ([configuration](configuration.md#jobs-runs-tasks)). Then it claims
+occurrence ([configuration](../packages/host/docs/configuration.md#jobs-runs-tasks)). Then it claims
 queued runs within capacity and executes them.
 
 ## How runs end
@@ -160,8 +160,9 @@ no sign-in it asks what the machine should be:
   "Signed in as …".
 - **Create a new aivi server here** — installs the server into
   `<home>/app` with npm and seeds the home's OpenCode shape
-  (`opencode.jsonc`, `.opencode/agents/` with `assistant.md` and
-  `dreamer.md` — files that exist are never overwritten). Then it asks
+  (`opencode.jsonc`, `.opencode/agents/` with `assistant.md`, `dreamer.md`,
+  and the worker files `product.md`, `dev.md`, `review.md` — files that exist
+  are never overwritten). Then it asks
   whether *this machine* signs in too or this is a *headless server*:
   this-machine mints the operator person and token (the secret is printed
   once, only its hash is kept), installs the plugins, offers
@@ -311,7 +312,7 @@ carries terminal bytes, not JSON operations: the CLI is the protocol, so
 the payload is version-independent by construction. The child's
 environment is closed: PATH, HOME, the home, the terminal, and the
 bearer this connection presented (as `AIVI_OPERATOR_BEARER`) — none of
-the host's secrets travel ([configuration](configuration.md#secrets)).
+the host's secrets travel ([configuration](../packages/host/docs/configuration.md#secrets)).
 
 Opening the channel requires a bearer whose person carries the
 `operator` role, and every arrival — accepted or refused — writes one
@@ -410,6 +411,6 @@ message says to remove the CLI the way it was installed.
 ## Projects
 
 `aivi projects list|add|remove|purge` manage the checkouts under
-`<home>/projects` ([projects](projects.md#adding-listing-renaming-removing)).
+`<home>/projects` ([projects](projects.md#adding-listing-removing)).
 The host reads that directory at startup, so restart `aivi serve` after adding
 or removing one.

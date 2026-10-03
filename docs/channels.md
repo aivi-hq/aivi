@@ -68,7 +68,12 @@ conversation-binding names — travel to plugin authors as
   capacity, calls the turn runner with a timeout, splits the reply at
   `replyLimit` (UTF-16 units, surrogate pairs intact) and sends it, records
   `sent`; `TurnNotStarted` → the turn is discarded and the person asked to
-  resend; anything else → `blocked` with "an operator has been notified". Each
+  resend. Anything else depends on the platform's `effects`: a reply-only
+  platform (Discord, Slack) discards the turn and says "Something went wrong"
+  with the reason; a platform whose turns have effects beyond the reply
+  (`effects: 'work'`, which is how Linear's assistant turns run) ends
+  `blocked` with "an operator has been notified" — its side effects may
+  stand, so the turn is not quietly retried. Each
   launched turn has its own abort besides the engine's and the timeout:
   `stopTurn(conversation)` aborts the one running there (`/stop`), which is
   then discarded as "Stopped at the person's request" and the conversation
@@ -174,7 +179,7 @@ ordered behind the messages already waiting; a channel report is posted by
 the named module, which opens a thread that adopts the run's session (agent
 job) or is seeded with the output (script job), so replying to an outcome
 meets an agent that knows what it did. Configuration and defaults:
-[configuration](configuration.md#reporting).
+[configuration](../packages/host/docs/configuration.md#reporting).
 
 ## Feedback and recovery, shared
 

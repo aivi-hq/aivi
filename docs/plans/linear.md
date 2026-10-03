@@ -6,8 +6,10 @@ and the live gates — plus the open build items and the deliberately-later
 list. The build checklist, the vocabulary and the decisions are history:
 the behaviour docs own what is, and git owns how it got built (this file was
 shrunk 2026-09-26). Where a step below says "lock released" or "serialize",
-the single-app rework (2026-09-19) replaced that: worktrees isolate, the
-pool is the capacity, one worker per issue is the redelivery guard.
+the single-app rework (2026-09-19) replaced that: the pool is the capacity
+and one worker per issue is the redelivery guard; since 2026-10-02 the
+worker works in the checkout by default and only a `worktree: true` lane
+isolates.
 Requirements this serves: [requirements.md](../requirements.md) §2, §4, §5.
 
 ## Verify (facts no document could settle; each gates the work that needs it)
@@ -28,11 +30,15 @@ Requirements this serves: [requirements.md](../requirements.md) §2, §4, §5.
       second later) and for the installer's own. Built 2026-09-26: the listener
       delegates first and starts from that answer; `agentSessionCreateOnIssue`
       is gone, and a later `created` webhook dedupes as the redelivery it is.
-- [ ] **verify 3** `agent.list` with
+- [x] **verify 3** `agent.list` with
       `directory: <home>/projects/<id>/worktrees/<x>` returns agents from
       `<home>/.opencode/agents/` and prefers the worktree's
-      `.opencode/agents/` file of the same name. Record the result in
-      [projects.md](../projects.md).
+      `.opencode/agents/` file of the same name. **Answered live 2026-10-03:**
+      a list at the checkout's location returns the home-seeded files
+      (`assistant`, `dev`, `dreamer`) — discovery reaches up, which is why
+      the lane wizard's pick-list has workers to name; [projects.md](../projects.md)
+      says so. The same-name override follows OpenCode's upward discovery
+      and has not been exercised separately.
 - [ ] **verify 4** The `stop` signal's payload shape (`agentActivity.signal`),
       `Issue.branchName` in the session payload or by query, and the
       delegate-removed notification (`issueUnassignedFromYou`) as they arrive
@@ -47,8 +53,9 @@ Requirements this serves: [requirements.md](../requirements.md) §2, §4, §5.
       `linear-timestamp` and `linear-event` headers are what `verifyWebhook`
       already reads.
 
-## Live gates — retired as history (2026-09-29)
+## Live gates
 
+**Retired as history (2026-09-29).**
 The module has never run live end to end, and the operator ruled (twice:
 2026-09-27 in the [templates program](templates/index.md), confirmed
 2026-09-29) that it is **rebuilt to the orchestrator design, not verified
@@ -88,8 +95,8 @@ when they are planned. Record any partial findings in
   systems they prove: `webhooks` first — creating the ticket proves Linear
   delivers to this URL — then `agent events` — delegating proves the
   session is created and posted about. Each wait owns one live line: what
-  lands rewrites it, and its verdict closes the line with clack's own
-  marks — a hollow green diamond for passed, a red square for failed, the
+  lands rewrites it, and its verdict closes the line with the marks
+  `@clack/prompts` draws — a hollow green diamond for passed, a red square for failed, the
   failure naming the likeliest cause. It starts without a
   confirmation: what it will do is explained before the team is asked for.
   A wait that passes is not made to sit out its window — the window only

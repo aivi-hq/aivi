@@ -1,13 +1,16 @@
 # Forge: GitHub as the repo host
 
-Status: **plan of record** (all open questions resolved 2026-09-29; the
-wake flow detail awaits worked examples). Built **after** the
-orchestrator extraction in the [v1 rc line](../roadmap.md#next-in-order-of-intent)
+Status: **plan of record, largely built** (all open questions resolved
+2026-09-29; the wake flow detail awaits worked examples). It was built
+**after** the orchestrator extraction in the
+[v1 rc line](../roadmap.md#next-in-order-of-intent)
 (reordering ruled 2026-09-29: the orchestrator is proven first on the
 no-forge base flow, the forge joins on top as the configurable path it
-is). The contract is **provisional** in the same way the tracker seam
-is: wiring it into the orchestrator is what proves it, and more forges
-will move the details. The **worker-facing git surface** — the tools a
+is) — and the joining landed 2026-10-02: the registry, the `fetchBranch`
+crossing, `aivi_pr`, and the sync rewrite all stand under the prose here.
+What is owed is the **live gate**: the forge walkthrough and one round trip
+over a real PR on the operator's host. The contract stays **provisional**
+in the same way the tracker seam is: more forges will move the details. The **worker-facing git surface** — the tools a
 worker calls, the feedback gate, the redirect hook, `prompts/` — is
 planned in [git-workflow](git-workflow.md); this document owns the forge
 contract and GitHub's answers to it.
@@ -23,8 +26,8 @@ The word distinguishes two things that keep getting conflated:
 
 - **GitHub as forge** — branches, PRs, review facts. This page. One forge
   per project, discovered from the project's git remote.
-- **GitHub as tracker** — issues as tickets. A possible future adapter in
-  the [orchestrator](templates/orchestrator.md) seam; unrelated to this.
+- **GitHub as tracker** — issues as tickets. A possible future adapter at
+  the `Tracker` seam ([orchestrator](../orchestrator.md)); unrelated to this.
 
 Today GitHub is a forge implicitly: every project clone has `origin`,
 `identity.github` names the commit bot, and PRs are entirely the worker's
@@ -169,7 +172,9 @@ answer is **structured output requested in a turn — no tools** (ruled
 2026-09-29 after the operator's pushback): a tool would need plumbing to
 report back to the orchestrator anyway, and a tool call is itself an
 instruction, so the turn simply asks for the JSON and the orchestrator
-parses the answer text. It is the wrap-up ruling applied here: trusting a
+parses the answer text. The wrap-up ruling — never trust a session's memory
+for the closing, trust a dedicated turn with a validated schema — applied
+here: trusting a
 long session (possibly compacted) to remember a final-message instruction
 is asking for trouble; a dedicated turn with a clear schema to validate
 against (zod) is what succeeds. **The orchestrator posts the replies**:
@@ -203,10 +208,10 @@ wake, the walk claims for the review lane's agent, and the orchestrator's
 first prompt composes the ticket's dossier, the pull request over the
 ticket's branch (`prForBranch` — the tracker's own answer first, the forge's
 search after), and everything the pull request says: review threads with
-their replies, **and the pull request's plain conversation comments**. One
-gap to fill when building: `ReviewFacts` carries review states and open
-threads, not the plain comments — the gather grows until "all review and
-regular comments" is literally true.
+their replies, **and the pull request's plain conversation comments**. The
+gap this page left for building is filled: `reviewFeedback` answers `comments`
+beside threads and reviews, so "all review and regular comments" is literally
+true.
 
 1. Wake: bring the restored worktree up to date (the forge's fetch plus a
    fast-forward); gather the ticket facts and everything the pull request
@@ -241,7 +246,7 @@ following this schema exactly, no other text* — and when the turn ends the
 orchestrator validates the closing message; a failed validation is re-asked,
 a few tries, then the exit contract's fallback. The report carries what the
 orchestrator needs to act: the outcome, the ticket comment, **the PR
-message**, and **any deviations** the worker mentions. This is the
+message**, and **any deviations** the worker mentions. This is that
 wrap-up ruling reconciled: the dedicated turn survives as the *retry*
 for when the closing message is not the JSON — which is exactly the
 case the earlier ruling feared (a long session forgetting the
@@ -425,9 +430,9 @@ token also owns its renewal, so nothing sits around to expire; `gh` as a
    for — `tracker: { id, lanes }`, `forge`, `queueLane`, `lanes` with
    `worktree`, in `projectDefaults` and per project, replace-not-merge —
    is ruled and owned by
-   [orchestrator.md](templates/orchestrator.md#the-projects-config-ruled-2026-09-29);
-   that compose fix built the **mechanism only**, those keys land with
-   the extraction that acts on them.
+   [orchestrator.md](../orchestrator.md);
+   that compose fix built the **mechanism**, and the lanes array with its
+   `worktree` flag landed with the extraction that acted on it (2026-10-01).
 4. **One app, one installation.** Resolved 2026-09-29 — see Auth.
 5. **PR conversations in the knowledge index.** Resolved 2026-09-29: not
    v1; it is traceable already — open the PR and read the threads.
@@ -511,10 +516,11 @@ flow detail stays proposed until worked examples are walked.
       and opens the pull request only when the branch has none. Served
       always and erroring plainly (per-session tool injection is not
       possible: the plugin registers at load, and calls are already
-      per-session). The half that remains is the person's: the `git push`
-      deny lives in the worker's own agent file — aivi never writes a deny
-      (AGENTS.md) — so until that file carries it, the worker's git is
-      local-only by tool design, not by enforcement.
+      per-session). What enforces the rest is not the agent file (the seeded
+      dev file deliberately does not deny `shell`): the redirect hook —
+      built 2026-10-02 — denies boundary-crossing git inside aivi's runs
+      only, so the worker's direct push is enforced where it should be,
+      without aivi ever writing a deny into an agent file (AGENTS.md).
 - [x] Took the misplaced remote git out of its current package (2026-10-02):
       `projects.sync` asks the forge registry before fetching — an owned
       remote syncs through the forge's `syncSource` (the rewrite), an

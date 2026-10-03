@@ -8,9 +8,11 @@ It attempts to outline the responsibilities of each system and the direction of 
 for a very, very long time, with the rulings from its conversation folded in
 (where folded, they are marked). It **owns** lanes, priority, queue lanes,
 pools, leases and the dispatcher; the build checklist that shrinks as these
-land is [plans/orchestrator.md](plans/orchestrator.md); the follower-side
-contracts (completion, questions, recovery, the adapter seam) live in
-[plans/templates/orchestrator.md](plans/templates/orchestrator.md).
+land is [plans/orchestrator.md](plans/orchestrator.md). The run contracts —
+the tracker's stages, the worker's tools, completion, questions and recovery —
+live here too; the workflow ideas that were never built (triage as a worked
+lane, the ticket subagent) are parked in
+[backlog/ticket-workflow.md](backlog/ticket-workflow.md).
 
 **The yardstick:** [plans/orchestrator-reference.md](plans/orchestrator-reference.md)
 is the operator's own copy of this design, kept for course checks. It is
@@ -28,11 +30,14 @@ Many concepts touch the flow of work, but two systems are responsible for actual
 
 The orchestrator never counts capacity itself. It asks the dispatcher for a lease and, once one is granted, works with it.
 
-The dispatcher is a central system, and the orchestrator pulling work is only one of the things it is used for.
-
-The Discord bot, the dreamer, jobs, the librarian, and so on ask the dispatcher for leases in the same way.
-
-All of these systems draw from the same pools, so nothing can bypass the limits.
+The dispatcher is a central system, and the orchestrator pulling work is
+only one of the things it is designed for. Today it is the only user:
+**ticket work** draws `dispatcher.pools`. Jobs, dreaming and chat turns —
+Discord, Slack and the Linear assistant — still draw the older
+`scheduler.resources` from the store's own leases. The two systems coexist;
+folding them into the dispatcher's one pool set — including the turn lease
+below — is tracked deliberately-later in
+[plans/orchestrator.md](plans/orchestrator.md).
 
 ## The basics
 
@@ -44,6 +49,12 @@ Let's cover some of the terminology used in this document.
 - **Capacity and pool:** a pool has a fixed number of slots: its capacity. An active lease occupies one slot.
 - **Claim**: the orchestrator record for an active ticket lease. It mirrors a session lease.
 - **Blocked:** the ticket is waiting on a human answer or another ticket. An unclaimed blocked ticket is not picked up.
+- **The walk:** the orchestrator's eligibility pass — it reads the board's lanes right to left and their tickets top to bottom, and starts a worker where a lane names an agent and a lease is granted. It is woken by events (a webhook, a run's ending, an explicit wake), never by a timer.
+- **The board:** the tracker's live state as the walk reads it — lane membership, labels, delegates. "The board is the memory" (ruled 2026-10-02): anything people must be able to check lives there, never only in the host's database.
+- **Unheard:** a queued request given its lease back before it was ever delivered — the claim's guard caught that its ticket took a run through another door while the request waited; no second worker starts.
+- **Strike:** one attempt in the dispatcher's bounded kill sequence (`dispatcher.killAttempts`) against a session that went silent. After the last strike the dispatcher gives up on the session, not the slot; the loose worker becomes a person's business — the ending says so loudly.
+- **The assistant:** the agent people speak to on channels and Linear (`assistant.md`, seeded at `<home>/.opencode/agents/`). Older pages call it **the librarian**; that name is retired here — it is the same agent.
+- **Follower (historical):** the 2026-10-01 design's name for the tracker module that listened to the orchestrator's run events. The stage rulings replaced it the same day — a tracker now **answers stages** (`initWork`, `startWork`, `endWork`, …) instead of following events. Old checklist lines about "the follower" or "the follower-era" mean that superseded design.
 
 ## Orchestrator
 
@@ -82,7 +93,7 @@ closes the ticket.
 
 A lane cannot be both a worker lane and a queue lane, and should fail loudly when this is the case.
 
-Lane semantics as built (folded from the follower-era design doc, 2026-10-02):
+Lane semantics as built (folded from the 2026-10-01 design doc, 2026-10-02):
 
 - A tracker state named by **no lane** is not a lane: nothing is picked up
   there, and a ticket whose run is working there goes **silent** — the run
@@ -108,7 +119,7 @@ Lane semantics as built (folded from the follower-era design doc, 2026-10-02):
 | Triage                    | Worker lane  | A worker refines the new ticket.                                                               |
 | Backlog                   | Human lane   | The ticket waits for human prioritization and approval.                                        |
 | Todo                      | Queue lane   | The ticket is approved and waiting for capacity before being moved to In Progress on capacity. |
-| In Progress               | Worker lane  | On capacity: a worker picks up the ticket or processess feedback (injected, never fetched).    |
+| In Progress               | Worker lane  | On capacity: a worker picks up the ticket or processes feedback (injected, never fetched).    |
 | Review                    | Worker lane  | On capacity: a worker reviews the changes.                                                     |
 | Test                      | Worker lane  | On capacity: a worker tests the changes.                                                       |
 | Release                   | Human lane   | On capacity: a human approves and ships.                                                       |
@@ -273,18 +284,22 @@ Fallback pools may themselves also have fallback pools as long as it does not re
 
 A lease holds one slot in a pool. It may exist before a session does.
 
-There are two lease types:
+There are two lease types; only the second is built:
 
-|                       | **Turn lease**                                   | **Session lease**                    |
+|                       | **Turn lease** (design)                           | **Session lease** (built)            |
 | --------------------- | ------------------------------------------------ | ------------------------------------ |
-| **Used by**           | Discord, Slack, jobs, the librarian, the dreamer | The orchestrator, for ticket work    |
+| **Used by**           | Discord, Slack, jobs, the assistant, the dreamer | The orchestrator, for ticket work    |
 | **Request means**     | Run this prompt                                  | Give the caller direct use of a slot |
 | **Who sends prompts** | The dispatcher                                   | The caller                           |
 | **Session**           | Created or resumed by the dispatcher             | May be attached immediately or later |
 
-#### Turn lease
+#### Turn lease — designed, not built
 
-A turn lease asks the dispatcher to run a prompt.
+A turn lease would ask the dispatcher to run a prompt. Nothing sends such a
+request yet: the services named above run their turns through their own
+machinery against `scheduler.resources`, and the steer-versus-queue delivery
+this section's rulings settled lives today in the channel engine
+([channels](channels.md)), not in the dispatcher.
 
 When granted, the dispatcher claims a slot, creates or resumes the session, and runs the prompt.
 
@@ -294,7 +309,7 @@ OpenCode owns queued input. The dispatcher does not keep its own turn counter or
 
 A turn lease ends when the session is no longer present in `/active` and its inbox is empty. (Both endpoints verified live against the OpenCode service, 2026-10-01: `GET /api/session/active`, `GET /api/session/:id/inbox`.)
 
-The default is `steer` (ruled 2026-10-02: "Default will be steer, and the slash commands therefor become queue instead of steer"): the `/steer` command dies and `/queue` takes its place.
+The default is `steer` (ruled 2026-10-02: "Default will be steer, and the slash commands therefor become queue instead of steer"); the built echo of that ruling is interjection-by-default in the channels.
 
 #### Session lease
 
@@ -439,7 +454,7 @@ the ticket's words, never the worker's first message. The *guidance texts*
 the composition fills — the worker contract, the feedback-loop opener, the
 posture lines, the escalation form, the job-result re-entry — are the
 operator's editable copies under `<home>/prompts/`, read at use
-([configuration](configuration.md#home)): the composition is code, the
+([configuration](../packages/host/docs/configuration.md#home)): the composition is code, the
 words are theirs.
 
 There is **no event bus**: the stages are the surface. A run's ending,

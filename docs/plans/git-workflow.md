@@ -84,7 +84,7 @@ form is never made a second time.
 
 The core mechanic, ruled by the operator: **"if there is open feedback, we
 keep nudging until there is none"** with **"a max of 3 tries or something
-until HITL"**, and his nuance that a run which *started* without feedback
+until HITL"**, and the operator's distinction that a run which *started* without feedback
 must not be chased by feedback that appears mid-run — because a reviewing
 agent would never finish its own review.
 

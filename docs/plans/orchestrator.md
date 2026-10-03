@@ -99,4 +99,5 @@ stages; the round below is the one that counts.
 
 Tracked deliberately later (not this build): folding `scheduler.resources`
 (jobs, turns, dreamer) into the dispatcher's pools — the one-pool
-unification; worktree/forge prep; GitHub Issues and Jira adapters.
+unification; GitHub Issues and Jira adapters. (Worktree and forge prep was on
+this list until it built on 2026-10-02.)

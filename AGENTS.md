@@ -30,8 +30,10 @@ Rules for the worker/Linear lifecycle (built: `docs/linear.md`; what is left:
 
 - Never release a worker's resources merely because its caller disconnected.
 - A worker runs in the project's checkout; a lane that says `worktree: true`
-  gets its own git worktree once a forge gives them. A lane that writes is
-  never read-only by aivi — that is its agent file's own permission deny.
+  gets its own git worktree on the ticket's branch (built 2026-10-02; a
+  forge is not a precondition — its fetch goes in injected when the project
+  has one). A lane that writes is never read-only by aivi — that is its
+  agent file's own permission deny.
 - Stop means stop: a stop request, the HITL label or a lane change ends the
   worker and releases the issue. A stop cleans up its own attempt: the run's
   worktree goes with its uncommitted work and local commits (what was

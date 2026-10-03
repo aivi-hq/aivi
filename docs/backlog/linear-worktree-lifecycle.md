@@ -1,11 +1,12 @@
 # Worktree lifecycle per lane
 
-Status: **planned (v3), partly landed.** The lane shape and the checkout
-environment landed with the single-app rework (2026-09-19,
-[plans/linear.md](../plans/linear.md) step 11): lanes are
-`agent | null | { agent, worktree: false }`, and a `worktree: false` lane runs
-its agent in the project's clean checkout with the agent file's own `edit`
-deny as the only enforcement. `client.ts` gained `createComment`. What remains
+Status: **planned (v3), partly landed.** The checkout environment landed with
+the single-app rework (2026-09-19, [plans/linear.md](../plans/linear.md)
+step 11); the lane shape under it moved on 2026-10-01/02: a lane is now
+`{ name, agent?, queue?, pool?, worktree? }` with `worktree` **defaulting to
+false** — the default worker runs in the project's checkout, a `worktree:
+true` lane gets its own — and aivi still never touches agent permissions.
+`client.ts` gained `createComment`. What remains
 of this page is the **sweep**: issue-keyed worktrees, terminal-lane removal
 and staging, `linear.sweep` as a daily system job, `linear.reportChannels`.
 (The issue-keyed worktree — `worktrees/PEC-123` shared across agents — is a
@@ -14,9 +15,11 @@ the sweep.)
 
 ## Rules (agreed with the owner)
 
-- A lane says whether its work needs a worktree: lane value
-  `app | null | { app, worktree? = true }`. Read-only lanes run their agent
-  in the project's clean checkout; **aivi never touches agent permissions** —
+- A lane says whether its work needs a worktree: the lane's `worktree` flag,
+  default false (shape amended 2026-10-02; the old
+  `app | null | { app, worktree? = true }` union died with the lanes array).
+  Lanes naming no agent are worked by
+  humans; **aivi never touches agent permissions** —
   the agent file's own permissions are the only enforcement.
 - The worktree belongs to the **issue**, not one delegation:
   `worktrees/PEC-123`, shared by dev/review/qa so agents inherit each other's

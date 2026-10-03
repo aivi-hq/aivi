@@ -9,7 +9,7 @@ the tools themselves are the first build.
 
 ## Idea
 
-From any channel — the Linear assistant, the Discord/Slack librarian — an
+From any channel — the assistant on Linear, Discord or Slack — an
 operator can ask aivi to do installation work it can already do from the CLI:
 
 - add a project (clone, register, map Linear teams and lanes, index)
@@ -35,7 +35,7 @@ The rework changed the ground this page stood on:
   plugin already reaches the host API (`aivi_jobs` can create, run, pause,
   remove). An operator tool is mostly a thin wrapper over an existing path.
 - **Linear onboarding proved the pattern live** (2026-09-19 dogfood): the
-  librarian created the `needs-human` label through the Linear MCP from a
+  assistant created the `needs-human` label through the Linear MCP from a
   conversation. What is missing is the aivi side (config, projects) — the
   Linear side of onboarding already works by conversation.
 - The `config.json` rule has moved: "aivi and the operator edit the live
@@ -56,7 +56,7 @@ CLI code path — no new host API, no new authority model:
 | `status` | exists today (`aivi_status`) | |
 
 The toggle is exactly the house rule — *the agent file is the boundary*: the
-shipped `librarian.md` / `aivi.md` deny the new tool id; an operator who wants
+shipped `assistant.md` and worker files deny the new tool id; an operator who wants
 a given agent to maintain the installation removes the deny (or adds an
 `allow`). No `access.editors` list, no mode switching, no new auth surface:
 whoever may already talk to that agent, may now ask it for this. The deny

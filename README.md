@@ -37,7 +37,7 @@ aivi serve
 ```
 
 From here on: [getting started](docs/getting-started.md) (searching, the
-librarian in OpenCode, a project, a chat channel).
+assistant in OpenCode, a project, a chat channel).
 
 ## Development
 
@@ -66,8 +66,9 @@ so local and installed behavior are identical.
 | `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads                                                                                                        |
 | `@aivi/channel-slack`   | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads                                                                                             |
 | `@aivi/plugin`          | The plugin kit: the setup and CLI command contracts, `resolveBlocked`, the module contract under its authoring names — and `./api`, the fetch-only host client. The package you import to write an aivi plugin; never depends on the host at runtime ([plugin](packages/plugin/README.md)) |
-| `@aivi/tracker-linear`  | Linear module: one app receiving every webhook, the assistant for people, workers in git worktrees, the Linear MCP proxy ([linear](docs/linear.md))                                                |
-| `@aivi/opencode`        | OpenCode plugin: `knowledge_search`, `knowledge_projects`, `aivi_sources`, `aivi_status`, `aivi_context`, `aivi_jobs`, `aivi_browser`                                                              |
+| `@aivi/tracker-linear`  | Linear module: one app receiving every webhook, the assistant for people, the tracker the orchestrator walks (checkout or own-worktree workers), the Linear MCP proxy ([linear](docs/linear.md))                                                |
+| `@aivi/forge-github`    | GitHub forge: the app's authenticated crossing to `origin` — clone, checkout sync, push, PR facts and review threads — plus the `projects add` contributor ([github](packages/forge-github/docs/github.md)) |
+| `@aivi/opencode`        | OpenCode plugin: registers exactly what the host's tool list answered at load — `aivi_status`, `aivi_sources`, `aivi_context`, `aivi_config`, `aivi_jobs`, `aivi_browser`, `knowledge_search`, `knowledge_projects`, and in aivi runs the worker tools (`aivi_work_complete`, `aivi_ask`, `aivi_plan`, `aivi_push`, `aivi_sync`, `aivi_pr`, `aivi_review`, `aivi_respond_feedback`, `aivi_submit_review`) — plus `aivi_connection`, which answers about its own loading |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
 services over the authenticated host API. Linear is an in-process module with
@@ -75,14 +76,16 @@ a webhook route per app on the same listener (`/linear/webhooks/app/<id>`).
 
 ## Status
 
-- Live-verified against OpenCode 2.0.3 and a Discord test server on the target
+- Live-verified against the OpenCode v2 family (the pinned `@opencode/*` set,
+  today 2.0.18) and a Discord test server on the target
   Mac: discovery and auth, plugin tools, the session driver (jobs, dreaming,
   Discord turns all end in a verified final answer), Discord DMs/channels/
   threads with slash commands and job reports.
 - Browser control: live-verified against headless Chrome on the target Mac
   (`npm run smoke:browser`); login takeover and extensions still to exercise.
 - Knowledge: core and per-project sources with kinds (`doc`, `decision`,
-  `memory`, `conversation`); scope never widens on unknown IDs. Projects are
+  `memory`, `conversation`, `manual` — docs shipped by installed packages);
+  scope never widens on unknown IDs. Projects are
   clean checkouts under `<home>/projects/`, described from the home by a
   `docs/` convention ([docs/projects.md](docs/projects.md)).
 - Jobs: definitions (cron or one-off `at`) and their runs in SQLite, Croner
@@ -92,8 +95,9 @@ a webhook route per app on the same listener (`/linear/webhooks/app/<id>`).
 - Dreaming: a scheduled agent maintains `facts.md` and proposals from
   conversations since its last run ([docs/dreaming.md](docs/dreaming.md)).
 
-Next, in order: next channels, installation on other machines, the Linear
-live gate. Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
+Next, in order: the forge walkthrough and the live round trip on the
+operator's host, then the v1 rc; installation on other machines after that.
+Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
 unscheduled ideas: `docs/backlog/`.
 
 `npm run agentic:verify` runs Biome and `npm run check` (build, tests against
@@ -102,11 +106,14 @@ CLI and daemon smoke). Live gates: `npm run live:opencode`, `npm run smoke:brows
 
 ## Releases
 
-Versions are independent per package, managed with
+Versions are managed with
 [Changesets](.changeset/README.md): run `npx changeset` in a PR that changes a
-package, describe the change and the bump level. Merging to `main` opens a
-Version PR; merging that publishes the changed packages to npm with
-provenance — no tags, no manual publishing.
+package, describe the change and the bump level. `@aivi/cli`, `@aivi/host` and
+`@aivi/plugin` are a **fixed group** — a changeset bumping one bumps the
+group, because the CLI mounts the host's command surface and the kit declares
+the contracts both speak; the other packages move independently. Merging to
+`main` opens a Version PR; merging that publishes the changed packages to npm
+with provenance — no tags, no manual publishing.
 
 New here? [Getting started](docs/getting-started.md) to run it,
 [operations](docs/operations.md) to keep it running,

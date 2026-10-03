@@ -1,21 +1,21 @@
 # Roadmap
 
-Status per milestone as of 2026-09-15. The original milestone plan (13 September
+Status per milestone as of 2026-10-03. The original milestone plan (13 September
 2026) proposed this order; what follows is where each stands. Product
 requirements are frozen in [requirements.md](requirements.md); decisions in
 [architecture.md](architecture.md); ideas not yet scheduled in [backlog/](backlog/).
 
 | Milestone | Status |
 | --- | --- |
-| 0. OpenCode boundary | **Done, live-verified** on OpenCode 2.0.3 ([opencode.md](opencode.md)). Repeat with `npm run live:opencode`. |
+| 0. OpenCode boundary | **Done, live-verified** on OpenCode 2.0.3, the family since pinned at 2.0.18 ([opencode.md](opencode.md)). Repeat with `npm run live:opencode`. |
 | 1. Native assistant and minimal core | **Done.** Plugin tools, CLI, schema-validated config, fnox/`.env` secrets. |
 | 2. Scoped knowledge search | **Done** for documents: QMD keyword search, kinds, scope never widens on unknown IDs. Conversation export and semantic retrieval not started. |
 | 3. Durable tasks and dreaming | **Done.** SQLite + Croner scheduler, leases, restart recovery, reporting, dreaming with `facts.md` and proposals. Agent-created jobs (`aivi_jobs`), one-offs, outcomes re-entering conversations, per-run abort, definitions vs runs, misfire grace and retention as a system job added 2026-09-15 and live-verified on Discord and Slack ([architecture.md#jobs-and-runs](architecture.md#jobs-and-runs)). |
 | 4. Browser hands | **Done, smoke-verified** against headless Chrome (2026-09-15). Login takeover, extensions, and recovery paths still to exercise live. |
 | 5. Discord adapter | **Done, live-verified** on the target server: DMs, channels, threads, typing, slash commands, job reports. Lifted onto the channel contract 2026-09-15; live re-check pending. |
 | 5b. Slack adapter | **Done, live-verified** on the owner's workspace 2026-09-15: DMs, mention → thread, `/spider-status`, ⏳/👀 reactions, job outcomes re-entering a thread, report threads adopting the job session ([slack.md](slack.md)). |
-| 6. Worker lifecycle without Linear | Not started. |
-| 7. Native Linear AgentSessions | **Built, not live-verified** (2026-09-16): delegation → worker in a worktree → activities → response, follow-ups, stop, HITL refusal, project/issue locks ([linear.md](linear.md)). Listener and the rest: [plans/linear.md](plans/linear.md). |
+| 6. Worker lifecycle without Linear | **Built tracker-neutral** (2026-10-02): the orchestrator and dispatcher in the host know `tracker` and `forge` roles, never Linear; worktrees and the forge are injected paths, not preconditions. What has never run is a worker with **no** tracker at all. |
+| 7. Native Linear AgentSessions | **Built, live rounds green** (2026-10-02): delegation → worker in the checkout or its own worktree → activities → response, follow-ups, stop, HITL refusal ([linear.md](linear.md)). The forge walkthrough and the last live round trip are open: [plans/linear.md](plans/linear.md). |
 
 ## Live gates
 
@@ -31,7 +31,10 @@ Mock tests do not establish these; each has its own command.
   with `"tools"` the tool calls are listed beneath; a failing turn leaves the
   notice in the placeholder's place. Not yet seen live: `/model` (autocomplete
   and a pinned answer), `/stop` on a running turn, interjection and `/queue`, `/jobs`, `/help`.
-- Linear: not yet run live; the gates are listed in [plans/linear.md](plans/linear.md#live-gates).
+- Linear: the base flow ran live (2026-10-02, question round + answer +
+  close green on the operator's host); the forge walkthrough and the round
+  trip over a real PR are the open gates
+  ([plans/linear.md](plans/linear.md#live-gates)).
 - Slack: create the app from the manifest in [slack.md](slack.md#setup),
   `serve` with both tokens, then a DM, a mention in a channel, a follow-up in
   the thread, a report into `reportChannels`, a reply in that thread,
@@ -45,29 +48,24 @@ Mock tests do not establish these; each has its own command.
 
 Projects are done (2026-09-15, [projects.md](projects.md)): discovered from
 `<home>/projects`, described from the home, per-project memory, add/remove/purge.
-The Linear module is built (2026-09-19) with worktrees as the isolation and the
-pool as the capacity — there is no per-project lock; running maintenance
+The Linear module is built (2026-09-19) with the pool as the capacity and the
+worktree as an opt-in isolation — the default worker works in the project's
+checkout; there is no per-project lock; running maintenance
 only when idle stays an idea
 ([backlog/projects-and-capacity.md](backlog/projects-and-capacity.md)).
 
-1. **The v1 rc line** (ruled 2026-09-29, reordered the same day): the CLI
-   refactor (built, unmerged) → **compose-projects fix** (config first:
-   plugins contribute project-section schemas; `linear.lanes` leaves
-   core's `projectSchema`; direction: **project config is a core
-   concept** — projects are core like the host and the orchestrator —
-   a project can be configured with a forge type, a lane can be
-   configured to use the forge, which is what makes the worktree stuff
-   happen) → **tracker extraction** (Linear speaks through the adapter
-   seam — **built 2026-09-29**: `@aivi/plugin/tracker` is the contract,
-   `tracker-linear/src/tracker.ts` is Linear's translator, and the
-   module's decision code knows only the neutral vocabulary; the
-   machinery itself moves to the host with the next step) →
-   **orchestrator extraction** (the machinery moves out of the
-   tracker into the host, built and proven on the **base flow**:
-   ticket → conversational agent → tracker update, no worktree, no
-   forge) → **forge-github** (added on top of the proven orchestrator,
-   as the configurable path it is; [plan](plans/forge-github.md)) →
-   **knowledge as a plugin** → **a last look at jobs** → tag v1 rc. The
+1. **The v1 rc line** (ruled 2026-09-29; what is left was settled 2026-10-03).
+   Built since the line was drawn: the CLI refactor (merged on this branch),
+   the compose-projects fix, the tracker extraction, the **orchestrator
+   extraction** (the machinery in the host knows `tracker`/`forge` roles and
+   is proven on the base flow), **forge-github** (the registry, the sync
+   crossing, `aivi_pr`, the worktree with the forge's fetch injected), the
+   dispatcher with its pools and leases, the **templates program's**
+   scaffolding and self-knowledge (2026-10-03). What is left: the **forge
+   walkthrough and live round trip** on the operator's host (one real PR,
+   one thread resolved, the stop and the feedback loop seen live) →
+   **knowledge as a plugin** → **a last look at jobs** → tag v1 rc, on the
+   operator's explicit word. The
    reversal: forge had been moved in front so review facts would exist
    for the orchestrator; the operator ruled it the other way —
    pre-designing the forge-carved system is harder than building,
@@ -75,8 +73,8 @@ only when idle stays an idea
    before the no-forge base flow exists. Most assistant work in tickets
    is skills, tools and MCPs on an agent (email included — not a new
    capability); the forge is the exception that earns core ceremony.
-   The [templates program](plans/templates/index.md) owns the design;
-   the sequence lives there too.
+   The [templates program](plans/templates/index.md) owns what the setup
+   scaffolds.
 2. Installation and updates for other machines; the home layout it must
    produce is now fixed.
 
@@ -91,12 +89,12 @@ and SSO come when asked for.
 
 | Set early | Can wait until its milestone |
 | --- | --- |
-| OpenCode owns execution and history; aivi owns operational coordination | Worker process isolation, resolved before milestone 6 ships |
-| Stable core/project/source/session identities | Retrieval tuning and semantic search |
-| Typed plugin/core boundary, with optional channel adapters | Browser credential-fill mechanism |
-| Clear read/write capabilities for assistant, maintenance and workers | Discord message UX beyond the current commands |
-| Schema migrations and restart reconciliation from the first persistent operation | Linear OAuth/webhook choreography in milestone 7 |
-| Local-model resource accounting before scheduled inference | Memory decay after we observe real usage |
+| OpenCode owns execution and history; aivi owns operational coordination | Retrieval tuning and semantic search |
+| Stable core/project/source/session identities | Browser credential-fill mechanism |
+| Typed plugin/core boundary, with optional channel adapters | Discord message UX beyond the current commands |
+| Clear read/write capabilities for assistant, maintenance and workers | Per-device tokens and SSO, when asked for |
+| Schema migrations and restart reconciliation from the first persistent operation | Memory decay after we observe real usage |
+| Local-model resource accounting before scheduled inference | |
 
 Each milestone adds its own operating checks and concise documentation, and
 tests the boundary it introduces: scoped retrieval, restart recovery, resource

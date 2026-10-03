@@ -16,12 +16,11 @@ only then does the orchestrator move the ticket and return the lease. People
 who want aivi itself rather than a worker talk to the **assistant** — and a
 hand *delegation* is neither: it gets one fixed refusal. This page owns the
 module's behavior **as built**; the run contracts live in
-[plans/templates/orchestrator.md](plans/templates/orchestrator.md), the
-work-pull flow (lanes, queue lanes, pools, leases, the dispatcher) is owned
+[orchestrator.md](orchestrator.md), how work gets picked and worked (lanes, queue lanes, pools, leases, the dispatcher) is owned
 by [orchestrator.md](orchestrator.md) with its build checklist in
 [plans/orchestrator.md](plans/orchestrator.md), and what is still owed here
 is in [plans/linear.md](plans/linear.md); configuration fields are in
-[configuration](configuration.md#linear).
+[configuration](../packages/host/docs/configuration.md#linear).
 
 ## Words
 
@@ -30,7 +29,7 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
 | app | One Linear OAuth application acting as an app user (Linear's UI says "agent"); `linear.apps.<id>`. The **primary** carries the data feed and the bare `LINEAR_*` secrets; every other app is a face |
 | face | An extra app: a name and icon in Linear's UI, its own credentials (`LINEAR_<APP>_*`) and webhook route, and no meaning for routing at all. An activity is posted with the token of the app the session lives on |
 | primary | The one app by default; with faces, `plugins.tracker-linear.primary` names the app that carries the workspace data feed and authorises the Linear MCP. `initWork` always delegates on the primary, since that is whose token it holds |
-| assistant | The OpenCode agent people address directly on Linear (`linear.agent`, default the aivi name): comment mentions. It answers, clarifies or refuses; it does not do work. Hand delegations it never sees — every one gets the fixed refusal instead (ruled 2026-10-02) |
+| assistant | The OpenCode agent people address directly on Linear (`linear.agent`, default `assistant`): comment mentions. It answers, clarifies or refuses; it does not do work. Hand delegations it never sees — every one gets the fixed refusal instead (ruled 2026-10-02) |
 | delegate | `Issue.delegate`: the app working the issue while the human assignee stays responsible. Its one meaning: *an app is working this issue* |
 | agent session | Linear's unit of agent work on an issue; aivi treats each as one conversation, id `<app>:<agent session id>` |
 | activity | What flows in a session: aivi emits `thought` (progress, ephemeral), `elicitation` (a worker's question, with its `select` signal when there are options), `response` (the answer, which **ends** the agent session) and `error` (refusals, stops); people's messages arrive as `prompt` activities, a stop request as a `prompt` with `signal: "stop"` |
@@ -320,12 +319,14 @@ module `degraded` and retried.
 
 ## Not yet
 
-Progress `thought`s while a worker runs (the session observer), worker lines
-in `aivi linear status`, the elicitation keep-alive timeout, worktree wiring
-once a forge gives them and the worktree sweep
+Worker lines in `aivi linear status`, the worktree sweep
 ([linear-worktree-lifecycle](backlog/linear-worktree-lifecycle.md)),
 permission prompts as `elicitation`, `externalUrls`, graceful agent-first
 cleanup, multi-workspace routing: all in
-[plans/linear.md](plans/linear.md). The installer and the delegate-first
+[plans/linear.md](plans/linear.md). Built since that page was written, and
+said here so the list above is the whole truth: progress `thought`s while a
+worker runs (`runprogress.ts`), the elicitation keep-alive timeout
+(`orchestrator.elicitationKeepAlive`), and worktree wiring with the forge's
+fetch injected. The installer and the delegate-first
 listener ran against a real Linear workspace (2026-09-26); the remaining live
 gates are listed there.

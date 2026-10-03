@@ -59,7 +59,7 @@ Recon (2026-09-27, verified against the tree):
 `update`, `upgrade`, `uninstall`, `service`, `link`, `version`). Home
 resolution is unchanged (`AIVI_HOME` → client-config `home` → error). When an
 operator command is invoked and the home is local, the CLI does what
-[channels.ts](../../../packages/app/src/commands/channels.ts) already does for
+`channels.ts` already does for
 plugins — a dynamic import and a mount — one level up:
 
 ```ts
@@ -87,7 +87,7 @@ Three rules, and they are the whole design:
 
 ## Deleted by this phase
 
-- [forward.ts](../../../packages/cli/src/forward.ts) entirely (the `spawnSync`
+- `forward.ts` entirely (the `spawnSync`
   relay with `stdio: 'inherit'` + `AIVI_HOME` env injection).
 - The `OWN`/`goesToApp`/`HELP_FORMS` dispatch in `main.ts:37-61,195-205`.
 - `forwardIdentity` (`setup.ts:431-445`): the stdout-piped one-JSON-object

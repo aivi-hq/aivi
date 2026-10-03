@@ -1,6 +1,10 @@
 # 4 · Remote: the typed flag and its channel (the bolt-on)
 
-Status: planned. Merged with the visibility phase (old phase 5) on 2026-09-28: it
+Status: **built** (was "planned" far too long: eleven of the twelve checklist
+boxes landed with the exec door on 2026-09-28, documented in the
+configuration chapter (`AIVI_OPERATOR_BEARER`) and people.md, and the last
+box — the changesets — has ridden every package-touching commit since).
+Merged with the visibility phase (old phase 5) on 2026-09-28: it
 became plumbing on this seam once driving another machine turned
 into a typed flag instead of an inferred state. Depends on:
 [one-cli.md](one-cli.md); lands easier after phases 2–3. Constrained by rule:
@@ -462,4 +466,6 @@ flag and what it teaches around it, then the strings and docs.
       and lost the stale `aivi install` rows (also in the channel READMEs).
       The relay's `no server configured` line points at `aivi setup`, the
       command that exists — `configure` stays the plan's later chapter.
-- [ ] Changesets (fixed group).
+- [x] Changesets (fixed group). Landed the same way everything does now:
+      a `.changeset/*.md` with every package-touching commit, `@aivi/cli` +
+      `@aivi/host` + `@aivi/plugin` in one fixed group.

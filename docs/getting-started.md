@@ -1,6 +1,6 @@
 # Getting started
 
-From a fresh clone to a assistant answering questions, in a development home
+From a fresh clone to an assistant answering questions, in a development home
 you set up yourself.
 
 ## Run it
@@ -57,7 +57,7 @@ package in `dev/app/package.json` under `aivi-plugins`, which is what enables
 the module.
 
 Start the host. No token is needed: commands are open, and a bearer only
-identifies the caller (see [secrets](configuration.md#secrets)):
+identifies the caller (see [secrets](../packages/host/docs/configuration.md#secrets)):
 
 ```sh
 npm run aivi -- serve
@@ -82,8 +82,8 @@ npm run aivi:cli -- link discord   # mint a link code for your Discord account
    client without that method ("client.jobs is not a function", seen
    2026-09-15).
 2. Open `dev/` in OpenCode v2. Its `opencode.jsonc` loads the aivi plugin
-   and `.opencode/agents/` carries the `assistant` and `dreamer` agents
-   setup seeded there.
+   and `.opencode/agents/` carries the agents setup seeded there:
+   `assistant`, `dreamer`, and the worker files `product`, `dev`, `review`.
 3. Ask it to list the projects and read a configured document.
 
 The home is the OpenCode location, so knowledge, memory and project

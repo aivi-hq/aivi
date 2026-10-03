@@ -18,7 +18,7 @@ you need them — a Discord block makes `serve` ask for `DISCORD_BOT_TOKEN`
 from `dev/.env`, and so on.
 
 `config.json` is installation configuration and describes the projects too; a
-project's checkout carries nothing of aivi's ([projects](../../docs/projects.md)).
+project's checkout carries nothing of aivi's ([projects](../../../docs/projects.md)).
 OpenCode's own files stay in their native locations.
 Unknown fields and invalid combinations fail validation; nothing silently falls
 back to another project or resource pool.
@@ -77,30 +77,30 @@ containing facts is the wrong file growing.
 | --- | --- |
 | `version` | Required; `1` |
 | `identity.name` | The persona: `aivi`. One name on every platform — the Linear application, the Discord and Slack bot usernames, what colleagues ping. Nothing derives agent names from it (the assistant is `assistant` unless a module says otherwise); the display name stays free-form. The plugin says it to every agent (`Your name is aivi.`) ahead of the soul, so `soul.md` never repeats it. aivi cannot set names on the platforms: the operator uses this name in each console |
-| `identity.github` | Who a **worker aivi launched** commits as, as a `{user, email}` pair: name the pair or neither, never half. Default: `opencode.coauthor` in the machine's git config, else the aivi app `aivi-agent[bot] <331678708+aivi-agent[bot]@users.noreply.github.com>`. GitHub resolves a bot commit's avatar and link from the email *inside the commit*, never from who pushed, so no token and no app installation is involved ([linear](../../docs/linear.md)) |
+| `identity.github` | Who a **worker aivi launched** commits as, as a `{user, email}` pair: name the pair or neither, never half. Default: `opencode.coauthor` in the machine's git config, else the aivi app `aivi-agent[bot] <331678708+aivi-agent[bot]@users.noreply.github.com>`. GitHub resolves a bot commit's avatar and link from the email *inside the commit*, never from who pushed, so no token and no app installation is involved ([linear](../../../docs/linear.md)) |
 | `stateDirectory` | `state` inside the home |
 | `host.bind` | `127.0.0.1`. Use a LAN/tailnet address or `0.0.0.0` so remote OpenCode installs can reach the knowledge server |
 | `host.port` | `4100` |
 | `host.public` | Where aivi is *reached from outside*: the funnel, tunnel or reverse-proxy URL (`https://you.tailscale.ts.net`, a path is allowed, no trailing slash). Never derived, never called — aivi dials `bind`/`port` — but every URL aivi prints for someone else to paste is composed from it. `aivi setup` asks for it; changing it later is editing this file |
-| `host.agentConfigEdits` | On by default: agents read and write this file through `aivi_config` — one validated block per write, the composed schema as referee (the doing side of [self-knowledge](../../docs/plans/templates/self-knowledge.md)). `false` and the tool is not offered at all; the file is then yours alone |
+| `host.agentConfigEdits` | On by default: agents read and write this file through `aivi_config` — one validated block per write, the composed schema as referee (the doing side of [self-knowledge](../../../docs/plans/templates/self-knowledge.md)). `false` and the tool is not offered at all; the file is then yours alone |
 | `opencode.url` | Omit to discover the local `opencode service` automatically (recommended). Set only for a server elsewhere; then `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` supply its basic-auth credentials |
 | `opencode.lifecycle` | How much of the local service aivi owns. `own` (default): at `aivi serve` startup a running service is replaced by a fresh one (persistent terminals handed off) and a missing one is started, so a new plugin build is live. `ensure`: only start when missing. `discover`: never start or stop (set this in any home tests and smoke checks read, so they never touch a developer's OpenCode). Ignored with `opencode.url` |
-| `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`. `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
-| `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](../../docs/projects.md)) |
-| `projectDefaults.tracker-linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](../../docs/linear.md)) |
+| `knowledge` | Core sources, each `{id, path, kind?}`; kinds: `doc` (default), `decision`, `memory`, `conversation`, `manual` (docs shipped by an installed package). `<home>/memory` is added as the core `memory` source automatically; that id is reserved |
+| `projectDefaults.knowledge` | The repository convention every project gets unless it lists its own; default `docs` (`doc`) and `docs/adr` (`decision`). A file belongs to its most specific source ([projects](../../../docs/projects.md)) |
+| `projectDefaults.tracker-linear` | The lane convention every Linear project inherits unless it maps the lane itself; `null` marks a lane humans work ([linear](../../../docs/linear.md)) |
 | `projects` | Overrides keyed by project id, each `{enabled?, knowledge?, linear?}`. Projects themselves are discovered as the directories of `<home>/projects`; an override for a project that is neither checked out nor remembered fails. `<home>/projects/<id>/memory` is each project's `memory` source |
-| `plugins` | One block per plugin, keyed by the plugin's own **module id**, which is the package's short name: `plugins.channel-discord`, `plugins.channel-slack`, `plugins.tracker-linear`, `plugins.forge-github`, `plugins.browser`. A person writes the word they typed into `aivi add`, never one they have to find in a source file — the rule holds for every plugin that can be installed (ruled 2026-09-30). What stays the platform's short name is anything naming the platform rather than the package — the table prefixes and session ids (`discord_turns`, `ses_linear_…`) and the `aivi discord`/`aivi linear` commands — because renaming a prefix orphans the conversations already bound to it. The block is the plugin's whole setup and is validated by the plugin's own schema; what *enables* a module is the `aivi-plugins` list in `app/package.json`, not the block — a listed plugin with no block takes its defaults or its own clear complaint, and a block for a plugin nobody listed fails validation. Each plugin's doc owns its block: [discord](../../docs/discord.md), [slack](../../docs/slack.md), [linear](../../docs/linear.md), [browser](../../docs/browser.md) |
+| `plugins` | One block per plugin, keyed by the plugin's own **module id**, which is the package's short name: `plugins.channel-discord`, `plugins.channel-slack`, `plugins.tracker-linear`, `plugins.forge-github`, `plugins.browser`. A person writes the word they typed into `aivi add`, never one they have to find in a source file — the rule holds for every plugin that can be installed (ruled 2026-09-30). What stays the platform's short name is anything naming the platform rather than the package — the table prefixes and session ids (`discord_turns`, `ses_linear_…`) and the `aivi discord`/`aivi linear` commands — because renaming a prefix orphans the conversations already bound to it. The block is the plugin's whole setup and is validated by the plugin's own schema; what *enables* a module is the `aivi-plugins` list in `app/package.json`, not the block — a listed plugin with no block takes its defaults or its own clear complaint, and a block for a plugin nobody listed fails validation. Each plugin's doc owns its block: [discord](../../../docs/discord.md), [slack](../../../docs/slack.md), [linear](../../../docs/linear.md), [browser](../../../docs/browser.md) |
 | `search` | On by default: `{provider: "qmd", indexOnStart: true, maxPending: 32}`; `false` disables search entirely |
 | `scheduler.maxConcurrent` | `1`; counts running and blocked runs |
-| `scheduler.resources` | `{"local-model": 1}`; named pool limits |
+| `scheduler.resources` | `{"local-model": 1}`; named limits the **jobs and chat turns** lease from (ticket work uses `dispatcher.pools`) |
 | `scheduler.agentSchedules` | On by default as `{ "resource": "local-model", "max": 50 }`: any OpenCode agent with the plugin creates jobs through `aivi_jobs`, run in that pool, at most `max` agent jobs (recurring, or one-offs not yet fired) at once. `false` disables the tool; a custom pool set must name one of its pools here or disable |
 | `scheduler.misfire.graceSeconds` | `60`. An occurrence found later than this (aivi was not running) is recorded as one `missed` run per job and never executed; see [Jobs, runs, tasks](#jobs-runs-tasks). A large value means "run whenever" |
-| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. The default (its own `maintenance`-style pool) is written out in [operations](../../docs/operations.md#how-runs-end) |
+| `scheduler.retention` | `{ "cron": "0 4 * * *", "timezone": <host>, "olderThanDays": 30, "resource": "local-model" }`: the host seeds a system job `retention` (task `runs.prune`) that deletes finished runs and finished one-off jobs older than that. `resource` defaults to `local-model`, or the first pool when that does not exist. `false` removes the job. The default (its own `maintenance`-style pool) is written out in [operations](../../../docs/operations.md#how-runs-end) |
 | `scheduler.projectsSync` | `{ "cron": "0 * * * *", "timezone": <host>, "resource": "local-model" }`: the host seeds a system job `projects-sync` (task `projects.sync`) that brings every project's `source/` up to its upstream — through the forge that owns the remote when one does, plain git otherwise — and reindexes when something moved, so merges reach what is searched. Same pool rule as retention. `false` removes the job |
 | `scheduler.timezone` | Host-wide default for derived schedules (`retention`, `projects-sync`); default the host's own timezone. A schedule's own `timezone` wins over it |
-| `dispatcher.pools` | Absent: **unlimited** — capacity is not moderated, today's behavior (the intended default). Present: named pools of `{model?, capacity, fallback?}` every service draws from — the orchestrator, chat turns, jobs, the dreamer — configured once for the installation, never per project. The pool decides the model at session create; a lane's `pool` names one. Fallback grants are for new sessions only and chains must exist and end. [orchestrator](../../docs/orchestrator.md) owns the design |
+| `dispatcher.pools` | Absent: **unlimited** — capacity is not moderated, today's behavior (the intended default). Present: named pools of `{model?, capacity, fallback?}` that **ticket work** draws from — the orchestrator asks, the dispatcher decides — configured once for the installation, never per project. Jobs and chat turns draw the older `scheduler.resources`; the two systems coexist. The pool decides the model at session create; a lane's `pool` names one. Fallback grants are for new sessions only and chains must exist and end. [orchestrator](../../../docs/orchestrator.md) owns the design |
 | `dispatcher.timeouts` | `{ idle: "180m", prepare: "5m" }`: silence on an attached session before the dispatcher reclaims the slot (kill, confirm, free; an unconfirmed kill keeps the slot unavailable until a strike confirms or the cap gives up); and how long a lease without a session may take to be provided one. Durations add by spaces (`1h 30m`) |
-| `dispatcher.killAttempts` | `3`: how many kill strikes an unconfirmed session gets before the dispatcher gives up on it — **not** on the slot: the capacity returns and the ending carries the `kill-unconfirmed` code, which the tracker says loudly on its platform ([orchestrator](../../docs/orchestrator.md#ending-a-lease)) |
+| `dispatcher.killAttempts` | `3`: how many kill strikes an unconfirmed session gets before the dispatcher gives up on it — **not** on the slot: the capacity returns and the ending carries the `kill-unconfirmed` code, which the tracker says loudly on its platform ([orchestrator](../../../docs/orchestrator.md#ending-a-lease)) |
 | `orchestrator.elicitationKeepAlive` | `5m`: how long an open in-session elicitation (a worker waiting on a person, like Linear elicitation) holds its slot. After it the lease releases; the answer reacquires capacity and resumes the same session — fallback never applies to a resume |
 | `jobs` | Empty; job definitions, each `id`, `task`, and either `cron` + `timezone` (recurring) or `at` (an ISO 8601 instant; one-off), with optional `title`, `resource` (`local-model`), `report`, `enabled` (default `true`) and `misfire.graceSeconds` (per-job override). A bare operation name is shorthand for its invocation: `"task": "system.check"` is `{ "kind": "invocation", "name": "system.check" }`; use the explicit shape when the operation takes `args`. The ids `retention` and `projects-sync` are reserved while their `scheduler.*` settings are on |
 
@@ -116,7 +116,7 @@ and exists so such a capability can be *scheduled* like any other job.
 | Kind | Fields | Outcome |
 | --- | --- | --- |
 | `shell` | `command` (argv array, never a shell string), `cwd`, `env` (merged over the inherited environment), `timeoutMs` (10 min) | Exit 0 succeeds, other exits fail, a timeout blocks; stdout/stderr tails are kept. The process inherits the host environment minus aivi's secrets (`DISCORD_BOT_TOKEN`, `SLACK_*_TOKEN`, `OPENCODE_*`, and every key of `<home>/.env`); set a secret in `env` on purpose if a script needs it |
-| `prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](../../docs/opencode.md) |
+| `prompt` | `agent`, `directory`, `prompt`, `timeoutMs` (30 min), `onPermission` (`reject`/`fail`) | Runs one agent turn to a verified answer; see [OpenCode integration](../../../docs/opencode.md) |
 | `invocation` | `name` (the operation to invoke), `args` (opaque to everyone but the operation, which parses them and fails the run when they are wrong) | Runs the operation that *claimed* the name. Each name is claimed exactly once: a second claimant is a fatal configuration error at startup, and a run of an unclaimed name fails with its name in the reason |
 
 ### Operations
@@ -132,7 +132,7 @@ would appear.
 | `knowledge.index` | – | Refreshes the search index |
 | `projects.sync` | – | For every project with a checkout: asks the forge registry who owns the remote — an owned checkout syncs through that forge (fetch authenticates; the credentials are the forge's), anything else runs plain git — then fast-forwards the checked-out branch to its upstream; skipped (logged `projects.sync.skipped`, listed in the report) when `source/` has local changes, a detached HEAD, no upstream or diverged history, so nothing is ever forced. Reindexes when any project moved. The host seeds one such job from `scheduler.projectsSync` |
 | `runs.prune` | `olderThanDays` (≥ 1) | Deletes runs that ended `succeeded`, `failed`, `cancelled` or `missed` before that, with their audit rows, then the `done`/`missed` one-off jobs that have no runs left. Blocked and active runs and recurring jobs are never touched. The host seeds one such job from `scheduler.retention` |
-| `dreaming` | `memoryDirectory` (`memory`, the org memory in the home), `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; paths resolve against the home, and `memoryDirectory` must be inside a core knowledge source. See [dreaming](../../docs/dreaming.md) |
+| `dreaming` | `memoryDirectory` (`memory`, the org memory in the home), `agent` (`dreamer`), `directory` (the home), `origins` (`["discord"]`; add `slack` for Slack conversations), `maxSessions`, `timeoutMs` | Reviews conversations since the last run and maintains memory files; paths resolve against the home, and `memoryDirectory` must be inside a core knowledge source. See [dreaming](../../../docs/dreaming.md) |
 
 ## Jobs, runs, tasks
 
@@ -185,11 +185,11 @@ changes the run's outcome. `on` is `"always"` (default), `"failure"` (failed,
 blocked and missed) or `"never"`. Two shapes exist:
 
 - **A channel**: `{ "to": "channel", "module": "discord", "channel": "<id>", "on": … }`.
-  `module` names a running channel module ([channels](../../docs/channels.md)), `channel`
+  `module` names a running channel module ([channels](../../../docs/channels.md)), `channel`
   is that platform's own identifier. The module decides whether aivi may post
   there (`reportChannels` in its config) and how: Discord opens a thread that
   continues the run's session, so replying to an outcome talks to the agent
-  that produced it ([discord](../../docs/discord.md#setup)). A shell task file:
+  that produced it ([discord](../../../docs/discord.md#setup)). A shell task file:
   `{ "task": { "kind": "shell", "command": ["node", "--version"], "timeoutMs": 30000 }, "resource": "maintenance" }`.
 - **A session**: `{ "to": "session", "session": "<OpenCode session id>", "on": … }`.
   The outcome is not posted as text; it is submitted as a prompt into that
@@ -262,7 +262,7 @@ installed home.
 ## Operator commands
 
 `npm run aivi -- --help` lists them; what each does and when to use it is in
-[operations](../../docs/operations.md#jobs-and-runs-from-the-command-line).
+[operations](../../../docs/operations.md#jobs-and-runs-from-the-command-line).
 
 ## Update channel
 
@@ -285,7 +285,7 @@ Linear the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
 ([Linear](#linear)), and `GITHUB_APP_PRIVATE_KEY` — the GitHub App's PEM
 private key, which is many lines, so the setup writes it as one quoted line and
 Node's loader gives it back with its newlines
-([the forge](../../docs/plans/forge-github.md)). `AIVI_OPERATOR_BEARER` is the one name in that list no
+([the forge](../../../docs/plans/forge-github.md)). `AIVI_OPERATOR_BEARER` is the one name in that list no
 one sets: the exec door stamps it with the bearer this connection presented
 into a driven session's closed child environment, so commands typed
 remotely attribute to the human who typed them, not to the server's own
@@ -297,7 +297,7 @@ person token); an unknown or missing one is anonymous and still served. The
 host logs a warning when it binds beyond loopback, because anyone who can reach
 the address can use the commands. The plugin never receives an API for reading
 host secrets. A person's own credentials live in the client config
-(`~/.config/aivi.json`), owned by [people](../../docs/people.md).
+(`~/.config/aivi.json`), owned by [people](../../../docs/people.md).
 
 The host discovers OpenCode through the SDK's service registration
 (`~/.local/state/opencode/service.json`), so the random service port and its
@@ -321,5 +321,5 @@ expressions, timezones, uniqueness, that every project override has a
 checkout, that every plugin block and system job names an existing resource
 pool, and Linear app references.
 
-`aivi serve` is the single application command. See [operations](../../docs/operations.md)
-for ownership and [knowledge search](../../docs/knowledge.md) for indexing and retrieval.
+`aivi serve` is the single application command. See [operations](../../../docs/operations.md)
+for ownership and [knowledge search](../../../docs/knowledge.md) for indexing and retrieval.

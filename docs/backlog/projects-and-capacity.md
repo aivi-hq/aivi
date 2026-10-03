@@ -2,8 +2,10 @@
 
 Status: the one survivor of the 2026-09-14 capacity research. The per-project
 lock half was built (plans/linear.md step 5) and removed again (step 11,
-2026-09-19): worktrees became the isolation and the pool the capacity, and
-one worker per issue remained as the redelivery guard
+2026-09-19): the pool became the capacity, and isolation went the other way
+since 2026-10-02 — the checkout is the default working directory and only a
+`worktree: true` lane isolates; one worker per issue remained as the
+redelivery guard
 ([linear](../linear.md)). What survives as an unscheduled idea is
 **maintenance only when idle**: dreaming and indexing should run when no
 agent is working, from the same queue, rather than at a fixed cron

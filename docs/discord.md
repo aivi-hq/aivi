@@ -79,6 +79,8 @@ the host's. This page has what is Discord's.
 - `/queue text` is the explicit way behind the running turn; with no turn
   running it queues the same and says so.
 - `/jobs` lists the next five job occurrences and the last ten runs.
+- `/link <code>` links the sender's account to their aivi person (the code
+  comes from `aivi link`; the link section above).
 - `/help` lists the commands, one line each.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
@@ -146,7 +148,7 @@ OpenCode location; `directory` overrides that for an agent defined elsewhere).
 Discord and native chat run the same agent file.
 
 `DISCORD_BOT_TOKEN` comes from the environment (`<home>/.env`, see
-[secrets](configuration.md#secrets)). The host API takes no token; the host
+[secrets](../packages/host/docs/configuration.md#secrets)). The host API takes no token; the host
 discovers the running `opencode service` on its own. Configure your
 provider/model in native OpenCode for the assistant location.
 
@@ -176,7 +178,7 @@ npm run aivi -- serve
 
 Commands follow the code: at every start the module overwrites the application's
 command list with the shared command table (`/new`, `/status`, `/context`,
-`/search`, `/model`, `/stop`, `/queue`, `/jobs`, `/help`; best effort,
+`/search`, `/model`, `/stop`, `/queue`, `/jobs`, `/link`, `/help`; best effort,
 logged); `discord register` does the same on demand without a restart. Global
 commands can take up to an hour to appear in clients. Only the final command is a long-running aivi process: it starts
 the host HTTP API, scheduler, knowledge service, and Discord together. OpenCode

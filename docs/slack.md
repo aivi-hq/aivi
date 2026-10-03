@@ -54,7 +54,7 @@ Slack's. `aivi serve` starts and stops it; there is no separate Slack process.
   command table ([channels](channels.md#chat-commands)): `/<prefix>-new`,
   `/<prefix>-status`, `/<prefix>-context`, `/<prefix>-search QUERY [project]`,
   `/<prefix>-model [model]`, `/<prefix>-stop`, `/<prefix>-queue TEXT`,
-  `/<prefix>-jobs`, `/<prefix>-help`; replies are ephemeral through the
+  `/<prefix>-jobs`, `/<prefix>-link CODE`, `/<prefix>-help`; replies are ephemeral through the
   command's `response_url`. Slack commands
   carry no thread, so in a `threads` channel they speak for the channel:
   `-new` says that every new top-level message already starts a fresh
@@ -161,7 +161,7 @@ settings:
 Install the app to the workspace, create an **app-level token** with
 `connections:write` (`xapp-…`) and copy the **bot token** (`xoxb-…`). Put
 them in `<home>/.env` as `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`
-([secrets](configuration.md#secrets)). Invite the bot to every channel it
+([secrets](../packages/host/docs/configuration.md#secrets)). Invite the bot to every channel it
 should listen in. Collect the channel ids (channel details → bottom of the
 About tab). DM channel ids are not configured; a linked person may DM from
 anywhere ([people](people.md#link-codes-discord-slack)).

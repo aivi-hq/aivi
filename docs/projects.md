@@ -72,7 +72,7 @@ only overrides:
   it, read by no other. `projects.<id>.tracker-linear` (`teams`, `lanes`, optional
   `workspaceId`) is the Linear tracker's; the same place a forge or any other
   plugin writes what a project needs
-  ([configuration](configuration.md#linear)).
+  ([configuration](../packages/host/docs/configuration.md#linear)).
 
 ## Who works in a project
 
@@ -80,13 +80,17 @@ only overrides:
   conversation runs the module's agent in the home; it reads projects through
   `knowledge_search` and `aivi_sources`, and learns which projects exist on
   demand through `knowledge_projects`. It never claims or edits a checkout.
-- **Workers work in a project.** Linear's workers run in a worktree under
-  `<home>/projects/<id>/worktrees/` with the app's mapped agent, one per
-  project at a time ([linear](linear.md)); maintenance-when-idle is designed
+- **Workers work in a project.** Linear's workers work in the project's
+  checkout; a lane that says `worktree: true` works in its own git worktree
+  under `<home>/projects/<id>/worktrees/` ([linear](linear.md)). The lane
+  names the worker's agent directly; capacity is the dispatcher's pools, no
+  per-project lock; maintenance-when-idle is designed
   but not built ([projects-and-capacity](backlog/projects-and-capacity.md)).
-- A checkout is an OpenCode location of its own: a session in
-  `projects/acme` does not see `<home>/.opencode/agents/`. Where worker agents
-  are defined is settled with the Linear module.
+- A checkout is an OpenCode location of its own — but discovery reaches up:
+  a session in `projects/acme` **does** see the agents seeded at
+  `<home>/.opencode/agents/` (verified live 2026-10-03), which is why the
+  lane wizard's pick-list has workers to name. Worker agents are the files
+  the scaffolding seeds there ([templates](plans/templates/index.md)).
 
 ## Memory
 
@@ -132,7 +136,7 @@ remote no forge recognises — is plain git, naming no plugin. Either way:
 fetch and fast-forward only, so a merge on
 GitHub reaches what is indexed within the hour and nothing is ever forced;
 local changes, a detached HEAD or a diverged branch are reported and left
-alone ([configuration](configuration.md#tasks)).
+alone ([configuration](../packages/host/docs/configuration.md#tasks)).
 
 The host reads the projects directory at startup, so restart `aivi serve`
 after adding or removing. To rename a project, rename its directory; memory

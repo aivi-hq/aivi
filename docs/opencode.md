@@ -163,8 +163,9 @@ npm run aivi -- runs list
 ```
 
 `aivi setup` seeds the home's `.opencode/agents/` (`assistant.md`,
-`dreamer.md`) from `packages/cli/templates/agents/`. Both seeded agents deny
-the `question` tool: no channel client can answer one yet, so a question asked
+`dreamer.md`, and the worker files `product.md`, `dev.md`, `review.md`) from
+`packages/cli/templates/agents/`. All five deny the `question` tool: no
+channel client can answer one yet, so a question asked
 in an unattended turn would only hang waiting for an answer
 ([discord-polish](backlog/discord-polish.md) is the way it lands).
 
@@ -213,7 +214,7 @@ host validates the agent with `agent.list` for that directory before creating
 anything (verified 2026-09-15: `agent.get` does not see agents defined under a
 directory's `.opencode/`, `agent.list` with a location does). Behaviour and
 the configuration switch are in
-[configuration](configuration.md#agent-created-jobs).
+[configuration](../packages/host/docs/configuration.md#agent-created-jobs).
 
 ## Browser tool
 
