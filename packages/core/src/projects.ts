@@ -32,7 +32,8 @@ export async function purgeProject(
 ): Promise<{ id: string; paths: string[]; purged: boolean }> {
   const home = dirname(resolve(configPath));
   const paths: string[] = [];
-  for (const path of [resolve(home, 'projects', id)]) if (await stat(path).catch(() => null)) paths.push(path);
+  const projectDir = resolve(home, 'projects', id);
+  if (await stat(projectDir).catch(() => null)) paths.push(projectDir);
   if (!paths.length) throw new Error(`Nothing to purge for project ${id}`);
   if (!options.confirm) return { id, paths, purged: false };
   for (const path of paths) await rm(path, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 import type { Logger } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
-import { ConfigurationError } from '@aivi/host';
+import { ConfigurationError } from '@aivi/plugin';
 import { LogLevel, SocketModeClient } from '@slack/socket-mode';
 import type { MarkdownBlock } from '@slack/web-api';
 import { WebClient } from '@slack/web-api';

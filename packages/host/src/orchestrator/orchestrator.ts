@@ -427,12 +427,21 @@ export class Orchestrator implements OrchestratorApi {
     fromQueue: boolean,
     leaseId: string,
   ): Promise<void> {
+    if (!lane.agent) {
+      // The config changed under the wait: the lane is still named but no
+      // longer has a worker — a human lane does not get a run. The books
+      // need a worker's name and this work has none; said loudly, the
+      // slot goes back, the board keeps the ticket.
+      await this.deps.dispatcher.release(leaseId);
+      this.deps.log.warn('claim.lane-workless', { ticket: ticketId, lane: lane.name });
+      return;
+    }
     const { run, created } = this.deps.ledger.request({
       projectId,
       trackerId,
       ticketId,
       lane: lane.name,
-      agent: lane.agent!,
+      agent: lane.agent,
     });
     if (!created) {
       await this.deps.dispatcher.release(leaseId);
@@ -555,12 +564,23 @@ export class Orchestrator implements OrchestratorApi {
     }
     if (work.kind === 'delegation') {
       // The push entry's platform side was its caller's, already done.
+      if (!lane.agent) {
+        // Same race as the lane-gone above, one notch finer: the lane
+        // stayed but lost its worker while the delegation waited.
+        await this.deps.dispatcher.release(lease.id);
+        this.deps.log.warn('fulfill.lane-workless', {
+          request: requestId,
+          ticket: work.ticketId,
+          lane: lane.name,
+        });
+        return;
+      }
       const { run, created } = this.deps.ledger.request({
         projectId: work.projectId,
         trackerId: work.trackerId,
         ticketId: work.ticketId,
         lane: lane.name,
-        agent: lane.agent!,
+        agent: lane.agent,
       });
       if (!created) {
         await this.deps.dispatcher.release(lease.id);

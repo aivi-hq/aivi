@@ -201,12 +201,13 @@ temp-file-plus-rename is three lines in each place.
 
 1. **The claims that promise what is not there (D9, D10, D11)** — *done
    2026-10-03, see Disposition.*
-2. **B4, B5 — fixed 2026-10-03; B3, B6 — closed** (see Disposition). **B8** remains.
-3. **D1/D4 together** (one reader of app/package.json, named loudly), D5-D8,
-   E1-E5 — small honest fixes.
-4. **E6 and C1** — the atomic-write trio and the error-classes-into-kit move
-   are the two refactors worth doing before anything external installs a
-   plugin; C1's engine/store half can wait for its own plan.
+2. **B4, B5 — fixed 2026-10-03; B3, B6 — closed** (see Disposition). **B8 —
+   removed 2026-10-03.**
+3. **D1/D4 — fixed 2026-10-03** (one reader's answer, named loudly). D5-D8 —
+   D8 fixed; D5, D6, D7 are the operator's calls. **E1-E5 — fixed 2026-10-03.**
+4. **E6 — fixed 2026-10-03** (every durable write lands whole or not at all).
+   **C1 — the easy half done 2026-10-03**: the two error classes live in the
+   kit now; the engine/store half waits for its own plan.
 
 ## Disposition
 
@@ -281,4 +282,46 @@ temp-file-plus-rename is three lines in each place.
   (`npm run smoke`). The suite runs 515 tests in about 3.5s; the one
   test that waits a real second is the shell timeout's blocking
   classification, a floor our own schema sets (`timeoutMs ≥ 1000`).
+- **B8 — removed 2026-10-03** (the operator: the `projects add` wizard asks
+  the worktree question per lane now). `parseLaneFlags` and the
+  `--lane`/`--unlane` readers are gone; no command ever registered the
+  flags, so nothing to delete from the surface but the dead machinery.
+- **C2, D8, E1, E2, E3, E4 — fixed 2026-10-03** (the small honest fixes).
+  The dreaming transcript's header says a *channel* names its speaker —
+  the prefix is the shared engine's, on every platform, not Discord's. An
+  interjection neither steered nor queued is **said** in the conversation
+  ("say it again"), never a log line alone; the books were already
+  acknowledged, so silence was a lost message. `#claimAndStart` and the
+  delegation fulfilment check the lane has a worker before the ledger does
+  — a lane that lost its agent during the wait releases the slot and says
+  `lane-workless`, no `undefined` worker's name in a run row. The dead
+  `_announceVersion` is gone; `purgeProject` stats its one path instead of
+  looping over it; `aivi_config read` of a corrupt config.json names
+  itself instead of a shapeless "Internal error".
+- **E5 — fixed 2026-10-03.** The redirect splits `git remote` on the
+  reading: the name list and `get-url` read local config and cross
+  nothing, so they pass; the rewriting sub-verbs — and `show`, which asks
+  the remote, and anything unknown — stay refused with a message that says
+  *changing* remotes is what aivi owns.
+- **E6 — fixed 2026-10-03.** Every durable write lands whole or not at
+  all: temp next door, rename over. `writeConfigBlock` and
+  `deleteConfigBlock` (and `.env`, whose temp is created 0600 so a secret
+  never sits world-readable), the CLI's install manifest, and Linear's
+  `writeProjectLinear` — a kill mid-write used to leave truncated JSON
+  where the config was, and the restore-on-refusal pattern only ever
+  protected against a *bad* write, not a half one.
+- **D1/D4 — fixed 2026-10-03.** `manualSources` tells absent from corrupt
+  like the host's registry reader of the same file already did: no
+  install record is silence, a manifest that exists but will not parse
+  throws its path and the parse error — a broken install is never read as
+  an empty one.
+- **D12 — fixed 2026-10-03.** The Linear MCP proxy caps its body buffer
+  at 1 MiB, as every other reader in aivi does, and answers an
+  over-weight request in the protocol's own shape instead of
+  accumulating it.
+- **C1 — the easy half done 2026-10-03.** `ToolError` and
+  `ConfigurationError` are defined in the kit's module contract
+  (`@aivi/plugin`) and re-exported by the host, so the five plugin
+  packages no longer import them from `@aivi/host`. The engine and the
+  store remain real imports — that half waits for its own plan.
 - The rest: operator's call on each.

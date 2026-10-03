@@ -30,7 +30,6 @@ export { createLinearModule, describeWorkers, LINEAR, openLinearStore } from './
 export type { RoutedProject } from './projects.ts';
 export {
   linearTeamCollisions,
-  parseLaneFlags,
   projectForIssue,
   projectLinear,
   writeProjectLinear,

@@ -14,7 +14,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getLogger, type Logger } from '@aivi/core';
-import { ConfigurationError } from '@aivi/host';
+import { ConfigurationError } from '@aivi/plugin';
 import { createAppAuth } from '@octokit/auth-app';
 import { Octokit as OctokitCore } from '@octokit/core';
 import { restEndpointMethods } from '@octokit/plugin-rest-endpoint-methods';

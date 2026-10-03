@@ -604,8 +604,10 @@ async function startLinear(
 
     /** An interjection steers (ruled 2026-10-01): the message lands between
      *  turns and steers what comes next. With no turn to steer, the same
-     *  message queues instead — said in the log, never lost. */
+     *  message queues instead; when both ways fail the person is told the
+     *  message did not land — never silence for a message that is gone. */
     const steerInterjection = async (
+      conversation: string,
       run: RunView,
       client: Awaited<ReturnType<typeof services.opencode>>,
       text: string,
@@ -620,13 +622,25 @@ async function startLinear(
         return log.info('run.interjected', { run: run.id });
       } catch (error) {
         log.warn('run.steer.failed', { run: run.id, error });
-        await client.session.prompt({
-          sessionID: run.sessionId!,
-          id: `msg_${crypto.randomUUID()}`,
-          text,
-          delivery: 'queue',
-        });
-        return log.info('run.interjected.queued', { run: run.id });
+        try {
+          await client.session.prompt({
+            sessionID: run.sessionId!,
+            id: `msg_${crypto.randomUUID()}`,
+            text,
+            delivery: 'queue',
+          });
+          return log.info('run.interjected.queued', { run: run.id });
+        } catch (queueError) {
+          // Both ways in failed. The delivery was acknowledged to Linear
+          // already, so nothing resends it: if the person hears nothing the
+          // message is gone with only a log line. The conversation hears
+          // that it did not land, and can say it again.
+          log.error('run.interjection.lost', { run: run.id, error: queueError });
+          return refuse(
+            conversation,
+            'I could not carry that message — my agent runtime would not take it, to steer or to queue. Say it again.',
+          );
+        }
       }
     };
 
@@ -673,7 +687,7 @@ async function startLinear(
         const client = await services.opencode();
         const [form] = await client.session.form.list({ sessionID: run.sessionId });
         if (form) return deliverAnswer(conversation, run, text, form.id);
-        return steerInterjection(run, client, text);
+        return steerInterjection(conversation, run, client, text);
       }
       if (store.has(conversation)) {
         store.enqueue({ id: event.id, channel: conversation, user: 'linear', name: 'a person in Linear', text }, 100);

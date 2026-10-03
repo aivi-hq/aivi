@@ -5,7 +5,6 @@ import {
   announce,
   CHAT_COMMANDS,
   ChannelEngine,
-  ConfigurationError,
   ConversationStore,
   chatCommand,
   createTurnRunner,
@@ -26,7 +25,7 @@ import {
   stopTurn,
   switchModel,
 } from '@aivi/host';
-import type { AiviModule, AiviServices, Store } from '@aivi/plugin';
+import { type AiviModule, type AiviServices, ConfigurationError, type Store } from '@aivi/plugin';
 import type { ChannelPlatform, ChatCommand, ChatCommandName, DeliveryContext, Turn } from '@aivi/plugin/channel';
 import {
   type AutocompleteInteraction,

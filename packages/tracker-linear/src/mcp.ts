@@ -78,6 +78,15 @@ export class LinearMcp {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     // The request body is an MCP message: small JSON, buffered so a 401 retry can replay it.
     const body = await readBody(request);
+    if (!body) {
+      // Over the cap: said in the protocol's own shape, the way every
+      // other body reader in aivi refuses what is too big to hold.
+      response.writeHead(413, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Request body over the cap' } }),
+      );
+      return;
+    }
     await this.forward(request, response, body, false);
   }
 
@@ -125,10 +134,26 @@ export class LinearMcp {
   }
 }
 
-const readBody = (request: IncomingMessage): Promise<Buffer> =>
+/** What one MCP message may weigh: every other body reader in aivi caps
+ *  (`readCapped`, `MAX_PUBLIC_BODY`, `MAX_DIARY_BODY`); loopback is the
+ *  threat model, so this is consistency, and the cap costs nothing. */
+const MAX_MCP_BODY = 1024 * 1024;
+
+/** The body, buffered whole — or `undefined` when it passes the cap and
+ *  the stream is dropped rather than accumulated without end. */
+const readBody = (request: IncomingMessage): Promise<Buffer | undefined> =>
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    request.on('data', chunk => chunks.push(chunk as Buffer));
+    let bytes = 0;
+    request.on('data', chunk => {
+      bytes += (chunk as Buffer).length;
+      if (bytes > MAX_MCP_BODY) {
+        request.destroy();
+        resolve(undefined);
+        return;
+      }
+      chunks.push(chunk as Buffer);
+    });
     request.on('end', () => resolve(Buffer.concat(chunks)));
     request.on('error', reject);
   });

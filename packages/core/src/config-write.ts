@@ -4,9 +4,23 @@
  *  its previous bytes. A plugin's own project-section write (e.g. Linear's
  *  `writeProjectLinear`) carries the same guarantee for its one block; these
  *  are the general shape of it. */
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
 import { loadConfig } from './config.ts';
+
+/** Write bytes so a kill mid-write leaves either the old file or the new
+ *  one: temp next door, then rename over the live path — rename is atomic
+ *  on every filesystem aivi's home lives on. A direct write can die
+ *  half-full, and the next boot's only complaint then is a parse error
+ *  where the config used to be. With a mode given it lands with those
+ *  permissions from the first byte — a secret's temp must never sit
+ *  world-readable, even for the moment before the rename. */
+function writeWhole(path: string, contents: string, mode?: number): void {
+  const temp = `${path}.aivi-tmp`;
+  rmSync(temp, { force: true }); // a leftover temp keeps its old mode; start clean
+  writeFileSync(temp, contents, mode === undefined ? {} : { mode });
+  renameSync(temp, path);
+}
 
 /**
  * Write one block into `config.json` at a path like `['plugins', 'channel-discord']`:
@@ -24,11 +38,11 @@ export async function writeConfigBlock(configPath: string, path: string[], value
     node = node[key] as Record<string, unknown>;
   }
   node[path.at(-1)!] = value;
-  writeFileSync(configPath, `${JSON.stringify(raw, null, 2)}\n`);
+  writeWhole(configPath, `${JSON.stringify(raw, null, 2)}\n`);
   try {
     await loadConfig(configPath);
   } catch (error) {
-    writeFileSync(configPath, before);
+    writeWhole(configPath, before);
     throw error;
   }
 }
@@ -54,11 +68,11 @@ export async function deleteConfigBlock(configPath: string, path: string[]): Pro
   const last = path.at(-1)!;
   if (!(last in node)) return false;
   delete node[last];
-  writeFileSync(configPath, `${JSON.stringify(raw, null, 2)}\n`);
+  writeWhole(configPath, `${JSON.stringify(raw, null, 2)}\n`);
   try {
     await loadConfig(configPath);
   } catch (error) {
-    writeFileSync(configPath, before);
+    writeWhole(configPath, before);
     throw error;
   }
   return true;
@@ -76,8 +90,7 @@ export function upsertEnvFile(path: string, key: string, value: string): void {
   const pattern = new RegExp(`^${key}=.*$`, 'm');
   const pad = body && !body.endsWith('\n') ? '\n' : '';
   const next = pattern.test(body) ? body.replace(pattern, () => line) : `${body}${pad}${line}\n`;
-  writeFileSync(path, next);
-  chmodSync(path, 0o600);
+  writeWhole(path, next, 0o600);
 }
 
 /** The names a dotenv file defines; everything in it is treated as a secret. */

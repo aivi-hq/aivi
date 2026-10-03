@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { laneOf, loadConfig } from '@aivi/core';
-import { linearTeamCollisions, parseLaneFlags, projectLinear, writeProjectLinear } from '../src/projects.ts';
+import { linearTeamCollisions, projectLinear, writeProjectLinear } from '../src/projects.ts';
 
 test('writeProjectLinear writes teams, keeps everything else, and restores a config that stops loading', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-projects-linear-'));
@@ -72,27 +72,6 @@ test('writeProjectLinear writes teams, keeps everything else, and restores a con
   assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.site.lanes, [
     { name: 'Dev', agent: 'ghost-agent', worktree: true },
   ]);
-});
-
-test('lane flags read as the ordered lane array: shorthand, human lanes, colons kept', () => {
-  assert.deepEqual(parseLaneFlags(['Dev:dev', 'Review,Build:review'], ['Backlog']), [
-    { name: 'Dev', agent: 'dev', worktree: true },
-    { name: 'Review', agent: 'review', worktree: true },
-    { name: 'Build', agent: 'review', worktree: true },
-    { name: 'Backlog', worktree: true },
-  ]);
-  assert.deepEqual(
-    parseLaneFlags(['Stand:up:dev'], []),
-    [{ name: 'Stand:up', agent: 'dev', worktree: true }],
-    'split at the last colon',
-  );
-  assert.deepEqual(parseLaneFlags([], []), []);
-  assert.throws(() => parseLaneFlags(['Dev'], []), /must read LANE:AGENT/);
-  assert.throws(() => parseLaneFlags(['Dev:'], []), /must read LANE:AGENT/);
-  assert.throws(() => parseLaneFlags([':dev'], []), /must read LANE:AGENT/);
-  assert.throws(() => parseLaneFlags(['Dev, :dev'], []), /empty lane name/);
-  assert.throws(() => parseLaneFlags(['Dev:dev'], ['Dev']), /both --lane and --unlane/);
-  assert.throws(() => parseLaneFlags([], ['  ']), /--unlane needs a lane name/);
 });
 
 test('projectLinear: the convention is the base, the entry wins one lane at a time, null means humans', async t => {

@@ -45,6 +45,22 @@ import type { Tracker } from './tracker.ts';
  *  SDK's own client, named here because this is where plugins meet it. */
 export type OpenCodeClient = ReturnType<typeof OpenCode.make>;
 
+/** A tool failed with an answer for the agent: this status and message reach the caller. */
+export class ToolError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * A module start that no retry can fix: a missing token, an id that does not
+ * match. Modules throw this for what the operator must change; everything else
+ * (a platform answering 503, a network blip) is retried.
+ */
+export class ConfigurationError extends Error {}
+
 /** What a module hands back at start: the one thing the host may do to it is stop it. */
 export interface RunningModule {
   stop(): Promise<void>;

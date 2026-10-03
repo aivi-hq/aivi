@@ -252,7 +252,19 @@ export function claimHostTools(tools: ToolRegistry, deps: HostToolDeps): void {
           throw new ToolError(400, `Invalid config call: ${parsed.error.issues.map(i => i.message).join('; ')}`);
         const { action, path, value } = parsed.data;
         const configPath = loaded.path;
-        if (action === 'read') return JSON.parse(await readFile(configPath, 'utf8')) as unknown;
+        if (action === 'read') {
+          const bytes = await readFile(configPath, 'utf8');
+          try {
+            return JSON.parse(bytes) as unknown;
+          } catch (error) {
+            // Every other refusal in this tool names itself; a corrupt file
+            // used to reach the agent as a shapeless 500.
+            throw new ToolError(
+              500,
+              `config.json is not valid JSON: ${errorMessage(error)}. Repair the file by hand; the tool will not read or write over it until it loads again.`,
+            );
+          }
+        }
         const before = await readFile(configPath, 'utf8');
         if (action === 'write') {
           try {

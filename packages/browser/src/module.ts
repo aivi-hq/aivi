@@ -8,8 +8,7 @@
  * Chrome and owned tabs stay for inspection.
  */
 import type { ToolDescriptor } from '@aivi/core';
-import { ToolError } from '@aivi/host';
-import type { AiviModule } from '@aivi/plugin';
+import { type AiviModule, ToolError } from '@aivi/plugin';
 import type { BrowserConfig } from './config.ts';
 import { browserRequestSchema } from './config.ts';
 import { createBrowserService } from './service.ts';

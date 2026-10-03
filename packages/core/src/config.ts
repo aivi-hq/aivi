@@ -1186,15 +1186,23 @@ function absolutizePaths(config: Config, base: string): void {
  *  moved (the client record's `appDir`) is the laptop case, not the server's;
  *  the convention here is `<home>/app`, like everything else in the home. */
 async function manualSources(base: string): Promise<KnowledgeSource[]> {
-  let list: unknown;
+  const manifestPath = join(base, 'app', 'package.json');
+  let bytes: string;
   try {
-    const manifest = JSON.parse(await readFile(join(base, 'app', 'package.json'), 'utf8')) as {
-      'aivi-plugins'?: unknown;
-    };
-    list = manifest['aivi-plugins'];
+    bytes = await readFile(manifestPath, 'utf8');
   } catch {
     // No install record yet: nothing installed, nothing to know about.
     return [];
+  }
+  let list: unknown;
+  try {
+    const manifest = JSON.parse(bytes) as { 'aivi-plugins'?: unknown };
+    list = manifest['aivi-plugins'];
+  } catch (error) {
+    // A manifest that exists but will not parse is a broken install, not an
+    // empty one. Said by name, the way the host's registry reader says it:
+    // both readers of this file tell absent from corrupt.
+    throw new Error(`${manifestPath} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   const sources: KnowledgeSource[] = [];
   for (const entry of Array.isArray(list) ? list : []) {

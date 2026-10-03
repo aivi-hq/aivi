@@ -13,8 +13,7 @@
  *  module never polled today, so the adapter does not pretend to.
  */
 import { getLogger, type Logger } from '@aivi/core';
-import { ConfigurationError } from '@aivi/host';
-import type { PublicRoutes } from '@aivi/plugin';
+import { ConfigurationError, type PublicRoutes } from '@aivi/plugin';
 import type { RunPlan, RunQuestion } from '@aivi/plugin/run';
 import type {
   Platform,

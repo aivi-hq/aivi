@@ -89,25 +89,6 @@ export async function discoverTolerant(options: { file?: string } = {}): Promise
   return undefined;
 }
 
-let versionAnnounced = false;
-
-/** Once per process: say which server aivi found. Skew is information, never fatal. */
-async function _announceVersion(endpoint: DiscoveredEndpoint, log: Logger): Promise<void> {
-  if (versionAnnounced) return;
-  try {
-    const response = await fetch(`${endpoint.url}/api/info`, {
-      ...(endpoint.auth ? { authorization: basicAuth(endpoint.auth.username, endpoint.auth.password) } : {}),
-      signal: AbortSignal.timeout(1500),
-    });
-    const server = response.ok ? ((await response.json()) as { version?: string }) : undefined;
-    if (!server?.version) return;
-    versionAnnounced = true;
-    log.info('opencode.version', { server: server.version });
-  } catch {
-    // Best effort: a server that says nothing about itself still gets used.
-  }
-}
-
 let lastLoggedVersion: string | undefined;
 
 /** The SDK hands the server's version to this predicate during discover and ensure: log it, accept every version. */

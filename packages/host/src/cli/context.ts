@@ -63,7 +63,7 @@ export const context = async (): Promise<{
  *  and plugin channel commands render the same way. */
 export const print = (value: unknown, output?: OutputBlock[] | string): void => corePrint(value, output);
 
-/** Repeatable options collect into a list: `--lane Dev:dev --lane Review:dev`. */
+/** Repeatable options collect into a list: `--project site --project api`. */
 export const collect = (value: string, previous: string[]): string[] => [...previous, value];
 
 /** The home's SQLite store, open for the callback and closed after, whatever

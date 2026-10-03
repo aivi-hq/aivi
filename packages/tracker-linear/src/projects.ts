@@ -3,6 +3,7 @@
  *  owns because core reads nothing inside a contributed section. Teams are
  *  Linear's own; the **lanes are core's** — this file writes them into the
  *  project's core `lanes` array and reads nothing back from it. */
+import { renameSync, rmSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { type LoadedConfig, loadConfig, PROJECT_ID, type Project, type ProjectLaneInput } from '@aivi/core';
 import type { LinearProjectDefaults, LinearProjectEntry, ProjectLinear } from './config.ts';
@@ -101,7 +102,7 @@ export async function writeProjectLinear(
   entry[SECTION] = linear;
   linear.teams = options.teams;
   if (options.lanes) entry.lanes = options.lanes;
-  await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
+  await writeWhole(configPath, `${JSON.stringify(raw, null, 2)}\n`);
   try {
     const loaded = await loadConfig(configPath);
     linearProjectSchema.parse(linear);
@@ -118,48 +119,20 @@ export async function writeProjectLinear(
         );
     }
   } catch (error) {
-    await writeFile(configPath, before);
+    await writeWhole(configPath, before);
     throw error;
   }
   const lanes = entry.lanes as ProjectLaneInput[] | undefined;
   return { id, teams: options.teams, ...(lanes ? { lanes } : {}) };
 }
 
-/**
- * The `--lane`/`--unlane` flags as the ordered lane array core stores. The
- * flags state the order they are given in — first flag, first lane. Each
- * `--lane` is `LANE[,LANE…]:AGENT` (split at the *last* colon, so a lane name
- * may hold one); each `--unlane` is a lane with no agent, worked by humans,
- * a separate flag so no word is reserved. `next`/`previous` targets and the
- * queue and pool marks are the configured exception and get hand-written
- * into the file, not flagged.
- * A lane given both ways is an error.
- */
-export function parseLaneFlags(lanes: string[], unlanes: string[]): ProjectLaneInput[] {
-  const byName = new Map<string, ProjectLaneInput>();
-  for (const entry of lanes) readLaneFlag(byName, entry);
-  for (const entry of unlanes) readUnlaneFlag(byName, entry);
-  return [...byName.values()];
-}
-
-/** One `--lane` entry appended to the order; split at the last colon, so a
- *  lane name may hold one. */
-function readLaneFlag(out: Map<string, ProjectLaneInput>, entry: string): void {
-  const at = entry.lastIndexOf(':');
-  const agent = at < 0 ? '' : entry.slice(at + 1).trim();
-  if (!agent || at <= 0) throw new Error(`--lane "${entry}" must read LANE:AGENT, e.g. --lane "Dev:dev"`);
-  for (const lane of entry.slice(0, at).split(',')) {
-    const name = lane.trim();
-    if (!name) throw new Error(`--lane "${entry}" has an empty lane name`);
-    if (out.has(name)) throw new Error(`Lane "${name}" is given twice`);
-    out.set(name, { name, agent, worktree: true });
-  }
-}
-
-/** One `--unlane` entry: a lane with no agent, unless `--lane` claimed it first. */
-function readUnlaneFlag(out: Map<string, ProjectLaneInput>, entry: string): void {
-  const name = entry.trim();
-  if (!name) throw new Error('--unlane needs a lane name');
-  if (out.has(name)) throw new Error(`Lane "${name}" is given both --lane and --unlane; choose one`);
-  out.set(name, { name, worktree: true });
+/** Bytes land whole or not at all: temp next door, rename over the live
+ *  path. A kill mid-write used to leave truncated JSON where the config
+ *  was — the restore-on-refusal pattern below protects against a bad
+ *  write, not against a half one. */
+async function writeWhole(path: string, contents: string): Promise<void> {
+  const temp = `${path}.aivi-tmp`;
+  rmSync(temp, { force: true });
+  await writeFile(temp, contents);
+  renameSync(temp, path);
 }

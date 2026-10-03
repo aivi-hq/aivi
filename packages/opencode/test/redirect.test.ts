@@ -13,8 +13,17 @@ test('the boundary verbs are recognised behind any flags or -c prefixes', () => 
   assert.equal(boundaryGit('git --no-pager fetch origin'), 'fetch');
   assert.equal(boundaryGit('git -C /w pull'), 'pull');
   assert.equal(boundaryGit('git ls-remote origin'), 'ls-remote');
-  assert.equal(boundaryGit('git remote get-url origin'), 'remote');
   assert.equal(boundaryGit('git clone https://github.com/acme/widget.git'), 'clone');
+});
+
+test('git remote splits on the reading: names and URLs are local, changes cross', () => {
+  assert.equal(boundaryGit('git remote'), undefined, 'the bare name list reads local config');
+  assert.equal(boundaryGit('git remote -v'), undefined, 'verbose stays a read');
+  assert.equal(boundaryGit('git remote get-url origin'), undefined, 'one URL is local config');
+  assert.equal(boundaryGit('git remote set-url origin https://github.com/acme/widget.git'), 'remote');
+  assert.equal(boundaryGit('git remote show origin'), 'remote', 'show asks the remote');
+  assert.equal(boundaryGit('git remote prune origin'), 'remote');
+  assert.equal(boundaryGit('git remote secrete origin'), 'remote', 'an unknown sub-verb stays refused');
 });
 
 test('local git stays itself: the deny never reaches past the boundary', () => {

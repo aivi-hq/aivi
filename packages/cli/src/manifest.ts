@@ -5,7 +5,7 @@
  *  exists but stands down. The module id, the `plugins.<id>` config key, is
  *  not here: the package's own `./config` declaration carries it, and the host
  *  validates this list when it loads. */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 interface Manifest {
@@ -18,8 +18,16 @@ function readManifest(appDir: string): Manifest {
   return JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')) as Manifest;
 }
 
+/** Bytes land whole or not at all: temp next door, rename over. A kill
+ *  mid-write used to leave truncated JSON where the install record was,
+ *  and every later read — `aivi add`, the host's registry — then complained
+ *  about JSON instead of knowing what it lost. */
 function writeManifest(appDir: string, manifest: Manifest): void {
-  writeFileSync(join(appDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  const path = join(appDir, 'package.json');
+  const temp = `${path}.aivi-tmp`;
+  rmSync(temp, { force: true });
+  writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`);
+  renameSync(temp, path);
 }
 
 /** The list entry names, tuples included: what the home holds plugins for. */

@@ -16,6 +16,10 @@ export type BoundaryGit = (typeof BOUNDARY)[number];
  *  a `-c x=y` prefix is still recognised. */
 const VALUE_FLAGS = new Set(['-c', '-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix']);
 
+/** The `git remote` sub-verbs that read local config and never cross: the
+ *  name list and one URL. `show` is not among them — it asks the remote. */
+const REMOTE_READS = new Set(['get-url']);
+
 /** The boundary verb a shell resource spends, if it spends one. OpenCode's
  *  scanner already split chained commands into separate resources; whitespace
  *  inside one is collapsed here, as the attribution plugin does. */
@@ -26,7 +30,13 @@ export function boundaryGit(resource: string): BoundaryGit | undefined {
     const token = tokens[at]!;
     if (VALUE_FLAGS.has(token)) at++;
     else if (token.startsWith('-')) continue;
-    else return (BOUNDARY as readonly string[]).includes(token) ? (token as BoundaryGit) : undefined;
+    else if (token === 'remote') {
+      // Listing remotes and reading one URL is local config, not a
+      // crossing; rewriting them is. A sub-verb unknown here stays
+      // refused: the wall is the safety, the hook is courtesy.
+      const sub = tokens.slice(at + 1).find(t => !t.startsWith('-'));
+      return sub === undefined || REMOTE_READS.has(sub) ? undefined : ('remote' as BoundaryGit);
+    } else return (BOUNDARY as readonly string[]).includes(token) ? (token as BoundaryGit) : undefined;
   }
   return undefined;
 }
@@ -38,6 +48,8 @@ export function redirectMessage(verb: BoundaryGit): string {
     return 'git push is disabled in aivi runs — use aivi_push (and aivi_sync first if the remote moved).';
   if (verb === 'fetch' || verb === 'pull')
     return 'git fetch and git pull are disabled in aivi runs — use aivi_sync to bring the remote’s latest refs in; integrate them with your own git.';
+  if (verb === 'remote')
+    return 'changing remotes is disabled in aivi runs: aivi owns the way across (aivi_sync, aivi_push, aivi_pr). If none of them does what you need, ask the person with aivi_ask.';
   return `git ${verb} is disabled in aivi runs: aivi crosses to the remote through its own tools (aivi_sync, aivi_push, aivi_pr). If none of them does what you need, ask the person with aivi_ask.`;
 }
 
