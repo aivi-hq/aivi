@@ -72,6 +72,30 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     'The GitHub app aivi works as',
   );
 
+  ctx.prompts.note(
+    [
+      '1. Open https://github.com/settings/apps/new',
+      '2. GitHub App name is the bot’s name; homepage and contact do not',
+      '   matter. No webhooks: aivi receives nothing, it only calls out.',
+      '3. Under "Repository permissions", set:',
+      '   - Contents: Read & write       (aivi reads and pushes branches)',
+      '   - Pull requests: Read & write  (pull requests, reviews, replies)',
+      '   - Issues: Read & write         (tracker-github; harmless to grant)',
+      '4. Press Create. The App ID is the number at the top of the app’s',
+      '   settings page, next to "App ID".',
+      '5. On that page, under "Private keys", press "Generate a private',
+      '   key". GitHub downloads a .pem file (into your Downloads folder).',
+      '6. Press "Install App", pick the account that holds the repositories,',
+      '   choose "Only select repositories", and add the repositories aivi',
+      '   works. Without this the app reads nothing and the check below fails.',
+      '',
+      'If the app already exists and is installed, saving new permissions is',
+      'not enough: open the installation (Integrations → Configure) and',
+      'approve the pending access, or aivi keeps the old grant.',
+    ].join('\n'),
+    'Creating the GitHub app',
+  );
+
   const appId =
     already?.app ??
     Number(
@@ -79,7 +103,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
         await settled(
           ctx,
           ctx.prompts.text({
-            message: 'The App ID — the number on the app settings page',
+            message: 'The App ID — the number on the app page (step 4)',
             placeholder: 'e.g. 12345',
             validate: value =>
               value !== undefined && APP_ID.test(value.trim()) ? undefined : 'the numeric App ID, as on the app page',
@@ -89,11 +113,14 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     );
 
   // The key is asked for as a file because it is many lines: a paste prompt
-  // takes one. GitHub hands this file out when the app is created.
+  // takes one. GitHub hands this file out when the app is created. The path
+  // itself is read once — the key is what stays, in .env — and the person
+  // is told that, because a path a tool never remembers is not a path to
+  // curate.
   const keyPath = await settled(
     ctx,
     ctx.prompts.text({
-      message: 'Where is the app’s private key?',
+      message: 'The path to the .pem from step 5 — aivi reads it once and saves the key in the home’s .env',
       placeholder: '~/.config/aivi/aivi-agent.pem',
       validate: value => (value?.trim() ? undefined : 'the path to the .pem GitHub gave you'),
     }),
