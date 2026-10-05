@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger, Run } from '@aivi/core';
 import { getLogger, gitIdentity, parseDuration, readPrompt, systemJobs } from '@aivi/core';
-import type { AiviModule, AiviServices } from '@aivi/plugin/module';
+import type { AiviModule, AiviServices, OpenCodeClient } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
 import { attachExec } from './api/exec.ts';
 import { PublicRoutes } from './api/public.ts';
@@ -76,6 +76,9 @@ export interface RunHostOptions {
   log?: Logger;
   /** Backoff for module starts that fail; the default climbs from 1 s to 10 min. */
   moduleRetry?: RetryPolicy;
+  /** Injection point for tests; defaults to aivi's own discovery. A host whose
+   *  OpenCode never answers still boots: the boot reconcile pass defers (see `Dispatcher`). */
+  opencode?: () => Promise<OpenCodeClient>;
   /** Reload a config file under the composed closed schema (the `aivi_config`
    *  referee); supplied by the boot, which alone may load the plugin registry. */
   compose?: (configPath: string) => Promise<unknown>;
@@ -126,15 +129,17 @@ export async function runHost(options: RunHostOptions): Promise<void> {
 
   // Discovery is one file read, so it runs per unit of work: a restarted `opencode service`
   // (new port and password) is picked up by the next turn without restarting aivi.
-  const opencode = () =>
-    connectOpenCode(
-      loaded.config.opencode,
-      process.env,
-      {
-        onStart: reason => log.info('opencode.started', { reason }),
-      },
-      log,
-    );
+  const opencode =
+    options.opencode ??
+    (() =>
+      connectOpenCode(
+        loaded.config.opencode,
+        process.env,
+        {
+          onStart: reason => log.info('opencode.started', { reason }),
+        },
+        log,
+      ));
   const wake = new Wake();
   const tasks = new TaskRegistry();
   const tools = new ToolRegistry();

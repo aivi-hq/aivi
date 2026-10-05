@@ -499,10 +499,12 @@ export class Dispatcher {
 
   /**
    * Boot: the rows survived; check them against OpenCode's reality before
-   * granting anything new. If the server itself does not answer, the pass
-   * is **deferred whole** — silence from OpenCode is not proof that work
-   * died, and releasing every lease on a network hiccup would be the
-   * dispatcher's own double-booking bug.
+   * granting anything new. If the server itself does not answer — or there
+   * is no server to even build a client for (`lifecycle: "discover"` with
+   * none registered) — the pass is **deferred whole**: silence from OpenCode
+   * is not proof that work died, and releasing every lease on a network
+   * hiccup would be the dispatcher's own double-booking bug. A host whose
+   * OpenCode is unreachable still boots and serves.
    *
    * - preparing past the prepare timeout: revoked (no session to kill).
    * - attached and its session is gone: released.
@@ -514,7 +516,18 @@ export class Dispatcher {
     now = Date.now(),
   ): Promise<{ ended: { lease: DispatcherLease; reason: string }[]; deferred: boolean }> {
     const ended: { lease: DispatcherLease; reason: string }[] = [];
-    const client = await this.deps.opencode();
+    // Building the client can itself fail when there is nothing to point at;
+    // that is the same silence as a server that does not answer.
+    let client: OpenCodeClient;
+    try {
+      client = await this.deps.opencode();
+    } catch (error) {
+      this.log.warn('reconcile.deferred', {
+        reason: `OpenCode could not be reached: ${errorMessage(error)}; leases stand untouched`,
+      });
+      for (const lease of this.leases.all()) this.#armFrom(lease, now);
+      return { ended: [], deferred: true };
+    }
     const request = { signal: this.deps.signal ?? AbortSignal.timeout(15_000) };
     // Even with no pools to count, the pass reads OpenCode's reality; a
     // server that does not answer gets its leases left alone, not a purge.

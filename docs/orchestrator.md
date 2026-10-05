@@ -355,7 +355,11 @@ tracker that owns the ticket says so loudly — its platform's help mark —
 and a person goes looking. A worker may still be loose; that is a
 person's war now, not the dispatcher's. After a restart the survivors' clocks
 run from their **stored** activity — a silence that began before the
-restart is timed from where it began.
+restart is timed from where it began. The boot pass that reads OpenCode's
+reality **defers whole** when OpenCode cannot be reached at all — including
+when discovery finds no service to build a client against
+(`lifecycle: "discover"`, none registered): the host boots and serves, the
+leases stand untouched, and their clocks arm as they would for any silence.
 
 ### Dispatcher queue
 

@@ -4,6 +4,7 @@ import { configSchema, jobSchema } from '@aivi/core';
 import type { AiviModule } from '@aivi/plugin/module';
 import type { HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
+import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { Forges } from '../src/forges.ts';
 import { ConfigurationError } from '../src/modules.ts';
 import { createExecutor } from '../src/runtime.ts';
@@ -66,6 +67,7 @@ test('one host starts modules with shared services and stops them in reverse ord
     store,
     resources,
     modules,
+    opencode: noOpenCode,
     signal: abort.signal,
     onReady: () => {
       events.push('ready');
@@ -119,7 +121,14 @@ test('a configuration error at module start unwinds earlier modules and releases
     },
   ];
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
+    runHost({
+      loaded: loaded(),
+      store,
+      resources,
+      modules,
+      opencode: noOpenCode,
+      signal: new AbortController().signal,
+    }),
     /start failed/,
   );
   assert.deepEqual(events, ['stop', 'close']);
@@ -167,6 +176,7 @@ test('a composed module seeds its system jobs and claims operations under its ow
     store,
     resources,
     modules,
+    opencode: noOpenCode,
     signal: abort.signal,
     onReady: () => abort.abort(),
   });
@@ -195,7 +205,14 @@ test('two system job definitions sharing an id is fatal, not a silent overwrite'
     },
   }));
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
+    runHost({
+      loaded: loaded(),
+      store,
+      resources,
+      modules,
+      opencode: noOpenCode,
+      signal: new AbortController().signal,
+    }),
     /Two system job definitions claim job id linear-sweep/,
   );
   store.acquireDaemon('another');
@@ -222,7 +239,14 @@ test('two modules claiming one operation name take the host down with the clash 
     },
   }));
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
+    runHost({
+      loaded: loaded(),
+      store,
+      resources,
+      modules,
+      opencode: noOpenCode,
+      signal: new AbortController().signal,
+    }),
     /Operation "shared.thing" is already claimed by first/,
   );
   store.acquireDaemon('another');
@@ -252,7 +276,14 @@ test('the failure that ended the host survives a failing cleanup step', async t 
     },
   ];
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, modules, signal: new AbortController().signal }),
+    runHost({
+      loaded: loaded(),
+      store,
+      resources,
+      modules,
+      opencode: noOpenCode,
+      signal: new AbortController().signal,
+    }),
     (error: unknown) =>
       error instanceof AggregateError &&
       error.errors.map(e => (e as Error).message).join(',') === 'start failed,close failed',
@@ -271,7 +302,7 @@ test('duplicate host is rejected before initializing shared services', async t =
     throw new Error('must not run');
   };
   await assert.rejects(
-    runHost({ loaded: loaded(), store, resources, signal: new AbortController().signal }),
+    runHost({ loaded: loaded(), store, resources, opencode: noOpenCode, signal: new AbortController().signal }),
     /already owns/,
   );
   assert.equal(called, false);
@@ -343,6 +374,7 @@ test('the host sleeps until the next due instant and a wake dispatches a job cre
     store,
     resources: async () => ({ knowledge }),
     modules: [module],
+    opencode: noOpenCode,
     signal: abort.signal,
     onReady: () => {
       // Created after the loop went to sleep: only a wake makes it run before the safety-net tick.
@@ -391,6 +423,7 @@ test('a module whose start fails is retried with backoff while the host serves; 
     store,
     resources: async () => ({ knowledge }),
     modules: [flaky, steady],
+    opencode: noOpenCode,
     signal: abort.signal,
     moduleRetry: { baseMs: 20, maxMs: 100 },
     onReady: a => {
@@ -423,4 +456,36 @@ test('a module whose start fails is retried with backoff while the host serves; 
   assert.equal(later.modules.find(m => m.id === 'flaky')!.attempts, 3);
   abort.abort();
   await host;
+});
+
+test('the host boots and serves with OpenCode unreachable: the boot reconcile pass defers and leases stand', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const leases = new LeaseStore(store);
+  // A lease that survived the restart: what the boot pass must never purge
+  // when OpenCode does not answer.
+  const granted = leases.grant({ kind: 'session', service: 'linear', pool: 'local-model' });
+  assert.ok(granted, 'the unlimited pool grants the lease');
+  const knowledge = {
+    async index() {},
+    async search() {
+      return [];
+    },
+    async close() {},
+  };
+  const abort = new AbortController();
+  let ready = false;
+  await runHost({
+    loaded: loaded(),
+    store,
+    resources: async () => ({ knowledge }),
+    opencode: noOpenCode,
+    signal: abort.signal,
+    onReady: () => {
+      ready = true;
+      abort.abort();
+    },
+  });
+  assert.ok(ready, 'the host is ready although OpenCode never answered');
+  assert.ok(leases.get(granted.id), 'the deferred pass left the lease standing, not purged');
 });
