@@ -79,7 +79,7 @@ test('projects.sync fast-forwards clean checkouts and skips anything that needs 
   ];
 
   // Upstream moved: site fast-forwards; the dirty checkout is never touched;
-  // the `sync: false` project is never visited; the removed project is not.
+  // neither the `sync: false` project nor the removed one is ever visited.
   const first = scriptedGit((directory, args) => {
     if (directory === projects[1]!.directory && args[0] === 'status') return ' M docs/a.md\n';
     return settled('aaa111', 'bbb222')(directory, args);
