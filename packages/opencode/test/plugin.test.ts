@@ -213,6 +213,10 @@ test('plugin registers exactly the tools the host serves, beside its own connect
 });
 
 test('a host that refuses the plugin still loads, and the connection tool reports the refusal', async t => {
+  // The load warning is the plugin's mouth to the person (OpenCode's process
+  // has no configured aivi logger to speak through): captured here so it
+  // neither litters the test output nor goes unasserted.
+  const warned = t.mock.method(console, 'error', () => {});
   await hermeticXdg(t);
   withToken(t, undefined);
   const refuse: Route = () => ({ status: 401, json: { error: 'Unauthorized' } });
@@ -232,9 +236,14 @@ test('a host that refuses the plugin still loads, and the connection tool report
   assert.equal(report.reachable, false);
   assert.match(report.error, /401.*bearer token that names a person/);
   if (typeof cleanup === 'function') await cleanup();
+  assert.equal(warned.mock.calls.length, 1, 'the refusal is said once at load');
+  const said = String(warned.mock.calls[0]!.arguments[0]);
+  assert.ok(said.includes(base) && said.includes('401'), `the warning names the host and the refusal: ${said}`);
+  assert.match(said, /Reload OpenCode once the host is running/, 'the person is told the way out');
 });
 
 test('host down at load: only the connection tool remains and it says the host is not reachable', async t => {
+  const warned = t.mock.method(console, 'error', () => {});
   await hermeticXdg(t);
   withToken(t, 'test-offline-token');
   const base = await deadPort();
@@ -249,9 +258,14 @@ test('host down at load: only the connection tool remains and it says the host i
   assert.match(report.error, /not reachable/);
   assert.deepEqual(report.toolsLoaded, []);
   if (typeof cleanup === 'function') await cleanup();
+  assert.equal(warned.mock.calls.length, 1, 'the dead host is said once at load');
+  const said = String(warned.mock.calls[0]!.arguments[0]);
+  assert.ok(said.includes(base) && /not reachable/.test(said), `the warning names the host and the silence: ${said}`);
+  assert.match(said, /Reload OpenCode once the host is running/, 'the person is told the way out');
 });
 
 test('the connection tool tells a live host its tools were not loaded into this process', async t => {
+  const warned = t.mock.method(console, 'error', () => {});
   await hermeticXdg(t);
   withToken(t, 'test-late-host-token');
   const base = await hostServing(t, {
@@ -272,6 +286,13 @@ test('the connection tool tells a live host its tools were not loaded into this 
   assert.deepEqual(report.toolsLoaded, []);
   assert.match(report.note, /reload OpenCode/i);
   if (typeof cleanup === 'function') await cleanup();
+  assert.equal(warned.mock.calls.length, 1, 'the missing list is said once at load');
+  const said = String(warned.mock.calls[0]!.arguments[0]);
+  assert.ok(
+    said.includes(base) && said.includes('404'),
+    `the warning names the host and the missing endpoint: ${said}`,
+  );
+  assert.match(said, /Reload OpenCode once the host is running/, 'the person is told the way out');
 });
 
 test('served tools keep their namespace and dispatch through POST /tools with the runtime session', async t => {
