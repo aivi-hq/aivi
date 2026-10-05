@@ -234,7 +234,7 @@ fnox configuration. aivi does not implement a vault.
 
 ## OpenCode connection
 
-Verified against the pinned `@opencode/*` family (today 2.0.18; see
+Verified against the pinned `@opencode/*` family (today 2.0.23; see
 [opencode.md](opencode.md)): the background service lives on a random port
 with basic auth, so the host uses aivi's own tolerant discovery — a server is
 alive when it answers HTTP on its registered endpoint, whatever its version —
