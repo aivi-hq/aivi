@@ -40,7 +40,7 @@ whole table.
 
 `~/.aivi` (or `AIVI_HOME`). Holds `config.json`, `.env`, `app/` (the
 installed server), and `state/`. The client config at
-`~/.config/aivi.json` records the home and the app directory.
+`~/.config/aivi/config.json` records the home and the app directory.
 
 ## Docs
 

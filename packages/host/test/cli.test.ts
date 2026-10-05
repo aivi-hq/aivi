@@ -75,7 +75,8 @@ const run = async (
 ): Promise<{ status: number; stdout: string; stderr: string }> => {
   const capture = captureProcess(env);
   const clientConfig =
-    process.env.AIVI_CONFIG ?? join(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+    process.env.AIVI_CONFIG ??
+    join(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi', 'config.json');
   const program = new Command('aivi').exitOverride();
   await registerCommands(program, {
     home: process.env.AIVI_HOME,
@@ -129,7 +130,7 @@ test('server create initializes the home, mints the operator, and signs this mac
   assert.equal(out.home, home);
   assert.match(out.next, /aivi setup/);
   assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')), { version: 1 });
-  const clientPath = join(xdg, 'aivi.json');
+  const clientPath = join(xdg, 'aivi', 'config.json');
   const client = JSON.parse(await readFile(clientPath, 'utf8'));
   assert.deepEqual(client, { configVersion: 1, url: out.url, home, person: { token: out.token } });
   assert.equal((await stat(clientPath)).mode & 0o777, 0o600, 'the client config is 0600');
@@ -153,7 +154,7 @@ test('server create for another machine prints the token and writes no client co
   assert.match(out.next, /other machine/);
   assert.match(out.next, /Connect to a host/);
   assert.equal(out.clientConfig, undefined);
-  assert.equal(existsSync(join(xdg, 'aivi.json')), false, 'nothing signed in here');
+  assert.equal(existsSync(join(xdg, 'aivi', 'config.json')), false, 'nothing signed in here');
   assert.deepEqual(JSON.parse(await readFile(join(home, 'config.json'), 'utf8')), { version: 1 });
 });
 
@@ -206,7 +207,11 @@ test('people commands talk HTTP to the running host', async t => {
   const { home, xdg, env, cleanup } = await scratch();
   const operator = store.createPerson({ name: 'Ada', roles: ['operator'] });
   const { secret } = store.mintToken(operator.id, 'laptop');
-  writeFileSync(join(xdg, 'aivi.json'), JSON.stringify({ configVersion: 1, home, person: { token: secret } }));
+  await mkdir(join(xdg, 'aivi'), { recursive: true });
+  writeFileSync(
+    join(xdg, 'aivi', 'config.json'),
+    JSON.stringify({ configVersion: 1, home, person: { token: secret } }),
+  );
   const server = serveApp(
     createApp({
       store,

@@ -297,7 +297,7 @@ person token); an unknown or missing one is anonymous and still served. The
 host logs a warning when it binds beyond loopback, because anyone who can reach
 the address can use the commands. The plugin never receives an API for reading
 host secrets. A person's own credentials live in the client config
-(`~/.config/aivi.json`), owned by [people](../../../docs/people.md).
+(`~/.config/aivi/config.json`), owned by [people](../../../docs/people.md).
 
 The host discovers OpenCode through the SDK's service registration
 (`~/.local/state/opencode/service.json`), so the random service port and its

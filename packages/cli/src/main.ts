@@ -275,7 +275,7 @@ async function mountForRequest(
  *  for what the listing holds. */
 function helpFooter(home: string | undefined, mountError: string | undefined): string {
   const footer = `
-Home: ~/.aivi (AIVI_HOME leads over the home recorded in ~/.config/aivi.json)
+Home: ~/.aivi (AIVI_HOME leads over the home recorded in ~/.config/aivi/config.json)
 holds config.json, .env, app/ (the installed server) and state/`;
   if (home === undefined)
     return `${footer}

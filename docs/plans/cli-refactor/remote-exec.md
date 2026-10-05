@@ -29,7 +29,7 @@ D11 amended and D23 below).
 ## Two machine states + one typed flag (D11 amended 2026-09-28)
 
 Process state is two facts about this machine, decided once per run from
-`~/.config/aivi.json` and the home directory — and nothing else:
+`~/.config/aivi/config.json` and the home directory — and nothing else:
 
 | State | Decided by | Help shows | Plain commands run |
 | --- | --- | --- | --- |
@@ -277,7 +277,7 @@ dying host killed the child in between. operations.md owns the behavior.
 The *connection* is already authenticated: the client connects with its
 own bearer from the client config, and opening the channel required the
 `operator` role. The gap is that the **child process on the server** would
-otherwise attribute itself to the server's own `~/.config/aivi.json` token.
+otherwise attribute itself to the server's own `~/.config/aivi/config.json` token.
 So the relay re-exports the caller's already-presented bearer into the child's
 env as `AIVI_OPERATOR_BEARER` — no new credential, just the one the channel
 already saw — so `whoami`, link creation, and association name the remote

@@ -1,9 +1,8 @@
 /** The identity helpers: the one command that mints a person and token
  *  directly, and the client config file it signs in with. */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { resolve } from 'node:path';
-import { installPrompts, loadConfig, printedBaseUrl, writeConfigBlock } from '@aivi/core';
+import { dirname, resolve } from 'node:path';
+import { clientConfigPath, installPrompts, loadConfig, printedBaseUrl, writeConfigBlock } from '@aivi/core';
 import { Store } from '@aivi/host';
 import * as p from '@clack/prompts';
 import { hostUrl } from './context.ts';
@@ -169,13 +168,6 @@ export function readClientConfigToken(): string | undefined {
   return config.person?.token;
 }
 
-/** The one client config file: `~/.config/aivi.json`, `$XDG_CONFIG_HOME/aivi.json`,
- *  or the file `AIVI_CONFIG` names — the same resolution the CLI uses. */
-function clientConfigPath(): string {
-  if (process.env.AIVI_CONFIG) return resolve(process.env.AIVI_CONFIG);
-  return resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
-}
-
 /** The one client config file, identical shape everywhere; 0600. An existing person token is never overwritten. */
 function writeClientConfig(url: string, home: string, token: string): string {
   const path = clientConfigPath();
@@ -186,6 +178,7 @@ function writeClientConfig(url: string, home: string, token: string): string {
       throw new Error(`${path} already signs a person in; delete or edit it before signing in here`);
   }
   const next = { ...current, configVersion: 1, url, home, person: { token } };
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
   return path;

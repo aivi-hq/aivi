@@ -30,7 +30,7 @@ is printed with instructions for their laptop. Colleague: gets a token from
 `aivi people create` → installs the client CLI → `aivi setup` → url, token,
 verified with `whoami` **before anything is written**, both plugins
 installed into OpenCode (hot-reloads; no restart step),
-`~/.config/aivi.json` written → "Signed in as …", linking offered. After
+`~/.config/aivi/config.json` written → "Signed in as …", linking offered. After
 that: their agents speak aivi's name and soul, `knowledge_search` answers,
 attended commits carry the co-author **named by aivi's identity**, and
 pasting a one-time code into a Discord/Slack DM (or a Linear comment) binds
@@ -67,7 +67,7 @@ their channel identity to their person.
   `identity.github`) — open to anyone, and the source the attribution
   plugin reads. There is **no server token**: every token row belongs to a
   person, and the config file has no `server` key.
-- **One config file, identical shape everywhere: `~/.config/aivi.json`** —
+- **One config file, identical shape everywhere: `~/.config/aivi/config.json`** —
   `{ configVersion?, url?, home?, person?: { token, roles?, checkedAt? } }`
   , `0600`. `home` declares "this machine hosts aivi" (no fs probing).
   `person.roles`/`checkedAt` are a **cache for the help command only** —
@@ -174,7 +174,7 @@ their channel identity to their person.
    replies confirming. Email later: link token to inbox + callback URL on
    the public Linear route.
 8. **Attribution without drift.** opencode-attribution gains an aivi mode:
-   it reads `~/.config/aivi.json` (just a file — no aivi imports), fetches
+   it reads `~/.config/aivi/config.json` (just a file — no aivi imports), fetches
    **soul** at setup for `identity.github`, prefers it over
    `opencode.coauthor`; git config is the offline fallback. It never calls
    whoami — the co-author is aivi, not the caller. Stays standalone and
@@ -242,7 +242,7 @@ the live gates are open. Next work is box 9 or Session C, not box 8.
        `Whoami` type + `whoami()` on `HostClient`; test in `http.test.ts`.
 - [x] 5. CLI: `aivi server create` — init `~/.aivi` (starter `config.json`,
        `state/`), operator person + token (secret printed once), then "Where
-       will you use aivi?" → *this machine* writes `~/.config/aivi.json`
+       will you use aivi?" → *this machine* writes `~/.config/aivi/config.json`
        (0600, merged, never over an existing token), *another* prints url +
        token for `aivi setup` there. Refinement on the plan: the question is
        asked **before** anything is minted, so a cancel leaves nothing
@@ -276,7 +276,7 @@ the live gates are open. Next work is box 9 or Session C, not box 8.
        consolidation onto one shared library stays follow-up.
 - [ ] 9. Host: `GET /soul` → persona name, soul text, `identity.github`;
        tests. Still open: no soul route exists.
-- [ ] 10. Plugin remote mode: credentials from `~/.config/aivi.json`
+- [ ] 10. Plugin remote mode: credentials from `~/.config/aivi/config.json`
        (person token if present, else bearerless; `options.url` override,
        else `url` key, else loopback); setup awaits `soul` (+ `whoami` for
        the cache), sync transforms read the cache; local-file soul path
@@ -317,7 +317,7 @@ the live gates are open. Next work is box 9 or Session C, not box 8.
 
 ### Session C — attribution (separate repo `~/projects/agentic/opencode-attribution`)
 
-- [ ] 15. aivi mode: read `~/.config/aivi.json`; fetch **soul** at setup,
+- [ ] 15. aivi mode: read `~/.config/aivi/config.json`; fetch **soul** at setup,
        cache the `identity.github` pair, prefer it over
        `opencode.coauthor`; offline git-config fallback unchanged; tests.
 - [ ] 16. README setup section; standalone rule holds (no `@aivi/*`

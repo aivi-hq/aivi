@@ -52,7 +52,7 @@ a warning: anyone who can reach the address can use the open commands.
 Store methods: `createPerson`, `people`, `person`, `mintToken`,
 `personForToken` — the last is the lookup behind every request.
 
-## The client config: `~/.config/aivi.json`
+## The client config: `~/.config/aivi/config.json`
 
 One file, identical shape everywhere (`XDG_CONFIG_HOME` wins when set,
 `AIVI_CONFIG` moves the whole file — the development home uses that), 0600:

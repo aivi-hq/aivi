@@ -18,7 +18,7 @@ import { Command, CommanderError } from 'commander';
 // this driver stands in for the bin, so a test can drive the provider side
 // of a machine fact by setting the environment the door's child gets.
 const clientConfig =
-  process.env.AIVI_CONFIG ?? join(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  process.env.AIVI_CONFIG ?? join(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi', 'config.json');
 const program = new Command('aivi');
 await registerCommands(program, {
   home: process.env.AIVI_HOME,

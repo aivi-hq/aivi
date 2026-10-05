@@ -1,6 +1,6 @@
 /** Which home aivi works on. `AIVI_HOME` leads (it is how development and tests
  *  point at a scratch home); otherwise the `home` field of the CLI-owned
- *  `~/.config/aivi.json`, which `aivi setup` writes. For setup itself the
+ *  `~/.config/aivi/config.json`, which `aivi setup` writes. For setup itself the
  *  chain ends at the default `~/.aivi`. */
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';

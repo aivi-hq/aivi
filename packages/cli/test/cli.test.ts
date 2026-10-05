@@ -94,7 +94,7 @@ test('the published bin starts with a shebang, or the global command cannot exec
 });
 
 test('the client config saves 0600, preserves unknown fields and never drops the person', () => {
-  const path = join(directory, 'xdg', 'aivi.json');
+  const path = join(directory, 'xdg', 'aivi', 'config.json');
   saveClientConfig({ home: '/home/me/.aivi', appDir: '/home/me/.aivi/app', installMethod: 'npm' });
   assert.equal(statSync(path).mode & 0o777, 0o600);
   saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: 'aivi-t' } });
@@ -107,18 +107,18 @@ test('the client config saves 0600, preserves unknown fields and never drops the
 
 test('AIVI_CONFIG moves the whole client record, leading over XDG_CONFIG_HOME', () => {
   saveClientConfig({ home: '/dev/home', appDir: '/dev/home/app' });
-  assert.ok(existsSync(join(directory, 'xdg', 'aivi.json')), 'without AIVI_CONFIG the xdg path is used');
+  assert.ok(existsSync(join(directory, 'xdg', 'aivi', 'config.json')), 'without AIVI_CONFIG the xdg path is used');
   process.env.AIVI_CONFIG = join(directory, 'dev.json');
   assert.equal(loadClientConfig(), undefined, 'the overridden path starts empty');
   saveClientConfig({ home: '/dev/other' });
   assert.deepEqual(loadClientConfig()!.home, '/dev/other');
   assert.equal(existsSync(join(directory, 'dev.json')), true);
-  assert.equal(existsSync(join(directory, 'xdg', 'aivi.json')), true, 'the previous record is untouched');
+  assert.equal(existsSync(join(directory, 'xdg', 'aivi', 'config.json')), true, 'the previous record is untouched');
 });
 
 test('unknown fields survive a save', () => {
-  const path = join(directory, 'xdg', 'aivi.json');
-  mkdirSync(join(directory, 'xdg'), { recursive: true });
+  const path = join(directory, 'xdg', 'aivi', 'config.json');
+  mkdirSync(join(directory, 'xdg', 'aivi'), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ configVersion: 1, future: { deep: true } }, null, 2)}\n`);
   saveClientConfig({ home: '/h' });
   assert.deepEqual(clientConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8'))).future, { deep: true });
