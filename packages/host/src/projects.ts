@@ -37,12 +37,11 @@ export interface ProjectSyncOutcome {
  * **through the forge** — a fetch authenticates, and credentials belong to
  * the system that holds them, not to aivi's machinery. Everything else
  * stays plain git naming no plugin (the configurable path, not the spine):
- * no forge registered, a remote no forge recognises, no checkout at all.
- * Both ways the rule is the same — fast-forward only; anything that would
- * need a decision (local changes, a detached head, no upstream, diverged
- * history) is skipped with the reason, never resolved by force, because
- * `source/` is the clean checkout that gets indexed, not a working
- * directory.
+ * no forge registered, a remote no forge recognises. Both ways the rule is
+ * the same — fast-forward only; anything that would need a decision (local
+ * changes, a detached head, no upstream, diverged history) is skipped with
+ * the reason, never resolved by force, because `source/` is the clean
+ * checkout that gets indexed, not a working directory.
  */
 async function syncProject(
   project: Project,
@@ -52,8 +51,6 @@ async function syncProject(
 ): Promise<ProjectSyncOutcome> {
   const { id, directory } = project;
   const git = (...args: string[]) => runner(directory, args, signal);
-  if (!(await stat(join(directory, '.git')).catch(() => null)))
-    return { id, state: 'skipped', reason: 'not a git checkout' };
   try {
     const owned = await forges.owner({ id, directory });
     if (owned) {
@@ -92,7 +89,15 @@ async function plainSync(id: string, git: (...args: string[]) => Promise<string>
   return { id, state: 'updated', from, to };
 }
 
-/** Sync every checked-out project in turn; removed projects have nothing to sync. */
+/**
+ * Sync every project that has a checkout, in turn. Two kinds are not visited
+ * and report nothing: a removed project, and one whose `source/` holds no
+ * repository — a project without a repo is a supported state (`aivi projects
+ * add` with no forge configured leaves an untracked directory holding a note,
+ * and the project still has its memory and knowledge), so it is no anomaly to
+ * log once an hour. A skip is what a person would act on; the four reasons
+ * `syncProject` gives are exactly that.
+ */
 export async function syncProjects(
   projects: Project[],
   forges: Forges,
@@ -103,6 +108,7 @@ export async function syncProjects(
   for (const project of projects) {
     if (project.removed) continue;
     signal?.throwIfAborted();
+    if (!(await stat(join(project.directory, '.git')).catch(() => null))) continue;
     outcomes.push(await syncProject(project, forges, signal, git ?? realGit));
   }
   return outcomes;

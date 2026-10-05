@@ -81,7 +81,7 @@ test('projects.sync fast-forwards clean checkouts and skips anything that needs 
   ];
 
   // Upstream moved: site fast-forwards; the dirty checkout is never touched;
-  // the plain directory is named; the removed project is not visited.
+  // the plain directory is never visited; the removed project is not visited.
   const first = scriptedGit((directory, args) => {
     if (directory === projects[1]!.directory && args[0] === 'status') return ' M docs/a.md\n';
     return settled('aaa111', 'bbb222')(directory, args);
@@ -92,9 +92,12 @@ test('projects.sync fast-forwards clean checkouts and skips anything that needs 
     [
       ['site', 'updated', undefined],
       ['dirty', 'skipped', 'local changes in source/'],
-      ['plain', 'skipped', 'not a git checkout'],
     ],
-    'removed projects are not visited',
+    'a project with no repository and a removed one report nothing: no checkout is no anomaly',
+  );
+  assert.ok(
+    !first.calls.some(call => call.directory === projects[2]!.directory),
+    'a directory that is no repository is never asked anything of git',
   );
   assert.ok(
     first.calls.some(call => call.args.join(' ') === 'merge --ff-only --quiet origin/main'),

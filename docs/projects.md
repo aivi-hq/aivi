@@ -136,7 +136,9 @@ remote no forge recognises — is plain git, naming no plugin. Either way:
 fetch and fast-forward only, so a merge on
 GitHub reaches what is indexed within the hour and nothing is ever forced;
 local changes, a detached HEAD or a diverged branch are reported and left
-alone ([configuration](../packages/host/docs/configuration.md#tasks)).
+alone ([configuration](../packages/host/docs/configuration.md#tasks)). A
+project with no repository — the untracked `source/` above — is no checkout,
+so the job never visits it and says nothing about it.
 
 The host reads the projects directory at startup, so restart `aivi serve`
 after adding or removing. To rename a project, rename its directory; memory
