@@ -32,7 +32,7 @@
   "dependencies": {
     "@aivi/core": "^0.7.1",
     "@clack/prompts": "1.8.1",
-    "@opencode/client": "2.0.18",
+    "@opencode/client": "2.0.23",
     "zod": "4.1.13"
   },
   "devDependencies": {

@@ -77,7 +77,7 @@ a webhook route per app on the same listener (`/linear/webhooks/app/<id>`).
 ## Status
 
 - Live-verified against the OpenCode v2 family (the pinned `@opencode/*` set,
-  today 2.0.18) and a Discord test server on the target
+  today 2.0.23) and a Discord test server on the target
   Mac: discovery and auth, plugin tools, the session driver (jobs, dreaming,
   Discord turns all end in a verified final answer), Discord DMs/channels/
   threads with slash commands and job reports.
