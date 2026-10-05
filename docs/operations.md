@@ -155,7 +155,7 @@ no sign-in it asks what the machine should be:
   (`aivi people create NAME`, which offers to mint the token right away;
   `aivi people token PERSON` mints another bearer). Setup asks for the host
   url and the token, verifies both (`/health`, then `whoami` — a typo never
-  persists), writes `~/.config/aivi.json` (0600) and installs both OpenCode
+  persists), writes `~/.config/aivi/config.json` (0600) and installs both OpenCode
   plugins with `opencode plugin add`. The last line is a verified truth:
   "Signed in as …".
 - **Create a new aivi server here** — installs the server into

@@ -1,7 +1,6 @@
 import { existsSync, type FSWatcher, readFileSync, watch } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { ServedTool } from '@aivi/core';
+import { clientConfigPath, type ServedTool } from '@aivi/core';
 import { createHostClient } from '@aivi/plugin/api';
 import { Plugin } from '@opencode/plugin';
 import { makeRedirect } from './redirect.ts';
@@ -37,15 +36,13 @@ function personaName(home: string): string {
 }
 
 /**
- * The client config `aivi setup` writes: `~/.config/aivi.json` (or
+ * The client config `aivi setup` writes: `~/.config/aivi/config.json` (or
  * `XDG_CONFIG_HOME`, or the file `AIVI_CONFIG` names), holding where the host
  * answers and which person signs in. Read as just a file — the plugin imports
  * no CLI code, the same standalone rule the attribution plugin keeps.
  */
 function clientConfig(): { url?: string; token?: string } {
-  const path = process.env.AIVI_CONFIG
-    ? resolve(process.env.AIVI_CONFIG)
-    : resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  const path = clientConfigPath();
   try {
     const file = JSON.parse(readFileSync(path, 'utf8')) as { url?: unknown; person?: { token?: unknown } };
     return {

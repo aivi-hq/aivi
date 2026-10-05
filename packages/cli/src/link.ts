@@ -119,7 +119,7 @@ function loadClientConfig(): { url?: string; person?: { token?: string } } | und
   // AIVI_CONFIG moves the whole record (a development home signs in its own copy).
   const path = process.env.AIVI_CONFIG
     ? resolve(process.env.AIVI_CONFIG)
-    : resolve(process.env.XDG_CONFIG_HOME ?? resolve(process.env.HOME ?? '', '.config'), 'aivi.json');
+    : resolve(process.env.XDG_CONFIG_HOME ?? resolve(process.env.HOME ?? '', '.config'), 'aivi', 'config.json');
   if (!existsSync(path)) return undefined;
   try {
     return JSON.parse(readFileSync(path, 'utf8')) as { url?: string; person?: { token?: string } };

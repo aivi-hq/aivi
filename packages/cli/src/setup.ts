@@ -322,7 +322,7 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   await seedOpenCodeOrSay(io, home);
 
   // Identity is the installed app's own act: person and token are minted in
-  // its store, and this-machine signs `~/.config/aivi.json` there.
+  // its store, and this-machine signs `~/.config/aivi/config.json` there.
   const identity = await io.createIdentity({ use, name, ...reachStep(reach) }, home, appDir);
   printIdentity(identity, use, home, io);
   if (use === 'another') return;

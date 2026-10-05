@@ -303,7 +303,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Module contract (`AiviServices`, `Store.migrate`, `fail`) | [docs/architecture.md](docs/architecture.md#one-application-contained-modules) |
 | Tool ids, plugin loading, permission matching, session driver contract | [docs/opencode.md](docs/opencode.md) |
 | Knowledge scope, kinds, refresh | [docs/knowledge.md](docs/knowledge.md) |
-| People, person tokens, linking, the client config (`~/.config/aivi.json`) | [docs/people.md](docs/people.md) |
+| People, person tokens, linking, the client config (`~/.config/aivi/config.json`) | [docs/people.md](docs/people.md) |
 | What a project is, home layout, docs convention, who works in one | [docs/projects.md](docs/projects.md) |
 | Dreaming run, memory contract, dreamer boundary | [docs/dreaming.md](docs/dreaming.md) |
 | Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |

@@ -126,7 +126,7 @@ Milestone 0 of the roadmap, run against a real `opencode service` with
 ## Plugin credentials, client and server
 
 The plugin resolves the host in this order: its `url` option, the `url` in
-the client config (`~/.config/aivi.json`, written by `aivi setup`), then the
+the client config (`~/.config/aivi/config.json`, written by `aivi setup`), then the
 default loopback. The bearer is `AIVI_TOKEN` if set; otherwise the client
 config's `person.token` — except on a server home (a directory holding
 `config.json`), where the cached bearer is ignored: host-originated sessions

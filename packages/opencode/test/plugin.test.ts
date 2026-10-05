@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type RequestListener, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -99,11 +99,12 @@ function withToken(t: { after(fn: () => void): void }, value: string | undefined
   });
 }
 
-/** The plugin reads `~/.config/aivi.json` for remote credentials; tests must
+/** The plugin reads `~/.config/aivi/config.json` for remote credentials; tests must
  *  never see the machine's own client config. */
 async function hermeticXdg(t: { after(fn: () => void): void }) {
   const previous = process.env.XDG_CONFIG_HOME;
   const scratch = await mkdtemp(join(tmpdir(), 'aivi-plugin-xdg-'));
+  await mkdir(join(scratch, 'aivi'), { recursive: true }); // the record's directory, as every reader expects it
   process.env.XDG_CONFIG_HOME = scratch;
   t.after(() => {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
@@ -371,7 +372,7 @@ test('remote mode: url and bearer come from the client config when options say n
   const url = 'http://127.0.0.1:4321';
   const token = `aivi-${'f'.repeat(32)}`;
   await writeFile(
-    join(xdg, 'aivi.json'),
+    join(xdg, 'aivi', 'config.json'),
     JSON.stringify({ configVersion: 1, url, person: { token, id: 'person-1', name: 'Ada', roles: ['operator'] } }),
   );
   const server: Server = createServer((request, response) => {
@@ -402,7 +403,7 @@ test('on a server home the cached bearer is ignored: host-originated sessions st
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1 }));
   await writeFile(
-    join(xdg, 'aivi.json'),
+    join(xdg, 'aivi', 'config.json'),
     JSON.stringify({ configVersion: 1, url: 'http://127.0.0.1:4321', person: { token: 'aivi-cached' } }),
   );
   const server: Server = createServer((request, response) => {

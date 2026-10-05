@@ -9,8 +9,10 @@ The module runs when `@aivi/forge-github` stands in the `aivi-plugins` list.
 ```
 
 The private key is a secret and so is not here: `GITHUB_APP_PRIVATE_KEY` in
-`<home>/.env`, the PEM file GitHub handed out when the app was created. The
-app must also be **installed** — an installation is the grant from the account
+`<home>/.env`, the PEM file GitHub handed out when the app was created.
+`aivi add` asks for that file once: it reads the .pem, copies the key into
+`.env`, and remembers no path.
+The app must also be **installed** — an installation is the grant from the account
 holding the repositories to the app — and aivi speaks through exactly one:
 none is an error carrying the install link, several is an error naming the
 grants and saying which to revoke.

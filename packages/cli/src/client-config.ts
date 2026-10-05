@@ -1,6 +1,9 @@
-/** The one file the CLI owns: `~/.config/aivi.json` (or `$XDG_CONFIG_HOME/aivi.json`,
+/** The one file the CLI owns: `~/.config/aivi/config.json` (or `$XDG_CONFIG_HOME/aivi/config.json`,
  *  or the file `AIVI_CONFIG` names — a development home points the whole client
- *  record at its own copy), 0600, never hand-edited. It merges the client record —
+ *  record at its own copy), 0600, never hand-edited. The host side resolves the
+ *  same path through `clientConfigPath` in core; the CLI computes it here itself
+ *  because it may not import core — the packaging test is that wall. It merges
+ *  the client record —
  *  where the host is, which person signs in — with the installation record
  *  `aivi setup` writes: the home, the selected Node, the app directory, the
  *  install method. Unknown fields survive a save so the file can grow without a
@@ -35,7 +38,7 @@ export type ClientConfig = z.infer<typeof clientConfigSchema>;
 
 export function clientConfigPath(): string {
   if (process.env.AIVI_CONFIG) return resolve(process.env.AIVI_CONFIG);
-  return resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi.json');
+  return resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), '.config'), 'aivi', 'config.json');
 }
 
 /** The record as every command that takes *hints* from it wants it — a

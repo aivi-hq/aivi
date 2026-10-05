@@ -130,7 +130,7 @@ claimed as ours and is not this phase's job.
 
 ## Client config
 
-`~/.config/aivi.json` keeps every field, including `nodePath` and `appDir` —
+`~/.config/aivi/config.json` keeps every field, including `nodePath` and `appDir` —
 only their consumer changes from "where to spawn" to "where to import from":
 
 - `appDir` is where the code lives that local mode imports (default
