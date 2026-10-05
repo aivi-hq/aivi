@@ -1,6 +1,4 @@
 import { execFile } from 'node:child_process';
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Project } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
@@ -90,13 +88,14 @@ async function plainSync(id: string, git: (...args: string[]) => Promise<string>
 }
 
 /**
- * Sync every project that has a checkout, in turn. Two kinds are not visited
- * and report nothing: a removed project, and one whose `source/` holds no
- * repository — a project without a repo is a supported state (`aivi projects
- * add` with no forge configured leaves an untracked directory holding a note,
- * and the project still has its memory and knowledge), so it is no anomaly to
- * log once an hour. A skip is what a person would act on; the four reasons
- * `syncProject` gives are exactly that.
+ * Sync every project the config lets the sync near, in turn. Two kinds are
+ * not visited and report nothing: a removed project, and one whose entry
+ * says `sync: false` — a project with no repository is a supported state
+ * (`aivi projects add` with no forge configured leaves an untracked
+ * directory holding a note, and the project still has its memory and
+ * knowledge), and `add` writes that key when it clones nothing. A skip is
+ * what a person would act on; the four reasons `syncProject` gives are
+ * exactly that.
  */
 export async function syncProjects(
   projects: Project[],
@@ -106,9 +105,8 @@ export async function syncProjects(
 ): Promise<ProjectSyncOutcome[]> {
   const outcomes: ProjectSyncOutcome[] = [];
   for (const project of projects) {
-    if (project.removed) continue;
+    if (project.removed || project.sync === false) continue;
     signal?.throwIfAborted();
-    if (!(await stat(join(project.directory, '.git')).catch(() => null))) continue;
     outcomes.push(await syncProject(project, forges, signal, git ?? realGit));
   }
   return outcomes;

@@ -48,6 +48,7 @@ only overrides:
   },
   "projects": {
     "legacy": { "knowledge": [{ "id": "wiki", "path": "wiki" }] },
+    "research": { "sync": false },
     "archived": { "enabled": false }
   }
 }
@@ -59,6 +60,11 @@ only overrides:
   defaults; paths are relative to the checkout.
 - `enabled: false` keeps the checkout but hides the project from indexing,
   memory and `projects list`.
+- `sync: false` keeps the `projects-sync` job away from the project. A project
+  with no repository is a supported state, not something to discover hourly:
+  `aivi projects add` writes the key when no forge cloned a checkout. Clone a
+  repository into `source/` by hand later and set it back to `true` (or drop
+  the key) to have the job keep it current.
 - An override for a project that is not checked out fails `config check`: it
   is a typo or a missing clone, and both deserve a message.
 - A directory that a repository does not have (no `docs/adr`) is skipped with
@@ -67,7 +73,8 @@ only overrides:
   is `decision`, the rest of `docs/` is `doc`; nothing is indexed twice or under
   two kinds. This is resolved once, when the index is configured: the outer
   collection ignores the inner one's subtree.
-- Beyond core's `enabled` and `knowledge`, a project carries **plugin sections**
+- Beyond core's own fields (`enabled`, `knowledge`, `sync`, `lanes`), a
+  project carries **plugin sections**
   keyed by module id — each contributed and validated by the plugin that owns
   it, read by no other. `projects.<id>.tracker-linear` (`teams`, `lanes`, optional
   `workspaceId`) is the Linear tracker's; the same place a forge or any other
@@ -137,8 +144,9 @@ fetch and fast-forward only, so a merge on
 GitHub reaches what is indexed within the hour and nothing is ever forced;
 local changes, a detached HEAD or a diverged branch are reported and left
 alone ([configuration](../packages/host/docs/configuration.md#tasks)). A
-project with no repository — the untracked `source/` above — is no checkout,
-so the job never visits it and says nothing about it.
+project whose entry says `sync: false` — what `add` writes when no forge cloned
+a repository — is not a project the job has business with: it is never visited
+and reports nothing.
 
 The host reads the projects directory at startup, so restart `aivi serve`
 after adding or removing. To rename a project, rename its directory; memory

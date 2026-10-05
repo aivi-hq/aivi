@@ -65,10 +65,10 @@ test('plugins contribute project sections: projects close like the plugins recor
   const parsed = composed.parse({ version: 1, projects: { site: { alpha: {} } }, projectDefaults: { alpha: {} } });
   // Core cannot type what it does not know: the plugin reads its own sections
   // back with a cast — the `plugins.<id>` pattern, one level down.
-  const site = parsed.projects.site as { enabled: boolean; alpha?: { widget: string } };
+  const site = parsed.projects.site as { enabled: boolean; sync: boolean; alpha?: { widget: string } };
   assert.deepEqual(
     site,
-    { enabled: true, alpha: { widget: 'w' } },
+    { enabled: true, sync: true, alpha: { widget: 'w' } },
     'the contributed schema fills the project section defaults',
   );
   const defaults = parsed.projectDefaults as { alpha?: { gadget: number } };
@@ -310,6 +310,29 @@ test('projects are the directories of <home>/projects; config.json only override
     false,
   );
   assert.equal(configSchema.safeParse({ version: 1, projects: { 'Bad Id': {} } }).success, false);
+});
+
+test('a project with no repository is opted out of the sync by the config, not by a runtime discovery', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-nosync-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // Neither `source/` holds a git repository. Whether the sync has business
+  // here is a fact the config holds — `aivi projects add` writes it when no
+  // forge cloned anything — never something the hourly job discovers.
+  for (const id of ['research', 'wiki']) await mkdir(join(root, `projects/${id}/source`), { recursive: true });
+  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, projects: { research: { sync: false } } }));
+  const loaded = await loadConfig(join(root, 'config.json'));
+  assert.deepEqual(
+    loaded.projects.map(p => [p.id, p.sync ?? true]),
+    [
+      ['research', false],
+      ['wiki', true],
+    ],
+    'sync: false reaches the sync view; a project that says nothing is synced',
+  );
+  const entry = (
+    configSchema.parse({ version: 1, projects: { wiki: {} } }).projects as Record<string, { sync: boolean }>
+  ).wiki!;
+  assert.equal(entry.sync, true, 'a project that says nothing is synced: the default is on');
 });
 
 test('core passes a plugin project section through unread and unwidened', async t => {
