@@ -69,8 +69,6 @@ const defaultIo: AddIo = {
     // every command reaches them), then pluginSetup with its writers. A stop
     // is not a rejection: pluginSetup says its own words and marks the exit.
     const app = await importApp<{
-      home: string;
-      configPath: string;
       context: () => Promise<{ loaded: { config: { identity: { name: string } } } }>;
     }>(options.appDir, options.home, 'dist/cli/context.js');
     const { loaded } = await app.context();
@@ -81,8 +79,8 @@ const defaultIo: AddIo = {
       ) => Promise<string | undefined>;
     }>(options.appDir, options.home, 'dist/cli/plugin-setup.js');
     return pluginSetup(spec, {
-      home: app.home,
-      configPath: app.configPath,
+      home: options.home,
+      configPath: join(options.home, 'config.json'),
       identityName: loaded.config.identity.name,
     });
   },
