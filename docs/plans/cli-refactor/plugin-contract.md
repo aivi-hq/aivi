@@ -1,6 +1,7 @@
 # 2 · The plugin contract
 
-Status: planned. Depends on: [one-cli.md](one-cli.md). Unlocks:
+Status: landed (2026-09-28, `refactor/single-cli-command`). Depends on:
+[one-cli.md](one-cli.md) (landed). Unlocks:
 [plugin-registry.md](plugin-registry.md).
 Goal: one command mechanism everywhere — plugins export plain **commander**
 subtrees — and one kit package, `@aivi/plugin`, that every plugin author
@@ -106,6 +107,18 @@ code.
   future `tracker-github`.
 - Cheapest moment is now: pre-1.0, few installs, and these packages are opened
   anyway. Changesets under the fixed group.
+- **The module id is the package's short name** (ruled 2026-09-30, as the forge
+  landed): `plugins.tracker-linear`, `plugins.forge-github` — the same word as
+  the npm name after the scope, and the same word `/status` and the log category
+  use. Linear's id moved to `tracker-linear` that day; there was no installed
+  config to break. Not module ids, and so not renamed, are the **platform**'s
+  short names: the SQLite prefix and session-id prefixes (`linear_turns`,
+  `ses_linear_…`), the webhook URL Linear's dashboard holds, the `aivi linear`
+  command. **The operator ruled the same for the channels** (2026-09-30, the
+  day after): `@aivi/channel-discord` and `@aivi/channel-slack` key their
+  blocks `plugins.channel-discord` and `plugins.channel-slack` too, and the
+  rule now holds for every plugin that can be installed; their **platform**
+  ids stay `discord` and `slack`, which is what keys the database.
 
 ## Core loses its last CLI face
 
@@ -119,23 +132,68 @@ output — needs nothing, knows no plugin.
 come from `GET /tools` at load
 ([plugin-registry.md](plugin-registry.md#follow-ups) keeps the story).
 
+## Landing (2026-09-28)
+
+Landed as described, with four deviations:
+
+- **The module contract's declaration stays in the host.** ~~The kit
+  type-imports `Store` and `ConversationStore` from `@aivi/host`, so the host
+  engine cannot reference the kit without a project-reference cycle (TS6202 —
+  the same trap half 2 of [one-cli.md](one-cli.md) split around).~~
+  **Resolved 2026-10-02 — the flip.** The kit now *declares* the shared
+  contracts (`run.ts`, `tracker.ts`, `channel.ts`, `module.ts`): the module
+  contract, the run shapes, the channel vocabulary, and interfaces for every
+  service-bag member (`Store`, `Orchestrator`, `ConversationStore`,
+  `Channels`, `PublicRoutes`, `TaskClaims`, `ToolClaims`, `SessionEvents`),
+  which the host's classes carry `implements` clauses against. The kit
+  depends on core, `@opencode/client` and `@clack/prompts` and on nothing
+  above it; the host references the kit and imports its own vocabulary from
+  it. `ConfigurationError` stays in the host: module entries import it at
+  runtime from the process that hosts them. What forced this deviation — the
+  type-only reference the kit kept to the host — is gone, so
+  [store-package](../../backlog/store-package.md) now only carries the
+  *implementation* split (the 1,100-line class), not a contract problem.
+- **`PluginSetupContext` gained a `withStore` door.** The deletion ledger wants
+  no plugin→host runtime imports, and `linear/src/setup.ts` built
+  `new Store(...)` from `@aivi/host` to read the request diary during the
+  webhook test. The runner (host's `cli/plugin-setup.ts`) supplies the door
+  from the same store bracket the CLI context uses; the flow receives the
+  store typed.
+- **`createHostClient` now names the kit's version.** The version moved with
+  the code: `x-aivi-client` is `@aivi/plugin`'s own `package.json` version,
+  read at runtime. The gate serves a client at or behind the host, and
+  `@aivi/plugin` joined the changesets `fixed` group so releases keep the
+  sides of the wire equal.
+- **An empty Enter at the Slack manifest prompt ends the command** (exit 1).
+  The old `ask.text` wrapper turned an empty Enter into the string
+  `'undefined'` — an answer nobody typed; the branch that prompt's own
+  `answered === undefined` documented "no answer", and the new action says
+  exactly that.
+
+The kit's one devDependency is `commander` (its contract test builds a
+subtree); its runtime dependencies stay `@aivi/core` only.
+
 ## Checklist
 
-- [ ] Create `packages/plugin` (`@aivi/plugin`): move contracts out of
+- [x] Create `packages/plugin` (`@aivi/plugin`): move contracts out of
       `core/src/plugin.ts` and `host/src/plugin-cli.ts` (incl. `resolveBlocked`,
       which reaches the store only through `ctx.withStore`); add `./api`
       (move `host/src/client.ts`; host keeps the server-side gate/routes).
-- [ ] `PluginCliContext` gains `prompts` (the module), loses `ask`; update
+- [x] `PluginCliContext` gains `prompts` (the module), loses `ask`; update
       plugin call sites to own their screens.
-- [ ] Each plugin: `./cli` becomes `(ctx) => Command`; delete the data-object
+- [x] Each plugin: `./cli` becomes `(ctx) => Command`; delete the data-object
       relay in all three channel packages; declare `commander`.
-- [ ] Module contract types (`HostModule` → `AiviModule`, services bag) move to
+- [x] Module contract types (`HostModule` → `AiviModule`, services bag) move to
       the kit; host implements; plugin imports are type-only.
-- [ ] Rename `@aivi/linear` → `@aivi/tracker-linear` (workspace, config
+      (Declaration stays in the host — see Landing.)
+- [x] Rename `@aivi/linear` → `@aivi/tracker-linear` (workspace, config
       references, docs).
-- [ ] Core: remove `@clack/prompts`; `@aivi/opencode` imports `@aivi/plugin/api`.
-- [ ] Docs same commits: [channels.md](../../channels.md) (module contract),
+- [x] Core: remove `@clack/prompts`; `@aivi/opencode` imports `@aivi/plugin/api`.
+- [x] Docs same commits: [channels.md](../../channels.md) (module contract),
       [opencode.md](../../opencode.md) (plugin loading),
       [linear.md](../../linear.md), [CONTEXT.md](../../../CONTEXT.md)
       (packages, vocabulary).
-- [ ] Changesets for every package under `packages/` touched (fixed group).
+- [x] Changesets for every package under `packages/` touched (fixed group).
+      Landed 2026-09-28 in `53e55f4`: `.changeset/plugin-contract.md`
+      (core minor, `@aivi/tracker-linear` minor, the three plugins minor);
+      the `fixed` group carried `@aivi/plugin` along at the group's 0.9.0.

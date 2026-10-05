@@ -17,6 +17,10 @@ export const knowledgeKinds = {
   conversation: {
     description: 'Indexed conversation transcripts. Useful for recovering details; never authoritative.',
   },
+  manual: {
+    description:
+      'Docs shipped with an installed aivi package: what is installed and how it is configured. Authoritative for this installation, version-matched with the code, refreshed by `aivi upgrade`.',
+  },
 } as const;
 export type KnowledgeKind = keyof typeof knowledgeKinds;
 export const knowledgeKindNames = Object.keys(knowledgeKinds) as [KnowledgeKind, ...KnowledgeKind[]];

@@ -1,13 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { Config, Logger, Run } from '@aivi/core';
+import type { Config, ExecutionContext, ExecutionResult, Logger, Run } from '@aivi/core';
 import { errorMessage, getLogger, taskLabel } from '@aivi/core';
 import type { Store } from './store.ts';
 
-export interface ExecutionContext {
-  signal: AbortSignal;
-  attachSession(id: string): void;
-}
-export type ExecutionResult = { state: 'succeeded' | 'failed' | 'blocked'; result: unknown; reason?: string };
 /** Runs one run; the run carries its task snapshot. */
 export type Execute = (run: Run, context: ExecutionContext) => Promise<ExecutionResult>;
 /** Observes final states (including blocked-by-exception and missed occurrences). Must not throw; used for reporting. */

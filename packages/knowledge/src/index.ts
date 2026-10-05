@@ -134,17 +134,18 @@ export async function createKnowledgeService(
   log?: Logger,
 ): Promise<KnowledgeService> {
   const warned = new Set<string>();
-  if (!loaded.config.search)
+  if (loaded.config.search === false)
     return {
       async search() {
-        throw new SearchUnavailable('Knowledge search is not enabled');
+        throw new SearchUnavailable('Knowledge search is disabled in the config');
       },
       async index() {
-        throw new SearchUnavailable('Knowledge search is not enabled');
+        throw new SearchUnavailable('Knowledge search is disabled in the config');
       },
       async close() {},
     };
   const sdk = await loader();
+  const search = loaded.config.search;
   const { collections, sources } = await surveySources(loaded, log);
   const folder = resolve(loaded.config.stateDirectory, 'knowledge');
   await mkdir(folder, { recursive: true, mode: 0o700 });
@@ -154,8 +155,7 @@ export async function createKnowledgeService(
   let closed = false;
   const run = <T>(operation: () => Promise<T>): Promise<T> => {
     if (closed) return Promise.reject(new SearchUnavailable('Knowledge service is closing'));
-    if (pending >= loaded.config.search!.maxPending)
-      return Promise.reject(new SearchUnavailable('Knowledge queue is full'));
+    if (pending >= search.maxPending) return Promise.reject(new SearchUnavailable('Knowledge queue is full'));
     pending++;
     const result = chain.then(operation);
     chain = result

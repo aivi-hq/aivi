@@ -1,9 +1,57 @@
 # 1 · One CLI (local, primary)
 
-Status: planned. Depends on: nothing — this lands first. Unlocks: everything.
+Status: **landed 2026-09-27** in two shippable halves (recon below), both on
+`refactor/single-cli-command`; only the D22 dev-home nuke remains. Depends:
+nothing — this lands first. Unlocks: everything.
 Goal: one user-facing `aivi`. Machine commands built in; every other command
 loaded **in-process** from the installed app and mounted. `forward.ts` deleted,
 `@aivi/app` deleted, the ctrl+c class dead at the root.
+
+## The two halves (execution order)
+
+The whole phase is one commit-shaped design, but it lands as two commits a
+session can each finish green. Mechanics first, burial second:
+
+- **Half 1 — the mount.** The CLI imports the installed app's CLI in-process
+  and mounts its subtree on the CLI's own commander tree; `forward.ts`,
+  `OWN`/`goesToApp`/`HELP_FORMS` and the `forwardIdentity`/`forwardSetup`
+  spawn-relays die; the identity and plugin-setup steps become direct
+  function calls into the installed code. `@aivi/app` stays where it is,
+  gaining only a `registerCommands(program)` export (tree + logging hook;
+  the banner and `--version` stay in its own `main`, so the CLI root keeps
+  its own voice). End state: one help tree, no spawn relay, every test green.
+  Mount target is `@aivi/app/dist/cli.js` for now; Half 2 repoints the path.
+- **Half 2 — the move and burial.** `packages/app/src/*` relocates to
+  `packages/host/src/cli/` (subpath export `./cli`); setup installs
+  `@aivi/host` into `<home>/app` instead of `@aivi/app`; the plist, `update`,
+  `install`'s refusal list, dev scripts, root tsconfig references and the
+  packaging test repoint; `packages/app` is deleted.
+
+Recon (2026-09-27, verified against the tree):
+
+- **No dependency cycle**: `@aivi/knowledge` depends only on `@aivi/core` +
+  qmd and never imports `@aivi/host`, so host can gain the command surface
+  (which imports knowledge) cleanly. Channel packages and `@aivi/tracker-linear`
+  arrive only through dynamic `import()` and resolve from `<home>/app`'s
+  `node_modules` whatever package hosts the call site.
+- **`@aivi/app` consumers to rewire in Half 2** (line anchors predate
+  half 1 — grep for `@aivi/app` instead of trusting them): `setup.ts`
+  (installs `@aivi/app` into the appDir; installed check); `service.ts:30`
+  (plist `ProgramArguments` target); `update.ts` (updates the server
+  package by name, reads its `package.json`/`engines`); `install.ts`
+  (refuses `@aivi/app` as a plugin); `mount.ts` (Half 1's import path and
+  its `No aivi server installed` error — both become `@aivi/host`); root
+  `package.json` script `aivi`; `scripts/smoke.mjs:16` (spawns
+  `packages/app/dist/cli.js` directly — `npm run check` smokes the host
+  through it); `tsconfig.build.json` reference;
+  `packages/cli/test/cli.test.ts` fixtures; `packages/app/test/cli.test.ts`
+  relocates to `packages/host/test/` (it spawns `../src/cli.ts`).
+  `pack-smoke.mjs` names only the CLI — untouched.
+- **Machine-vs-operator decision without an OWN set**: commander already
+  knows — the mounted tree's top-level command names are the machine set
+  (`program.commands.map(c => c.name())`). Operator-or-unknown first args
+  trigger the mount before parsing; machine commands never import app code,
+  which is rule 1 below.
 
 ## The mechanism
 
@@ -11,7 +59,7 @@ loaded **in-process** from the installed app and mounted. `forward.ts` deleted,
 `update`, `upgrade`, `uninstall`, `service`, `link`, `version`). Home
 resolution is unchanged (`AIVI_HOME` → client-config `home` → error). When an
 operator command is invoked and the home is local, the CLI does what
-[channels.ts](../../../packages/app/src/commands/channels.ts) already does for
+`channels.ts` already does for
 plugins — a dynamic import and a mount — one level up:
 
 ```ts
@@ -33,13 +81,13 @@ Three rules, and they are the whole design:
 2. **One commander tree, one help.** No `OWN` set, no `goesToApp`, no
    `HELP_FORMS`, no `aivi help X` forwarding special case. What is mounted is
    what help shows (state-based visibility arrives in
-   [visibility.md](visibility.md)).
+   [remote-exec.md](remote-exec.md)).
 3. **Missing install = the mount-time error above**, the same sentence today's
    `appCliPath()` throws at spawn time (`forward.ts:13`).
 
 ## Deleted by this phase
 
-- [forward.ts](../../../packages/cli/src/forward.ts) entirely (the `spawnSync`
+- `forward.ts` entirely (the `spawnSync`
   relay with `stdio: 'inherit'` + `AIVI_HOME` env injection).
 - The `OWN`/`goesToApp`/`HELP_FORMS` dispatch in `main.ts:37-61,195-205`.
 - `forwardIdentity` (`setup.ts:431-445`): the stdout-piped one-JSON-object
@@ -60,8 +108,10 @@ from configuration exactly as today (the if-chain is replaced in
 
 launchd is **unchanged plumbing**: the plist's `ProgramArguments` is a file
 path (`service.ts:54` records `[nodePath, <appDir>/…/cli.js, serve]`), and a
-file path needs no bin declaration. After this phase it points at
-`<appDir>/node_modules/@aivi/host/dist/cli.js serve`. One bin on PATH: `aivi`.
+file path needs no bin declaration. It pointed at
+`<appDir>/node_modules/@aivi/host/dist/cli.js serve` until half 3 moved the
+unit to `dist/server.js` — same file-path logic, a file that parses nothing.
+One bin on PATH: `aivi`.
 
 ## The ctrl+c receipt (why this phase is the fix)
 
@@ -73,7 +123,7 @@ node_modules asks those questions (grepped: no OSC/DA/CPR querier in
 `@logtape/*`, `@clack/*`, or any dependency; the OpenCode service child runs
 `stdio: ["ignore","ignore","pipe"]`) — probably the shell or terminal stack.
 Whatever it is, ctrl+c on the relay hits a three-process foreground group
-where the thin CLI dies instantly while the app's graceful shutdown
+where the CLI dies instantly while the app's graceful shutdown
 (`server.ts:35`) keeps the group alive, and the answers orphan. This phase
 deletes the relay, so the class has no habitat. The mystery querier is **not**
 claimed as ours and is not this phase's job.
@@ -100,8 +150,8 @@ host code arrives only through dynamic import from `appDir`.*
 
 Dev scripts converge: `npm run aivi:cli` (global CLI sources) becomes the
 primary dev entry for everything; `npm run aivi` stays as the direct
-server-machine shortcut (`node packages/host/dist/cli.js serve …` once phase
-1 lands).
+server-machine shortcut (`node packages/host/dist/server.js`, no argument,
+since the purity pass below).
 
 ## Poke, unchanged
 
@@ -117,24 +167,146 @@ same bell because they run on the server anyway.
 
 ## Checklist
 
-- [ ] `packages/host/src/cli/` — move `commands/*`, `context.ts`, `identity.ts`
-      bodies; export `registerCommands(program, ctx)` + the `serve` command;
-      subpath export `./cli`.
-- [ ] `packages/cli/src/mount.ts` — lazy dynamic import + mount; error text
-      when the install is missing.
-- [ ] Delete `forward.ts`, the OWN/goesToApp/help dispatch, `forwardIdentity`;
-      `setup`/`install` call the mounted functions directly (identity step,
-      `plugin setup` step).
-- [ ] Delete `packages/app`; setup installs `@aivi/host` (+ plugins) into
-      `<home>/app`; plist `ProgramArguments` points at the host dist path.
-- [ ] Rewrite `packaging.test.ts` wording; lifecycle tests at the real
+Half 1 — the mount:
+
+- [x] `packages/app/src/cli.ts` — export `registerCommands(program)`: the
+      command registrations, `--log-level`/`--log-format` and the logging
+      preAction hook move under it; `main()` keeps program creation, version,
+      banner and parsing, so the app's own bin is behavior-identical.
+- [x] `packages/cli/src/mount.ts` — lazy dynamic import + mount; error text
+      when the install is missing; `AIVI_HOME`/`appDir` set for the import.
+- [x] Delete `forward.ts`, the OWN/goesToApp/help dispatch, `forwardIdentity`
+      and `forwardSetup`; `setup`/`install` call the installed functions
+      directly (identity step, `plugin setup` step).
+- [x] Rewrite `packaging.test.ts` wording; lifecycle tests at the real
       boundary: mount with a present install, with a missing install, and with
       a broken install (machine commands still run).
-- [ ] Scripts and docs in the same commits: [operations.md](../../operations.md)
-      (CLI/forward sentences, service section), `packages/cli/README.md`
-      (one command table), `packages/app/README.md` deleted,
-      [CONTEXT.md](../../../CONTEXT.md) (package list, plans row).
+- [x] Docs: [operations.md](../../operations.md) had no forward sentence to
+      change; `packages/cli/README.md` command table and
+      `packages/app/README.md` intro reworded; changeset `@aivi/cli` minor.
+
+Half 1 landed 2026-09-27 on `refactor/single-cli-command`. What differed
+from the plan while landing:
+
+- Both entries gained an `import.meta.main` guard: importing the app's
+  `dist/cli.js` must not start a second parse; the bins still run themselves
+  (launchd, pack-smoke and the app tests spawn them directly).
+- The logging hooks are hung on each command `registerCommands` adds, never
+  on the receiving tree's root — commander passes `(hookedCommand,
+  actionCommand)`, so the old root hook could never see `serve` and
+  `state/logs/aivi.log` was dead code; per-command hooks fix that and leave
+  a host tree's machine commands untouched. A `postAction` hook flushes
+  logging in the mounted case; the flush is skipped when an action throws
+  (known gap: buffered log lines can be lost on the error path).
+- The machine-vs-operator decision reads `program.commands` after the
+  machine tree is built — the tree itself is the set, no constant.
+- `SetupIo.forwardIdentity(args…)` became `createIdentity(step, home,
+  appDir)`: structured step, async, object answer — the JSON-over-stdout
+  contract is gone. `InstallIo.forwardSetup` became `setupPlugin`: a stop is
+  `process.exitCode` marked (the app's `pluginSetup` says its own words and
+  never rejects); a hard failure is a rejection, and `install` says
+  "Nothing was restarted." for both.
+- `pack-smoke.mjs`'s no-home assertion still holds verbatim; only its
+  "forward path" sentence was reworded.
+- Live check on the dev home (a workspace-linked install, so the new code
+  ran): `aivi jobs list` answered from the store in-process, `aivi --help`
+  and `aivi help jobs` show one merged tree, `version`/`--version` stay the
+  CLI's. Known cosmetic: `--log-level`/`--log-format` now appear in the CLI
+  root's options (declared on the receiving tree's root);
+  [remote-exec.md](remote-exec.md) owns state-based help trimming.
+
+Half 2 — the move and burial:
+
+- [x] `packages/host/src/cli/` — move `commands/*`, `context.ts`, `identity.ts`,
+      `plugin-setup.ts`, `help.ts` bodies; subpath export `./cli`; host gains
+      `@aivi/knowledge`, `commander`, `@clack/prompts` deps and the tsconfig
+      references `@aivi/app` carried.
+- [x] Setup installs `@aivi/host` (+ plugins) into `<home>/app`; plist
+      `ProgramArguments`, `update.ts`, `install.ts`' refusal, `mount.ts`'s
+      import path and the dev scripts repoint at `@aivi/host/dist/cli.js`.
+- [x] Delete `packages/app` (bin, README, changeset membership, root tsconfig
+      reference, workspace package).
+- [x] `packages/app/test/cli.test.ts` relocates into `packages/host/test/`.
+- [x] [CONTEXT.md](../../../CONTEXT.md) package list; changesets: **deferred
+      by the operator** (see what differed) — `@aivi/app` major (removed),
+      `@aivi/host` minor, fixed group come back at the end of the refactor.
 - [ ] No migration (D22): `rm -rf dev` after the phase lands, `aivi setup`
-      again — the dev home exists to be nuked.
-- [ ] Changesets: `@aivi/app` major (removed), `@aivi/cli` minor, `@aivi/host`
-      minor (fixed group).
+      again — the dev home exists to be nuked. **Parked by the operator to
+      the end of the refactor** (with the changesets): a fresh `setup` wants
+      an interactive terminal, and one nuke at the end covers every
+      shape-changing phase instead of one per phase.
+
+Half 2 landed 2026-09-27 on `refactor/single-cli-command`. What differed
+from the plan while landing:
+
+- **The tsconfig references were a cycle, so the host's build is split.**
+  Half 2 gives host dynamic `import()`s of `@aivi/browser`,
+  `@aivi/channel-discord`, `@aivi/channel-slack` and `@aivi/tracker-linear` (the
+  `serve` if-chain and `projects add` running a plugin's `./setupProject`), and
+  all of those packages
+  import `@aivi/host` — so host cannot reference them in *one* project
+  (`error TS6202`). The split is build-plumbing only: `tsconfig.build.json`
+  is the engine (`src` minus `src/cli.ts`/`src/cli`, refs core), new
+  `tsconfig.cli.build.json` is the command surface (refs core, knowledge,
+  the four plugins). Both emit into the same `dist/`; root `build` and the
+  host's `prepack` build both. Zero source changes, all types stay real.
+  Phase 3 (plugin-registry) kills the if-chain and the plugin references
+  retire, so the split can collapse back to one project there.
+- **No changeset in the half-2 commit, by the operator** ("changesets aren't
+  needed. We're not doing a release yet. Keep these until the end of the
+  refactor"). The pending `.changeset/*.md` files — including the ones
+  naming `@aivi/app` (`one-cli-mount`'s `@aivi/app: minor` among them) —
+  stay untouched for now; sorting them out (app's removal as a major,
+  host minor, the `fixed` group) is end-of-refactor work.
+- `mount.ts`'s three import sites repoint as a group: the mount
+  (`dist/cli.js` — unchanged name, new package dir), setup's identity step
+  (`dist/identity.js` → `dist/cli/identity.js`), install's plugin-setup step
+  (`dist/context.js`/`dist/plugin-setup.js` → `dist/cli/…`). The
+  `No aivi server installed` error text is verbatim.
+- Docs repointed in the same commit: CONTEXT package list, README table
+  (app row gone), architecture's composition-root sentence (host's `./cli`
+  now), operations/people setup-plumbing wording, getting-started and
+  dev/README `--app-spec` (`file:../../packages/host`), host and cli
+  READMEs. `pack-smoke.mjs` stayed untouched as the recon predicted.
+- **Half 2's verification is the suite, not a fresh home.** `npm run check`
+  (typecheck + tests + schema:check + smoke + pack:smoke) is green, and the
+  mount is tested at both ends: the host's `test/cli.test.ts` spawns the
+  real command surface, the CLI's tests mount it onto the machine tree.
+  The dev home is now stale by design (D22): its `app` link points at the
+  deleted package and `@aivi/host` is not in `dev/app/node_modules`, so
+  operator commands with `AIVI_HOME=dev` answer `No aivi server installed
+  at dev/app` while machine commands still work. Recreate it in a real
+  terminal at the end of the refactor — the command the dev home's own
+  README carries (`npm run aivi:cli -- setup --use this-machine` with the
+  local `file:` app and plugin specs) — which then proves the fresh record,
+  the identity step through `dist/cli/identity.js`, and the sign-in end to
+  end.
+
+## Half 3 — the host goes pure (2026-09-28)
+
+Decided by the operator while preparing phase 4: host must not know it is
+behind a CLI — **the CLI collects, the host provides, exactly like a plugin**
+("Host has NO cli knowledge. Why would it need `serve` as an argument?"). The
+boot living behind an argv parser was the last proof of the old shape.
+
+- **`@aivi/host/server`** is the new boot: `startServer()` loads the home
+  context, builds the modules from the plugin list, and runs `runHost` with
+  the graceful SIGINT/SIGTERM stop. Run as a file, it is what launchd/systemd
+  execute: no bin, no arguments — the `serve` argument existed only because
+  the boot sat behind a parser.
+- **`@aivi/host/cli` lost its self-boot**: the private `main` and its
+  `import.meta.main` block are deleted; `registerCommands` is the module's
+  only job. `rootBanner` (`cli/help.ts`) is deleted with the entry — the
+  banner belongs to the bin alone, which draws its own.
+- **The `serve` command calls the boot in-process.** Commander exists in
+  exactly one place: the bin's tree, on every path.
+- **Units point at `dist/server.js` with no argument** (`service.ts`'s
+  `hostCli` became `hostServer`); `npm run aivi` runs the same file. An
+  installed home reruns `aivi service install` — nothing to stay compatible
+  with (D22, no installs exist).
+- **The host tests and the smoke spawn
+  `packages/host/test/command-surface.mjs`**: `registerCommands` on a bare
+  commander tree, which is what the bin collects. It lives under the host so
+  `commander` resolves to the pinned 15, not the 10 the repo root hoists.
+- Consequence for phase 4: the exec child is plain `aivi <argv>` from PATH;
+  [remote-exec.md](remote-exec.md)'s protocol line is amended to that.

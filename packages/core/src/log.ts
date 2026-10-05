@@ -30,15 +30,15 @@ export type ConsoleFormat = 'pretty' | 'json';
 
 // The category is the activation tree: `aivi` is a one-shot CLI command,
 // `aivi·host` is the serve application, and whatever the host starts hangs
-// below it (`aivi·host·discord`). One color per module; the longest prefix
+// below it (`aivi·host·channel-discord`). One color per module; the longest prefix
 // wins, so a module's engine and turn records inherit its color. Knowledge
 // hangs at root because the CLI builds it before any host exists. Dreaming
 // is pinned to the muted gray — the prefix rule would otherwise dye it host
 // blue — and the CLI root reaches the same gray by fallback.
 const CATEGORY_COLORS: NonNullable<PrettyFormatterOptions['categoryColorMap']> = new Map([
-  [['aivi', 'host', 'discord'], '#a371f7'],
-  [['aivi', 'host', 'slack'], '#36c5f0'],
-  [['aivi', 'host', 'linear'], '#5e6ad2'],
+  [['aivi', 'host', 'channel-discord'], '#a371f7'],
+  [['aivi', 'host', 'channel-slack'], '#36c5f0'],
+  [['aivi', 'host', 'tracker-linear'], '#5e6ad2'],
   [['aivi', 'host', 'browser'], '#ff7800'],
   [['aivi', 'knowledge'], '#C69214'],
   [['aivi', 'host', 'scheduler'], '#c51162'],

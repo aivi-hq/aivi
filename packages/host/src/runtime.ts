@@ -1,16 +1,25 @@
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { DreamingArgs, KnowledgeService, LoadedConfig, Logger, Run, Task } from '@aivi/core';
+import type {
+  DreamingArgs,
+  ExecutionContext,
+  ExecutionResult,
+  KnowledgeService,
+  LoadedConfig,
+  Logger,
+  Run,
+  Task,
+} from '@aivi/core';
 import { dreamingArgsSchema, errorMessage, getLogger, MEMORY_SOURCE_ID, runsPruneArgsSchema } from '@aivi/core';
+import type { Forges } from '@aivi/plugin/forge';
+import type { OpenCodeClient, SessionEvents, TaskHandler } from '@aivi/plugin/module';
 import { dream } from './dreaming.ts';
-import type { SessionEvents } from './events.ts';
-import type { OpenCodeClient } from './opencode.ts';
 import { syncProjects } from './projects.ts';
-import type { Execute, ExecutionContext, ExecutionResult } from './scheduler.ts';
+import type { Execute } from './scheduler.ts';
 import { connectForTurn, PermissionRequired, runTurn, TurnNotStarted, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
-import type { TaskHandler, TaskRegistry } from './tasks.ts';
+import type { TaskRegistry } from './tasks.ts';
 
 export interface ExecutorDeps {
   store: Store;
@@ -24,6 +33,10 @@ export interface ExecutorDeps {
   log?: Logger | undefined;
   /** What `kind: 'invocation'` tasks dispatch to. The host claims its own system operations here, as `host`. */
   tasks: TaskRegistry;
+  /** Who owns a project's remote: the projects-sync task asks before fetching, and an owned checkout syncs through that forge. */
+  forges: Forges;
+  /** The channel platform ids registered right now. Dreaming reviews their conversations when its args name no origins. */
+  channelOrigins?: () => string[];
 }
 
 /** Secrets aivi reads from its own environment; a shell task never sees them unless its `env` sets them on purpose. */
@@ -34,6 +47,11 @@ export const SECRET_ENV = [
   'SLACK_APP_TOKEN',
   'OPENCODE_USERNAME',
   'OPENCODE_PASSWORD',
+  // The bearer a driven exec session's human presented: the door
+  // stamps it into that session's closed env, and it is scrubbed here so an
+  // operator's credential never reaches a task script, however it entered
+  // the environment.
+  'AIVI_OPERATOR_BEARER',
 ];
 
 /**
@@ -96,7 +114,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
       return { state: 'succeeded', result: await deps.knowledge.index() };
     },
     'projects.sync': async (_run, context) => {
-      const projects = await syncProjects(loaded.projects, context.signal);
+      const projects = await syncProjects(loaded.projects, deps.forges, context.signal);
       const updated = projects.filter(p => p.state === 'updated').map(p => p.id);
       for (const p of projects)
         if (p.state === 'skipped') log.warn('projects.sync.skipped', { project: p.id, reason: p.reason });
@@ -119,7 +137,19 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
           result: null,
           reason: `dreaming: memoryDirectory "${args.memoryDirectory}" must be inside a core knowledge source so memories are searchable`,
         };
-      const task: DreamingArgs = { ...args, directory, memoryDirectory };
+      // Origins the person never named are every channel module registered
+      // when the run starts — the module list, not a word welded into the
+      // default. A home whose only channels are Slack reviews Slack.
+      const origins = args.origins.length ? args.origins : (deps.channelOrigins?.() ?? []);
+      if (!origins.length) {
+        return {
+          state: 'failed',
+          result: null,
+          reason:
+            'dreaming: no channel module is registered and the job names no origins, so there is nothing to review; register a channel or set origins in the dreaming args',
+        };
+      }
+      const task: DreamingArgs = { ...args, directory, memoryDirectory, origins };
       const { sessionId } = turnIdsFor(run.id);
       const timeout = AbortSignal.timeout(task.timeoutMs);
       try {

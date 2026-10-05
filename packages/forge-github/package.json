@@ -1,0 +1,58 @@
+{
+  "name": "@aivi/forge-github",
+  "version": "0.0.0",
+  "description": "The GitHub forge for aivi: the remote a project came from, the pull requests over its branches, and the review conversation on them.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "development": "./src/config.ts",
+      "default": "./dist/config.js"
+    },
+    "./setup": {
+      "development": "./src/setup.ts",
+      "default": "./dist/setup.js"
+    },
+    "./setupProject": {
+      "development": "./src/setup-project.ts",
+      "default": "./dist/setup-project.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=26.1.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/forge-github"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "tsc -b tsconfig.build.json"
+  },
+  "dependencies": {
+    "@aivi/core": "^0.7.1",
+    "@aivi/plugin": "^0.1.0",
+    "@octokit/auth-app": "8.3.1",
+    "@octokit/core": "7.0.8",
+    "@octokit/plugin-rest-endpoint-methods": "17.0.0",
+    "@octokit/plugin-retry": "8.1.1",
+    "zod": "4.1.13"
+  },
+  "peerDependencies": {
+    "@aivi/host": "^0.8.1"
+  },
+  "devDependencies": {
+    "@aivi/host": "^0.8.1"
+  }
+}

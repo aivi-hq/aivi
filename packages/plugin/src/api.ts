@@ -1,0 +1,164 @@
+/**
+ * The HTTP client for the aivi server, for whoever talks to it from outside:
+ * the OpenCode-side plugin (a guest in someone else's process) and a plugin's
+ * own tool surface. It ships in the kit, not in the host, so reaching the
+ * server never pulls SQLite, QMD or other host-side weight into the caller.
+ */
+import { createRequire } from 'node:module';
+import type {
+  HostClient,
+  JobResponse,
+  KnowledgeSource,
+  Person,
+  PersonToken,
+  ProjectSummary,
+  SearchHit,
+  ServedTool,
+  SourceSelection,
+  Status,
+  Whoami,
+} from '@aivi/core';
+
+/**
+ * The version of this `@aivi/plugin` installation — read from its own
+ * `package.json` at runtime, so the number can never drift from the package
+ * that carries it. It travels as `x-aivi-client`; the host serves a client at
+ * or behind its own version, and `@aivi/cli`, `@aivi/host` and `@aivi/plugin`
+ * move in lockstep through the changesets `fixed` group, so the two sides of
+ * the wire agree. The gate's rules are in the host's `api/gate.ts`.
+ */
+const clientVersion: string = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
+
+export interface HostClientOptions {
+  /** Bearer token identifying the caller (a person token). Omit to stay anonymous. */
+  token?: string | undefined;
+}
+
+/**
+ * Fetch-only client for the aivi host API. Used by the OpenCode plugin, so it
+ * must stay free of SQLite, QMD, and other host-side dependencies.
+ */
+export function createHostClient(baseUrl: string, options: HostClientOptions = {}): HostClient {
+  const base = new URL(baseUrl);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
+    throw new Error('Expected an HTTP host URL without embedded credentials');
+  }
+  const headers: Record<string, string> = {
+    // The version the host negotiates against; a host that cannot speak to
+    // this client answers 403 with the version that would pass, and the
+    // error below carries that answer. Read from this package's own
+    // package.json: this module must stay free of SQLite, QMD, and other
+    // host-side weight.
+    'x-aivi-client': clientVersion,
+    ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
+  };
+
+  async function request<T>(path: string, init: RequestInit & { timeoutMs: number }): Promise<T> {
+    const { timeoutMs, ...rest } = init;
+    let response: Response;
+    try {
+      response = await fetch(new URL(path, base), {
+        ...rest,
+        headers: { ...headers, ...(rest.headers as Record<string, string> | undefined) },
+        signal: AbortSignal.timeout(timeoutMs),
+        redirect: 'error',
+      });
+    } catch (error) {
+      // Every aivi tool goes through the host; the usual cause is simply that `aivi serve` is not running.
+      if (error instanceof Error && error.name === 'TimeoutError') throw error;
+      throw new Error(`aivi is not reachable at ${base.origin}. Is \`aivi serve\` running?`, { cause: error });
+    }
+    if (!response.ok) throw new Error(await describeFailure(response));
+    return (await response.json()) as T;
+  }
+
+  const get = <T>(path: string) => request<T>(path, { timeoutMs: 10_000 });
+
+  return {
+    search(query) {
+      const params = new URLSearchParams({ q: query.query });
+      if (query.limit !== undefined) params.set('limit', String(query.limit));
+      appendSelection(params, query);
+      return get<SearchHit[]>(`/knowledge/search?${params}`);
+    },
+    status: () => get<Status>('/status'),
+    sources(selection: SourceSelection = {}) {
+      const params = new URLSearchParams();
+      appendSelection(params, selection);
+      return get<KnowledgeSource[]>(`/sources?${params}`);
+    },
+    projects: () => get<ProjectSummary[]>('/projects'),
+    async listTools() {
+      return (await get<{ tools: ServedTool[] }>('/tools')).tools;
+    },
+    callTool(id, call) {
+      // One budget per tool comes from its descriptor: a browser action may
+      // wait behind other tabs, a status read must not.
+      return request<unknown>('/tools', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tool: id,
+          sessionId: call.sessionId,
+          ...(call.messageId ? { messageId: call.messageId } : {}),
+          input: call.input,
+        }),
+        timeoutMs: call.timeoutMs ?? 10_000,
+      });
+    },
+    health: () => request<{ ok: true }>('/health', { timeoutMs: 3_000 }),
+    runMembership: sessionId =>
+      request<{ run: boolean }>(`/run?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 3_000 }),
+    context: sessionId =>
+      request<{ text: string }>(`/context?${new URLSearchParams({ session: sessionId })}`, { timeoutMs: 20_000 }),
+    wake: () => request<{ woken: boolean }>('/wake', { method: 'POST', timeoutMs: 3_000 }),
+    whoami: () => get<Whoami>('/whoami'),
+    people: () => get<Person[]>('/people'),
+    createPerson(input) {
+      return request<Person>('/people', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+        timeoutMs: 10_000,
+      });
+    },
+    createPersonToken(personId, label) {
+      return request<{ token: PersonToken; secret: string }>(`/people/${encodeURIComponent(personId)}/tokens`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ label }),
+        timeoutMs: 10_000,
+      });
+    },
+    jobs(body) {
+      // Creating a job checks the calling session and agent against OpenCode; a few seconds at most.
+      return request<JobResponse>('/jobs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        timeoutMs: 30_000,
+      });
+    },
+  };
+}
+
+function appendSelection(params: URLSearchParams, selection: SourceSelection): void {
+  for (const project of selection.projects ?? []) params.append('project', project);
+  // An explicit empty selection means core only.
+  if (selection.projects?.length === 0) params.set('coreOnly', 'true');
+  if (selection.includeCore === false) params.set('includeCore', 'false');
+  for (const kind of selection.kinds ?? []) params.append('kind', kind);
+}
+
+async function describeFailure(response: Response): Promise<string> {
+  let detail = '';
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body?.error === 'string') detail = `: ${body.error}`;
+  } catch {
+    // Non-JSON error body; the status is enough.
+  }
+  if (response.status === 401)
+    return `aivi host rejected the request (401)${detail}. This endpoint needs a bearer token that names a person.`;
+  return `aivi host returned HTTP ${response.status}${detail}`;
+}

@@ -1,9 +1,9 @@
 import type { Config, Logger } from '@aivi/core';
 import { errorMessage, getLogger } from '@aivi/core';
+import type { ChannelDelivery, EngineNotices, Turn } from '@aivi/plugin/channel';
 import { TurnNotStarted } from '../session.ts';
-import type { ChannelDelivery, EngineNotices } from './contract.ts';
 import { type ProgressOptions, ProgressReporter } from './reporter.ts';
-import type { ConversationStore, Turn } from './store.ts';
+import type { ConversationStore } from './store.ts';
 
 /** Split on code points so surrogate pairs survive; the limit counts UTF-16 units like the platforms do. */
 export function splitReply(text: string, limit: number): string[] {
@@ -26,7 +26,6 @@ export type Send = ChannelDelivery['send'];
 export interface EngineLimits {
   resource: string;
   maxConcurrent: number;
-  turnTimeoutMs: number;
 }
 export interface EngineOptions {
   log?: Logger;
@@ -137,7 +136,12 @@ export class ChannelEngine {
     log: Logger,
     startedAt: number,
   ): Promise<void> {
-    const signal = AbortSignal.any([this.abort.signal, own.signal, AbortSignal.timeout(this.limits.turnTimeoutMs)]);
+    // No turn bound here (2026-10-03): the platform `turnTimeoutMs` options
+    // bounded chat turns only and lied about worker turns, so they are gone —
+    // the bound's right home is the dispatcher, which watches every session
+    // (docs/plans/orchestrator.md). Until it grows one, a turn ends when it
+    // ends, bounded by its own abort and the engine's shutdown.
+    const signal = AbortSignal.any([this.abort.signal, own.signal]);
     const text = await this.ask(turn, signal, () => this.store.ready(turn.channel));
     const answeredMs = Date.now() - startedAt;
     this.store.result(turn.id, text);
@@ -182,7 +186,7 @@ export class ChannelEngine {
       return;
     }
     // A chat turn's only effect is its reply, so a known end (provider/auth error,
-    // timeout, delivery failure) is just a failure: release capacity and say why.
+    // delivery failure) is just a failure: release capacity and say why.
     // Only a worker (`effects: 'work'`) blocks, because its checkout may still be moving.
     const reason = shortReason(error);
     if (this.store.platform.effects === 'work') {

@@ -1,11 +1,12 @@
 # Worktree lifecycle per lane
 
-Status: **planned (v3), partly landed.** The lane shape and the checkout
-environment landed with the single-app rework (2026-09-19,
-[plans/linear.md](../plans/linear.md) step 11): lanes are
-`agent | null | { agent, worktree: false }`, and a `worktree: false` lane runs
-its agent in the project's clean checkout with the agent file's own `edit`
-deny as the only enforcement. `client.ts` gained `createComment`. What remains
+Status: **planned (v3), partly landed.** The checkout environment landed with
+the single-app rework (2026-09-19, [plans/linear.md](../plans/linear.md)
+step 11); the lane shape under it moved on 2026-10-01/02: a lane is now
+`{ name, agent?, queue?, pool?, worktree? }` with `worktree` **defaulting to
+false** — the default worker runs in the project's checkout, a `worktree:
+true` lane gets its own — and aivi still never touches agent permissions.
+`client.ts` gained `createComment`. What remains
 of this page is the **sweep**: issue-keyed worktrees, terminal-lane removal
 and staging, `linear.sweep` as a daily system job, `linear.reportChannels`.
 (The issue-keyed worktree — `worktrees/PEC-123` shared across agents — is a
@@ -14,9 +15,11 @@ the sweep.)
 
 ## Rules (agreed with the owner)
 
-- A lane says whether its work needs a worktree: lane value
-  `app | null | { app, worktree? = true }`. Read-only lanes run their agent
-  in the project's clean checkout; **aivi never touches agent permissions** —
+- A lane says whether its work needs a worktree: the lane's `worktree` flag,
+  default false (shape amended 2026-10-02; the old
+  `app | null | { app, worktree? = true }` union died with the lanes array).
+  Lanes naming no agent are worked by
+  humans; **aivi never touches agent permissions** —
   the agent file's own permissions are the only enforcement.
 - The worktree belongs to the **issue**, not one delegation:
   `worktrees/PEC-123`, shared by dev/review/qa so agents inherit each other's
@@ -27,9 +30,18 @@ the sweep.)
   Otherwise KEEP: stage in SQLite (a table, not marker files), comment on the
   Linear issue, post to configured channels, warn-log. After
   `linear.worktreeRetentionDays` (default 7) the sweep force-removes and
-  notes it. Stop / HITL / lane-change keep everything: stop ≠ done.
+  notes it. **Amended 2026-10-03:** a *stop* now tears its own run's
+  worktree down immediately — uncommitted work and local commits with it,
+  what was pushed stays pushed (the orchestrator's `removeWorktree`); a
+  *failed* run keeps its worktree for a person to inspect. What stays open
+  here is the age sweep over kept worktrees and the terminal-lane pass.
+- A stop's teardown is lossy (ruled 2026-10-03, v1): the person who stopped
+  gets a clean board, not a half-finished attempt. The v2 shape is a
+  **pause**: keep the worktree and the branch on a stop, resume the same
+  attempt when the person lifts the mark — the stopped commit as the
+  starting point instead of a discard. Same teardown code, one flag away.
 - The sweep is its own operation `linear.sweep`, claimed by the linear
-  module and seeded as a **daily system job** through `HostModule.jobs`.
+  module and seeded as a **daily system job** through `AiviModule.jobs`.
   (Plan v3 had it ride the hourly `projects.sync`; the owner chose its own
   invocation so its frequency is configurable like any system job and it
   shows up uniformly in the future desktop job list. No new timers either
@@ -60,7 +72,9 @@ the sweep.)
 
 ## Open live gates from the lane work this builds on
 
-- Interactive `aivi projects create` against a real repo, and a real
-  `--lane`/`--unlane` write (from `59b33fd`).
+- Interactive `aivi projects add` running Linear's project-setup contributor
+  against a real team set — the teams-and-lanes write, once done by
+  `projects create` and `--lane`/`--unlane` (from `59b33fd`, the flags gone
+  with the role-driven redo).
 - Vessel repo (tiny, disposable) as the first dogfood; example's config gains
   a triage app + lane when this lands.

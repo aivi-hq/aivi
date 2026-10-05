@@ -1,0 +1,94 @@
+/** Shared plumbing for every command: the home, the lazily-loaded context
+ *  (config, .env, a logger, the host poke), the store bracket and the small
+ *  helpers the actions share. */
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
+import type { LoadedConfig, Logger, OutputBlock } from '@aivi/core';
+import { hostUrl as coreHostUrl, print as corePrint, errorMessage, getLogger } from '@aivi/core';
+import { Store } from '@aivi/host';
+import { createHostClient } from '@aivi/plugin/api';
+import { loadComposedConfig, type PluginRegistry, pluginRegistry } from './registry.ts';
+
+/** One home holds everything: config.json, .env, state/. Paths in the config resolve against it.
+ *  Read at call, not frozen at import: the env names the home, and a module-level constant
+ *  would pin the process to whatever env the first importer had. The bin runs one command
+ *  per process and never notices; the test suite drives many homes through one process,
+ *  exactly the way the bin drives them one at a time. */
+export const home = () => resolve(process.env.AIVI_HOME ?? resolve(homedir(), '.aivi'));
+export const configPath = () => resolve(home(), 'config.json');
+
+/** Everything an action needs from the home, read fresh at every call: logging
+ *  is configured by the preAction hook in cli.ts, so an action that asks for the
+ *  context gets a ready log. `server create` runs before any config exists and
+ *  never asks for the context. The config is validated against the **composed**
+ *  schema — core's fields plus the block of every plugin in the home's list —
+ *  so the registry arrives with it. Nothing is memoized: one command is one
+ *  process in production, and a context cached across commands would show a
+ *  later command stale disk state — the bin re-reads for every command, and so
+ *  does the suite that drives many commands through one process. */
+export const context = async (): Promise<{
+  loaded: LoadedConfig;
+  registry: PluginRegistry;
+  protectedEnv: string[];
+  log: Logger;
+  poke: () => Promise<void>;
+}> => {
+  const at = home();
+  const config = configPath();
+  if (!existsSync(config))
+    throw new Error(`No config.json in ${at}. Create one, or point AIVI_HOME at a directory that has one.`);
+  const log = getLogger(['aivi']);
+  // .env is loaded without overriding existing variables, so `fnox exec` and CI overrides behave.
+  const protectedEnv = loadEnvFile(resolve(at, '.env'), log);
+  const loaded = await loadComposedConfig(at, config);
+  const registry = await pluginRegistry(at);
+  // The CLI writes to SQLite directly; the running host learns about it through this poke and
+  // nothing else, so a poke that cannot be delivered is said out loud rather than swallowed.
+  const poke = async () => {
+    await createHostClient(hostUrl(loaded))
+      .wake()
+      .catch(error =>
+        console.error(
+          `Note: could not wake the host (${errorMessage(error)}). Saved; it takes effect when the host next dispatches (a due job, or \`aivi serve\` starting).`,
+        ),
+      );
+  };
+  return { loaded, registry, protectedEnv, log, poke };
+};
+
+/** What a command puts on stdout: `data` is the machine form every pipe gets;
+ *  `output` is the readable form a terminal gets. One function, so app commands
+ *  and plugin channel commands render the same way. */
+export const print = (value: unknown, output?: OutputBlock[] | string): void => corePrint(value, output);
+
+/** Repeatable options collect into a list: `--project site --project api`. */
+export const collect = (value: string, previous: string[]): string[] => [...previous, value];
+
+/** The home's SQLite store, open for the callback and closed after, whatever
+ *  the callback does. Commands that need no database never touch one. */
+export async function withStore<T>(loaded: LoadedConfig, fn: (store: Store) => T | Promise<T>): Promise<T> {
+  const store = new Store(resolve(loaded.config.stateDirectory, 'aivi.sqlite'));
+  try {
+    return await fn(store);
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * dotenv-style file; existing environment always wins, so `fnox exec` and CI overrides behave.
+ * Returns the variable names the file defines: everything in it is treated as a secret.
+ */
+function loadEnvFile(path: string, log: { debug(event: string, fields?: Record<string, unknown>): void }): string[] {
+  if (!existsSync(path)) return [];
+  process.loadEnvFile(path);
+  log.debug('env.loaded', { path });
+  return Object.keys(parseEnv(readFileSync(path, 'utf8')));
+}
+
+/** The URL aivi calls itself on; the printed one is `host.public` (core's rule). */
+export function hostUrl(loaded: LoadedConfig): string {
+  return coreHostUrl(loaded.config.host);
+}

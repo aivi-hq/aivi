@@ -30,11 +30,14 @@ callers (it is the person lookup) and answers the caller's real roles:
 array** on the person (`roles` column, JSON): `operator` manages people and
 maintenance, the default for a new person is `member`; a future role is data,
 not a migration. The store migration granted `operator` to everyone who
-existed when the column arrived (the v1 stub was simply true). Enforcement
-widens with the remote exec channel, whose gate is the `operator` role
-([plans/cli-refactor](plans/cli-refactor/remote-exec.md#security));
-until then a non-loopback bind logs a warning: anyone who can reach the
-address can use the commands.
+existed when the column arrived (the v1 stub was simply true). The remote
+exec channel is the enforcement landed 2026-09-28: opening `/exec` requires a
+recognised bearer whose person carries the `operator` role — the channel hands
+out the widest privilege aivi knows, a PTY that can run `people create` and
+`service`. Anonymous and member-only bearers get the door's refusal in its own
+words, and every arrival, accepted or refused, writes one diary line
+([operations](operations.md#running-remotely)). A non-loopback bind still logs
+a warning: anyone who can reach the address can use the open commands.
 
 ## Persons and tokens (aivi.sqlite)
 
@@ -72,7 +75,16 @@ One file, identical shape everywhere (`XDG_CONFIG_HOME` wins when set,
 - `url` — the host API. The OpenCode plugin falls back to it (and to
   `person.token`) when its options say nothing — see [opencode](opencode.md).
 - `home` — present only on a machine that hosts aivi: "this machine hosts".
-  The home lives at `~/.aivi` and never moves.
+  The home is `~/.aivi` by default and aivi never relocates the directory;
+  `aivi configure` re-points the record when the words are wrong (a home
+  moved by hand, a relocated app dir).
+
+`aivi setup` creates this file and `aivi configure` is its only other
+writer: it edits `url`, `home` and `appDir` and **never touches the
+person** — the token is audit evidence, and the most a person can become
+is *disabled*, a server-side decision of this document, never a laptop
+command's feature. A machine with no record does not have `configure`; it
+has `setup`, which creates the first one.
 
 ## Bootstrap and people commands
 
@@ -80,8 +92,9 @@ One file, identical shape everywhere (`XDG_CONFIG_HOME` wins when set,
 (connect branch) or creates the server and the operator person (create
 branch) — the flow is described in
 [operations](operations.md#first-run-aivi-setup). The identity minting
-itself stays in the installed app's `server create`, which `aivi setup`
-drives. Every other identity command talks HTTP (ungated like everything
+itself stays in the installed server's `server create` code
+(`@aivi/host/cli`), which `aivi setup` calls in-process. Every other
+identity command talks HTTP (ungated like everything
 until the api-only session):
 
 - `aivi people create NAME [--email E]` — on a terminal it offers to mint
@@ -108,7 +121,7 @@ identity comes from the platform, the code is the evidence, and the host binds
 an account that is already bound — never consumes the code, and re-binding is
 refused outright: there is no unlink yet (historic sessions keep their
 association), so a binding lasts until that exists. From then on the account
-speaks as its person: the turn prompt and `/steer` words carry the person's
+speaks as its person: the turn prompt and interjected words carry the person's
 name and the session and messages are stamped `metadata.aivi.person`. The
 link is also the admission:
 a linked person may DM aivi and is heard in every channel aivi listens in;

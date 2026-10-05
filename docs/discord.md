@@ -4,7 +4,8 @@
 to Discord through discord.js and uses the host's OpenCode connection,
 knowledge service, database, and capacity limits. `aivi serve` starts and stops it;
 there is no separate Discord server or daemon command. It implements the
-[channel module contract](channels.md) with the module id `discord`; the
+[channel module contract](channels.md) with the platform id `discord` (the
+module id, the `plugins` key and the `/status` id, is `channel-discord`); the
 inbox, session bindings, engine, turn runner and recovery described there are
 the host's. This page has what is Discord's.
 
@@ -72,10 +73,14 @@ the host's. This page has what is Discord's.
   "Stopped at your request." in place of the answer, the turn is discarded
   (not blocked), its capacity released, OpenCode's session interrupted, and
   queued messages follow. Nothing running: it says so.
-- `/steer text` passes text into the running turn (`delivery: "steer"`)
-  instead of queueing it behind; with no turn running it says so and queues
-  nothing.
+- A message sent while the conversation's turn runs **interjects** into it
+  (the default since 2026-10-02): steering, marked as part of the turn, ⚡ as
+  the ack; a steer that fails queues anyway, logged.
+- `/queue text` is the explicit way behind the running turn; with no turn
+  running it queues the same and says so.
 - `/jobs` lists the next five job occurrences and the last ten runs.
+- `/link <code>` links the sender's account to their aivi person (the code
+  comes from `aivi link`; the link section above).
 - `/help` lists the commands, one line each.
 - People always get a signal: a ⏳ reaction while a message waits behind other
   work (a short reply instead where the bot may not react; the invite should
@@ -103,10 +108,10 @@ the host's. This page has what is Discord's.
 
 ## Setup
 
-The short way: `aivi install discord`. It prints the application steps below,
+The short way: `aivi add discord`. It prints the application steps below,
 verifies the token against Discord, derives the application id from the bot,
-writes the `modules.discord` block and `DISCORD_BOT_TOKEN`, and restarts aivi
-([operations](operations.md#plugins-aivi-install)). The manual path:
+writes the `plugins.channel-discord` block and `DISCORD_BOT_TOKEN`, and restarts aivi
+([operations](operations.md#plugins-aivi-add-and-aivi-remove)). The manual path:
 
 Create a Discord application
 and bot, then invite it to your server with `bot` and `applications.commands`.
@@ -114,16 +119,17 @@ Give it access to the selected channels and permission to send messages, add
 reactions, create public threads, and send messages in threads. Private threads also require bot
 membership/access.
 
-The short way is `aivi install discord`, which runs the package's own setup
-and writes the block for you. By hand, enable Discord with a
-`modules.discord` block in `<home>/config.json`, filled
-with your ids. The block is the whole module setup, and its presence enables
-the module (`false` is an explicit off):
+The short way is `aivi add discord`, which runs the package's own setup
+and writes the block for you. By hand, put a `plugins.channel-discord` block in
+`<home>/config.json`, filled
+with your ids, and put `@aivi/channel-discord` in the `aivi-plugins` list in
+`app/package.json` — the list is what enables the module, the block is its
+whole setup:
 
 ```json
 {
-  "modules": {
-    "discord": {
+  "plugins": {
+    "channel-discord": {
       "applicationId": "10000000000000001",
       "agent": "assistant",
       "access": {
@@ -142,7 +148,7 @@ OpenCode location; `directory` overrides that for an agent defined elsewhere).
 Discord and native chat run the same agent file.
 
 `DISCORD_BOT_TOKEN` comes from the environment (`<home>/.env`, see
-[secrets](configuration.md#secrets)). The host API takes no token; the host
+[secrets](../packages/host/docs/configuration.md#secrets)). The host API takes no token; the host
 discovers the running `opencode service` on its own. Configure your
 provider/model in native OpenCode for the assistant location.
 
@@ -172,7 +178,7 @@ npm run aivi -- serve
 
 Commands follow the code: at every start the module overwrites the application's
 command list with the shared command table (`/new`, `/status`, `/context`,
-`/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/help`; best effort,
+`/search`, `/model`, `/stop`, `/queue`, `/jobs`, `/link`, `/help`; best effort,
 logged); `discord register` does the same on demand without a restart. Global
 commands can take up to an hour to appear in clients. Only the final command is a long-running aivi process: it starts
 the host HTTP API, scheduler, knowledge service, and Discord together. OpenCode
@@ -192,8 +198,10 @@ for DMs and bot mentions.
 The shared machinery is described in [channels](channels.md#what-a-module-inherits);
 Discord's parameters: message ids are snowflakes and deduplicate gateway
 replays, replies are split at 1900 UTF-16 units, the binding that rotates
-sessions when it changes is `{ applicationId, agent, directory }`, and the
-turn timeout is `turnTimeoutMs`. `maxConcurrent` adds a Discord-specific upper
+sessions when it changes is `{ applicationId, agent, directory }`. Turn
+bounding waits for the dispatcher (the platform `turnTimeoutMs` options were
+removed 2026-10-03: they bounded chat turns only and lied about worker
+turns). `maxConcurrent` adds a Discord-specific upper
 bound on concurrent turns; `maxPending` bounds the inbox. The application lock
 prevents duplicate hosts; a module lock also protects the Discord inbox.
 

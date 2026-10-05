@@ -52,7 +52,20 @@ const defaultIo: UninstallIo = {
   },
   service: { installed: serviceInstalled, uninstall: serviceUninstall },
   opencodeOnPath: () => spawnSync('opencode', ['--version'], { stdio: 'ignore' }).status === 0,
-  pluginList: () => spawnSync('opencode', ['plugin', 'list'], { encoding: 'utf8' }).stdout ?? '',
+  // The one probe proven to hang: with the CLI on PATH but no service
+  // registered, `opencode plugin list` never exits. The deadline is
+  // OS-enforced on the spawn, so it holds while this loop itself blocks;
+  // silence then fails by name — an empty list would read as "no plugins"
+  // and the deletion below would leave an entry no listing ever named.
+  pluginList() {
+    const result = spawnSync('opencode', ['plugin', 'list'], {
+      encoding: 'utf8',
+      timeout: 500,
+      killSignal: 'SIGKILL',
+    });
+    if (result.error) throw new Error('opencode plugin list did not answer within 500 ms.', { cause: result.error });
+    return result.stdout ?? '';
+  },
   pluginRemove(pkg) {
     const result = spawnSync('opencode', ['plugin', 'remove', pkg], { stdio: 'inherit' });
     if (result.status !== 0)

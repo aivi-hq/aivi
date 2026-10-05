@@ -33,6 +33,15 @@ action, which OpenCode's default policy already allows. There is **no per-agent
 tool allowlist in v2** — availability is location-scoped registration, and you
 grant or withhold each tool with `permissions`.
 
+Besides its tools the plugin registers **one permission hook**: an
+`evaluate` hook that denies boundary git (`push`, `fetch`, `pull`, `clone`,
+`ls-remote`, `remote`) **in aivi's runs only** and says which aivi tool
+does it instead. Membership is the host's fact — `GET /run?session=`,
+answered from the run ledger — asked once per session and cached; a
+person's sessions are never denied, and a host that cannot answer fails
+open (the no-credential worktree mark is the safety, the hook is the
+signpost). See [git workflow](plans/git-workflow.md#the-redirect-hook).
+
 | Tool | Permission action | What it does | Permissions notes |
 | --- | --- | --- | --- |
 | `aivi_connection` | `aivi_connection` | Whether the host answers this process, its version, and which tools were loaded at startup | Read-only; probes `/health` and `/status`. The only tool when the host was down at load. |
@@ -42,6 +51,7 @@ grant or withhold each tool with `permissions`.
 | `aivi_status` | `aivi_status` | aivi version, job counts and capabilities | Read-only; does not start work. |
 | `aivi_context` | `aivi_context` | This conversation's context window, tokens, cost and knowledge scope | Read-only; takes the session id from the tool context. |
 | `aivi_jobs` | `aivi_jobs` | Create/list/pause/resume/remove/run jobs | Schedules work. Turn the tool off host-wide with `scheduler.agentSchedules: false`. |
+| `aivi_config` | `aivi_config` | Read the live `config.json`, write one block, or remove one — validated against the composed closed schema | The doing side of self-knowledge. A refused write leaves the file byte-identical. Turn it off host-wide with `host.agentConfigEdits: false` (then the tool is absent, not present-failing). Secrets stay `.env` territory. |
 | `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The seeded assistant denies `browser` (OpenCode's), **not** this one. |
 
 ### Giving tools to an agent
@@ -130,7 +140,7 @@ Walkthrough in [getting started](getting-started.md#the-assistant-in-opencode).
 The home is the OpenCode location, so knowledge, memory and
 project directories inside it need no `external_directory` rules; sources elsewhere get
 those rules from aivi per session. The OpenCode service caches
-`@aivi/host/client`, so restart it after every change to the plugin or client
+`@aivi/plugin/api`, so restart it after every change to the plugin or client
 (`opencode.lifecycle: "own"` does this at `aivi serve` startup).
 
 ## Host submission
@@ -153,7 +163,11 @@ npm run aivi -- runs list
 ```
 
 `aivi setup` seeds the home's `.opencode/agents/` (`assistant.md`,
-`dreamer.md`) from `packages/cli/templates/agents/`.
+`dreamer.md`, and the worker files `product.md`, `dev.md`, `review.md`) from
+`packages/cli/templates/agents/`. All five deny the `question` tool: no
+channel client can answer one yet, so a question asked
+in an unattended turn would only hang waiting for an answer
+([discord-polish](backlog/discord-polish.md) is the way it lands).
 
 The running host dispatches queued runs through the session driver
 (`packages/host/src/session.ts`): create the session with a client-chosen id,
@@ -200,7 +214,7 @@ host validates the agent with `agent.list` for that directory before creating
 anything (verified 2026-09-15: `agent.get` does not see agents defined under a
 directory's `.opencode/`, `agent.list` with a location does). Behaviour and
 the configuration switch are in
-[configuration](configuration.md#agent-created-jobs).
+[configuration](../packages/host/docs/configuration.md#agent-created-jobs).
 
 ## Browser tool
 
@@ -208,4 +222,4 @@ The `browser` module claims the descriptor for `aivi_browser` (permission
 action `aivi_browser`) and the host serves that claim only while the module is
 composed; a host without it serves no such tool and no agent sees it.
 Ownership comes from the native tool context, not tool arguments. Install and
-configure it with `aivi install browser`; see [browser setup](browser.md).
+configure it with `aivi add browser`; see [browser setup](browser.md).

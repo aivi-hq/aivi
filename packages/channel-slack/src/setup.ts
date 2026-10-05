@@ -1,5 +1,5 @@
 /**
- * The setup `aivi install slack` runs: everything Slack-specific lives in
+ * The setup `aivi add slack` runs: everything Slack-specific lives in
  * this file — the app manifest to paste, which two tokens to ask for and how
  * to verify them, what to write into config.json and .env. The CLI runs it
  * blind: it installs the package, hands it a context, and brings aivi back
@@ -9,8 +9,8 @@
  * every id matches the platform's shape, and a config.json that no longer
  * loads is restored to its old bytes.
  */
-import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/core';
-import { isChannelId } from './config.ts';
+import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
+import { isChannelId, MODULE_ID } from './config.ts';
 import { slackManifest } from './module.ts';
 
 /** Clack answers Ctrl+C with its cancel symbol and an empty Enter with
@@ -69,10 +69,10 @@ async function collectIds(
 }
 
 const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
-  const existing = (ctx.config.modules as Record<string, unknown> | undefined)?.slack;
-  if (existing !== undefined && existing !== false)
+  const existing = (ctx.config.plugins as Record<string, unknown> | undefined)?.[MODULE_ID];
+  if (existing !== undefined)
     throw new Error(
-      'Slack is already configured (the modules.slack block in config.json). Edit that block; install configures a module that is not configured yet.',
+      'Slack is already configured (the plugins.channel-slack block in config.json). Edit that block; aivi add configures a module that is not configured yet.',
     );
   const prefix =
     settled(
@@ -157,9 +157,9 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   };
   await ctx.writeSecret('SLACK_BOT_TOKEN', botToken);
   await ctx.writeSecret('SLACK_APP_TOKEN', appToken);
-  await ctx.writeConfigBlock(['modules', 'slack'], block);
+  await ctx.writeConfigBlock(['plugins', MODULE_ID], block);
   return {
-    module: 'slack',
+    module: MODULE_ID,
     summary: [
       `Slack is configured for workspace ${workspace}: /${prefix}-* commands.`,
       channelIds.length ? '' : 'No shared channels: aivi will answer DMs only.',

@@ -1,4 +1,4 @@
-/** The release gate for the thin CLI: the published artifact is installed
+/** The release gate for the CLI: the published artifact is installed
  *  alone and made to run. Inside the workspace every import resolves through
  *  the root node_modules hoist, so `npm test` cannot see what a person's
  *  `npm i -g @aivi/cli` sees — `aivi help` died in the wild that way (the
@@ -35,7 +35,7 @@ try {
   if (!help.includes('Usage: aivi') || !help.includes('setup')) throw new Error(`aivi help lost its words:\n${help}`);
   const version = run(installed, ['--version']).trim();
   if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`aivi --version said: ${version}`);
-  // The forward path without any home must say so, not crash with a module
+  // The mount path without any home must say so, not crash with a module
   // error. HOME and XDG_CONFIG_HOME are fenced to the prefix so a development
   // machine's own installation cannot answer for the smoke.
   const fenced = {
@@ -45,11 +45,13 @@ try {
   };
   delete fenced.AIVI_HOME;
   try {
-    run(installed, ['status'], { env: fenced });
+    // stderr is captured (not passed through) for the assertion below: the
+    // honest refusal is expected here, and its echo is the smoke's business.
+    run(installed, ['status'], { env: fenced, stdio: ['ignore', 'pipe', 'pipe'] });
     throw new Error('aivi status without a home should fail');
   } catch (error) {
     const stderr = String(error.stderr ?? '');
-    if (error.status === 0 || !/No aivi home known|No aivi server/.test(stderr))
+    if (error.status === 0 || !/unknown command|No aivi server/.test(stderr))
       throw new Error(`aivi status without a home said: ${stderr || error.message}`);
   }
   console.log(`pack-smoke: @aivi/cli ${version} installed alone and answers.`);

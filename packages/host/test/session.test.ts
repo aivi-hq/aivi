@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import type { SessionEvent, SessionEventListener, SessionEvents } from '../src/events.ts';
+import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/plugin/module';
 import { connectOpenCode } from '../src/opencode.ts';
 import { finalAnswer, PermissionRequired, runTurn } from '../src/session.ts';
 
@@ -42,7 +42,7 @@ test('only the matching completed final answer is returned, without reasoning or
   const failed = structuredClone(messages);
   (failed.at(-1) as { outcome: string }).outcome = 'failed';
   assert.throws(() => finalAnswer(failed, 'msg_one', 'assistant'), /No confirmed/);
-  // A /steer into this turn is a user message that belongs to it; any other user message means the session moved on.
+  // An interjection steered into this turn is a user message that belongs to it; any other user message means the session moved on.
   const steered = structuredClone(messages);
   steered.splice(3, 0, {
     type: 'user',
@@ -78,6 +78,9 @@ function mockOpenCode(
     contextLagsFor?: number;
     /** Runs when `wait` is requested, before it answers: the moment a permission would be asked. */
     waitUntil?: () => void;
+    /** The real server's shape: a pending permission parks `wait` until
+     *  someone replies. Off by default, where the fake answers at once. */
+    parkWait?: boolean;
     onPermissionList?: () => void;
     /** What the session reports as its model (`session.get`); the assistant's file pins gemini-3.8-flash. */
     sessionModel?: { id: string; providerID: string };
@@ -147,6 +150,9 @@ function mockOpenCode(
     const url = req.url!;
     if (url.endsWith('/wait')) options.waitUntil?.();
     if (url.startsWith('/api/agent')) return void res.end(AGENTS_BODY);
+    // A parked wait holds the response — the real server parks it on the
+    // pending permission and only a reply (or the turn's own end) settles it.
+    if (url.endsWith('/wait') && options.parkWait && pending.length > 0) return;
     if (req.method === 'PATCH' || url.endsWith('/wait') || url.endsWith('/model')) return void res.writeHead(204).end();
     const asked = permissionRoute(url, req.method!);
     if (asked) return void res.writeHead(asked.status).end(asked.body);
@@ -168,7 +174,12 @@ async function withServer<T>(
   run: (client: Awaited<ReturnType<typeof connectOpenCode>>) => Promise<T>,
 ): Promise<T> {
   await new Promise<void>(resolve => mock.server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => mock.server.close(() => resolve())));
+  t.after(async () => {
+    // A parked wait is still open when the turn ends; the server lets go of
+    // its sockets too, not just its listener.
+    mock.server.closeAllConnections();
+    await new Promise<void>(resolve => mock.server.close(() => resolve()));
+  });
   const address = mock.server.address();
   assert.ok(address && typeof address !== 'string');
   const config = configSchema.parse({ version: 1, opencode: { url: `http://127.0.0.1:${address.port}` } });
@@ -288,6 +299,28 @@ test('runTurn with onPermission fail leaves the prompt pending and throws Permis
     ),
   );
   assert.ok(!mock.requests.some(r => r.path.includes('/reply')));
+});
+
+test('a fail verdict given before the race fails the turn — it never parks the wait forever', async t => {
+  // The wait parks on the pending permission, as the real server parks it.
+  // The verdict for that permission was already given before any race was
+  // armed, and an abort only fires forward: a turn that waited for the
+  // race to notice would wait on the very permission that can never be
+  // answered. The standing verdict answers first; the turn fails in words.
+  const mock = mockOpenCode({
+    parkWait: true,
+    pending: [{ id: 'per_9', action: 'shell', resources: ['rm -rf'] }],
+  });
+  await withServer(t, mock, async client => {
+    await assert.rejects(
+      runTurn(
+        client,
+        { ...input, create: false },
+        { signal: AbortSignal.timeout(5000), events: quiet, onPermission: 'fail' },
+      ),
+      (error: unknown) => error instanceof PermissionRequired && error.requests[0]!.action === 'shell',
+    );
+  });
 });
 
 test('runTurn refuses a session whose agent changed', async t => {

@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { z } from 'zod';
 import { nextOccurrence } from '../src/clock.ts';
 import {
-  assistantAgent,
+  composeConfigSchema,
   configSchema,
   gitIdentity,
   hostUrl,
   jobSchema,
-  linearSecretNames,
   loadConfig,
   printedBaseUrl,
   projectsSyncJob,
@@ -22,111 +22,71 @@ import {
   userTaskSchema,
 } from '../src/config.ts';
 
-test('linear settings: defaults, secret names, reserved pool', () => {
-  const linear = configSchema.parse({ version: 1, linear: { apps: { dev: {} } } }).linear!;
-  assert.deepEqual(
-    [linear.listener, linear.humanLabel, linear.resource, linear.progress, linear.turnTimeoutMs, linear.logMisroutes],
-    [false, 'needs-human', 'local-model', 'tools', 7_200_000, true],
-  );
-  assert.deepEqual(linear.mcp, { port: 4101 }, 'the Linear MCP is on by default on its loopback port');
-  assert.deepEqual(configSchema.parse({ version: 1, linear: { apps: { dev: {} }, mcp: false } }).linear!.mcp, false);
-  assert.deepEqual(linearSecretNames('dev-app'), {
-    clientId: 'LINEAR_DEV_APP_CLIENT_ID',
-    clientSecret: 'LINEAR_DEV_APP_CLIENT_SECRET',
-    webhookSecret: 'LINEAR_DEV_APP_WEBHOOK_SECRET',
-  });
-  assert.ok(
-    configSchema.safeParse({ version: 1, linear: { apps: { data: {} } } }).success,
-    'no app id is reserved: the bare LINEAR_* names mean the primary',
-  );
-  assert.match(
-    JSON.stringify(configSchema.safeParse({ version: 1, linear: { apps: {}, resource: 'gpu' } }).error?.issues),
-    /Unknown resource pool/,
-  );
-  assert.match(
-    JSON.stringify(
-      configSchema.safeParse({
-        version: 1,
-        linear: { apps: { dev: {} } },
-        projects: {
-          website: { linear: { teams: ['lt-1'], lanes: {} } },
-          api: { linear: { teams: ['lt-1', 'lt-2'], lanes: {} } },
-        },
-      }).error?.issues,
-    ),
-    /already mapped to project website/,
+test('plugins is an open record in the core schema: blocks pass through as written', () => {
+  const block = { connection: { mode: 'launch', userDataDir: 'state/chrome' } };
+  const parsed = configSchema.parse({ version: 1, plugins: { browser: block, 'cool-thing': { any: true } } });
+  assert.deepEqual(parsed.plugins.browser, block, 'the block is kept as written: its plugin validates it');
+  assert.equal(
+    configSchema.safeParse({ version: 1, plugins: { 'Bad Id': {} } }).success,
+    false,
+    'block keys are module ids',
   );
 });
 
-test('channel modules are blocks in the one file: presence enables with defaults, false is off, the pool must exist', () => {
-  const on = configSchema.parse({
-    version: 1,
-    modules: {
-      discord: { applicationId: '10000000000000001', access: {} },
-      slack: { access: {} },
+test('composeConfigSchema closes the plugins record to the registered plugins', () => {
+  const composed = composeConfigSchema({
+    alpha: z.strictObject({ resource: z.string().default('local-model'), name: z.string().default('a') }),
+  });
+  assert.equal(composed.safeParse({ version: 1 }).success, true);
+  const parsed = composed.parse({ version: 1, plugins: { alpha: {} } });
+  assert.deepEqual(parsed.plugins.alpha, { resource: 'local-model', name: 'a' }, 'the plugin schema fills defaults');
+  assert.equal(
+    composed.safeParse({ version: 1, plugins: { beta: {} } }).success,
+    false,
+    'a block for an unregistered plugin fails: configured, not registered',
+  );
+  assert.equal(composed.safeParse({ version: 1, unexpected: true }).success, false, 'core fields stay strict');
+  assert.match(
+    JSON.stringify(composed.safeParse({ version: 1, plugins: { alpha: { resource: 'nope' } } }).error?.issues),
+    /Unknown resource pool; name one of scheduler\.resources or remove the plugins\.alpha block/,
+  );
+});
+
+test('plugins contribute project sections: projects close like the plugins record does', () => {
+  const composed = composeConfigSchema(
+    { alpha: z.strictObject({ name: z.string().default('a') }) },
+    {
+      alpha: {
+        project: z.strictObject({ widget: z.string().default('w') }),
+        defaults: z.strictObject({ gadget: z.number().default(7) }),
+      },
     },
-  });
-  if (typeof on.modules.discord !== 'object' || typeof on.modules.slack !== 'object')
-    throw new Error('present blocks parse to settings, not false');
-  assert.equal(on.modules.discord.agent, 'assistant');
-  assert.equal(on.modules.slack.commandPrefix, 'aivi');
-  assert.deepEqual(configSchema.parse({ version: 1, modules: { discord: false } }).modules, { discord: false });
-  assert.match(
-    JSON.stringify(
-      configSchema.safeParse({
-        version: 1,
-        modules: { discord: { applicationId: '10000000000000001', access: {}, resource: 'nope' } },
-      }).error?.issues,
-    ),
-    /Unknown resource pool; name one of scheduler\.resources or set modules\.discord to false/,
   );
-});
-
-test('browser is opt-in: absent builds nothing, false is off, a block builds the service', () => {
-  assert.equal('browser' in configSchema.parse({ version: 1 }), false, 'no prefault: a fresh home has no browser');
-  assert.equal(configSchema.parse({ version: 1, browser: false }).browser, false);
-  const built = configSchema.parse({
-    version: 1,
-    browser: { connection: { mode: 'launch', userDataDir: 'state/chrome' } },
-  }).browser;
-  if (typeof built !== 'object') throw new Error('a present block parses to settings, not false');
-  assert.deepEqual(built.connection, { mode: 'launch', userDataDir: 'state/chrome', headless: false });
-});
-
-test('a modules.*.config pointer is the old shape and says where the settings went', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-inline-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(
-    join(root, 'config.json'),
-    JSON.stringify({ version: 1, modules: { discord: { config: 'discord.json' } } }),
+  const parsed = composed.parse({ version: 1, projects: { site: { alpha: {} } }, projectDefaults: { alpha: {} } });
+  // Core cannot type what it does not know: the plugin reads its own sections
+  // back with a cast — the `plugins.<id>` pattern, one level down.
+  const site = parsed.projects.site as { enabled: boolean; alpha?: { widget: string } };
+  assert.deepEqual(
+    site,
+    { enabled: true, alpha: { widget: 'w' } },
+    'the contributed schema fills the project section defaults',
   );
-  await assert.rejects(loadConfig(join(root, 'config.json')), /the discord settings live inline/);
-});
-
-test('config rejects ambiguous Linear primary settings and invalid job resources', () => {
-  // Several apps without a primary: which one carries the data feed is ambiguous.
+  const defaults = parsed.projectDefaults as { alpha?: { gadget: number } };
+  assert.deepEqual(defaults.alpha, { gadget: 7 }, 'and the projectDefaults section alike');
+  assert.equal(composed.safeParse({ version: 1 }).success, true, 'sections are optional: nothing written parses');
   assert.equal(
-    configSchema.safeParse({
-      version: 1,
-      linear: { apps: { developer: {}, reviewer: {} } },
-    }).success,
+    composed.safeParse({ version: 1, projects: { site: { beta: {} } } }).success,
     false,
+    'a project section no registered plugin contributes is an unrecognized key',
   );
-  // A primary that is not a configured app is a typo.
   assert.equal(
-    configSchema.safeParse({
-      version: 1,
-      linear: { primary: 'ghost', apps: { developer: {}, reviewer: {} } },
-    }).success,
+    composed.safeParse({ version: 1, projectDefaults: { alpha: { gadget: 'seven' } } }).success,
     false,
+    'the contributed schema validates the defaults section too',
   );
-  assert.equal(
-    configSchema.safeParse({
-      version: 1,
-      linear: { primary: 'developer', apps: { developer: {}, reviewer: {} } },
-    }).success,
-    true,
-  );
+});
+
+test('config rejects invalid job resources and timezones and unknown fields', () => {
   assert.equal(
     configSchema.safeParse({
       version: 1,
@@ -155,7 +115,10 @@ test('config rejects ambiguous Linear primary settings and invalid job resources
     }).success,
     false,
   );
-  assert.equal(configSchema.safeParse({ version: 1, unexpected: true }).success, false);
+  // The open core schema passes unknown fields through untouched: plugins are
+  // unknown to core by design, and the composed schema is the gate that
+  // refuses them (asserted above, where a registered plugin stands).
+  assert.equal(configSchema.safeParse({ version: 1, unexpected: true }).success, true);
 });
 
 test('a job is recurring (cron) or one-off (at), never both or neither; misfire is one grace knob', () => {
@@ -295,7 +258,8 @@ test('projects are the directories of <home>/projects; config.json only override
     'a removed project keeps only its memory',
   );
   assert.equal(loaded.projects[1]!.directory, join(root, 'projects/website/source'));
-  assert.equal(loaded.projects[1]!.linear!.lanes.Review!.agent, 'worker');
+  // (the `linear` section is a plugin's own: core passes it through unread; the
+  //  lane merge and team checks live in @aivi/tracker-linear and are tested there)
   // The convention (docs as doc, docs/adr as decision) plus the project's memory, or the project's own list plus memory.
   assert.deepEqual(
     selectSources(loaded, ['website'], false).map(s => [s.id, s.kind, s.path]),
@@ -348,52 +312,117 @@ test('projects are the directories of <home>/projects; config.json only override
   assert.equal(configSchema.safeParse({ version: 1, projects: { 'Bad Id': {} } }).success, false);
 });
 
-test('projectDefaults.linear.lanes is the base; a project wins one lane at a time, and null means humans work it', async t => {
+test('core passes a plugin project section through unread and unwidened', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-lanes-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'projects/site/source'), { recursive: true });
-  const write = (extra: Record<string, unknown>) =>
-    writeFile(
-      join(root, 'config.json'),
-      JSON.stringify({ version: 1, linear: { primary: 'dev', apps: { dev: {}, review: {} } }, ...extra }),
-    );
-  await write({
-    projectDefaults: { linear: { lanes: { Dev: 'dev', Review: 'dev', Triage: null }, workspaceId: 'ws-default' } },
-    projects: {
-      site: { linear: { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } } },
-    },
-  });
-  const routing = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
-  assert.deepEqual(
-    routing.lanes,
-    { Dev: { agent: 'dev', worktree: true }, Review: { agent: 'reviewer', worktree: false } },
-    'the convention is the base, the entry wins per lane, and human lanes are absent from the map the listener consults',
+  const linearSection = { teams: ['t-1'], lanes: { Review: { agent: 'reviewer', worktree: false }, Shipped: null } };
+  await writeFile(
+    join(root, 'config.json'),
+    JSON.stringify({
+      version: 1,
+      projectDefaults: { linear: { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
+      projects: { site: { linear: linearSection } },
+    }),
   );
-  assert.equal(routing.workspaceId, 'ws-default', 'workspaceId falls back to the convention');
-  const raw = JSON.parse(await readFile(join(root, 'config.json'), 'utf8'));
-  assert.equal(raw.projects.site.linear.lanes.Shipped, null, 'the file keeps the human lanes');
+  const loaded = await loadConfig(join(root, 'config.json'));
+  // The section is present in the raw config exactly as written — core parsed it
+  // with the open catchall and read nothing inside — and the plugin's own schema
+  // (its merge, its human-lane drop) is what turns it into routing, tested in
+  // @aivi/tracker-linear. The core Project view carries no `linear`.
+  assert.deepEqual((loaded.config.projects.site as unknown as { linear: unknown }).linear, linearSection);
+  assert.equal('linear' in loaded.projects[0]!, false, 'core hands the project view without a plugin section');
+});
 
-  // A bare linear entry gets the whole convention, workspaceId included.
-  await write({
-    projectDefaults: { linear: { lanes: { Dev: 'dev' }, workspaceId: 'ws-default' } },
-    projects: { site: { linear: { teams: ['t-1'] } } },
+test('dispatcher config: no pools means unlimited, timeouts default, fallback chains load-check', () => {
+  const plain = configSchema.parse({ version: 1 });
+  assert.equal(plain.dispatcher.pools, undefined, 'no pools block: capacity is not moderated');
+  assert.deepEqual(plain.dispatcher.timeouts, { idle: '180m', prepare: '5m' });
+  assert.equal(plain.orchestrator.elicitationKeepAlive, '5m', 'the orchestrator’s own dial, at the root');
+
+  const pools = { default: { capacity: 2 }, worker: { model: 'a/b', capacity: 2, fallback: 'default' } };
+  const ok = configSchema.safeParse({
+    version: 1,
+    dispatcher: { pools, timeouts: { idle: '1h 30m' } },
+    orchestrator: { elicitationKeepAlive: '10m' },
   });
-  const bare = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
-  assert.deepEqual(
-    bare.lanes,
-    { Dev: { agent: 'dev', worktree: true } },
-    'the convention applies untouched when the project maps nothing',
+  assert.equal(ok.success, true, 'durations add by spaces: 1h 30m parses');
+
+  const missing = configSchema.safeParse({ version: 1, dispatcher: { pools: { a: { capacity: 1, fallback: 'b' } } } });
+  assert.equal(missing.success, false);
+  assert.match(JSON.stringify(missing.error?.issues), /falls back to .*b.* which is not a configured pool/);
+
+  const cycle = configSchema.safeParse({
+    version: 1,
+    dispatcher: { pools: { a: { capacity: 1, fallback: 'b' }, b: { capacity: 1, fallback: 'a' } } },
+  });
+  assert.equal(cycle.success, false, 'fallback chains must end');
+  assert.match(JSON.stringify(cycle.error?.issues), /cycles through/);
+
+  const bogus = configSchema.safeParse({ version: 1, dispatcher: { timeouts: { idle: '90' } } });
+  assert.match(JSON.stringify(bogus.error?.issues), /Not a duration/);
+});
+
+test('lane arrays load-validate: unique names, real next/previous targets, and one queue feeding a worker', () => {
+  const lanes = (written: unknown[]) => configSchema.safeParse({ version: 1, projects: { site: { lanes: written } } });
+  assert.equal(
+    lanes([
+      { name: 'Todo', agent: 'dev', pool: 'worker' },
+      { name: 'Review', agent: 'dev' },
+    ]).success,
+    true,
+    'queue and pool are optional; a named pool loads inert until the dispatcher is built',
   );
-  assert.equal(bare.workspaceId, 'ws-default');
-
-  // A lane names an OpenCode agent; no app resolution happens at load time — an
-  // unknown agent file is OpenCode's own error at session start.
-  await write({
-    projectDefaults: { linear: { lanes: { Dev: 'ghost-agent' } } },
-    projects: { site: { linear: { teams: ['t-1'] } } },
-  });
-  const ghosted = (await loadConfig(join(root, 'config.json'))).projects[0]!.linear!;
-  assert.deepEqual(ghosted.lanes, { Dev: { agent: 'ghost-agent', worktree: true } });
+  assert.equal(
+    lanes([
+      { name: 'Todo', agent: 'dev' },
+      { name: 'Todo', agent: 'dev' },
+    ]).success,
+    false,
+  );
+  assert.match(JSON.stringify(lanes([{ name: 'Todo', agent: 'dev', next: 'Gone' }]).error?.issues), /not a lane/);
+  // The queue lane's rules (docs/orchestrator.md): at most one per workflow,
+  // never worked by an agent of its own, and its next lane — by override or
+  // by order — is a worker lane. All loud, all at load.
+  assert.equal(
+    lanes([
+      { name: 'Todo', queue: true },
+      { name: 'In Progress', agent: 'dev' },
+    ]).success,
+    true,
+  );
+  assert.match(
+    JSON.stringify(
+      lanes([
+        { name: 'Todo', queue: true, agent: 'dev' },
+        { name: 'Doing', agent: 'dev' },
+      ]).error?.issues,
+    ),
+    /holds work, it works none/,
+  );
+  assert.match(
+    JSON.stringify(
+      lanes([
+        { name: 'A', queue: true },
+        { name: 'B', queue: true },
+        { name: 'C', agent: 'dev' },
+      ]).error?.issues,
+    ),
+    /at most one queue lane/,
+  );
+  assert.match(JSON.stringify(lanes([{ name: 'Todo', queue: true }]).error?.issues), /has no next lane/);
+  assert.match(
+    JSON.stringify(lanes([{ name: 'Todo', queue: true }, { name: 'Review' }]).error?.issues),
+    /no agent works/,
+  );
+  assert.match(
+    JSON.stringify(
+      lanes([{ name: 'Todo', queue: true, next: 'Review' }, { name: 'In Progress', agent: 'dev' }, { name: 'Review' }])
+        .error?.issues,
+    ),
+    /no agent works/,
+    'the next override is held to the same rule as plain order',
+  );
 });
 
 test('calendar calculations use the configured timezone across daylight saving changes', () => {
@@ -472,11 +501,10 @@ test('scheduler.timezone is the host-wide default; a per-job timezone wins over 
 test('identity is the persona, and who a worker commits as comes from the file, the machine, then the app', async () => {
   const bare = configSchema.parse({ version: 1 });
   assert.equal(bare.identity.name, 'aivi', 'the persona has a default');
-  assert.equal(assistantAgent(bare), 'assistant', 'the one assistant is the fallback name');
   assert.equal(
-    assistantAgent(configSchema.parse({ version: 1, identity: { name: 'Clawd The' } })),
-    'assistant',
-    'the persona name is never slugged into an agent name; the display name stays free-form',
+    configSchema.parse({ version: 1, identity: { name: 'Clawd The' } }).identity.name,
+    'Clawd The',
+    'the display name stays free-form; the assistant agent name is the Linear plugin’s own',
   );
   const app = { name: 'aivi-agent[bot]', email: '331678708+aivi-agent[bot]@users.noreply.github.com' };
   const machine = async (key: string) => (key === 'opencode.coauthor' ? 'Jane Doe <jane@example.com>' : '');
@@ -514,13 +542,6 @@ test('identity is the persona, and who a worker commits as comes from the file, 
   );
 });
 
-test('a top-level name is the old shape and says where the persona went', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aivi-identity-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(join(root, 'config.json'), JSON.stringify({ version: 1, name: 'aivi' }));
-  await assert.rejects(loadConfig(join(root, 'config.json')), /identity\.name/);
-});
-
 test('host.public: the reach address, validated and preferred when printed', () => {
   const host = configSchema.parse({ version: 1 }).host;
   assert.equal(host.public, undefined, 'unset by default: asked, never guessed');
@@ -541,4 +562,43 @@ test('host.public: the reach address, validated and preferred when printed', () 
     url: 'http://127.0.0.1:4100',
     declared: false,
   });
+});
+
+test('the install record seeds manual sources, in place, disabled plugins included', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-manual-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, 'config.json');
+  await writeFile(configPath, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  const app = join(root, 'app');
+  await mkdir(join(app, 'node_modules', '@aivi', 'host', 'docs'), { recursive: true });
+  await mkdir(join(app, 'node_modules', '@aivi', 'dead', 'docs'), { recursive: true });
+  await writeFile(join(app, 'node_modules', '@aivi', 'host', 'docs', 'configuration.md'), '# Configuration\n');
+  await writeFile(
+    join(app, 'package.json'),
+    JSON.stringify({
+      name: 'aivi-server',
+      'aivi-plugins': ['@aivi/host', ['@aivi/dead', false], 'plain-no-docs'],
+    }),
+  );
+  const loaded = await loadConfig(configPath);
+  const manuals = loaded.sources.filter(s => s.kind === 'manual');
+  assert.deepEqual(
+    manuals.map(s => ({ id: s.id, scope: s.scope })),
+    [
+      { id: 'manual:@aivi/host', scope: 'core' },
+      { id: 'manual:@aivi/dead', scope: 'core' },
+    ],
+    'the list indexes regardless of the enablement flag; a package without docs is no source',
+  );
+  assert.equal(manuals[0]!.path, join(app, 'node_modules', '@aivi', 'host', 'docs'), 'indexed in place: no copying');
+
+  // A home without the install record is a home with nothing installed: no error, no sources.
+  const bare = join(root, 'bare');
+  await mkdir(bare);
+  await writeFile(join(bare, 'config.json'), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+  assert.deepEqual(
+    (await loadConfig(join(bare, 'config.json'))).sources.filter(s => s.kind === 'manual'),
+    [],
+    'no install record, no manual sources',
+  );
 });

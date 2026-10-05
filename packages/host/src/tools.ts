@@ -1,30 +1,11 @@
 import type { ServedTool, ToolDescriptor } from '@aivi/core';
 import { toolDescriptorSchema } from '@aivi/core';
+import type { ToolClaims, ToolHandler } from '@aivi/plugin/module';
 import { ConfigurationError } from './modules.ts';
 
-/** One call as the generic dispatch hands it over: the envelope's ids, the model's input. */
-export interface ToolCall {
-  sessionId: string;
-  messageId?: string;
-  input: Record<string, unknown>;
-}
-/** What a claimed tool does; `POST /tools` dispatches to it. */
-export type ToolHandler = (call: ToolCall) => Promise<unknown>;
-
-/** A tool failed with an answer for the agent: this status and message reach the caller. */
-export class ToolError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
-
-/** The tool door as one module sees it: claims carry the module's own id. */
-export interface ToolClaims {
-  claim(descriptor: ToolDescriptor, handler: ToolHandler): void;
-  release(id: string): void;
-}
+// The error classes a module may throw live in the kit's module contract,
+// not here; the host re-exports them so its own code keeps one import line.
+export { ToolError } from '@aivi/plugin/module';
 
 /**
  * What `GET /tools` serves and `POST /tools` dispatches over: the

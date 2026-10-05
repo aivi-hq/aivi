@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.build.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "./tsconfig.cli.build.tsbuildinfo"
+  },
+  "//": "The surface: what the host provides for @aivi/cli to collect (src/cli.ts, src/cli) and the boot launchd runs directly (src/server.ts). The plugin list imports listed packages dynamically by name, so no references are needed for them; the one static plugin import is tracker-linear, which projects.ts uses for its interactive Linear setup.",
+  "include": ["src/cli.ts", "src/cli", "src/server.ts"],
+  "references": [
+    { "path": "./tsconfig.build.json" },
+    { "path": "../knowledge/tsconfig.build.json" },
+    { "path": "../tracker-linear/tsconfig.build.json" }
+  ]
+}

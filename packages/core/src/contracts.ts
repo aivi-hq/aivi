@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { KnowledgeSource, Report, Task } from './config.ts';
+import type { Job, KnowledgeSource, Report, Task } from './config.ts';
 import { knowledgeKindSchema } from './config.ts';
 import type { KnowledgeKind } from './kinds.ts';
 import type { ServedTool } from './tools.ts';
@@ -27,12 +27,76 @@ export interface Run {
   error: string | null;
   report: Report | null;
 }
+/** A call the host answered, as the request diary holds it: what a setup
+ *  flow watches to prove a platform's webhook arrived. */
+export interface RequestLogEntry {
+  id: number;
+  at: number;
+  method: string;
+  path: string;
+  status: number;
+  body: string | null;
+  truncated: boolean;
+  headers: Record<string, string>;
+}
+/** A held unit of capacity: one run of one resource, until it settles. The
+ *  dispatcher's lease joins this table as a column when capacity lands. */
+export interface Lease {
+  id: string;
+  owner: string;
+  resource: string;
+  state: 'running' | 'blocked';
+  createdAt: number;
+  reason: string | null;
+}
+/** One line of a run's audit trail: what happened, when, and why. */
+export interface AuditEntry {
+  seq: number;
+  runId: string;
+  at: number;
+  action: string;
+  reason: string;
+}
+/** How an agent or CLI request creates a job: the idempotence key that
+ *  makes a retried call create one job, not two, and the audit reason. */
+export interface AddJobOptions {
+  /** Identical requests with the same key create one job; a different task under the same key is refused. */
+  dedupeKey?: string;
+  /** Audit reason for the first run's `enqueued` entry; default `job:<id>`. */
+  reason?: string;
+}
+/** The run history read: one job, one state, the newest `limit` kept. */
+export interface RunFilter {
+  jobId?: string;
+  state?: RunState;
+  /** Keep only the newest `limit` runs. */
+  limit?: number;
+}
 /** Who defined a job: `config.json`, an agent through `aivi_jobs`, the operator CLI, or the host itself (retention). */
 export type JobSource = 'config' | 'agent' | 'operator' | 'system';
 /** A definition's own state; `done` and `missed` only happen to one-offs. */
 export type JobState = 'active' | 'paused' | 'done' | 'missed';
+/** A job as the store holds it: the definition, who wrote it, and its key. */
+export interface JobEntry {
+  spec: Job;
+  source: JobSource;
+  state: JobState;
+  /** The next occurrence to materialize; null once a one-off has fired or when nothing is left. */
+  nextAt: number | null;
+  createdAt: number;
+  /** Idempotency key of a job created outside config.json (a tool message id, a CLI `--key`). */
+  dedupeKey: string | null;
+}
+/** What a task handler may do while it runs: stop when told, name the session it opened. */
+export interface ExecutionContext {
+  signal: AbortSignal;
+  attachSession(id: string): void;
+}
+/** How a task run ended, as the handler says; `blocked` waits for a person. */
+export type ExecutionResult = { state: 'succeeded' | 'failed' | 'blocked'; result: unknown; reason?: string };
 /** One optional module as the host sees it; `degraded` means its start failed and is being retried. */
 export interface ModuleHealth {
+  /** The module's own id — the package's short name, as `plugins.<id>`. */
   id: string;
   state: 'starting' | 'running' | 'degraded' | 'stopped';
   attempts: number;
@@ -140,6 +204,18 @@ export const searchSchema = sourceSelectionSchema.extend({
   query: z.string().trim().min(1).max(2000),
   limit: z.number().int().min(1).max(20).default(8),
 });
+
+/** The input of `aivi_config`: the read/write door to the live `config.json`
+ *  (the doing side of self-knowledge, docs/plans/templates/self-knowledge.md).
+ *  One block per write; the composed closed schema is the referee. */
+export const configToolSchema = z
+  .strictObject({
+    action: z.enum(['read', 'write', 'remove']),
+    path: z.array(z.string().min(1).max(60)).min(1).max(6).optional(),
+    value: z.unknown(),
+  })
+  .refine(call => call.action === 'read' || call.path !== undefined, 'write and remove need a path of key segments')
+  .refine(call => call.action !== 'write' || call.value !== undefined, 'write needs a value');
 export interface SearchHit {
   sourceId: string;
   kind: KnowledgeKind;
@@ -216,6 +292,10 @@ export interface HostClient {
   ): Promise<unknown>;
   /** Liveness only: succeeds when the host answers HTTP, whatever it thinks of the caller. */
   health(): Promise<{ ok: true }>;
+  /** Is this OpenCode session one of aivi's runs? The redirect hook's one
+   *  question, answered from the run ledger: a person's session is never an
+   *  aivi run and never denied. */
+  runMembership(sessionId: string): Promise<{ run: boolean }>;
   /** The person the bearer names; the one endpoint a request cannot make anonymously. */
   whoami(): Promise<Whoami>;
   /** Operator people management; ungated until the api-only session enforces roles. */

@@ -9,7 +9,7 @@ the tools themselves are the first build.
 
 ## Idea
 
-From any channel — the Linear assistant, the Discord/Slack librarian — an
+From any channel — the assistant on Linear, Discord or Slack — an
 operator can ask aivi to do installation work it can already do from the CLI:
 
 - add a project (clone, register, map Linear teams and lanes, index)
@@ -29,11 +29,13 @@ The rework changed the ground this page stood on:
   holders: they already run on the channel machinery with per-agent files, and
   the soul exists as a file an agent could maintain.
 - **The CLI's operations are already library code** (`packages/core/src/projects.ts`:
-  `addProject`, `writeProjectLinear`, `removeProject`, `purgeProject`), and the
+  `removeProject`, `purgeProject`; adding a project is the role-driven
+  `runProjectSetup` in `packages/host/src/cli/project-setup.ts`, which runs each
+  configured plugin's `./setupProject`), and the
   plugin already reaches the host API (`aivi_jobs` can create, run, pause,
   remove). An operator tool is mostly a thin wrapper over an existing path.
 - **Linear onboarding proved the pattern live** (2026-09-19 dogfood): the
-  librarian created the `needs-human` label through the Linear MCP from a
+  assistant created the `needs-human` label through the Linear MCP from a
   conversation. What is missing is the aivi side (config, projects) — the
   Linear side of onboarding already works by conversation.
 - The `config.json` rule has moved: "aivi and the operator edit the live
@@ -47,14 +49,14 @@ CLI code path — no new host API, no new authority model:
 
 | Action | Wraps | Notes |
 | --- | --- | --- |
-| `projects.add` | `addProject` + `writeProjectLinear` | the full `projects add` path, Linear mapping included; needs team resolution, which lives in `@aivi/linear` |
+| `projects.add` | `runProjectSetup` (the role-driven path) | the full `projects add` flow: it runs the configured forge and tracker `./setupProject` contributors, team resolution and lanes included, all inside `@aivi/tracker-linear` |
 | `projects.remove` / `purge` | same-named CLI functions | `purge` keeps its `confirm` semantics: the agent must relay what goes and get an explicit yes in chat |
 | `jobs.*` | exists today (`aivi_jobs`) | no new work |
 | `knowledge.index` | the host operation | via the jobs path or a direct POST, as `aivi jobs run` does |
 | `status` | exists today (`aivi_status`) | |
 
 The toggle is exactly the house rule — *the agent file is the boundary*: the
-shipped `librarian.md` / `aivi.md` deny the new tool id; an operator who wants
+shipped `assistant.md` and worker files deny the new tool id; an operator who wants
 a given agent to maintain the installation removes the deny (or adds an
 `allow`). No `access.editors` list, no mode switching, no new auth surface:
 whoever may already talk to that agent, may now ask it for this. The deny
@@ -120,7 +122,7 @@ ever enters editor mode.
   called through Code Mode? Plugin: it inherits session identity and the
   permission gate for free.
 - Should `projects.add` resolve Linear teams itself (import from
-  `@aivi/linear`'s client) or ask the operator for raw team ids?
+  `@aivi/tracker-linear`'s client) or ask the operator for raw team ids?
 - Does the assistant ever get `edit` on `config.json` directly (the
   "config is yours and aivi's" decision), or only through narrow tools?
   The editor-mode answer was "never from a chat"; the newer CONTEXT decision

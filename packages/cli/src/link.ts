@@ -81,7 +81,7 @@ function said(io: LinkIo, sentence: string, record: unknown): void {
 async function mintFor(io: LinkIo, connection: { url: string; token: string }, channel: string): Promise<void> {
   const result = await io.mint(connection.url, connection.token, channel);
   if (process.stdout.isTTY) {
-    // The thin CLI ships without @aivi/core, so the terminal gets its own one
+    // The CLI ships without @aivi/core, so the terminal gets its own one
     // line: the host's instruction carries the code, the expiry is the
     // reader's clock. A pipe keeps the JSON record.
     const expires = new Date(result.expiresAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });

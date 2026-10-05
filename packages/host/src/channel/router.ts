@@ -1,6 +1,6 @@
 import type { Report } from '@aivi/core';
+import type { ChannelModule, Channels as ChannelsApi, DeliveryContext, ReentryContext } from '@aivi/plugin/channel';
 import { SESSION_DESTINATION } from '../reports.ts';
-import type { ChannelModule, DeliveryContext, ReentryContext } from './contract.ts';
 
 export type NativeReentry = (sessionId: string, text: string, context: ReentryContext) => Promise<void>;
 
@@ -9,7 +9,7 @@ export type NativeReentry = (sessionId: string, text: string, context: ReentryCo
  * `session` report goes to the module that owns the session, else into the
  * native session through `native`. One registry, one registration per module.
  */
-export class Channels {
+export class Channels implements ChannelsApi {
   private readonly modules = new Map<string, ChannelModule>();
   private readonly native: NativeReentry | undefined;
   constructor(native?: NativeReentry) {
@@ -25,6 +25,10 @@ export class Channels {
   }
   has(id: string): boolean {
     return this.modules.has(id);
+  }
+  /** The platform ids registered now — dreaming's default review list, the module list and no word from a schema. */
+  ids(): string[] {
+    return [...this.modules.keys()];
   }
   /** A channel module has this session as a conversation; it is one, whatever its origin says. */
   ownsSession(sessionId: string): boolean {

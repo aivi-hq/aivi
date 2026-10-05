@@ -3,8 +3,7 @@ import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/pro
 import { join, relative } from 'node:path';
 import type { DreamingArgs, Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
-import type { SessionEvents } from './events.ts';
-import type { OpenCodeClient } from './opencode.ts';
+import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 import { runTurn, turnIdsFor } from './session.ts';
 import type { Store } from './store.ts';
 
@@ -172,7 +171,7 @@ export async function collectSessions(
 }
 
 export function renderTranscript(sessions: ReviewedSession[], since: number): string {
-  const head = `# Conversations since ${since ? new Date(since).toISOString() : 'the beginning'}\n\n${sessions.length} session(s). Speaker lines show who said what; "user" lines from Discord start with the speaker's name and id.\n`;
+  const head = `# Conversations since ${since ? new Date(since).toISOString() : 'the beginning'}\n\n${sessions.length} session(s). Speaker lines show who said what; "user" lines from a channel start with the speaker's name and id.\n`;
   const body = sessions
     .map(
       s =>

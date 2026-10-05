@@ -10,12 +10,14 @@ identifiers and the `report` shape.
 
 ## The contract
 
-A module is a `HostModule` (`id`, `start(services)` → `stop()`) whose `start`
+A module is an `AiviModule` (`id`, `start(services)` → `stop()`; the name a
+plugin author imports from `@aivi/plugin` for the contract the host itself
+declares) whose `start`
 registers one `ChannelModule` with `services.channels.register(module)`:
 
 | Member | Meaning |
 | --- | --- |
-| `id` | The module id (`discord`, `slack`): `report.module`, table prefix, lease owner, `metadata.aivi.origin` |
+| `id` | The **platform** id (`discord`, `slack`): `report.module`, table prefix, lease owner, `metadata.aivi.origin`. Not the plugin registry's module id, which is the package's short name and keys `plugins.<id>` — `@aivi/tracker-linear` registers the platform `linear` |
 | `ownsSession(sessionId)` | This OpenCode session is one of the module's conversations (bound or adopted) |
 | `reenter(sessionId, text, context)` | Bring a run's outcome into the conversation bound to that session as a turn of kind `job`; `context` is `{ run, state }` |
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
@@ -24,7 +26,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 | `linkHint?` | How a person spends a link code on this platform ("DM the bot: /link <code>."), shown by `aivi link` and aggregated by the router for `POST /links`; redemption itself is the shared `redeemLink` helper |
 
 Registering is the whole integration with reports: `Channels` (the router on
-`HostServices.channels`) sends `{ to: "channel", module }` reports to the
+`AiviServices.channels`) sends `{ to: "channel", module }` reports to the
 module with that id and `{ to: "session" }` reports to the module that owns
 the session, falling back to a native `session.prompt` into the OpenCode
 session when nobody owns it. `channels.ownerOf(sessionId)` is how the
@@ -35,7 +37,9 @@ report. `register` returns the unregister function; call it in `stop`.
 
 Everything below is in `@aivi/host` (`packages/host/src/channel/`) and is
 parameterized by a `ChannelPlatform`: `{ id, label, replyLimit,
-describeSpeaker? }`.
+describeSpeaker? }`. The contract types — `ChannelModule` and the
+conversation-binding names — travel to plugin authors as
+`@aivi/plugin/channel`; the machinery below stays the host's.
 
 - **`ConversationStore`**: the durable inbox and conversation↔session
   bindings in the host database, tables `<id>_turns`, `<id>_sessions`,
@@ -61,11 +65,20 @@ describeSpeaker? }`.
   different binding (agent, directory, application) acts as `/new` for every
   conversation, refused while any turn is queued or blocked.
 - **`ChannelEngine`**: claims queued turns within `maxConcurrent` and shared
-  capacity, calls the turn runner with a timeout, splits the reply at
+  capacity, calls the turn runner, splits the reply at
   `replyLimit` (UTF-16 units, surrogate pairs intact) and sends it, records
   `sent`; `TurnNotStarted` → the turn is discarded and the person asked to
-  resend; anything else → `blocked` with "an operator has been notified". Each
-  launched turn has its own abort besides the engine's and the timeout:
+  resend. Anything else depends on the platform's `effects`: a reply-only
+  platform (Discord, Slack) discards the turn and says "Something went wrong"
+  with the reason; a platform whose turns have effects beyond the reply
+  (`effects: 'work'`, which is how Linear's assistant turns run) ends
+  `blocked` with "an operator has been notified" — its side effects may
+  stand, so the turn is not quietly retried. No turn is bounded by a clock
+  here (2026-10-03): the platform `turnTimeoutMs` options bounded chat
+  turns only and lied about worker turns, so they are gone; the bound's
+  right home is the dispatcher, which watches every session
+  ([plans/orchestrator.md](plans/orchestrator.md)). Each
+  launched turn has its own abort besides the engine's:
   `stopTurn(conversation)` aborts the one running there (`/stop`), which is
   then discarded as "Stopped at the person's request" and the conversation
   hears "Stopped at your request."; a reply already being delivered is not
@@ -98,7 +111,7 @@ The typing indicator and the 👀 reaction say "alive"; the placeholder says
 with the answer only.
 
 - **Source.** The host opens OpenCode's `client.event.subscribe()` once
-  (`HostServices.events`, `packages/host/src/events.ts`): a live-only stream
+  (`AiviServices.events`, `packages/host/src/events.ts`): a live-only stream
   with no replay and no reconnect of its own, so the host rediscovers the
   client and reopens it with backoff (1 s doubling to 30 s) whenever it ends
   or errors, until the host stops. The first `events.watch(sessionID,
@@ -144,8 +157,10 @@ with the answer only.
 
 ## Identifiers and prefixes
 
-All derive from the module id so two platforms never collide in one database
-or one OpenCode:
+All derive from the platform id — who a conversation is on, not which package
+speaks for it — so two platforms never collide in one database or one OpenCode.
+A prefix is never renamed once conversations are bound to it; quoting it in SQL
+is not a rename:
 
 | What | Shape |
 | --- | --- |
@@ -168,7 +183,7 @@ ordered behind the messages already waiting; a channel report is posted by
 the named module, which opens a thread that adopts the run's session (agent
 job) or is seeded with the output (script job), so replying to an outcome
 meets an agent that knows what it did. Configuration and defaults:
-[configuration](configuration.md#reporting).
+[configuration](../packages/host/docs/configuration.md#reporting).
 
 ## Feedback and recovery, shared
 
@@ -204,10 +219,15 @@ underneath is an ordinary message under the channel's access policy.
 
 `describeSession` (host) renders one session's context: the window in use
 against the model's limit (last answer's input + cache + output vs
-`model.list().limit.context`), compactions, the session's token and cost
-totals and the knowledge in scope, as markdown both platforms render, read
-from OpenCode's transcript and catalogue. It backs three surfaces: the
-channels' `/context` command (`describeConversation`, which adds the
+`model.list().limit.context`), what OpenCode has loaded beyond its built-ins
+(`plugin.list`: id, version, and the source target when it differs — the aivi
+plugin's line is where a missing or failed load shows up in the channel), the
+session's lifetime token and cost totals and the knowledge in scope, as
+markdown both platforms render. It reads three bounded OpenCode calls — the
+session object (lifetime totals), `session.context` (the effective context,
+starting at its compaction; the same read the TUI's context display makes) and
+the plugin list — and never walks the full transcript. It backs three surfaces:
+the channels' `/context` command (`describeConversation`, which adds the
 conversation's binding and pending turns), `GET /context?session=` and the
 plugin tool `aivi_context`, so an agent asked "what's the context?" answers
 with the same text. Slack refuses slash commands inside threads; there the
@@ -234,10 +254,11 @@ redemption is its own proof.
 | `new` | `ConversationStore.reset` |
 | `status` | `ConversationStore.list` + `status()` |
 | `context` | `describeConversation` |
-| `search QUERY [project]` | `HostServices.knowledge.search` |
+| `search QUERY [project]` | `AiviServices.knowledge.search` |
 | `model [model]` | `describeModel` / `switchModel`: shows the conversation's pin, what its session last answered with and the agent's own model; with an argument pins the conversation to a catalogue model (`model.list` for the directory, enabled ones, spelled `provider/model` or `provider/model@variant`, `provider/model (variant)` accepted; a model id or display name that names exactly one entry works too; otherwise the closest matches are offered). The pin is `setModel` on the session row: `Turn.model` → `TurnInput.model`, applied by `session.switchModel` before each prompt, until `/new`; `default` unpins. Refused while a turn runs in that conversation. Discord autocompletes the argument from the catalogue (≤ 25 choices by prefix); Slack validates free text |
 | `stop` | `stopTurn`: `ChannelEngine.stopTurn` (the turn is discarded as stopped, the conversation hears "Stopped at your request.") then `session.interrupt` so the agent stops spending; queued messages stay queued and follow. Nothing running → says so |
-| `steer TEXT` | `steerTurn`: `session.prompt` with `delivery: "steer"` into the running turn's session, the speaker line as for a message (a linked account speaks as its person and stamps `metadata.aivi.person` like its turns), and `metadata.aivi.steer = <that turn's message id>` so `finalAnswer` counts it as part of the turn; nothing is queued when no turn runs |
+| — | **Interjection is the default for a message** (ruled 2026-10-02; the `/steer` command died): when the conversation's turn runs, `interject` sends `session.prompt` with `delivery: "steer"` into that session — the speaker line as for a message (a linked account speaks as its person and stamps `metadata.aivi.person` like its turns) — and marks `metadata.aivi.steer = <that turn's message id>` so `finalAnswer` counts it as part of the turn. The reaction is the only ack; the turn's own answer speaks for it. A steer that fails queues the message anyway, logged; no turn running queues as ever |
+| `queue TEXT` | `ConversationStore.enqueue` explicitly **behind** the running turn — the opt-out of interjection, and the answer to "wait, say that after this". Nothing running: it queues the same and says so |
 | `jobs` | `describeJobs`: the next five occurrences (id, title, when) and the last ten runs (job, state, when) from the host store, as short markdown |
 | `link CODE` | `redeemLink`: consumes the one-time code the person minted with `aivi link` and binds `{channel, user id} → person` — the identity comes from the platform, the code is the evidence, the host decides; the reply is host-authored. Refusals (unknown, expired, already bound) never consume the code; a binding is refused while one exists, since there is no unlink yet ([people](people.md#link-codes-discord-slack)) |
 | `help` | `helpText`: one line per command |

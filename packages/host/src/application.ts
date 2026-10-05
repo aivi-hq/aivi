@@ -1,22 +1,29 @@
 import { randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import type { KnowledgeService, LoadedConfig, Logger } from '@aivi/core';
-import { getLogger, systemJobs } from '@aivi/core';
+import type { KnowledgeService, LoadedConfig, Logger, Run } from '@aivi/core';
+import { getLogger, gitIdentity, parseDuration, readPrompt, systemJobs } from '@aivi/core';
+import type { AiviModule, AiviServices, OpenCodeClient } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
+import { attachExec } from './api/exec.ts';
 import { PublicRoutes } from './api/public.ts';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
-import { EventStream, type SessionEvents } from './events.ts';
+import { Dispatcher, type DispatcherLease } from './dispatcher/dispatcher.ts';
+import { LeaseStore } from './dispatcher/leases.ts';
+import { EventStream } from './events.ts';
+import { Forges } from './forges.ts';
 import { createJobHandler } from './jobs.ts';
-import { ConfigurationError, type ModuleContract, ModuleSupervisor, type RetryPolicy } from './modules.ts';
-import { connectOpenCode, type OpenCodeClient, restartOpenCode } from './opencode.ts';
+import { ConfigurationError, ModuleSupervisor, type RetryPolicy } from './modules.ts';
+import { connectOpenCode, restartOpenCode } from './opencode.ts';
+import { RunLedger } from './orchestrator/ledger.ts';
+import { Orchestrator } from './orchestrator/orchestrator.ts';
+import { globalGitConfig } from './orchestrator/worktree.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
 import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import type { Store } from './store.ts';
-import type { TaskClaims } from './tasks.ts';
 import { TaskRegistry } from './tasks.ts';
-import type { ToolClaims } from './tools.ts';
 import { ToolRegistry } from './tools.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
@@ -54,49 +61,47 @@ class Wake {
   }
 }
 
-export interface HostServices {
-  loaded: LoadedConfig;
-  store: Store;
-  knowledge: KnowledgeService;
-  /** Discovers the OpenCode service on every call. Call once per unit of work and hold the client for its duration. */
-  opencode: () => Promise<OpenCodeClient>;
-  /** The host's one OpenCode event stream, fanned out by session id; channel progress watches turns through it. */
-  events: SessionEvents;
-  signal: AbortSignal;
-  log: Logger;
-  /** Chat platform modules register here once; that makes them report destinations and session owners. */
-  channels: Channels;
-  /** Webhook routes a module exposes on the host listener, outside bearer auth; the platform's signature is the auth. */
-  routes: PublicRoutes;
-  /** What `kind: 'invocation'` tasks dispatch to: the host claims its own operations here, modules claim theirs. */
-  tasks: TaskClaims;
-  /** The tool surface the OpenCode plugin registers at load: the host claims its own tools here, modules claim theirs. */
-  tools: ToolClaims;
-  /** Tell the scheduler and every channel engine that the queue or capacity changed; dispatch now. */
-  wake(): void;
-  /** Be told the same; a channel engine ticks on it instead of polling for capacity released elsewhere. */
-  onWake(listener: () => void): () => void;
-  /** Abort the whole host. Only for failures the module cannot recover from. */
-  fail(error: unknown): void;
-}
 export interface HostResources {
   knowledge: KnowledgeService;
 }
-export type { RunningModule } from './modules.ts';
-export type HostModule = ModuleContract<HostServices>;
 
 export interface RunHostOptions {
   loaded: LoadedConfig;
   store: Store;
   resources: () => Promise<HostResources>;
-  modules?: HostModule[];
+  modules?: AiviModule[];
   signal: AbortSignal;
   /** Environment variable names shell tasks must not inherit (the keys of `<home>/.env`); aivi's fixed secrets are always hidden. */
   protectedEnv?: Iterable<string>;
   log?: Logger;
   /** Backoff for module starts that fail; the default climbs from 1 s to 10 min. */
   moduleRetry?: RetryPolicy;
+  /** Injection point for tests; defaults to aivi's own discovery. A host whose
+   *  OpenCode never answers still boots: the boot reconcile pass defers (see `Dispatcher`). */
+  opencode?: () => Promise<OpenCodeClient>;
+  /** Reload a config file under the composed closed schema (the `aivi_config`
+   *  referee); supplied by the boot, which alone may load the plugin registry. */
+  compose?: (configPath: string) => Promise<unknown>;
   onReady?: (address: unknown) => void;
+}
+
+/** The report's words: the outcome as `describeOutcome` speaks it, and for
+ *  a streak of failures the line that tells a person — a third one in a row
+ *  says so. (Ruled: failures stay silent until three, then a person is
+ *  asked to fix, pause or remove.) */
+function reportText(
+  store: Store,
+  run: Run,
+  state: 'succeeded' | 'failed' | 'blocked' | 'missed',
+  result: unknown,
+  reason: string,
+): string {
+  const words = describeOutcome(run, state, result, reason);
+  if (state !== 'failed' && state !== 'blocked') return words;
+  const streak = store.failureStreak(run.jobId);
+  return streak >= FAILURE_NUDGE_AT
+    ? `${words}\nThis job has failed ${streak} times in a row. Fix it, pause it, or remove it.`
+    : words;
 }
 
 /** Composition and ownership only: no service locator, decorators, or plugin registry. */
@@ -118,27 +123,85 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   let knowledge: KnowledgeService | undefined;
   let scheduler: Scheduler | undefined;
   let server: ReturnType<typeof serveApp> | undefined;
-  let supervisor: ModuleSupervisor<HostServices> | undefined;
+  let supervisor: ModuleSupervisor<AiviServices> | undefined;
   const owner = randomUUID();
   let acquired = false;
 
   // Discovery is one file read, so it runs per unit of work: a restarted `opencode service`
   // (new port and password) is picked up by the next turn without restarting aivi.
-  const opencode = () =>
-    connectOpenCode(
-      loaded.config.opencode,
-      process.env,
-      {
-        onStart: reason => log.info('opencode.started', { reason }),
-      },
-      log,
-    );
+  const opencode =
+    options.opencode ??
+    (() =>
+      connectOpenCode(
+        loaded.config.opencode,
+        process.env,
+        {
+          onStart: reason => log.info('opencode.started', { reason }),
+        },
+        log,
+      ));
   const wake = new Wake();
   const tasks = new TaskRegistry();
   const tools = new ToolRegistry();
+  // The forge registry: modules register their forges at start; the projects-sync
+  // task asks who owns a remote before fetching it, and `aivi_pr` asks the
+  // same question before pushing; the review gather will ask it too.
+  const forges = new Forges();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
+
+  // The run ledger is the durable ticket↔run↔session link; the orchestrator is the one
+  // authority that turns a ticket into a run. Its two worker tools are host tools: the
+  // OpenCode plugin registers them as `aivi_work_complete`/`aivi_ask`, and every call
+  // arrives with the trusted session id — which is how a tool call finds its run.
+  const ledger = new RunLedger(store);
+  // The dispatcher is the only part that knows how much capacity is left;
+  // the orchestrator's claims are leases here, and when the dispatcher ends
+  // one on its own the mirrored claim must clear. The link between them is
+  // set in the same synchronous breath that builds both — anything firing
+  // earlier says so, rather than silently losing an ended lease.
+  let clearClaim: (lease: DispatcherLease, reason: string) => void = () => {
+    throw new Error('a lease ended before the orchestrator was wired to the dispatcher');
+  };
+  const dispatcher = new Dispatcher({
+    leases: new LeaseStore(store),
+    dispatcher: loaded.config.dispatcher,
+    // The unit's clocks: the durations were strings in the config, numbers
+    // here, parsed once at load like everything else that waits.
+    idleMs: parseDuration(loaded.config.dispatcher.timeouts.idle),
+    prepareMs: parseDuration(loaded.config.dispatcher.timeouts.prepare),
+    opencode,
+    signal: abort.signal,
+    log,
+    onEnded: (lease, reason) => clearClaim(lease, reason),
+  });
+  const orchestrator = new Orchestrator({
+    ledger,
+    opencode,
+    events,
+    log,
+    signal: abort.signal,
+    // Moves come from core's lane order, read straight off the loaded config.
+    lanes: id => loaded.config.projects[id]?.lanes ?? [],
+    directory: id => {
+      const project = loaded.projects.find(p => p.id === id);
+      if (!project) throw new Error(`no project ${id} in the loaded config`);
+      return project.directory;
+    },
+    dispatcher,
+    forges,
+    // Who a worktree's commits belong to: core's order — identity.github,
+    // the machine's git config, the aivi app.
+    identity: () => gitIdentity(loaded.config.identity, globalGitConfig),
+    // The orchestrator's own dial: how long an open elicitation holds a slot.
+    keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
+    // The editable prompts, read at use from the home's `prompts/` copies:
+    // an edit lands on the next run, a delete is instant restoration.
+    prompt: name => readPrompt(dirname(loaded.path), name),
+  });
+  clearClaim = (lease, reason) => void orchestrator.leaseEnded(lease, reason);
+  for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);
 
   const serve = async (scheduler: Scheduler, channels: Channels, knowledge: KnowledgeService) => {
     // With lifecycle "own", a running service is replaced now, before any module or job needs it:
@@ -162,10 +225,19 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         linkable: () => channels.linkable(),
         tools,
         context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
+        // The composed-schema referee for `aivi_config` writes; the boot
+        // handed this function in because only it may import the registry.
+        compose: options.compose,
+        // The redirect hook's one question, answered from the run ledger:
+        // the ledger is the only fact of who is an aivi run.
+        runMembership: sessionID => ledger.bySession(sessionID) !== undefined,
         log,
       }),
     );
     server = http;
+    // The exec door rides the same listener: an upgrade on `/exec`, gated by
+    // hand (hono never sees upgrades), and audited into the same diary.
+    attachExec(http, { store, loaded, log, signal: abort.signal });
     const { bind, port } = loaded.config.host;
     await new Promise<void>((yes, no) => {
       http.once('error', no);
@@ -179,7 +251,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         hint: 'Anyone who can reach this address can search knowledge, use the browser and run jobs.',
       });
 
-    const services: HostServices = {
+    const services: AiviServices = {
       loaded,
       store,
       knowledge,
@@ -192,6 +264,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       // The supervisor replaces this with each module's own scope before start; nothing else reads it.
       tasks: tasks.forModule('host'),
       tools: tools.forModule('host'),
+      forges,
+      orchestrator,
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
       fail,
@@ -200,6 +274,14 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     // and shows as degraded in status; only a ConfigurationError is fatal.
     supervisor = new ModuleSupervisor(services, abort.signal, log, fail, options.moduleRetry, tasks, tools);
     await supervisor.start(modules);
+    // Leases stand or fall against OpenCode's reality before anything is
+    // re-armed: a claim whose session died at the restart clears first, so
+    // the watch below never re-attaches to a run that is already over.
+    await dispatcher.reconcile();
+    // Boot recovery after the modules: a tracker must be registered before its owed
+    // ceremonies are re-driven. Live OpenCode turns were resumed by OpenCode itself;
+    // this pass re-attaches the watch and fetches the state of anything owed.
+    await orchestrator.recover();
     abort.signal.throwIfAborted();
     options.onReady?.(http.address());
 
@@ -227,7 +309,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       await client.session.prompt(
         {
           sessionID: sessionId,
-          text: reentryPrompt(text),
+          text: reentryPrompt(text, await readPrompt(dirname(loaded.path), 'job-result')),
           delivery: 'queue',
           metadata: { aivi: { origin: 'job-result', run: context.run.id } },
         },
@@ -237,18 +319,23 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
-      createExecutor(loaded, { store, knowledge, opencode, events, protectedEnv: options.protectedEnv, log, tasks }),
+      createExecutor(loaded, {
+        store,
+        knowledge,
+        opencode,
+        events,
+        protectedEnv: options.protectedEnv,
+        log,
+        tasks,
+        forges,
+        channelOrigins: () => channels.ids(),
+      }),
       log,
       async (run, state, result, reason) => {
         // Capacity was released: queued work may be claimable now.
         wake.notify();
         if (!shouldReport(run.report, state)) return;
-        let text = describeOutcome(run, state, result, reason);
-        if (state === 'failed' || state === 'blocked') {
-          const streak = store.failureStreak(run.jobId);
-          if (streak >= FAILURE_NUDGE_AT)
-            text += `\nThis job has failed ${streak} times in a row. Fix it, pause it, or remove it.`;
-        }
+        const text = reportText(store, run, state, result, reason);
         try {
           await channels.deliver(run.report, text, { run, state });
           store.note(run.id, 'reported', reportTarget(run.report));
@@ -268,7 +355,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       systemIds.add(job.id);
     }
     store.syncJobs(loaded.config.jobs, system);
-    if (loaded.config.search?.indexOnStart) {
+    if (loaded.config.search !== false && loaded.config.search.indexOnStart) {
       const startedAt = Date.now();
       await knowledge.index();
       log.info('knowledge.indexed', { ms: Date.now() - startedAt });
@@ -279,13 +366,28 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   } catch (error) {
     errors.push(error);
   } finally {
+    errors.push(...(await shutdown()));
+    if (acquired) store.releaseDaemon(owner);
+    signal.removeEventListener('abort', stop);
+    log.info('host.stopped', { errors: errors.length });
+  }
+  // The first entry is the failure that ended the host; cleanup failures follow it, never replace it.
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, 'Application shutdown failed');
+
+  /** The ordered close: wakes stop, modules drain before in-flight HTTP,
+   *  HTTP drains before knowledge closes, and the daemon lock goes last.
+   *  Every failure is collected — none of them replaces the failure that
+   *  ended the host. */
+  async function shutdown(): Promise<unknown[]> {
+    const cleanup: unknown[] = [];
     stop();
     scheduler?.stop();
-    if (supervisor) errors.push(...(await supervisor.stop()));
+    if (supervisor) cleanup.push(...(await supervisor.stop()));
     try {
       await scheduler?.drain();
     } catch (error) {
-      errors.push(error);
+      cleanup.push(error);
     }
     if (server?.listening) {
       const http = server;
@@ -295,15 +397,10 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     try {
       await knowledge?.close();
     } catch (error) {
-      errors.push(error);
+      cleanup.push(error);
     }
-    if (acquired) store.releaseDaemon(owner);
-    signal.removeEventListener('abort', stop);
-    log.info('host.stopped', { errors: errors.length });
+    return cleanup;
   }
-  // The first entry is the failure that ended the host; cleanup failures follow it, never replace it.
-  if (errors.length === 1) throw errors[0];
-  if (errors.length) throw new AggregateError(errors, 'Application shutdown failed');
 }
 
 function isLoopback(address: string): boolean {

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.build.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo"
+  },
+  "//": "The kit is the floor: it depends on core (and on the OpenCode client it names for plugins) and on nothing above it. The host references the kit and imports its contracts from it — the direction the contracts were always meant to point.",
+  "include": ["src"],
+  "references": [{ "path": "../core/tsconfig.build.json" }]
+}

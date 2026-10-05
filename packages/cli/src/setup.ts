@@ -3,9 +3,10 @@
  *  operator in; either way the OpenCode plugins go in and the last line says
  *  a verified truth ("Signed in as …"), never a promise the CLI cannot keep.
  *  `server create` folded into the create branch: its identity step stays as
- *  the plumbing that mints person and token inside the freshly installed app.
- *  This file spawns npm, the app CLI and `opencode plugin add`; it imports no
- *  host code — the whoami check is one plain fetch. */
+ *  the plumbing that mints person and token inside the freshly installed
+ *  server. This file spawns npm and `opencode plugin add` and reaches the
+ *  identity step through a dynamic import of the installed server (mount.ts);
+ *  it imports no host code statically — the whoami check is one plain fetch. */
 
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,7 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as p from '@clack/prompts';
 import { loadClientConfig, saveClientConfig } from './client-config.ts';
-import { appCliPath } from './forward.ts';
+import { importApp } from './mount.ts';
 import { serviceInstall } from './service.ts';
 import { aiviVersion } from './version.ts';
 
@@ -27,8 +28,11 @@ export const ATTRIBUTION_PLUGIN = 'opencode-attribution';
 const CLIENT_PLUGINS = [AIVI_PLUGIN, ATTRIBUTION_PLUGIN];
 
 /** The OpenCode shape of a server home: the service `aivi serve` runs loads
- *  these from the home. A file that exists is never overwritten. */
-const HOME_AGENTS = ['assistant.md', 'dreamer.md'];
+ *  these from the home. A file that exists is never overwritten. The three
+ *  lane workers are the template's strong defaults (docs/plans/templates/
+ *  scaffolding.md): written once, then plain files — editing them is the
+ *  whole configuration, deleting them is the only uninstall. */
+const HOME_AGENTS = ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md'];
 
 const SCRIPT_FORM =
   'setup needs an interactive terminal; in a script use: aivi setup --use this-machine|another --name TEXT, or aivi setup --connect --url URL --token TOKEN';
@@ -63,8 +67,15 @@ export interface Identity {
   next?: string;
   /** Caveat on the printed url (a loopback or LAN guess the operator should know about), if any. */
   urlNote?: string;
-  /** What the soft reachability probe saw, when a public base was given. */
-  probeNote?: string;
+}
+
+/** What the identity step is asked for: where the server will run, the
+ *  operator's name, and the reach address when one was given. */
+export interface IdentityStep {
+  use: 'this-machine' | 'another';
+  name: string;
+  public?: string;
+  lanBind?: string;
 }
 
 export interface WhoamiResult {
@@ -74,8 +85,14 @@ export interface WhoamiResult {
 
 export interface SetupIo {
   install(specs: string[], appDir: string): void;
+  /** Rebuild `<state>/cache/schema.json` and config.json's `$schema` line, in
+   *  the installed app's code; called after the plugin list is written. */
+  rebuildSchema(home: string, appDir: string): Promise<void>;
   npmView(spec: string, field: string): Promise<string>;
-  forwardIdentity(args: string[], home: string, appDir: string, nodePath: string): Identity;
+  /** The identity step, called in-process in the installed app's code: the
+   *  person and token are minted in its store, the answer is the object, no
+   *  stdout carries it. */
+  createIdentity(step: IdentityStep, home: string, appDir: string): Promise<Identity>;
   opencodeOnPath(): boolean;
   pluginAdd(pkg: string): void;
   health(url: string): Promise<boolean>;
@@ -100,8 +117,7 @@ export interface SetupOptions {
 }
 
 export interface SetupFlags {
-  plugins: string[];
-  appSpec: string | undefined;
+  hostPackage: string | undefined;
   use: string | undefined;
   connect: boolean;
   url: string | undefined;
@@ -113,9 +129,8 @@ export interface SetupFlags {
 /** The valued flags, each with its setter. `--plugin` collects; the rest take
  *  one value, as `--flag value` or `--flag=value` — the same two shapes for all. */
 const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = {
-  '--plugin': (flags, value) => flags.plugins.push(value),
-  '--app-spec': (flags, value) => {
-    flags.appSpec = value;
+  '--host-package': (flags, value) => {
+    flags.hostPackage = value;
   },
   '--use': (flags, value) => {
     flags.use = value;
@@ -136,8 +151,7 @@ const SETUP_FLAGS: Record<string, (flags: SetupFlags, value: string) => void> = 
 
 export function extractSetupFlags(args: string[]): SetupFlags {
   const flags: SetupFlags = {
-    plugins: [],
-    appSpec: undefined,
+    hostPackage: undefined,
     use: undefined,
     connect: false,
     url: undefined,
@@ -252,18 +266,17 @@ function writeHomeSkeleton(home: string): string {
   return appDir;
 }
 
-/** The identity-step flags that carry the reach answer. */
-function reachFlags(reach: Reach): string[] {
-  if (reach.kind === 'url') return ['--public', reach.url];
-  if (reach.kind === 'lan') return ['--lan-bind', reach.bind];
-  return [];
+/** The reach answer carried into the identity step. */
+function reachStep(reach: Reach): Pick<IdentityStep, 'public' | 'lanBind'> {
+  if (reach.kind === 'url') return { public: reach.url };
+  if (reach.kind === 'lan') return { lanBind: reach.bind };
+  return {};
 }
 
 /** Say what the identity step returned: caveats first, then the paste-able
  *  handoff for the other machine when that is where the person will sign in. */
 function printIdentity(identity: Identity, use: string, home: string, io: SetupIo): void {
   if (identity.urlNote) io.warn(identity.urlNote);
-  if (identity.probeNote) io.log(identity.probeNote);
   if (use !== 'another') return;
   io.log(`The server home is ready at ${home}. Take these to the other machine — the token is shown once:`);
   io.log(`  url:   ${identity.url}`);
@@ -293,19 +306,24 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   const appDir = writeHomeSkeleton(home);
 
   io.log(`Installing the aivi server into ${appDir}`);
-  io.install([flags.appSpec ?? '@aivi/app', ...flags.plugins], appDir);
+  io.install([flags.hostPackage ?? '@aivi/host'], appDir);
   saveClientConfig({ home, appDir, nodePath, installMethod: 'npm' });
+
+  // Setup installs the server alone: plugins join afterwards with `aivi add`,
+  // which runs each plugin's own setup before it enters `aivi-plugins` — a
+  // package listed without its block would make `aivi serve` complain. The
+  // editor schema is rebuilt from the installed app's code, so the `$schema`
+  // hint and the composed shape land together; a cache that cannot rebuild is
+  // a warning, the truth of the home is config.json and the list.
+  await rebuildSchemaOrSay(io, home, appDir);
 
   // The OpenCode shape of the home, before identity: the service finds its
   // agents and the plugin here whatever the sign-in path.
-  const version = await io.npmView('@aivi/opencode', 'version').catch(() => undefined);
-  if (!version)
-    io.warn('Could not resolve @aivi/opencode on npm; seeded the plugin unpinned (OpenCode installs the latest).');
-  seedHomeOpenCode(home, version ? `@aivi/opencode@${version}` : '@aivi/opencode');
+  await seedOpenCodeOrSay(io, home);
 
   // Identity is the installed app's own act: person and token are minted in
   // its store, and this-machine signs `~/.config/aivi.json` there.
-  const identity = io.forwardIdentity(['--use', use, '--name', name, ...reachFlags(reach)], home, appDir, nodePath);
+  const identity = await io.createIdentity({ use, name, ...reachStep(reach) }, home, appDir);
   printIdentity(identity, use, home, io);
   if (use === 'another') return;
 
@@ -318,6 +336,41 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
     );
     return;
   }
+  await serveInBackground(io, home, appDir, nodePath, identity);
+}
+
+/** The editor schema rebuilt from the installed app; a cache that cannot
+ *  rebuild is a warning — the truth of the home is config.json and the
+ *  list, and `aivi add` or `aivi update` rebuilds it once the config loads. */
+async function rebuildSchemaOrSay(io: SetupIo, home: string, appDir: string): Promise<void> {
+  try {
+    await io.rebuildSchema(home, appDir);
+  } catch (error) {
+    io.warn(
+      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); \`aivi add\` or \`aivi update\` rebuilds it once config.json loads again.`,
+    );
+  }
+}
+
+/** Seed the home's OpenCode plugin at the version npm names today; no
+ *  answer from npm seeds it unpinned and OpenCode installs the latest. */
+async function seedOpenCodeOrSay(io: SetupIo, home: string): Promise<void> {
+  const version = await io.npmView('@aivi/opencode', 'version').catch(() => undefined);
+  if (!version)
+    io.warn('Could not resolve @aivi/opencode on npm; seeded the plugin unpinned (OpenCode installs the latest).');
+  seedHomeOpenCode(home, version ? `@aivi/opencode@${version}` : '@aivi/opencode');
+}
+
+/** The background ending: the service is installed, gets its thirty seconds
+ *  to answer, and the client record signs in as the person the server says
+ *  it is — the whoami is the proof, never the install's return. */
+async function serveInBackground(
+  io: SetupIo,
+  home: string,
+  appDir: string,
+  nodePath: string,
+  identity: Identity,
+): Promise<void> {
   io.serviceInstall({ home, appDir, nodePath });
   if (!(await waitHealthy(identity.url, io)))
     throw new Error(`The server did not answer at ${identity.url} within 30 s. Check \`aivi service logs\`.`);
@@ -368,7 +421,7 @@ function opencodeJsonc(pluginSpec: string): string {
 }
 
 function serverInstalled(home: string): boolean {
-  return existsSync(join(home, 'app', 'node_modules', '@aivi', 'app'));
+  return existsSync(join(home, 'app', 'node_modules', '@aivi', 'host'));
 }
 
 /** The host url of the server in this home, read as a plain file (the CLI
@@ -423,25 +476,34 @@ const defaultIo: SetupIo = {
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`npm install failed (exit ${result.status ?? 'signal'})`);
   },
+  async rebuildSchema(home, appDir) {
+    const { writeEditorSchema } = await importApp<{ writeEditorSchema: (home: string) => Promise<string> }>(
+      appDir,
+      home,
+      'dist/cli/schema-cache.js',
+    );
+    await writeEditorSchema(home);
+  },
   async npmView(spec, field) {
     const result = spawnSync('npm', ['view', spec, field, '--json'], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error(`npm view ${spec} ${field} failed`);
     return JSON.parse(result.stdout.trim()) as string;
   },
-  forwardIdentity(args, home, appDir, nodePath) {
-    // stdout is captured, not inherited: the identity step prints exactly one
-    // JSON object, and the flow says the human-facing words itself.
-    const result = spawnSync(nodePath, [appCliPath(appDir), 'server', 'create', ...args], {
-      stdio: ['inherit', 'pipe', 'inherit'],
-      env: { ...process.env, AIVI_HOME: home },
-      encoding: 'utf8',
-    });
-    if (result.status !== 0) throw new Error(`The identity step failed (exit ${result.status ?? 'signal'}).`);
-    try {
-      return JSON.parse(result.stdout) as Identity;
-    } catch {
-      throw new Error('The identity step answered with something setup could not read.');
-    }
+  async createIdentity(step, home, appDir) {
+    // The identity step is the installed server's own code, called in-process:
+    // it answers with the object, no child's stdout carries it. The host's
+    // cli context reads the home importApp puts in the environment.
+    const { serverCreate } = await importApp<{
+      serverCreate: (options: {
+        home: string;
+        configPath: string;
+        use?: string;
+        name?: string;
+        public?: string;
+        lanBind?: string;
+      }) => Promise<Identity>;
+    }>(appDir, home, 'dist/cli/identity.js');
+    return serverCreate({ home, configPath: join(home, 'config.json'), ...step });
   },
   opencodeOnPath: () => spawnPrintable('opencode', ['--version']),
   pluginAdd(pkg) {

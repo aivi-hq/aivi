@@ -1,13 +1,16 @@
 import { setTimeout } from 'node:timers/promises';
 import type { Config, Job, Logger, ModuleHealth } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
+import { ConfigurationError, type RunningModule } from '@aivi/plugin/module';
 import type { TaskRegistry } from './tasks.ts';
 import type { ToolRegistry } from './tools.ts';
 
-export interface RunningModule {
-  stop(): Promise<void>;
-}
 export interface ModuleContract<Services = unknown> {
+  /** The module id — the package's short name (`channel-discord`), the same
+   *  word as `plugins.<id>`. It keys the supervisor, shows as the `/status`
+   *  id and owns task claims. Not the channel's platform id: that one is
+   *  `discord` and keys the database, and a module that registers a channel
+   *  carries both on purpose. */
   id: string;
   start(services: Services): Promise<RunningModule>;
   /**
@@ -21,12 +24,9 @@ export interface ModuleContract<Services = unknown> {
   jobs?(config: Config): Job[];
 }
 
-/**
- * A module start that no retry can fix: a missing token, an id that does not
- * match. Modules throw this for what the operator must change; everything else
- * (a platform answering 503, a network blip) is retried.
- */
-export class ConfigurationError extends Error {}
+// The class lives in the kit's module contract — it is what any module may
+// throw at the supervisor; the host re-exports it so importers are unchanged.
+export { ConfigurationError };
 
 export interface RetryPolicy {
   baseMs: number;

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { parse as parsePlist } from 'plist';
 import { tarballName } from '../src/runtime.ts';
-import { launchdPlist, systemdUnit } from '../src/service.ts';
+import { launchdPlist, serviceRestart, serviceStop, systemdUnit } from '../src/service.ts';
 import { type UpdateIo, updateServer } from '../src/update.ts';
 
 let directory: string;
@@ -22,8 +22,7 @@ test('the LaunchAgent plist carries the launchd lessons: Interactive, WorkingDir
   assert.equal(parsed.Label, 'ai.aivi.server');
   assert.deepEqual(parsed.ProgramArguments, [
     '/usr/local/bin/node',
-    '/Users/me/.aivi/app/node_modules/@aivi/app/dist/cli.js',
-    'serve',
+    '/Users/me/.aivi/app/node_modules/@aivi/host/dist/server.js',
   ]);
   assert.equal(parsed.ProcessType, 'Interactive');
   assert.equal(parsed.KeepAlive, true);
@@ -35,10 +34,7 @@ test('the LaunchAgent plist carries the launchd lessons: Interactive, WorkingDir
 
 test('the systemd unit runs the same command and restarts on failure', () => {
   const unit = systemdUnit({ home: '/home/me/.aivi', appDir: '/home/me/.aivi/app', nodePath: '/usr/bin/node' });
-  assert.match(
-    unit,
-    /ExecStart=\/usr\/bin\/node \/home\/me\/.aivi\/app\/node_modules\/@aivi\/app\/dist\/cli\.js serve/,
-  );
+  assert.match(unit, /ExecStart=\/usr\/bin\/node \/home\/me\/.aivi\/app\/node_modules\/@aivi\/host\/dist\/server\.js/);
   assert.match(unit, /Environment=AIVI_HOME=\/home\/me\/.aivi/);
   assert.match(unit, /Restart=on-failure/);
   assert.match(unit, /WantedBy=default\.target/);
@@ -50,13 +46,29 @@ test('the managed Node tarball name maps platform and arch', () => {
   assert.throws(() => tarballName('win32', 'x64', '26.2.0'), /No managed Node/);
 });
 
+test('service stop and restart answer `not running as a service` where no unit is installed', () => {
+  // homedir() honors HOME on darwin and linux, so a scratch home is a
+  // machine with neither plist nor unit — and the guard answers there,
+  // before launchctl or systemctl would be touched.
+  const saved = process.env.HOME;
+  process.env.HOME = join(directory, 'no-such-home');
+  try {
+    assert.throws(() => serviceStop(), /not running as a service/);
+    assert.throws(() => serviceRestart(), /not running as a service/);
+  } finally {
+    if (saved === undefined) delete process.env.HOME;
+    else process.env.HOME = saved;
+  }
+});
+
 function fakeIo(over: Partial<UpdateIo>): UpdateIo {
   return {
     npmView: async (_spec, field) => (field === 'engines.node' ? '>=26 <27' : '0.2.0'),
     install: () => ({ status: 0, stderr: '' }),
+    rebuildSchema: async () => {},
     log: () => {},
     healthProbe: async () => true,
-    service: { installed: () => false, stop: () => {}, start: () => {} },
+    service: { installed: () => false, restart: () => {} },
     ...over,
   };
 }
@@ -64,10 +76,10 @@ function fakeIo(over: Partial<UpdateIo>): UpdateIo {
 test('update is a no-op when the installed version is the target', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
-  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/app': '0.1.0' } }));
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
+  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/host': '0.1.0' } }));
   writeFileSync(
-    join(appDir, 'node_modules', '@aivi', 'app', 'package.json'),
+    join(appDir, 'node_modules', '@aivi', 'host', 'package.json'),
     JSON.stringify({ version: '0.2.0', engines: { node: '>=26 <27' } }),
   );
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1 }));
@@ -85,41 +97,48 @@ test('update is a no-op when the installed version is the target', async () => {
   assert.deepEqual(calls, []);
 });
 
-test('update installs the new server plus plugins at latest, stops and starts the service, and probes health', async () => {
+test('update installs while the host keeps answering, then makes one announced restart the final step', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
   writeFileSync(
     join(appDir, 'package.json'),
-    JSON.stringify({ dependencies: { '@aivi/app': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
+    JSON.stringify({ dependencies: { '@aivi/host': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
   );
-  writeFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  writeFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), JSON.stringify({ version: '0.1.0' }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1, host: { port: 4100 } }));
-  const installs: string[][] = [];
-  const service: string[] = [];
+  const events: string[] = [];
   await updateServer(
     { home, appDir, nodePath: process.execPath },
     fakeIo({
       install: specs => {
-        installs.push(specs);
+        events.push(`install ${specs.join(' ')}`);
         return { status: 0, stderr: '' };
       },
-      service: { installed: () => true, stop: () => service.push('stop'), start: () => service.push('start') },
+      service: {
+        installed: () => true,
+        restart: () => {
+          events.push('restart');
+        },
+      },
     }),
   );
-  assert.deepEqual(installs, [['@aivi/app@0.2.0', '@aivi/channel-discord@latest']]);
-  assert.deepEqual(service, ['stop', 'start']);
+  // The order is the point (D13): the managed host answers through the
+  // install — an exec session driving this command is its own child and
+  // would die mid-npm if it disconnected first — and the one disconnect
+  // comes last.
+  assert.deepEqual(events, ['install @aivi/host@0.2.0 @aivi/channel-discord@latest', 'restart']);
 });
 
 test('a plugin whose peer range excludes the new host is pinned and excluded from the retry', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
   writeFileSync(
     join(appDir, 'package.json'),
-    JSON.stringify({ dependencies: { '@aivi/app': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
+    JSON.stringify({ dependencies: { '@aivi/host': '0.1.0', '@aivi/channel-discord': '0.1.0' } }),
   );
-  writeFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  writeFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), JSON.stringify({ version: '0.1.0' }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1 }));
   const logs: string[] = [];
   const installs: string[][] = [];
@@ -140,23 +159,23 @@ test('a plugin whose peer range excludes the new host is pinned and excluded fro
       log: message => logs.push(message),
     }),
   );
-  assert.deepEqual(installs, [['@aivi/app@0.2.0', '@aivi/channel-discord@latest'], ['@aivi/app@0.2.0']]);
+  assert.deepEqual(installs, [['@aivi/host@0.2.0', '@aivi/channel-discord@latest'], ['@aivi/host@0.2.0']]);
   assert.ok(logs.some(line => line.includes('disabled: no compatible release (kept 0.1.0)')));
 });
 
 test('update refuses to touch a server that is running in the foreground', async () => {
   const home = join(directory, 'home');
   const appDir = join(home, 'app');
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app'), { recursive: true });
-  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/app': '0.1.0' } }));
-  writeFileSync(join(appDir, 'node_modules', '@aivi', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'host'), { recursive: true });
+  writeFileSync(join(appDir, 'package.json'), JSON.stringify({ dependencies: { '@aivi/host': '0.1.0' } }));
+  writeFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), JSON.stringify({ version: '0.1.0' }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1 }));
   await assert.rejects(
     updateServer(
       { home, appDir, nodePath: process.execPath },
       fakeIo({
         healthProbe: async () => true,
-        service: { installed: () => false, stop: () => {}, start: () => {} },
+        service: { installed: () => false, restart: () => {} },
       }),
     ),
     /running in the foreground/,

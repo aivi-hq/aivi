@@ -8,6 +8,19 @@ Box 1 moves this file to `docs/plans/client-aivi.md` and links it from
 Linear are in. **No existing installs — zero backwards compatibility
 anywhere in this plan.**
 
+**Supersession (2026-10-03).** This is a decision record; its mechanics
+half-superseded themselves and the file now says which. The built API has
+**no `/v1/` prefix** — paths are `/whoami`, `/people`, `/people/:id/tokens`,
+`/links` (this file was repointed to the real paths). The **roles column
+landed** (store migration; `createPerson` takes roles, the operator is
+backfilled), so `GET /whoami` reads the person's real roles — the
+`["operator"]` stub below is history. `aivi server create` no longer exists
+as a command: `aivi setup` is the single entry and the CLI refuses
+`server create` with a pointer. And box 8's `@aivi/client` package was never
+built: the CLI reads the config file directly and talks over
+`@aivi/plugin/api`. What genuinely still waits is the soul behind the API
+(box 9 — no `/soul` route exists) and the live gates.
+
 ## The outcome a colleague can test
 
 Admin: `aivi server create` on the server → home + an operator person +
@@ -42,13 +55,13 @@ their channel identity to their person.
   **accepted with no person attached**. Tokens **identify, never
   authorize** — they answer "which person is this" for association.
   Anonymous is rejected **only at endpoints whose answer must be attached
-  to a person**: `GET /v1/whoami` (it is the person lookup) and link
+  to a person**: `GET /whoami` (it is the person lookup) and link
   creation. Everywhere else anonymous works.
-- **Roles: a v1 stub.** `whoami` answers `roles: ["operator"]` for every
-  valid token — the operator is the only user, running locally, so this is
-  simply true today. No roles column, no roles files. Real per-person
-  roles arrive with the operator's api-only session (see out of scope);
-  before publishing, that replaces the stub.
+- **Roles: a v1 stub.** Superseded — the roles column landed with the store
+  migration and `whoami` answers the person's real roles. What was the stub
+  (`["operator"]` for every valid token) is now only what the operator's
+  row carries. Per-person authorization of every command is still the
+  operator's parallel work.
 - **Two identities, two endpoints.** `whoami` = *who is the caller* (person
   + roles). `soul` = *who aivi is* (persona name, soul text,
   `identity.github`) — open to anyone, and the source the attribution
@@ -124,8 +137,8 @@ their channel identity to their person.
    person-attached endpoints (whoami, links). `host.auth.mode` and the env
    comparison are **deleted**; the example home is rewritten to the new
    story as if it was always there.
-2. **`GET /v1/whoami`** → `{ person: {id, name}, roles: ["operator"] }`
-   (stub, see model); 401 only when no bearer resolves. **`GET /v1/soul`**
+2. **`GET /whoami`** → `{ person: {id, name}, roles: ["operator"] }`
+   (stub, see model); 401 only when no bearer resolves. **`GET /soul`**
    → persona name, soul text, `identity.github` — open. The aivi plugin
    stamps `metadata.aivi.person` on local sessions when it holds a person
    token (association).
@@ -155,7 +168,7 @@ their channel identity to their person.
    identity regardless).
 7. **Link codes (Discord, Slack, Linear).** `aivi link <platform>` (person
    token required — anonymous cannot link, there is no person to bind) →
-   `POST /v1/links` → one-time code `aivi-<random>` (hashed, ~15 min TTL),
+   `POST /links` → one-time code `aivi-<random>` (hashed, ~15 min TTL),
    pasted anywhere the bot reads; the inbox matches codes **before** a
    message becomes a turn, binds `{module, channel user id} → person`,
    replies confirming. Email later: link token to inbox + callback URL on
@@ -170,7 +183,7 @@ their channel identity to their person.
    (0600, configVersion), HTTP client + bearer, light types — used by the
    plugin and the CLI package. How its `.ts` sources land inside the
    published JS CLI (bundle vs publish-as-JS) is decided inside the build
-   box. Consolidating `@aivi/host/client` onto it is follow-up.
+   box. Consolidating `@aivi/plugin/api` onto it is follow-up.
 
 ## Open decisions (operator owns these; not schedulable work yet)
 
@@ -191,18 +204,17 @@ task; **check a box in the same commit that lands it**; mark exactly one box
 compaction: reread this file, resume at the first unchecked box, trust the
 file over memory.
 
-**Where we are:** Session A complete (boxes 1–7, 2026-09-21, branch
-`feat/client-identity`). 2026-09-22, branch `feat/aivi-setup`: box 12's
-`aivi setup` command landed (detect → connect/create, verify-before-write,
-`opencode plugin add` for both plugins, person id/name/roles cache,
-service-install offer; `server create` folded in as the identity step) and
-box 10's credential half landed (plugin reads client-config url + bearer;
-server home ignores the cached bearer). Still open in those boxes: the
-dynamic CLI help, soul-fetch at setup, session person stamping — and box 8
-(`@aivi/client`) was skipped: setup reads the config file directly. The
-decided flow supersedes items 5–6 below where they disagree (setup is the
-single entry; `server create` is no longer person-facing). Next Session B
-work starts at box 8 as written.
+**Where we are:** Session A complete (boxes 1–7, 2026-09-21). Session B
+landed around `aivi setup` (2026-09-22): box 12 (setup as the single entry,
+verify-before-write, both plugins, person key; `server create` folded in)
+and box 13's link codes (with the deviation recorded on the box); box 14's
+docs landed with them; box 11's JS build landed as `@aivi/cli`'s prepack
+(`dist/main.js`, published `dist` + `templates`) — Node-only engines, the
+bun half never claimed. Box 8 (`@aivi/client` as a package) was **superseded
+by direct use of `@aivi/plugin/api`** and the CLI's own config reader; box
+10 landed its credentials half and waits on box 9 for the soul fetch; box 9
+(`/soul` behind the API) is the one mechanism still unbuilt. Session C and
+the live gates are open. Next work is box 9 or Session C, not box 8.
 
 ### Session A — identity core (aivi repo)
 
@@ -225,7 +237,7 @@ work starts at box 8 as written.
        non-loopback bind warns `api.open`; smoke is one open serve; owning
        docs rewritten (configuration, operations, architecture, opencode,
        getting-started, discord, CONTEXT).
-- [x] 4. `GET /v1/whoami` → `{ person: {id, name}, roles: ["operator"] }`
+- [x] 4. `GET /whoami` → `{ person: {id, name}, roles: ["operator"] }`
        (stub); 401 for anonymous and unknown bearers, the only such route;
        `Whoami` type + `whoami()` on `HostClient`; test in `http.test.ts`.
 - [x] 5. CLI: `aivi server create` — init `~/.aivi` (starter `config.json`,
@@ -237,12 +249,12 @@ work starts at box 8 as written.
        behind. Flags `--use`/`--name` skip prompts; re-run refuses. First
        CLI tests in `packages/app/test/cli.test.ts`; owning doc:
        `operations.md` §First run.
-- [x] 6. People over the API: `POST /v1/people`, `GET /v1/people`,
-       `POST /v1/people/:id/tokens` (+ `personCreateSchema`/
+- [x] 6. People over the API: `POST /people`, `GET /people`,
+       `POST /people/:id/tokens` (+ `personCreateSchema`/
        `personTokenCreateSchema`), client methods, CLI `aivi people
        create|list|token` (secret printed once); ungated like everything
        until the api-only session. Router lesson: a path dispatch before the
-       method gate catches *all* methods — `/v1/people` branches on method.
+       method gate catches *all* methods — `/people` branches on method.
        CLI tests run the real CLI against an in-test host via async `spawn`
        (`spawnSync` blocks the parent event loop and deadlocks the host).
        `schema:check` green (no config-schema change needed).
@@ -259,39 +271,47 @@ work starts at box 8 as written.
 
 - [ ] 8. `@aivi/client` package (internal): config read/write (0600,
        configVersion, home/person keys), HTTP client + bearer, whoami/link
-       types; unit tests.
-- [ ] 9. Host: `GET /v1/soul` → persona name, soul text, `identity.github`;
-       tests.
+       types; unit tests. **Superseded, never built**: the CLI reads the
+       config file directly and talks over the `@aivi/plugin/api` client;
+       consolidation onto one shared library stays follow-up.
+- [ ] 9. Host: `GET /soul` → persona name, soul text, `identity.github`;
+       tests. Still open: no soul route exists.
 - [ ] 10. Plugin remote mode: credentials from `~/.config/aivi.json`
        (person token if present, else bearerless; `options.url` override,
        else `url` key, else loopback); setup awaits `soul` (+ `whoami` for
        the cache), sync transforms read the cache; local-file soul path
        stays for server homes; stamp session person metadata when a person
        token is held (verify the session API write inside this box); mock
-       tests.
-- [ ] 11. Build: prepack JS build for the published client CLI (engines
-       node+bun, bin entry); decide inside this box how `@aivi/client`
-       sources land in the artifact (bundle vs publish-as-JS); record the
-       scoped no-build exception in the owning doc; verify the built
-       artifact runs on node **and** bun.
+       tests. **Half landed 2026-09-22** (credentials from the config file);
+       the soul fetch waits on box 9; person stamping landed in the host
+       turn runner (`metadata.aivi.person`), not in the plugin.
+- [x] 11. Build: prepack JS build for the published client CLI — landed
+       2026-09-22 as `@aivi/cli` prepack (tsc build, bin `dist/main.js`,
+       published `dist` + `templates`). Engines Node-only: the bun half was
+       never claimed. How the sources land in the artifact: `@aivi/client`
+       was never built (box 8), so the CLI package carries its own sources,
+       built like everything else in this repo; the scoped no-build
+       exception is recorded in the Verified section above.
 - [ ] 12. `aivi setup` + dynamic CLI: preflight, prompts, verify-before-
        write, `opencode plugin add` for both plugins, person key + roles
        cache write, "Signed in as", offer link; help template over {home,
        person, cached roles} with no network — cached roles affect listing
-       only, never command behavior; tests.
-- [ ] 13. Link codes: `POST /v1/links` (person token required; anonymous is
+       only, never command behavior; tests. **Landed 2026-09-22 except the
+       dynamic help template**: commander's own help stands and roles gate
+       nothing in it; the template waits on whoever needs listing.
+- [x] 13. Link codes: `POST /links` (person token required; anonymous is
        told there is no person to bind); inbox code-match before a message
        becomes a turn; discord/slack/linear bind handlers; confirmation
        reply; `aivi link <platform>`; tests.
-       ▶ Landed 2026-09-22 with a deviation: redemption is the shared
+       Landed 2026-09-22 with a deviation: redemption is the shared
        `redeemLink` helper called from the `/link` slash command (host-authored
        reply, added to `CHAT_COMMANDS`), not an inbox pre-turn scan — and
        `link` never reached a person before this, so the CLI mints it
-       (`POST /v1/links`), 5 digits, hashed, 15 min, one-time, re-bind refused
+       (`POST /links`), 5 digits, hashed, 15 min, one-time, re-bind refused
        (no unlink). Discord + Slack only; Linear needs its own redemption
        path (box 22). Turn runner stamps `metadata.aivi.person` and speaks the
        person's name. Natural-language redemption via an `aivi_link` tool: later.
-- [ ] 14. Docs of this session: `people.md`, `opencode.md` (remote plugin),
+- [x] 14. Docs of this session: `people.md`, `opencode.md` (remote plugin),
        `channels.md` (code matching), `configuration.md` (config file,
        0600, token-never-logged); `agentic:verify` per commit.
 

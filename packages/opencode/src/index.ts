@@ -2,8 +2,9 @@ import { existsSync, type FSWatcher, readFileSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { ServedTool } from '@aivi/core';
-import { createHostClient } from '@aivi/host/client';
+import { createHostClient } from '@aivi/plugin/api';
 import { Plugin } from '@opencode/plugin';
+import { makeRedirect } from './redirect.ts';
 
 const DEFAULT_HOST_URL = 'http://127.0.0.1:4100';
 
@@ -153,6 +154,31 @@ export default Plugin.define({
         });
       }
     });
+
+    // The redirect hook (docs/plans/git-workflow.md): boundary git is denied
+    // **in aivi's runs only**. The plugin cannot tell a run from a person's
+    // session, so it asks the host's ledger — `GET /run?session=` — once per
+    // session and caches the answer; a session that never appears in the
+    // ledger is a person's, and stays free. The host unreachable fails open:
+    // the worktree's empty credentials are the wall, the hook is the signpost.
+    const members = new Map<string, boolean>();
+    await ctx.permission.hook(
+      'evaluate',
+      makeRedirect(async sessionID => {
+        const known = members.get(sessionID);
+        if (known !== undefined) return known;
+        try {
+          const member = (await client.runMembership(sessionID)).run;
+          members.set(sessionID, member);
+          return member;
+        } catch {
+          // The host is not answering: fail open and ask again next time —
+          // a lost lookup must not permanently un-scope a run's session, and
+          // the wall is the safety, not this signpost.
+          return false;
+        }
+      }),
+    );
 
     // The soul: who aivi is, appended to **every** agent's prompt (aivi runs on
     // a dedicated machine, so every agent there is an aivi agent). The

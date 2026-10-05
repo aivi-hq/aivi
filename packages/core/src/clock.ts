@@ -1,5 +1,7 @@
 import { Cron } from 'croner';
-import { ISO_INSTANT } from './config.ts';
+
+/** An ISO 8601 instant; `Date.parse` alone accepts too much. */
+export const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 
 export function nextOccurrence(pattern: string, timezone: string, after: number): number {
   const cron = new Cron(pattern, { timezone, paused: true });
@@ -31,13 +33,23 @@ const DURATION = /^(\d+)\s*(s|m|h|d)$/i;
 const UNIT_MS = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
 
 /**
- * A duration on its own terms — `--older-than 30d` — as milliseconds.
- * Natural language is deliberately not accepted; the model translates before calling.
+ * A duration on its own terms — `--older-than 30d`, a dispatcher timeout
+ * `1h 30m` — as milliseconds. Space-separated parts **sum** (ruled
+ * 2026-10-02: "Make sure it does addition (split on space)"); natural
+ * language is deliberately not accepted; the model translates before calling.
  */
 export function parseDuration(at: string): number {
-  const relative = DURATION.exec(at.trim());
-  if (!relative) throw new Error(`Not a duration: "${at}". Use a count with s, m, h or d (30m, 2h, 1d, 30d)`);
-  return Number(relative[1]) * UNIT_MS[relative[2]!.toLowerCase() as keyof typeof UNIT_MS];
+  const parts = at.trim().split(/\s+/).filter(Boolean);
+  const bad = () =>
+    new Error(`Not a duration: "${at}". Use counts with s, m, h or d, added by spaces (30m, 2h, 1h 30m)`);
+  if (!parts.length) throw bad();
+  let total = 0;
+  for (const part of parts) {
+    const unit = DURATION.exec(part);
+    if (!unit) throw bad();
+    total += Number(unit[1]) * UNIT_MS[unit[2]!.toLowerCase() as keyof typeof UNIT_MS];
+  }
+  return total;
 }
 
 /**

@@ -32,19 +32,21 @@ process owns one data directory. aivi can work with either level:
 | `existing` | A data directory you started yourself with `--user-data-dir`, extensions installed and signed in. | You want to prepare the aivi browser by hand, still separate from your own. |
 | `attach` | Your own running Chrome, over remote debugging. aivi's tabs open in it, in the profile that enabled debugging, with your logins. | You work at that Mac and want aivi's tabs next to yours. Unattended jobs then depend on your Chrome being open. |
 
-### Opt-in: `aivi install browser`
+### Opt-in: `aivi add browser`
 
-The browser is not part of the core install. `aivi install browser` puts
-`@aivi/browser` into `<home>/app` and writes the launch block; until a
-`browser` block exists in `config.json` the browser module is not composed and
+The browser is not part of the core install. `aivi add browser` puts
+`@aivi/browser` into `<home>/app`, writes the launch block and lists the
+package in `aivi-plugins` in `app/package.json`; until the package stands in
+that list the browser module is not composed and
 the plugin never sees an `aivi_browser` tool. Once composed it appears as the
-`browser` module in `/status`, and an install ends with "Browser is running."
-With the block present, the first browser call launches Chrome — visible (not
+`browser` module in `/status`, and an add ends with "Browser is running."
+Once the block is there, the first browser call launches Chrome — visible (not
 headless), with the data directory `<home>/state/chrome`. The window is amber
 and its profile is named "aivi", so it is never mistaken for your own Chrome;
 aivi seeds those two preferences before the first start and leaves any colour
-you pick later alone. `"browser": false` is an explicit off, and the module is
-then not composed rather than failing.
+you pick later alone. To stand the plugin down without uninstalling it, put
+the `["@aivi/browser", false]` tuple in the list: the module is then not
+composed rather than failing, and its block stays valid.
 
 ### Attach to your own Chrome
 
@@ -53,7 +55,7 @@ In Chrome 144 or later enable remote debugging at
 connection), or start Chrome with `--remote-debugging-port=9222`. Then:
 
 ```json
-{ "browser": { "connection": { "mode": "attach", "browserUrl": "http://127.0.0.1:9222" } } }
+{ "plugins": { "browser": { "connection": { "mode": "attach", "browserUrl": "http://127.0.0.1:9222" } } } }
 ```
 
 Only loopback URLs are accepted. The agent then acts in your profile with your
@@ -69,7 +71,7 @@ Install extensions and sign in there, enable remote debugging as above, and
 point aivi at the **data directory** (not its inner `Default` or `Profile 1`):
 
 ```json
-{ "browser": { "connection": { "mode": "existing", "userDataDir": "/absolute/path/chrome-aivi" } } }
+{ "plugins": { "browser": { "connection": { "mode": "existing", "userDataDir": "/absolute/path/chrome-aivi" } } } }
 ```
 
 Paths resolve relative to the home. In every mode the tool gets its session ID

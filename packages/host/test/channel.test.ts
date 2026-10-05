@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
-import type { ChannelPlatform } from '../src/channel/contract.ts';
+import type { ChannelPlatform } from '@aivi/plugin/channel';
 import { ChannelEngine, STOPPED_NOTICE, STOPPED_REASON, splitReply } from '../src/channel/engine.ts';
 import { ConversationStore } from '../src/channel/store.ts';
 import { TurnNotStarted } from '../src/session.ts';
@@ -9,7 +9,7 @@ import { Store } from '../src/store.ts';
 
 /** Discord's shape, so the ids and tables asserted here are the ones existing databases hold. */
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
-const limits = { resource: 'local-model', maxConcurrent: 1, turnTimeoutMs: 300_000 };
+const limits = { resource: 'local-model', maxConcurrent: 1 };
 const scheduler = configSchema.parse({ version: 1 }).scheduler;
 const message = (id: string, channel = 'dm-a') => ({
   id,
@@ -90,6 +90,35 @@ test('the tables and ids follow the module id, so a second platform never collid
     ],
   );
   assert.throws(() => slack.enqueue(message('C1:2.0', 'C1'), 1), /The Slack queue is full/);
+});
+
+test('a platform id that is not a bare SQL identifier still gets its tables', t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  // An adapter's platform id is its author's string, and a third-party package
+  // bringing a dashed one would otherwise die at its first CREATE: SQL reads
+  // `tracker-linear_turns` unquoted as `tracker` minus `linear_turns`. The
+  // first-party ids are bare words, so this renames nothing that exists — it is
+  // the module's first CREATE meeting a real SQLite, with the name quoted.
+  const dashed: ChannelPlatform = { id: 'tracker-linear', label: 'Linear', replyLimit: 60_000, effects: 'work' };
+  const store = new ConversationStore(core, dashed, 'binding');
+  store.enqueue(message('one', 'ENG-1'), 10);
+  assert.match(store.list()[0]!.session, /^ses_tracker-linear_/, 'the session id carries the id as written');
+  const claimed = store.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, 'local-model');
+  assert.equal(claimed!.id, 'one');
+  assert.deepEqual(
+    core.leases().map(lease => [lease.id, lease.owner]),
+    [['tracker-linear:one', 'tracker-linear']],
+    'the lease owner is the id as written too: a value, not an identifier',
+  );
+  // The index names carry the id as well, and they are the ones that died first.
+  assert.deepEqual(
+    core.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'tracker-linear%' ORDER BY name")
+      .all()
+      .map(row => row.name),
+    ['tracker-linear_pending', 'tracker-linear_session_lookup'],
+  );
 });
 
 test('conversation leases and scheduler claims enforce the same global capacity', t => {

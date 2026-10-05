@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { browserConfigSchema, browserRequestSchema } from '@aivi/core';
+import { browserConfigSchema, browserRequestSchema } from '../src/config.ts';
 import type { BrowserTransport, McpReply } from '../src/index.ts';
 import { chromeArguments, createBrowserService } from '../src/index.ts';
 import { createChromeTransport } from '../src/transport.ts';

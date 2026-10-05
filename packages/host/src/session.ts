@@ -1,7 +1,6 @@
 import type { Logger } from '@aivi/core';
 import { errorMessage, getLogger } from '@aivi/core';
-import type { SessionEvents } from './events.ts';
-import type { OpenCodeClient } from './opencode.ts';
+import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 
 export type NativeMessages = Awaited<ReturnType<OpenCodeClient['session']['context']>>;
 export type PermissionRule = { action: string; resource: string; effect: 'allow' | 'deny' | 'ask' };
@@ -240,6 +239,14 @@ export async function runTurn(client: OpenCodeClient, input: TurnInput, options:
       await permissions.answer(p.id, p.action, [...p.resources]);
     // The context can trail `wait` by a moment; every step of a session emits events, so the next one is the re-check.
     while (true) {
+      // A verdict that already stands answers **before** the wait: the
+      // park is an abort that only fires forward, so a `fail` verdict
+      // given before this race — a permission pending from before the
+      // prompt — has no future event to deliver, and the wait would park
+      // on that very permission forever. The same verdict the race
+      // answers with, said at once.
+      const standing = permissions.failure();
+      if (standing) throw standing;
       await Promise.race([
         client.session.wait({ sessionID }, request),
         new Promise<never>((_, reject) =>
@@ -307,8 +314,11 @@ function nextEvent(events: SessionEvents, sessionID: string, signal: AbortSignal
 /**
  * Extract the confirmed final answer for one turn from the native session
  * context, or throw. `PendingAnswer` means keep waiting; any other error means
- * the turn cannot be trusted. A `/steer` delivered into this turn is a user
- * message carrying `metadata.aivi.steer = <this message id>` and belongs to it.
+ * the turn cannot be trusted. An **interjection** steered into this turn —
+ * the default for a message that arrives while the turn runs — is a user
+ * message carrying `metadata.aivi.steer = <this message id>` and belongs to
+ * it; anything else user-shaped in the tail came from outside and voids the
+ * verification.
  */
 export function finalAnswer(messages: NativeMessages, messageId: string, agent: string): string {
   const aiviOf = (m: { metadata?: Record<string, unknown> }) =>

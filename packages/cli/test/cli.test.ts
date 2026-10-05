@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { clientConfigSchema, loadClientConfig, saveClientConfig } from '../src/client-config.ts';
-import { appCliPath, forward } from '../src/forward.ts';
 import { extractLinkArgs, link } from '../src/link.ts';
-import type { SetupIo } from '../src/setup.ts';
+import type { IdentityStep, SetupIo } from '../src/setup.ts';
 import { extractSetupFlags, seedHomeOpenCode, setup } from '../src/setup.ts';
 
 let directory: string;
@@ -46,21 +47,22 @@ function fakeIo(overrides: Partial<SetupIo> = {}): {
   calls: {
     installs: string[][];
     plugins: string[];
-    identity: string[][];
+    identity: IdentityStep[][];
     logs: string[];
   };
 } {
   const calls = {
     installs: [] as string[][],
     plugins: [] as string[],
-    identity: [] as string[][],
+    identity: [] as IdentityStep[][],
     logs: [] as string[],
   };
   const io: SetupIo = {
     install: specs => calls.installs.push(specs),
+    rebuildSchema: async () => {},
     npmView: async () => '9.9.9',
-    forwardIdentity: (args, home) => {
-      calls.identity.push(args);
+    createIdentity: async (step, home) => {
+      calls.identity.push([step]);
       return { home, url: 'http://127.0.0.1:4100', person: 'person-1234abcd', name: 'Ada', token: TOKEN };
     },
     opencodeOnPath: () => true,
@@ -123,18 +125,8 @@ test('unknown fields survive a save', () => {
 });
 
 test('setup flags are pulled out; unknown flags are refused', () => {
-  const flags = extractSetupFlags([
-    '--plugin',
-    '@aivi/channel-discord',
-    '--app-spec',
-    '@aivi/app@0.2.0',
-    '--use',
-    'this-machine',
-    '--name',
-    'Ada',
-  ]);
-  assert.deepEqual(flags.plugins, ['@aivi/channel-discord']);
-  assert.equal(flags.appSpec, '@aivi/app@0.2.0');
+  const flags = extractSetupFlags(['--host-package', '@aivi/host@0.2.0', '--use', 'this-machine', '--name', 'Ada']);
+  assert.equal(flags.hostPackage, '@aivi/host@0.2.0');
   assert.equal(flags.use, 'this-machine');
   assert.equal(flags.name, 'Ada');
   assert.equal(flags.connect, false);
@@ -179,11 +171,11 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
     { name: 'aivi-server', private: true },
     'the manifest npm installs against, so the app dir anchors the install',
   );
-  assert.deepEqual(calls.installs, [['@aivi/app']]);
-  assert.deepEqual(calls.identity, [['--use', 'this-machine', '--name', 'Ada']]);
+  assert.deepEqual(calls.installs, [['@aivi/host']]);
+  assert.deepEqual(calls.identity, [[{ use: 'this-machine', name: 'Ada' }]]);
   const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
   assert.match(jsonc, /"@aivi\/opencode@9\.9\.9"/);
-  for (const agent of ['assistant.md', 'dreamer.md'])
+  for (const agent of ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md'])
     assert.equal(existsSync(join(home, '.opencode', 'agents', agent)), true, agent);
   const assistant = readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8');
   assert.match(
@@ -191,6 +183,10 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
     /you do not perform\nproject work/,
     'the do-not-do-the-work rule lives in the agent file, not in module code',
   );
+  const dev = readFileSync(join(home, '.opencode', 'agents', 'dev.md'), 'utf8');
+  assert.match(dev, /both use aivi_respond_feedback/, 'the returning-work posture line ships with the worker');
+  const review = readFileSync(join(home, '.opencode', 'agents', 'review.md'), 'utf8');
+  assert.match(review, /Request changes for problems\.\s+Comments for nits\./, 'the review posture ships');
   const record = loadClientConfig()!;
   assert.equal(record.home, home);
   assert.equal(record.appDir, join(home, 'app'));
@@ -370,21 +366,64 @@ test('seeding the home keeps what exists and fills only the gaps', () => {
   assert.equal(readFileSync(join(home, 'opencode.jsonc'), 'utf8'), '{"kept":true}');
   assert.equal(readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8'), 'custom');
   assert.equal(existsSync(join(home, '.opencode', 'agents', 'dreamer.md')), true, 'missing agents are added');
+  for (const worker of ['product.md', 'dev.md', 'review.md'])
+    assert.equal(existsSync(join(home, '.opencode', 'agents', worker)), true, `${worker} is added too`);
 });
 
-test('forwarding runs the installed app CLI with AIVI_HOME and passes argv through', () => {
+/** A fake installed server: an ESM `dist/cli.js` the CLI can import. */
+function fakeInstalledApp(home: string, body: string): void {
+  const pkg = join(home, 'app', 'node_modules', '@aivi', 'host');
+  mkdirSync(join(pkg, 'dist'), { recursive: true });
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@aivi/host', type: 'module' }));
+  writeFileSync(join(pkg, 'dist', 'cli.js'), body);
+}
+
+const mainPath = fileURLToPath(new URL('../src/main.ts', import.meta.url));
+
+/** Run the real CLI entry against this test's home. */
+const runCli = (...args: string[]) =>
+  spawnSync(process.execPath, [mainPath, ...args], { encoding: 'utf8', env: process.env });
+
+test('an operator command runs in the installed app’s code, in-process, with the CLI’s home', () => {
   const home = join(directory, 'home');
-  const appDir = join(home, 'app');
-  assert.throws(() => appCliPath(appDir), /No aivi server installed/);
-  mkdirSync(join(appDir, 'node_modules', '@aivi', 'app', 'dist'), { recursive: true });
   const marker = join(directory, 'marker.json');
-  writeFileSync(
-    join(appDir, 'node_modules', '@aivi', 'app', 'dist', 'cli.js'),
-    `require('node:fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify({argv: process.argv.slice(2), home: process.env.AIVI_HOME}));\n`,
+  fakeInstalledApp(
+    home,
+    `import { writeFileSync } from 'node:fs';
+export const registerCommands = program => {
+  program
+    .command('jobs')
+    .command('list')
+    .action(() => writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ home: process.env.AIVI_HOME })));
+};
+`,
   );
-  const status = forward(['jobs', 'list'], { home, appDir });
-  assert.equal(status, 0);
-  const seen = JSON.parse(readFileSync(marker, 'utf8')) as { argv: string[]; home: string };
-  assert.deepEqual(seen.argv, ['jobs', 'list']);
-  assert.equal(seen.home, home);
+  process.env.AIVI_HOME = home;
+  const run = runCli('jobs', 'list');
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(JSON.parse(readFileSync(marker, 'utf8')).home, home, 'the app code sees the home the CLI resolved');
+});
+
+test('without an installed app an operator command says what to run, and help still shows the machine commands', () => {
+  const home = join(directory, 'home');
+  mkdirSync(home, { recursive: true });
+  process.env.AIVI_HOME = home;
+  const run = runCli('jobs', 'list');
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /No aivi server installed at .* Run `aivi setup` first/);
+  const help = runCli('--help');
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /aivi setup/);
+  assert.match(help.stdout, /App commands unavailable/, 'the missing install is said, not hidden');
+});
+
+test('a broken app install cannot hide the machine commands nor stop the machine commands', () => {
+  const home = join(directory, 'home');
+  fakeInstalledApp(home, "throw new Error('half-installed');\n");
+  process.env.AIVI_HOME = home;
+  const help = runCli('--help');
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /half-installed/);
+  const version = runCli('version');
+  assert.equal(version.status, 0, 'a machine command never imports the app');
 });

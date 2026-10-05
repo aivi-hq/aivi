@@ -8,7 +8,13 @@
   "dynamicallyLoaded": [
     // Git hooks lefthook invokes by path; nothing imports them, so the static
     // graph alone would report them dead.
-    "scripts/commit-msg.mjs"
+    "scripts/commit-msg.mjs",
+    // The CLI's one edge into the installed server: importApp() imports these
+    // two host modules by string path (`dist/cli/*.js`) — `aivi remove` drops
+    // a plugin's config block, and setup/add/remove/update rebuild the editor
+    // schema. Nothing imports them statically, by design.
+    "packages/host/src/cli/plugin-remove.ts",
+    "packages/host/src/cli/schema-cache.ts"
   ],
   "workspaces": {
     "patterns": [

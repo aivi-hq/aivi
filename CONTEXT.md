@@ -26,22 +26,31 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | run | one execution of a job: `queued → running → succeeded / failed / blocked`, or `cancelled`, or `missed`; one row, one audit trail, always a `jobId`; snapshots the task |
 | missed | a run recorded for an occurrence found later than its misfire grace; terminal, never executed, reported like a failure |
 | turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a conversation turn is of kind `message` (a person) or `job` (an outcome re-entering) |
-| pool / lease | named capacity (`local-model`, `maintenance`); runs and conversation turns take leases from the same pools |
+| pool / lease | a slot in a named capacity pool. Two systems coexist (no merger yet): **ticket work** draws the dispatcher's `dispatcher.pools` (the orchestrator asks, the dispatcher decides), while **jobs and channel turns** draw `scheduler.resources`: [orchestrator](docs/orchestrator.md) |
 | blocked | ended without proof that the external side stopped; keeps its capacity until `runs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
 | report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing |
 | channel module | a chat platform adapter (`discord`, `slack`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
 | conversation | what a channel module binds to one OpenCode session: a thread, a DM, or a whole channel |
-| source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`; a file belongs to its most specific source |
-| project | a repository the team works on: one directory `<home>/projects/<id>` holding the clean git checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `config.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project directory with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`) |
+| source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`, `manual` (docs shipped with an installed package); a file belongs to its most specific source |
+| project | what the team works on: one directory `<home>/projects/<id>` holding a checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `config.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`); a project may be **repo-less** — a forge gives the checkout, so with no forge a project has memory and knowledge but no source |
+| forge / tracker | the two **systems** core names (in that order): a **forge** owns repositories (clones a project's checkout, branches, pull requests), a **tracker** owns tickets (lanes, delegation). Core spells the roles, never which plugin fills them; `projectRoles = ['forge', 'tracker']` |
+| project contributor | a plugin's `./setupProject` export — `{ role?, setup(ctx) }` — that sets a new project up for its role and hands back the config section core writes at `projects.<id>.<moduleId>`; core computes which are *configured* (a `plugins.<id>` block exists), offers one per role (asks if several), and runs the roleless ones after the roles; the plugin clones/asks, core writes bytes and reads none |
+| platform adapter | the translator between aivi and one ticket system, at the `@aivi/plugin/tracker` seam (the interface `Platform`, declared where the tracker stages live): platform events in (`started`/`prompted`/`updated` on a *conversation*, the platform's word for one working session), neutral updates out (`issue`, `assign`/`unassign`, `startSession`, `comment`, `laneStates`, `ask`/`plan`, `resultShown`, `apply`). Linear's adapter is `tracker-linear/src/tracker.ts` |
+| tracker | the stages the orchestrator walks every run through, on one `Tracker` interface (declared in `@aivi/plugin/tracker`, followed by the host): the board the eligibility walk reads (`projects`, `tickets`, idempotent `moveTo`, `ticketLane` before any ending move) and the stages `initWork` (open the ticket on the platform, return its summary), `ready`, `startWork?`, `question`, `plan?`, `endWork` (closing words; awaited). The tracker keeps the pair (its session ↔ the OpenCode session ↔ the ticket) in its own namespaced table, posts people's messages into the worker's session itself, and retries its own closings at wake and boot. Lanes, guards and the exit contract stay the machinery's. Linear's tracker is `tracker-linear/src/work.ts` with its stages in `module.ts`; the machinery is `host/src/orchestrator/` |
+| forge adapter | the translator between aivi and one repository host, at the `@aivi/plugin/forge` seam: the facts a clone cannot see (which pull request stands for a branch, what its review said) and the operations only it may authenticate — everything that reaches `origin`: clone, the `source/` sync, push. An **installation** is the grant from an account to the app, and aivi speaks through exactly one, as its own app and never as the person at the keyboard; its posts are signed `_worker: aivi · <role>_` in the text a human reads, so a wake can tell them from replies. Local git — worktrees, commits — is not a forge's, and the line is remote, not clone. `forge-github` is the one built; the host-side registry asks "who owns this project's remote?" (built 2026-10-02): forges register at module start, and the `source/` sync is the first question it answers — an owned checkout syncs through its forge, authenticated as the app |
 | dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
-| origin | `metadata.aivi.origin` on every session aivi creates: a channel module id (`discord`, `slack`, `linear`), `job`, `dreaming`; on messages also `job-result` |
+| origin | `metadata.aivi.origin` on the OpenCode sessions aivi's **channel turns**, jobs and dreaming create — **not worker sessions**, which carry no aivi metadata and are known by the orchestrator's run rows: a channel **platform** id (`discord`, `slack`, `linear` — the platform a
+  conversation is on, not the package that speaks for it, which is why
+  `@aivi/tracker-linear` writes `linear`), `job`, `dreaming`; on messages also `job-result` |
 | progress / placeholder | one message per running conversation turn, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands |
 | model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
-| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/steer`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates |
+| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/queue`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates. A message arriving mid-turn **interjects** (steers) by default; `/queue` is the way behind |
 | attribution | which names a commit carries: the bot as author/co-author from aivi's identity, the human as author from their own git config — a git fact, it never consults whoami ([people](docs/people.md)) |
 | association | which person a record belongs to: link codes, job ownership, session stamps, memories — a host fact, taken from the calling bearer, never from what a message claimed ([people](docs/people.md)) |
 | link | a channel account bound to a person, minted by `aivi link` and redeemed by `/link`; the binding is also the channel admission — who may talk, while config names only where ([people](docs/people.md)) |
+| exec channel / relay | `aivi --remote`: a websocket (`/exec`) on the host's own port carrying terminal bytes — argv and keystrokes go out, the child's terminal comes back; commands are never remapped to JSON operations, the CLI itself is the protocol ([operations](docs/operations.md#running-remotely)) |
+| driven session | the far end of an exec channel: the host's child with a closed environment, `(remote)` in its banner, refusing at invocation the commands that act on the machine you type on ([operations](docs/operations.md#running-remotely)) |
 
 ## Decisions and why
 
@@ -52,7 +61,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Definitions and executions are two tables.** A job says what and when; a
   run is one execution and always belongs to a job, so a one-off is a job
   with `at` and not a special run. Operators reason about `jobs …`, inspect
-  `runs …` ([configuration](docs/configuration.md#jobs-runs-tasks)).
+  `runs …` ([configuration](packages/host/docs/configuration.md#jobs-runs-tasks)).
 - **It matched or it didn't.** A due occurrence found within
   `misfire.graceSeconds` runs; found later it becomes one `missed` run for the
   whole gap, never executed, reported like a failure, and the job moves on.
@@ -72,7 +81,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   claimant or two system jobs sharing an id is fatal at startup, an unclaimed
   name fails the run with its name. The host's own five operations are claimed
   into the same registry; only `prompt` and `shell` are tasks an agent can
-  author ([configuration](docs/configuration.md#tasks)).
+  author ([configuration](packages/host/docs/configuration.md#tasks)).
 - **Failed vs blocked** is decided by one thing: was the prompt accepted?
   `TurnNotStarted` before it → `failed`; anything unverifiable after it →
   `blocked`, capacity kept, human resolves. Exception: a conversation turn
@@ -99,8 +108,10 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **No polling, no periodic timers.** The loop sleeps until `Store.nextDue()`
   and is woken by whatever changed the queue; channel engines tick on the same
   wake; turns take permission prompts (`permission.asked`) and channels take
-  progress from the one OpenCode event stream. SQLite is the single truth, so
-  restarts reconcile nothing.
+  progress from the one OpenCode event stream. SQLite is the single truth:
+  restarts never guess from live state, they reconcile what the records owe —
+  the dispatcher re-arms its leases, the orchestrator re-drives owed moves,
+  the tracker pays owed closings.
 - **Shutdown aborts** running runs; they end `blocked`. A grace period is a
   design choice not yet made ([shutdown-hooks](docs/backlog/shutdown-hooks.md)).
 - **The agent file is the boundary.** Discord, jobs and dreaming run the
@@ -114,7 +125,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Two browsers, on purpose.** OpenCode's `browser.*` drives the desktop
   app's browser; aivi's `aivi_browser` drives one persistent Chrome for
   unattended sessions and shared logins, and is an opt-in plugin
-  (`aivi install browser`) rather than core. The seeded agents deny the
+  (`aivi add browser`) rather than core. The seeded agents deny the
   former so Discord and jobs are never offered a browser that cannot
   connect.
 - **A second chat platform is glue.** The host owns the inbox, the
@@ -131,8 +142,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
 - **Commands are adapter UI over host operations.** One command table in the
   host feeds Discord's registration, Slack's manifest and `/help`; a module
   translates, never decides. A `/stop` is the person's choice, so the turn is
-  discarded like a shutdown (not blocked) and said so; a `/steer` goes into
-  the running turn with `delivery: "steer"` and is marked as its own; a
+  discarded like a shutdown (not blocked) and said so; a message that arrives
+  mid-turn interjects — `delivery: "steer"`, marked as part of the running
+  turn (ruled 2026-10-02; `/steer` died and `/queue` took its place); a
   `/model` pin is a session property set before each turn and refused while
   one runs; `/agent` is deliberately absent (personalities by configuration)
   ([channels](docs/channels.md#chat-commands)).
@@ -144,31 +156,46 @@ runs in one process; adapters are optional modules with a start/stop contract.
   `projects.<id>` in `config.json`, checkout at `<home>/projects/<id>/source`, a
   company-wide `docs/` convention (`docs` as `doc`, `docs/adr` as `decision`)
   with per-project override, and projects discovered as the directories of
-  `<home>/projects`, so adding a project is a `git clone` into `source/` and a repository
-  works the same outside aivi. No `aivi.project.json`
+  `<home>/projects`, so **core has no clone** — a forge's `./setupProject`
+  clones into `source/` (a repo-less project is created without one), and a
+  repository works the same outside aivi. No `aivi.project.json`
   ([projects](docs/projects.md)).
 - **Agents create jobs, jobs do not.** Any agent with the plugin may schedule
-  through `aivi_jobs` (`POST /jobs`, the one job mutation on the
-  API, on by default; `scheduler.agentSchedules: false` turns it off); the host derives agent and
+  through `aivi_jobs` — a host tool, dispatched in-process over `POST /tools`
+  like every other served tool; `scheduler.agentSchedules: false` turns it
+  off. (`POST /jobs` is the same mutation over HTTP for API clients.)
+  The host derives agent and
   directory from the calling session and refuses sessions with origin `job` or
   `dreaming`, unless a Discord thread adopted that session. Whoever may talk
   to the agent is the authority; jobs are the admin's responsibility
-  ([configuration](docs/configuration.md#agent-created-jobs)).
+  ([configuration](packages/host/docs/configuration.md#agent-created-jobs)).
 - **Outcomes are conversations, not posts.** The default report of an
   agent-created job is `session`: the outcome re-enters the asking thread as
-  a turn and the librarian says what matters. A channel report opens a thread
+  a turn and the assistant says what matters. A channel report opens a thread
   that continues the run's own session, so replying never meets an agent that
   does not know what it did ([discord](docs/discord.md)).
 - **An optional module never takes the host down**, at startup either: a
   failed `start` is retried with backoff for as long as the host runs and shows
   as `degraded` in status; only a `ConfigurationError` (something the operator
   must change) is fatal ([operations](docs/operations.md#startup)).
-- **One config file, and it is yours.** Presence of a validated block enables
-  its module (`modules.discord`, `modules.slack`, `linear`; `false` is an
-  explicit off) — no module points at a separate config file. aivi and the
+- **One config file, and it is yours.** One `plugins` object holds one block
+  per plugin, keyed by the plugin's own **module id, which is the package's
+  short name** (`plugins.tracker-linear`, `plugins.forge-github`) — the word a
+  person typed into `aivi add`, so nobody reads a source file to learn what to
+  write in `config.json`. The platform's short name survives only where it names
+  the **platform** and not the package: Linear's table prefix and session ids
+  stay `linear`, because renaming a prefix orphans every conversation already
+  bound to it. What enables a module is the **`aivi-plugins` list** in
+  `app/package.json`, which holds npm **package names** — the install fact
+  (`aivi add @someone/aivi-cool-plugin`) — while the module id is the config
+  key, the logger category and the `/status` id, declared by the package's
+  own `./config` entry. The server composes the closed schema from the listed
+  plugins, so a block for an unlisted plugin fails and an editor says so; a
+  listed plugin with no block takes its own defaults or its own complaint.
+  No module points at a separate config file. aivi and the
   operator edit the live `config.json` itself, so it never goes under version
   control; a home in a git repository tracks only a template, which the first
-  run copies ([configuration](docs/configuration.md#home)).
+  run copies ([configuration](packages/host/docs/configuration.md#home)).
 - **Scripts see a normal shell** minus aivi's own secrets (`.env` keys and the
   fixed token names); an allow-list would break what works from a terminal.
 - **One compiled shape, locally and on npm.** Packages compile to `dist/`
@@ -178,16 +205,28 @@ runs in one process; adapters are optional modules with a start/stop contract.
   test and typecheck commands; nothing is rewritten at publish, and nothing
   ships from a package root. The
   git-checkout installation decision is superseded; packages publish to npm.
-- **Blocked runs hold global capacity** on purpose until per-project pools
-  exist ([projects-and-capacity](docs/backlog/projects-and-capacity.md)).
-- **An agent session is a conversation.** The Linear module runs on the
-  channel machinery: a delegation is a `created` webhook → one bound
-  conversation → one worker turn of the lane's agent in its own git worktree
-  (`projects/<id>/worktrees/<session>`, on Linear's branch name), progress as
-  ephemeral thoughts, the answer as a response. Stop means stop: the turn is
-  discarded, capacity released, worktree and session kept; only an
-  unverifiable stop is `blocked`. One worker per issue; worktrees isolate
-  concurrent workers, so there is no per-project lock
+- **Capacity became the dispatcher's pools — for ticket work.** Ruled 2026-10-02: one
+  installation-wide pool set; the orchestrator asks, the dispatcher decides;
+  a lease idles out on its own instead of a blocked run holding capacity
+  forever ([orchestrator](docs/orchestrator.md)). Jobs and channel turns
+  still draw the older `scheduler.resources`: the two systems coexist, and
+  folding one into the other is tracked deliberately-later in that plan.
+- **An agent session is a conversation the tracker answers.** The
+  orchestrator owns the run: durable record, worker session (the lane's agent
+  in the project checkout), worker tools, the first prompt's composition, and
+  the target lane its lane order chose; it walks every run through the
+  tracker's **stages** and never learns what a ticket platform is (ruled
+  2026-10-02). The Linear module answers them — pair in its own table,
+  closing words in its own order (result, note, delegate), the orchestrator
+  moving the ticket after it speaks and returning the lease last, people's
+  messages posted straight into the OpenCode session, the open form the
+  discriminator between answer and steer. A hand delegation gets one fixed
+  refusal: work reaches the orchestrator through the board. The **assistant**
+  still rides the channel machinery; worktrees were built 2026-10-02. Stop
+  means stop: the worker is interrupted and the run cancelled, the run's
+  worktree torn down with its local commits and its session kept for
+  inspection; the ending releases the delegate, and the stopped ticket
+  carries the human label — a stop remembers nothing; the board does
   ([linear](docs/linear.md); what is left: [plans/linear.md](docs/plans/linear.md)).
 - **One Linear app, one persona, lanes pick agents.** The primary app carries
   the workspace's data feed and every agent-session webhook on one route and
@@ -199,9 +238,9 @@ runs in one process; adapters are optional modules with a start/stop contract.
   voice, injected by the plugin into every agent's prompt and hot-reloaded;
   what aivi is *called* is `identity.name`, which the plugin states ahead of
   it, so the name has one owner and a soul edit cannot change it
-  ([linear](docs/linear.md), [configuration](docs/configuration.md#the-soul)).
+  ([linear](docs/linear.md), [configuration](packages/host/docs/configuration.md#the-soul)).
 - **A repository is a Linear team.** Routing reads the issue's team only
-  (`projects.<id>.linear.teams`, a list: several teams may share one
+  (`projects.<id>.tracker-linear.teams`, a list: several teams may share one
   checkout); lanes, branch-name format and labels all live per Linear team,
   while a Linear *project* is the humans' epic with a completion date and
   aivi never consults it ([linear](docs/linear.md)).
@@ -213,7 +252,7 @@ runs in one process; adapters are optional modules with a start/stop contract.
   source that answers: `identity.github`, else `opencode.coauthor` in the
   machine's git config, else the aivi app. The project's `source/` is never
   marked, so attended work keeps a human author with the agent as co-author
-  ([linear](docs/linear.md), [configuration](docs/configuration.md#fields)).
+  ([linear](docs/linear.md), [configuration](packages/host/docs/configuration.md#fields)).
 - **Tokens identify, never authorize — except people management.** Auth is
   `none`: commands are open, and a bearer only names the caller for
   association — whose job, whose link, whose memory; unknown or missing stays
@@ -232,24 +271,36 @@ runs in one process; adapters are optional modules with a start/stop contract.
   listens, linked or not: redemption is its own proof. An unlinked DM sender
   is answered once per start with the link hint; in channels aivi stays
   silent ([discord](docs/discord.md#behavior)).
-- **The lane map is a convention with per-project deviations.**
-  `projectDefaults.linear.lanes` is the company-wide base and a project wins
-  one lane at a time over it (merge, where `projectDefaults.knowledge`
-  replaces: a lane map is a lookup table, not a list); `null` marks a lane
-  humans work — written in the file, absent from the map the listener
-  consults. A lane names an OpenCode agent; `{ agent, worktree: false }` runs
-  it in the project's checkout. Deviations stay at project level; a per-team
-  lane map is the named escape hatch if two teams in one checkout ever want
-  different routing for the same lane name ([linear](docs/linear.md)).
+- **The lane array *is* the workflow, and it is core's.** Ruled 2026-10-01,
+  superseding the `projectDefaults.tracker-linear.lanes` lookup table:
+  `projects.<id>.lanes` is an ordered array of `{ name, agent?, worktree? }`
+  spelled as the tracker platform spells its workflow states. A lane naming
+  an agent is worked; naming none is worked by humans. Success moves a
+  ticket to the **next** entry, failure to the **previous** one — the
+  neighbours by default, overridden per lane by `next` and `previous`
+  (the old `complete`/`return` names die with the dispatcher build); a stop
+  moves nothing; a state outside the array is silence. **Closed states are
+  never written** — the tracker recognizes them by type. `worktree` defaults
+  to false; a true lane works in its own git worktree on the ticket's
+  branch (built 2026-10-02). The orchestrator decides
+  the target lane from the array and performs the move itself
+  ([linear](docs/linear.md), [orchestrator](docs/orchestrator.md)).
+- **The orchestrator may not know a tracker exists.** Ruled 2026-10-01,
+  shaped 2026-10-02: it orchestrates and calls the `Tracker`'s stages — one
+  interface, no events, no knowing which platform answers. It never mirrors
+  delivery and holds no conversation column — its ledger is aivi's fact about
+  the *work* plus the move it owes; the tracker's pair and owed closings live
+  in the tracker's own tables, retried in its own time. The row-as-outbox and
+  the run-event bus are both superseded ([orchestrator](docs/orchestrator.md#the-trackers-stages)).
 
 ## Where each fact lives
 
 | Fact | Owner |
 | --- | --- |
-| Config fields, task kinds, secrets and `.env` order | [docs/configuration.md](docs/configuration.md) |
+| Config fields, task kinds, secrets and `.env` order | [packages/host/docs/configuration.md](packages/host/docs/configuration.md) |
 | Startup, shutdown, dispatch, failed/blocked outcomes, resolving blocked work, CLI | [docs/operations.md](docs/operations.md) |
-| First run, librarian in OpenCode, first project and channel | [docs/getting-started.md](docs/getting-started.md) |
-| Module contract (`HostServices`, `Store.migrate`, `fail`) | [docs/architecture.md](docs/architecture.md#one-application-contained-modules) |
+| First run, the assistant in OpenCode, first project and channel | [docs/getting-started.md](docs/getting-started.md) |
+| Module contract (`AiviServices`, `Store.migrate`, `fail`) | [docs/architecture.md](docs/architecture.md#one-application-contained-modules) |
 | Tool ids, plugin loading, permission matching, session driver contract | [docs/opencode.md](docs/opencode.md) |
 | Knowledge scope, kinds, refresh | [docs/knowledge.md](docs/knowledge.md) |
 | People, person tokens, linking, the client config (`~/.config/aivi.json`) | [docs/people.md](docs/people.md) |
@@ -258,31 +309,35 @@ runs in one process; adapters are optional modules with a start/stop contract.
 | Channel module contract, shared inbox/engine/turn runner, ids, report shape | [docs/channels.md](docs/channels.md) |
 | Discord behavior, setup, recovery | [docs/discord.md](docs/discord.md) |
 | Slack behavior, app manifest, setup | [docs/slack.md](docs/slack.md) |
-| Linear behavior (agent sessions as conversations, worktrees and their attribution, stops), setup | [docs/linear.md](docs/linear.md) |
+| Linear behavior (the tracker's stages, stops and their trails, attribution), setup | [docs/linear.md](docs/linear.md) |
+| How work gets picked and worked (orchestrator and dispatcher: lanes, priority, queue lanes, pools, leases; the tracker's stages, worker tools, completion and question contracts, recovery) | [docs/orchestrator.md](docs/orchestrator.md) |
 | Browser service | [docs/browser.md](docs/browser.md) |
 | Decisions | [docs/architecture.md](docs/architecture.md) |
 | Status per milestone, live gates, next steps | [docs/roadmap.md](docs/roadmap.md) |
 | Product requirements | [docs/requirements.md](docs/requirements.md) |
 | Unscheduled ideas | `docs/backlog/` (one file per topic) |
-| Scheduled work in progress, as checklists that shrink as steps land | `docs/plans/` ([cli-refactor](docs/plans/cli-refactor/index.md), [linear](docs/plans/linear.md), [client-aivi](docs/plans/client-aivi.md), [templates](docs/plans/templates/index.md)) |
+| Scheduled work in progress, as checklists that shrink as steps land | `docs/plans/` ([cli-refactor](docs/plans/cli-refactor/index.md), [linear](docs/plans/linear.md), [client-aivi](docs/plans/client-aivi.md), [git workflow](docs/plans/git-workflow.md), [templates](docs/plans/templates/index.md), [orchestrator build](docs/plans/orchestrator.md), [knowledge improvements](docs/plans/knowledge-improvements.md)) |
 | Review findings (not specs; each has a disposition section) | `docs/review/` |
 
 ## Where things are
 
-`packages/{core,host,knowledge,browser,channel-discord,channel-slack,linear,opencode,app}` with tests in
+`packages/{core,host,knowledge,plugin,browser,channel-discord,channel-slack,tracker-linear,forge-github,opencode,cli}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `dist/` is built by `npm run build`
 (TypeScript 7, incremental); tests need no build — they run from sources
 under Node's type stripping, resolving workspace packages through the
 `development` exports condition.
-`scripts/` holds the smoke, schema, and live checks; `schemas/` is generated. aivi reads one **home** (`~/.aivi`, or
+`scripts/` holds the smoke and live checks; the editor schema is generated at
+runtime into `<state>/cache/schema.json`, composed from the plugin list. aivi reads one **home** (`~/.aivi`, or
 `AIVI_HOME`): `config.json` (the live config, never version-controlled), `.env`,
-`projects/<id>/{source,memory,worktrees}` per project, `memory/` (org), and
-`state/` with `aivi.sqlite`, the QMD index, and dreaming transcripts.
+`app/package.json` (the installed server, and the `aivi-plugins` list that
+enables plugins), `projects/<id>/{source,memory,worktrees}` per project,
+`memory/` (org), and `state/` with `aivi.sqlite`, the QMD index, the editor
+schema cache, and dreaming transcripts.
 `dev/` is a real development home, produced by `npm run aivi:cli setup` against
 the local build (only its README is tracked; everything else, including the
 app manifest setup writes, is generated or git-ignored). `npm run aivi`
-runs the app CLI against it.
+runs the server boot (`@aivi/host/server`) directly against it.
 
 ## Open threads
 
@@ -293,7 +348,7 @@ runs the app CLI against it.
   channels, Slack replies as a `markdown` block. Not yet seen live: dreaming
   writing into a project's memory; Slack's `response_url` answered 500 to a
   `markdown` block for `/…-context` (plain-text fallback added); the
-  `/model`, `/stop`, `/steer`, `/jobs` and `/help` commands on either
+  `/model`, `/stop`, `/queue` (and the default interjection), `/jobs` and `/help` commands on either
   platform (Slack needs the manifest in [slack.md](docs/slack.md#setup)
   re-applied first).
 - Next work, in order: [roadmap](docs/roadmap.md#next-in-order-of-intent).

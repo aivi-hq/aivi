@@ -32,10 +32,12 @@ Every source declares what it contains, from a registry in
 | `decision` | Recorded decisions (ADRs); authoritative on why |
 | `memory` | Facts and proposals distilled by [dreaming](dreaming.md); dated, attributed, softer |
 | `conversation` | Indexed transcripts; useful for details, never authoritative (reserved) |
+| `manual` | Docs shipped by installed packages (`<package>/docs/`), indexed in place: the assistant knows the manuals of what is installed ([self-knowledge](plans/templates/self-knowledge.md)) |
 
 Hits carry `kind`, `scope`, and `projectId`, so an answer can say what kind of
 material it rests on. `knowledge_search`, `/knowledge/search?kind=…`, and
-`/sources?kind=…` accept a kind filter (the `aivi sources` CLI does not yet). The assistant's agent file explains the
+`/sources?kind=…` accept a kind filter (the `aivi knowledge sources` CLI does
+not yet). The assistant's agent file explains the
 kinds to the model; adding a kind means one entry in the registry.
 
 ## Use it
@@ -76,7 +78,7 @@ indexing serialize through one bounded queue, so a large refresh delays searches
 behind it (the plugin's client gives up after 10 s). Sources are small today;
 letting searches run concurrently and only queue behind `index()` is planned
 work, not a knob. Keyword search does not acquire
-another inference slot, so a assistant holding a model slot can search without
+another inference slot, so an assistant holding a model slot can search without
 deadlocking itself. Semantic search will need explicit model-resource accounting.
 
 Updates/deletions appear after refresh. Excerpts represent the indexed version,

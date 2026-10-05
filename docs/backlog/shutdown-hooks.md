@@ -5,7 +5,7 @@ What is left:
 
 - A `--reason` on stop (maintenance, update, crash) so the notices can say
   why.
-- An optional `stopping(reason)` phase on `HostModule` that runs before
+- An optional `stopping(reason)` phase on `AiviModule` that runs before
   `stop()`, bounded by a configurable grace period; the host must still exit
   when a module misbehaves.
 

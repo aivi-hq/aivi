@@ -3,6 +3,6 @@
   "commit": false,
   "access": "public",
   "baseBranch": "main",
-  "fixed": [["@aivi/cli", "@aivi/host"]],
+  "fixed": [["@aivi/cli", "@aivi/host", "@aivi/plugin"]],
   "ignore": []
 }

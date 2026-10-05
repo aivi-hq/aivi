@@ -1,7 +1,6 @@
 import { basename } from 'node:path';
-import type { SessionEvent } from '../events.ts';
+import type { SessionEvent } from '@aivi/plugin/module';
 
-export type ProgressMode = 'silent' | 'status' | 'tools';
 export type ToolState = 'running' | 'done' | 'failed';
 export interface ToolCall {
   /** The native tool call id; several entries share one when a codemode `execute` calls several aivi tools. */
@@ -12,6 +11,7 @@ export interface ToolCall {
   /** A codemode `execute` whose code has not arrived yet: the real tool name is unknown, so it stays out of the status line. */
   pending?: true;
 }
+export type ProgressMode = 'silent' | 'status' | 'tools';
 export interface Progress {
   phase: 'thinking' | 'tool' | 'writing';
   tools: ToolCall[];
@@ -57,7 +57,7 @@ const DESTRUCTURE = /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*tools\b/g;
 const QUERY = /^\s*\{[^}]*?\bquery\s*:\s*(["'`])((?:\\.|(?!\1).)*)\1/;
 const dotted = (path: string) => path.replaceAll(/\[["']([\w-]+)["']\]/g, '.$1').replace(/^\./, '');
 
-type ToolDescription = { name: string; detail?: string };
+export type ToolDescription = { name: string; detail?: string };
 
 /** The aivi tools a codemode `execute`'s code calls, in call order, each shown once. */
 function codemodeCalls(code: string): ToolDescription[] {
