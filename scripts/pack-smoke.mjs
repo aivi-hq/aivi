@@ -45,7 +45,9 @@ try {
   };
   delete fenced.AIVI_HOME;
   try {
-    run(installed, ['status'], { env: fenced });
+    // stderr is captured (not passed through) for the assertion below: the
+    // honest refusal is expected here, and its echo is the smoke's business.
+    run(installed, ['status'], { env: fenced, stdio: ['ignore', 'pipe', 'pipe'] });
     throw new Error('aivi status without a home should fail');
   } catch (error) {
     const stderr = String(error.stderr ?? '');
