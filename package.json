@@ -32,8 +32,8 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run typecheck && NODE_OPTIONS=--conditions=development node --test --conditions=development --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
-    "test:cov": "npm run typecheck && NODE_OPTIONS=--conditions=development c8 --reporter=json --reporter=text --all \"--include=packages/*/src/**\" \"--include=packages/*/test/**\" \"--exclude=coverage/**\" \"--exclude=node_modules/**\" node --test --conditions=development --test-timeout=180000 --test-force-exit packages/*/test/*.test.ts",
+    "test": "npm run typecheck && NODE_OPTIONS=--conditions=development node --test --conditions=development --test-timeout=5000 --test-force-exit packages/*/test/*.test.ts",
+    "test:cov": "npm run typecheck && NODE_OPTIONS=--conditions=development c8 --reporter=json --reporter=text --all \"--include=packages/*/src/**\" \"--include=packages/*/test/**\" \"--exclude=coverage/**\" \"--exclude=node_modules/**\" node --test --conditions=development --test-timeout=5000 --test-force-exit packages/*/test/*.test.ts",
     "check": "npm run test:cov && npm run smoke && npm run pack:smoke",
     "check:ci": "npm run test && npm run smoke && npm run pack:smoke",
     "aivi": "npm run build -s && AIVI_HOME=${AIVI_HOME:-dev} node packages/host/dist/server.js",
