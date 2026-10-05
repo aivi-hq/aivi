@@ -50,16 +50,17 @@ export function projectSetupPlan(
   };
 }
 
-/** The project entry as written: the core `lanes` array (when a contributor
- *  offered one) and each contributor's section merged under its module id;
- *  the file must load against the composed schema or the old bytes return
- *  (core's lane validation and the plugin's own `projectSchema` are what
- *  reject a bad write). */
+/** The project entry as written: core's own fields (the `lanes` array when a
+ *  contributor offered one, `sync: false` when no forge cloned a repository)
+ *  and each contributor's section merged under its module id; the file must
+ *  load against the composed schema or the old bytes return (core's lane
+ *  validation and the plugin's own `projectSchema` are what reject a bad
+ *  write). */
 async function writeProjectSections(
   configPath: string,
   id: string,
   sections: Record<string, Record<string, unknown>>,
-  lanes?: ProjectLaneInput[],
+  core: { lanes?: ProjectLaneInput[]; sync?: false },
 ): Promise<void> {
   const { registry } = await context();
   const before = await readFile(configPath, 'utf8');
@@ -68,7 +69,8 @@ async function writeProjectSections(
   raw.projects = projects;
   projects[id] = {
     ...(projects[id] as Record<string, unknown> | undefined),
-    ...(lanes ? { lanes } : {}),
+    ...(core.lanes ? { lanes: core.lanes } : {}),
+    ...(core.sync === false ? { sync: false } : {}),
     ...sections,
   };
   await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`);
@@ -137,7 +139,12 @@ export async function runProjectSetup(options: {
 
     // The checkout must exist before the config names the project.
     if (!answers.cloned) await ensureUntrackedSource(options.home, projectId);
-    await writeProjectSections(options.configPath, projectId, answers.sections, answers.lanes);
+    await writeProjectSections(options.configPath, projectId, answers.sections, {
+      ...(answers.lanes ? { lanes: answers.lanes } : {}),
+      // Nothing was cloned, so the config says the sync has no business here;
+      // the hourly job reads the fact instead of discovering it as a skip.
+      ...(answers.cloned ? {} : { sync: false }),
+    });
     p.outro(outroFor(projectId, answers));
     return projectId;
   } catch (error) {

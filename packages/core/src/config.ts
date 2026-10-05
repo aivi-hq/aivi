@@ -323,13 +323,20 @@ export const projectLanesSchema = z.array(projectLaneSchema).superRefine((lanes,
  * that directory. An entry here is only needed to override: `knowledge`
  * replaces `projectDefaults.knowledge` for a repository laid out differently
  * (paths relative to the checkout), `enabled: false` hides a checkout from
- * indexing and memory. Anything else a project carries is a plugin's own
- * section — keyed by module id, contributed through the registry
+ * indexing and memory, `sync: false` keeps the projects-sync job away from a
+ * project with no repository to sync. Anything else a project carries is a
+ * plugin's own section — keyed by module id, contributed through the registry
  * (`AiviPlugin.projectSchema`) and validated by the plugin's schema, never
  * by core.
  */
 export const projectSchema = z.strictObject({
   enabled: z.boolean().default(true).describe('false: the checkout stays but aivi ignores it.'),
+  sync: z
+    .boolean()
+    .default(true)
+    .describe(
+      'false: the projects-sync job never visits this project. A project with no repository is a supported state — `aivi projects add` writes this when no forge cloned the checkout.',
+    ),
   knowledge: z
     .array(source)
     .optional()
@@ -1096,6 +1103,10 @@ export interface Project {
   lanes?: ProjectLane[];
   /** The checkout is gone but `memory/` remains: still listed and searchable until purged. */
   removed?: true;
+  /** The config entry says `sync: false`: no repository to keep current — a
+   *  supported state, not an anomaly — so the projects-sync job never visits
+   *  the project. Absent means the sync is on. */
+  sync?: false;
 }
 export interface LoadedConfig {
   config: Config;
@@ -1247,6 +1258,7 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
       directory: layout.source,
       ...(entry.lanes ? { lanes: entry.lanes } : {}),
       ...(removed ? { removed: true } : {}),
+      ...(entry.sync === false ? { sync: false } : {}),
     });
   }
   return { config, path, sources, projects };

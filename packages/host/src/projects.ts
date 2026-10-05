@@ -1,6 +1,4 @@
 import { execFile } from 'node:child_process';
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Project } from '@aivi/core';
 import { errorMessage } from '@aivi/core';
@@ -37,12 +35,11 @@ export interface ProjectSyncOutcome {
  * **through the forge** — a fetch authenticates, and credentials belong to
  * the system that holds them, not to aivi's machinery. Everything else
  * stays plain git naming no plugin (the configurable path, not the spine):
- * no forge registered, a remote no forge recognises, no checkout at all.
- * Both ways the rule is the same — fast-forward only; anything that would
- * need a decision (local changes, a detached head, no upstream, diverged
- * history) is skipped with the reason, never resolved by force, because
- * `source/` is the clean checkout that gets indexed, not a working
- * directory.
+ * no forge registered, a remote no forge recognises. Both ways the rule is
+ * the same — fast-forward only; anything that would need a decision (local
+ * changes, a detached head, no upstream, diverged history) is skipped with
+ * the reason, never resolved by force, because `source/` is the clean
+ * checkout that gets indexed, not a working directory.
  */
 async function syncProject(
   project: Project,
@@ -52,8 +49,6 @@ async function syncProject(
 ): Promise<ProjectSyncOutcome> {
   const { id, directory } = project;
   const git = (...args: string[]) => runner(directory, args, signal);
-  if (!(await stat(join(directory, '.git')).catch(() => null)))
-    return { id, state: 'skipped', reason: 'not a git checkout' };
   try {
     const owned = await forges.owner({ id, directory });
     if (owned) {
@@ -92,7 +87,16 @@ async function plainSync(id: string, git: (...args: string[]) => Promise<string>
   return { id, state: 'updated', from, to };
 }
 
-/** Sync every checked-out project in turn; removed projects have nothing to sync. */
+/**
+ * Sync every project the config lets the sync near, in turn. Two kinds are
+ * not visited and report nothing: a removed project, and one whose entry
+ * says `sync: false` — a project with no repository is a supported state
+ * (`aivi projects add` with no forge configured leaves an untracked
+ * directory holding a note, and the project still has its memory and
+ * knowledge), and `add` writes that key when it clones nothing. A skip is
+ * what a person would act on; the four reasons `syncProject` gives are
+ * exactly that.
+ */
 export async function syncProjects(
   projects: Project[],
   forges: Forges,
@@ -101,7 +105,7 @@ export async function syncProjects(
 ): Promise<ProjectSyncOutcome[]> {
   const outcomes: ProjectSyncOutcome[] = [];
   for (const project of projects) {
-    if (project.removed) continue;
+    if (project.removed || project.sync === false) continue;
     signal?.throwIfAborted();
     outcomes.push(await syncProject(project, forges, signal, git ?? realGit));
   }

@@ -37,21 +37,19 @@ const scriptedGit = (answer: (directory: string, args: string[]) => Reply | unde
   };
 };
 
-/** The board: a `site` checkout, a `dirty` one, a `plain` directory that is
- *  no repository. A checkout is a directory holding `.git` — that stat is the
- *  sync's only look at the disk; everything past it is the scripted runner. */
+/** The board: a `site` checkout, a `dirty` one, a `plain` directory that holds
+ *  no repository. The sync never looks at the disk — what it visits comes from
+ *  the config (`sync: false`, `removed`) — and everything past that is the
+ *  scripted runner answering its calls. */
 const board = async (t: TestContext) => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-sync-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const directories = new Map<string, string>();
-  for (const id of ['site', 'dirty']) {
+  for (const id of ['site', 'dirty', 'plain']) {
     const directory = join(root, `projects/${id}/source`);
-    await mkdir(join(directory, '.git'), { recursive: true });
+    await mkdir(directory, { recursive: true });
     directories.set(id, directory);
   }
-  const plain = join(root, 'projects/plain/source');
-  await mkdir(plain, { recursive: true });
-  directories.set('plain', plain);
   return { root, directories };
 };
 
@@ -76,12 +74,12 @@ test('projects.sync fast-forwards clean checkouts and skips anything that needs 
   const projects = [
     { id: 'site', directory: directories.get('site')! },
     { id: 'dirty', directory: directories.get('dirty')! },
-    { id: 'plain', directory: directories.get('plain')! },
+    { id: 'plain', directory: directories.get('plain')!, sync: false as const },
     { id: 'gone', directory: join(directories.get('site')!, '..', 'gone', 'source'), removed: true as const },
   ];
 
   // Upstream moved: site fast-forwards; the dirty checkout is never touched;
-  // the plain directory is named; the removed project is not visited.
+  // neither the `sync: false` project nor the removed one is ever visited.
   const first = scriptedGit((directory, args) => {
     if (directory === projects[1]!.directory && args[0] === 'status') return ' M docs/a.md\n';
     return settled('aaa111', 'bbb222')(directory, args);
@@ -92,9 +90,12 @@ test('projects.sync fast-forwards clean checkouts and skips anything that needs 
     [
       ['site', 'updated', undefined],
       ['dirty', 'skipped', 'local changes in source/'],
-      ['plain', 'skipped', 'not a git checkout'],
     ],
-    'removed projects are not visited',
+    'a `sync: false` project and a removed one report nothing: the config owns the fact',
+  );
+  assert.ok(
+    !first.calls.some(call => call.directory === projects[2]!.directory),
+    'a directory that is no repository is never asked anything of git',
   );
   assert.ok(
     first.calls.some(call => call.args.join(' ') === 'merge --ff-only --quiet origin/main'),
