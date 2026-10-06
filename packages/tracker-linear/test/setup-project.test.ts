@@ -164,7 +164,7 @@ test('the wizard walks the board in order: teams, name, one agent per open state
   );
 });
 
-test('with a forge configured a working lane is asked whether it writes files; without one it never is', async () => {
+test('with a forge configured a working lane is asked whether it works on the ticket branch; without one it never is', async () => {
   const withForge = wizard([['t-1'], '', 'developer', 'yes', '', 'developer', '', 'Todo'], { forgeConfigured: true });
   const result = await withForge.contributor.setup(withForge.ctx);
   assert.deepEqual(result.lanes, [
@@ -173,7 +173,7 @@ test('with a forge configured a working lane is asked whether it writes files; w
     { name: 'In Progress', agent: 'developer' },
   ]);
   assert.ok(
-    withForge.asked.some(m => /write files \(will use git worktrees\)/.test(m)),
+    withForge.asked.some(m => /on the ticket's branch \(git worktree\)/.test(m)),
     'the worktree question was asked for the worked lane',
   );
 
@@ -190,7 +190,7 @@ test('with a forge configured a working lane is asked whether it writes files; w
   // No forge: no worktree question at all — there are no worktrees to promise.
   const noForge = wizard([['t-1'], '', 'developer', '', 'developer', 'Todo']);
   await noForge.contributor.setup(noForge.ctx);
-  assert.ok(!noForge.asked.some(m => /write files/.test(m)), 'without a forge the question is never asked');
+  assert.ok(!noForge.asked.some(m => /on the ticket's branch/.test(m)), 'without a forge the question is never asked');
 });
 
 test('a cancelled answer cancels the setup by name — nothing half-written goes to core', async () => {

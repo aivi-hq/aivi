@@ -36,16 +36,40 @@ async function settled<T>(ctx: ProjectSetupContext, answer: Promise<T | symbol>)
 
 /** The repository asked for and read for what it is. Undefined when the answer
  *  names no GitHub repository at all: a non-GitHub host is said plainly, since
- *  a person typing a GitLab URL means it, and silence would lose the project. */
-async function askRepository(ctx: ProjectSetupContext) {
-  const answer = await settled(
-    ctx,
-    ctx.prompts.text({
-      message: 'Which GitHub repository is this project?',
-      placeholder: 'owner/repo, or its URL',
-      validate: value => (parseRemote(value ?? '') ? undefined : 'Give it as owner/repo, or as a github.com URL'),
-    }),
-  );
+ *  a person typing a GitLab URL means it, and silence would lose the project.
+ *
+ *  The app is asked what it was granted before the person is asked anything:
+ *  a pick-list of the real grant beats typing a name from memory, and a
+ *  mistake is impossible. A grant that cannot be listed is no failure — the
+ *  typed answer's own probe referees it anyway — so the text prompt stays as
+ *  the fallback, asking the very question the list would have. */
+async function askRepository(ctx: ProjectSetupContext, app: GitHubApp) {
+  const spinner = ctx.prompts.spinner();
+  spinner.start('Asking the app which repositories it can see');
+  let granted: string[] = [];
+  try {
+    granted = (await app.repositories()).map(repo => repo.id);
+    spinner.stop(`The app can see ${granted.length} repositor${granted.length === 1 ? 'y' : 'ies'}`);
+  } catch (error) {
+    spinner.stop(`Could not list the app's repositories: ${error instanceof Error ? error.message : error}`);
+  }
+  const answer = granted.length
+    ? await settled(
+        ctx,
+        ctx.prompts.autocomplete({
+          message: 'Which GitHub repository is this project?',
+          options: granted.map(id => ({ value: id, label: id })),
+          maxItems: 12,
+        }),
+      )
+    : await settled(
+        ctx,
+        ctx.prompts.text({
+          message: 'Which GitHub repository is this project?',
+          placeholder: 'owner/repo, or its URL',
+          validate: value => (parseRemote(value ?? '') ? undefined : 'Give it as owner/repo, or as a github.com URL'),
+        }),
+      );
   const remote = parseRemote(String(answer).trim());
   if (!remote) return undefined;
   if (!isGitHub(remote))
@@ -61,7 +85,7 @@ export const contributor: ProjectContributor = {
     const log = getLogger(['aivi', 'forge-github']);
     const config = forgeGithubSchema.parse(ctx.config);
     const app = await GitHubApp.connect(config, { log });
-    const remote = await askRepository(ctx);
+    const remote = await askRepository(ctx, app);
     if (!remote) throw new Error('no repository named');
     const id = `${remote.owner}/${remote.repo}`;
 

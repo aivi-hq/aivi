@@ -162,6 +162,21 @@ export class GitHubApp {
     return token;
   }
 
+  /** The repositories this installation was granted, as GitHub itself says:
+   *  the same truth `repository` proves one at a time, read from the other
+   *  side. Pages until exhausted, capped so a huge grant cannot hang a
+   *  wizard waiting on a keystroke. */
+  async repositories(cap = 500): Promise<{ id: string; defaultBranch: string }[]> {
+    const repos: { id: string; defaultBranch: string }[] = [];
+    for (let page = 1; repos.length < cap; page += 1) {
+      const { data } = await this.octokit.rest.apps.listReposAccessibleToInstallation({ per_page: 100, page });
+      const found = data.repositories ?? [];
+      repos.push(...found.map(repo => ({ id: repo.full_name, defaultBranch: repo.default_branch })));
+      if (found.length < 100) break;
+    }
+    return repos.slice(0, cap);
+  }
+
   /** One of the app's repositories, through the installation: the read that
    *  proves a repository is really under the grant. Undefined when the app
    *  cannot see it — which GitHub answers 404 for, on purpose, so that a repo
