@@ -333,7 +333,9 @@ class FakeTracker implements Platform {
     return undefined;
   }
   /** Linear's word for "the result was shown": the response ends the session. */
+  resultShownCalls = 0;
   async resultShown(conversation: string): Promise<boolean> {
+    this.resultShownCalls++;
     if (this.goneFor.has(conversation)) throw new LinearApiError('Entity not found: AgentSession', 200);
     return this.shown.has(conversation);
   }
@@ -1244,9 +1246,10 @@ test('a deleted ticket drops the owed closing: no ceremony on a grave, and the d
   assert.equal(first.closingNotes.length, 0, 'no closing note on a deleted session either');
   assert.deepEqual(first.moves, [], 'no help label is stuck on a dead conversation');
 
-  // The boot pass must not re-die on the surviving pair: the debt was dropped
-  // where it stood, not left to cry on every start.
+  // The boot pass must not re-die on the pair: the drop retires the pair
+  // itself, so Linear is never asked about the dead session again.
   await running.stop();
+  assert.deepEqual(new RunLinks(store).attached(), [], 'the dead pair is retired, not merely unpaid');
   const second = new FakeTracker(linearBlock(config));
   second.goneFor.add('dev:as-auto-1');
   const restarted = await createLinearModule(
@@ -1254,6 +1257,7 @@ test('a deleted ticket drops the owed closing: no ceremony on a grave, and the d
     async () => second,
     () => board,
   ).start(restartServices(services));
+  assert.equal(second.resultShownCalls, 0, 'no boot asks Linear about a retired pair');
   assert.deepEqual(second.comments, [], 'the boot pass pays nothing to a deleted ticket');
   assert.deepEqual(second.moves, [], 'and asks nobody for help on its behalf');
   await restarted.stop();

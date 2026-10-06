@@ -107,15 +107,14 @@ export class LinearApiError extends Error {
     this.codes = codes;
   }
 
-  /** Linear's word for "that entity is gone": a deleted issue takes its agent
-   *  session with it, and every later call names it. The message is the
-   *  stable part (`Entity not found: AgentSession`); the code is a newer
-   *  shape, so both answer. */
+  /** Linear's word for "that entity is gone", whatever shape it comes in: a
+   *  deleted issue takes its agent session with it, and every later call
+   *  names it. The message is the stable part (`Entity not found: …`); the
+   *  codes only say *how* Linear refused (`INPUT_ERROR` for a lookup of a
+   *  dead session, live 2026-10-06), never *what*, so no code may stand in
+   *  for the words. */
   static isGone(error: unknown): boolean {
-    return (
-      error instanceof LinearApiError &&
-      (error.codes.includes('EntityNotFound') || /entity not found/i.test(error.message))
-    );
+    return error instanceof LinearApiError && /entity not found/i.test(error.message);
   }
 }
 

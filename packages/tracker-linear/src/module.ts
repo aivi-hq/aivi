@@ -313,12 +313,13 @@ async function startLinear(
       } catch (error) {
         // A deleted ticket takes its agent session with it, and Linear then
         // answers every step with `Entity not found`. The closing is owed to
-        // a surface that no longer exists: drop the debt and say it plainly
-        // once — the person deleted the ticket, they need no help label on a
-        // grave, and a boot that re-cries this every time teaches nobody to
-        // read the log.
+        // a surface that no longer exists: drop the debt, retire the pair,
+        // and say it plainly once. The person deleted the ticket; they need
+        // no help label on a grave, and a boot that re-asked Linear about a
+        // dead pair every time would only teach the log to be unread.
         if (LinearApiError.isGone(error)) {
           closings.delete(runId);
+          links.drop(link.agentSession);
           log.warn('closing.dropped', { run: runId, ticket: entry.ticketId, error });
           return;
         }

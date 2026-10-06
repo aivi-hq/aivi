@@ -156,9 +156,10 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    owed to the next wake and the next boot (the label stands until a person
    removes it). A closing whose conversation is **gone** — Linear answers
    `Entity not found`, the ticket was deleted — is the one exception: the
-   debt is dropped where it stands, said once in the log. There is no
-   surface left to close, no help to ask of a grave, and a boot that
-   re-cried it every time would only teach the log to be unread. And when the dispatcher gives up on killing a stubborn worker
+   debt is dropped and the **pair retired** from the tracker's own table,
+   said once in the log. There is no surface left to close, no help to ask
+   of a grave, and no boot asks Linear about a retired pair again.
+   And when the dispatcher gives up on killing a stubborn worker
    (`dispatcher.killAttempts`, `kill-unconfirmed`), or OpenCode would not
    answer the interrupt for a person's stop (`stop-unconfirmed`), the ticket
    carries the human label and says plainly that a worker may still be

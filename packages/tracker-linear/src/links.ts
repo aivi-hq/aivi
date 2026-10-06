@@ -88,4 +88,12 @@ export class RunLinks {
         .all() as Row[]
     ).map(map);
   }
+
+  /** Retire a pair for good. Its use today is the gone-closing: Linear
+   *  answers the agent session with `Entity not found` — the ticket was
+   *  deleted — so there is nothing left to pay and no reason for the next
+   *  boot to ask again. */
+  drop(agentSession: string): void {
+    this.store.db.prepare('DELETE FROM tracker_linear_run_links WHERE agent_session=?').run(agentSession);
+  }
 }
