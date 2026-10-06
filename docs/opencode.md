@@ -158,8 +158,8 @@ next unit of work; a running one is never restarted again while aivi runs.
 `ensure` only starts a missing service; `discover` never starts or stops.
 
 ```sh
-npm run aivi -- opencode check
-npm run aivi -- runs list
+npm run aivi:cli -- opencode check
+npm run aivi:cli -- runs list
 ```
 
 `aivi setup` seeds the home's `.opencode/agents/` (`assistant.md`,

@@ -70,7 +70,7 @@ The default refresh happens on startup. Examples also schedule an hourly
 `knowledge.index` task in the `maintenance` resource pool. Request a refresh now:
 
 ```sh
-npm run aivi -- knowledge index
+npm run aivi:cli -- knowledge index
 ```
 
 That queues a job; the host executes it against the same service. Search and

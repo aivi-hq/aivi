@@ -31,9 +31,11 @@ tunnel or proxy carries to loopback. The URL answer is stored as
 composed from.
 
 Packages compile to `dist/` with TypeScript 7 (`npm run build`, incremental);
-`npm run aivi` and `npm run aivi:cli` build first and run the compiled
-artifacts — the same files npm publishes, so local and installed behavior are
-identical. `npm run typecheck` (`tsc --noEmit`) checks the sources against the
+`npm run aivi:cli` builds first and runs the compiled artifacts — the
+same files npm publishes, so local and installed behavior are identical.
+Everything goes through this one script: `npm run aivi:cli -- serve`
+starts the host in the foreground, and every operator command takes its
+place the same way. `npm run typecheck` (`tsc --noEmit`) checks the sources against the
 built declarations.
 
 Setup is the real CLI pointed at `dev/`: `AIVI_HOME=dev` makes the home,
@@ -49,7 +51,7 @@ against your local plugin build instead, replace that spec with
 
 aivi reads one **home** directory: `config.json`, `.env`, `projects/`,
 `memory/` and `state/` together. Installed copies use `~/.aivi`; in this repo
-`npm run aivi` points `AIVI_HOME` at `dev/`. The live `dev/config.json` is
+`npm run aivi:cli` points `AIVI_HOME` at `dev/`. The live `dev/config.json` is
 yours and aivi's to edit, and stays out of version control. Start from `{ version: 1 }`
 and add what you need, or configure a channel with
 `npm run aivi:cli -- add discord` (or `add slack`) — it also lists the
@@ -60,15 +62,15 @@ Start the host. No token is needed: commands are open, and a bearer only
 identifies the caller (see [secrets](../packages/host/docs/configuration.md#secrets)):
 
 ```sh
-npm run aivi -- serve
+npm run aivi:cli -- serve
 ```
 
 In another terminal:
 
 ```sh
-npm run aivi -- status
-npm run aivi -- jobs list
-npm run aivi -- runs list
+npm run aivi:cli -- status
+npm run aivi:cli -- jobs list
+npm run aivi:cli -- runs list
 npm run aivi:cli -- link discord   # mint a link code for your Discord account
 ```
 
@@ -95,7 +97,7 @@ real boundary (after the plugin spec points at your local build).
 ## A project
 
 ```sh
-npm run aivi -- projects add
+npm run aivi:cli -- projects add
 ```
 
 `projects add` is interactive and **role-driven**: it asks the configured
@@ -122,7 +124,7 @@ of `dev/config.json`, put `DISCORD_BOT_TOKEN` in `dev/.env`, add
 and run `serve`
 as above (slash commands are registered at start)
 ([Discord setup](discord.md#setup)). For Slack, create the app from the
-manifest in [Slack setup](slack.md#setup) (`npm run aivi -- slack manifest`),
+manifest in [Slack setup](slack.md#setup) (`npm run aivi:cli -- slack manifest`),
 fill in the `plugins.channel-slack` block, list `@aivi/channel-slack`, and put
 `SLACK_BOT_TOKEN` and
 `SLACK_APP_TOKEN` in `dev/.env`.
