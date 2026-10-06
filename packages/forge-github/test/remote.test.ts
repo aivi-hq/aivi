@@ -52,6 +52,14 @@ test('a credential stored in the origin is not carried along: aivi answers the r
   assert.deepEqual(remote, { host: 'github.com', owner: 'owner', repo: 'repo', ssh: false });
 });
 
+test('the bare owner/repo a person types means a repository on github.com', () => {
+  assert.deepEqual(parseRemote('aivi-hq/aivi'), { host: GITHUB_HOST, owner: 'aivi-hq', repo: 'aivi', ssh: false });
+  assert.deepEqual(parseRemote('owner/repo.git'), { host: GITHUB_HOST, owner: 'owner', repo: 'repo', ssh: false });
+  assert.deepEqual(parseRemote('  Owner/Repo  '), { host: GITHUB_HOST, owner: 'Owner', repo: 'Repo', ssh: false });
+  assert.equal(isGitHub(parseRemote('owner/repo')!), true);
+  assert.equal(httpsRemote(parseRemote('owner/repo')!), 'https://github.com/owner/repo.git');
+});
+
 test('anything that is not one repository path on one host is no remote at all', () => {
   for (const written of [
     '',
@@ -59,6 +67,10 @@ test('anything that is not one repository path on one host is no remote at all',
     '-C', // never an option aivi would run
     '/srv/git/repo.git',
     './repo',
+    '../repo',
+    'aivi-hq/',
+    '/aivi',
+    'owner/repo/extra',
     'github.com/owner/repo',
     'https://github.com/owner/repo/extra',
     'https://github.com/owner',

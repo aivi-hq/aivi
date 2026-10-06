@@ -29,13 +29,28 @@ const stripSuffix = (path: string) => (path.endsWith('.git') ? path.slice(0, -4)
  *  different host with a different install, not a detail of this parse. */
 export const GITHUB_HOST = 'github.com';
 
+/** The shorthand a person types when they mean a GitHub repository: two
+ *  path segments and nothing else. GitHub's own names are letters, digits,
+ *  dots, dashes and underscores; a lone `.` or `..` is a relative path, so
+ *  the segments may not be all-dots. */
+const BARE = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
+const bareRemote = (raw: string): GitHubRemote | undefined => {
+  const bare = BARE.exec(raw);
+  if (!bare) return undefined;
+  const [, owner, repo] = bare;
+  if (/^\.+$/.test(owner ?? '') || /^\.+$/.test(repo ?? '')) return undefined;
+  return { host: GITHUB_HOST, owner: owner!, repo: stripSuffix(repo!), ssh: false };
+};
+
 /**
  * Read a remote URL for what aivi can use: `owner/repo` and which transport it
  * names. Understands the scp-like ssh form (`git@github.com:owner/repo.git`),
- * `ssh://`, `https://` and `http://`, each with or without the `.git` suffix.
- * Undefined for anything that is not a two-segment repository path — a
- * repository on another host, a URL with a port or a nested path, or a local
- * path, which is a checkout with no remote to speak of.
+ * `ssh://`, `https://` and `http://`, each with or without the `.git` suffix,
+ * and the bare `owner/repo` shorthand a person types for a GitHub repository
+ * (no transport to speak of, so it reads as https). Undefined for anything
+ * that is not a two-segment repository path — a repository on another host,
+ * a URL with a port or a nested path, or a local path, which is a checkout
+ * with no remote to speak of.
  */
 export function parseRemote(url: string): GitHubRemote | undefined {
   const raw = url.trim();
@@ -54,7 +69,9 @@ export function parseRemote(url: string): GitHubRemote | undefined {
   try {
     parsed = new URL(raw);
   } catch {
-    return undefined;
+    // No scheme to parse: the only other thing that names a repository is the
+    // bare `owner/repo`, which can only mean the one host this forge speaks.
+    return bareRemote(raw);
   }
   if (!['https:', 'http:', 'ssh:'].includes(parsed.protocol)) return undefined;
   if (parsed.port) return undefined;
