@@ -40,15 +40,15 @@ local plugin build instead, replace that spec with `../packages/opencode/dist`.
 
 ```sh
 npm run aivi:cli -- serve        # the server (foreground)
-npm run aivi -- status           # the host's command surface directly, same home
-npm run aivi -- jobs list
+npm run aivi:cli -- status       # the host's command surface directly, same home
+npm run aivi:cli -- jobs list
 npm run aivi:cli -- link discord # mints a link code (needs the server up)
 ```
 
 `npm run aivi:cli` builds first and runs the compiled thin CLI, which
-mounts the server's operator commands in-process from `dev/app`;
-`npm run aivi` runs the host's `./cli` directly. Both point at this
-home. Secrets go in `dev/.env`; the live `config.json` is yours to edit.
+mounts the server's operator commands in-process from `dev/app`. It
+points at this home. Secrets go in `dev/.env`; the live `config.json` is
+yours to edit.
 
 ## Reset
 

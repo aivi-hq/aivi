@@ -172,8 +172,8 @@ Discord message id (`sourceMessage`), user id, and channel
 later be selected by origin and speaker.
 
 ```sh
-npm run aivi -- config check
-npm run aivi -- serve
+npm run aivi:cli -- config check
+npm run aivi:cli -- serve
 ```
 
 Commands follow the code: at every start the module overwrites the application's
@@ -206,7 +206,7 @@ bound on concurrent turns; `maxPending` bounds the inbox. The application lock
 prevents duplicate hosts; a module lock also protects the Discord inbox.
 
 ```sh
-npm run aivi -- discord status
+npm run aivi:cli -- discord status
 ```
 
 A conversation turn never ends `blocked`: its only effect is the reply, so a

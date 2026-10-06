@@ -12,7 +12,7 @@ schema cache, dreaming transcripts). The live
 file
 you and aivi edit, so it never goes under version control; a home that lives
 in a git repository starts empty (`{ version: 1 }`) and grows only what you
-enable. In this repository `npm run aivi` sets `AIVI_HOME=dev`, a development
+enable. In this repository `npm run aivi:cli` sets `AIVI_HOME=dev`, a development
 home produced by `npm run aivi:cli setup`; add blocks to `dev/config.json` as
 you need them — a Discord block makes `serve` ask for `DISCORD_BOT_TOKEN`
 from `dev/.env`, and so on.
@@ -261,7 +261,7 @@ installed home.
 
 ## Operator commands
 
-`npm run aivi -- --help` lists them; what each does and when to use it is in
+`npm run aivi:cli -- --help` lists them; what each does and when to use it is in
 [operations](../../../docs/operations.md#jobs-and-runs-from-the-command-line).
 
 ## Update channel

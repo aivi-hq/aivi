@@ -118,5 +118,5 @@ enables plugins), `projects/<id>/{source,memory,worktrees}` per project,
 schema cache, and dreaming transcripts.
 `dev/` is a real development home, produced by `npm run aivi:cli setup` against
 the local build (only its README is tracked; everything else, including the
-app manifest setup writes, is generated or git-ignored). `npm run aivi`
-runs the server boot (`@aivi/host/server`) directly against it.
+app manifest setup writes, is generated or git-ignored). `npm run aivi:cli`
+is the one script for everything against it, `-- serve` included.

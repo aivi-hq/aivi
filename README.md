@@ -46,13 +46,15 @@ Working on aivi itself? From the repository root:
 ```sh
 npm ci
 npm run check
-npm run aivi -- serve
+npm run aivi:cli -- serve
 ```
 
-`npm run aivi` uses `dev/`, a real development home produced by `npm run
-aivi:cli setup` against your local build; it builds first (incremental,
-TypeScript 7) and runs the compiled `dist/` — the same artifact npm publishes,
-so local and installed behavior are identical.
+`npm run aivi:cli` uses `dev/`, a real development home produced by
+`npm run aivi:cli setup` against your local build; it builds first
+(incremental, TypeScript 7) and runs the compiled `dist/` — the same
+artifact npm publishes, so local and installed behavior are identical.
+Everything goes through it: `npm run aivi:cli -- serve` runs the host in
+the foreground, every other command takes its place there.
 
 `npm run agentic:verify` runs Biome and `npm run check` (build, tests against
 real SQLite, real QMD and the real v2 client on a mock server, schema check,

@@ -204,8 +204,8 @@ The same channels see aivi come online and go offline
 Slack threads have no titles, so the job's `title` is not used.
 
 ```sh
-npm run aivi -- config check
-npm run aivi -- serve
+npm run aivi:cli -- config check
+npm run aivi:cli -- serve
 ```
 
 No `slack register` exists: Slack has no API for slash commands; the manifest
@@ -221,8 +221,8 @@ waits for the dispatcher (the platform `turnTimeoutMs` options were removed
 2026-10-03: they bounded chat turns only and lied about worker turns).
 
 ```sh
-npm run aivi -- slack status
-npm run aivi -- slack resolve TURN_ID --confirm-stopped --reason "Inspected native session and Slack delivery; no owned work remains"
+npm run aivi:cli -- slack status
+npm run aivi:cli -- slack resolve TURN_ID --confirm-stopped --reason "Inspected native session and Slack delivery; no owned work remains"
 ```
 
 ## Boundaries

@@ -83,8 +83,8 @@ those prove the session stopped doing things. Blocked runs keep their capacity
 until an operator has looked at the session:
 
 ```sh
-npm run aivi -- runs show RUN_ID       # task, session id, result, transition history
-npm run aivi -- runs resolve RUN_ID --outcome succeeded --reason "Inspected completed session" --confirm-stopped
+npm run aivi:cli -- runs show RUN_ID       # task, session id, result, transition history
+npm run aivi:cli -- runs resolve RUN_ID --outcome succeeded --reason "Inspected completed session" --confirm-stopped
 ```
 
 Failed runs do not retry automatically; the next occurrence does.
@@ -134,10 +134,10 @@ Chat turns take leases from the same pools as runs. A turn that could not be
 finished blocks its lease until you have inspected the native session:
 
 ```sh
-npm run aivi -- discord status
-npm run aivi -- discord resolve TURN_ID --confirm-stopped --reason "Inspected native session and Discord delivery; no owned work remains"
-npm run aivi -- slack status
-npm run aivi -- slack resolve TURN_ID --confirm-stopped --reason "…"
+npm run aivi:cli -- discord status
+npm run aivi:cli -- discord resolve TURN_ID --confirm-stopped --reason "Inspected native session and Discord delivery; no owned work remains"
+npm run aivi:cli -- slack status
+npm run aivi:cli -- slack resolve TURN_ID --confirm-stopped --reason "…"
 ```
 
 Resolution discards that blocked turn and releases capacity. It does not stop the
@@ -243,7 +243,7 @@ commands keep their names, so a plugin can never shadow `jobs` or `serve`.
 
 ## Jobs and runs from the command line
 
-Run `npm run aivi -- --help` for commands. `jobs …` act on definitions,
+Run `npm run aivi:cli -- --help` for commands. `jobs …` act on definitions,
 `runs …` on executions.
 
 The help is grouped (the wordmark opens the root help), and every command
