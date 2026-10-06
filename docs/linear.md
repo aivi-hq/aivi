@@ -154,7 +154,13 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    moment it fails — the human label rides the ticket and the session says
    why — the move lands and the slot comes back anyway, and the closing stays
    owed to the next wake and the next boot (the label stands until a person
-   removes it). A closing whose conversation is **gone** — Linear answers
+   removes it). A closing that **lands** settles its pair: the tracker's own
+   table stamps the moment, and boot consults Linear only about pairs still
+   owed — a partial index holds just those, so settled history never weighs
+   on a boot. The stamp records that the asking happened; it never replaces
+   it — an owed pair is still reconciled against Linear's real state, so a
+   home from before the stamp asks once and settles.
+   A closing whose conversation is **gone** — Linear answers
    `Entity not found`, the ticket was deleted — is the one exception: the
    debt is dropped and the **pair retired** from the tracker's own table,
    said once in the log. There is no surface left to close, no help to ask

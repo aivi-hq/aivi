@@ -309,6 +309,7 @@ async function startLinear(
         await tellUnconfirmed(runId, conversation, entry);
         await tracker.unassign(conversation, entry.ticketId).catch(error => log.warn('delegate.undone', { error }));
         closings.delete(runId);
+        links.closingLanded(link.agentSession); // settled: no boot asks Linear about this pair again
         log.info('run.caughtup', { run: runId, ticket: entry.ticketId });
       } catch (error) {
         // A deleted ticket takes its agent session with it, and Linear then
@@ -829,13 +830,15 @@ async function startLinear(
         'outcome',
       );
 
-    // Our boot pass, ours alone: every pair whose run has ended owes Linear
-    // its closing — the result may have died in an outage. Each step asks
-    // Linear's real state first, so a catch-up that already happened says
-    // nothing twice. Walk-picked work has a pair too now (initWork delegates
-    // for every run), so the pairs are the whole list; the lane moves are the
-    // orchestrator's own debt and its boot pass re-drives them.
-    for (const link of links.attached()) {
+    // Our boot pass, ours alone: every pair whose closing has **not landed**
+    // and whose run has ended owes Linear its closing — the result may have
+    // died in an outage. Each step asks Linear's real state first, so a
+    // catch-up that already happened says nothing twice, and a pair whose
+    // closing landed is settled — never asked again. Walk-picked work has a
+    // pair too now (initWork delegates for every run), so the owed pairs are
+    // the whole list; the lane moves are the orchestrator's own debt and its
+    // boot pass re-drives them.
+    for (const link of links.owed()) {
       const run = services.orchestrator.runBySession(link.opencodeSession!);
       if (run && isTerminal(run.state)) {
         closings.set(run.id, run);

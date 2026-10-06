@@ -1165,6 +1165,11 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
   // And a third boot says nothing twice: Linear itself says the result was
   // shown (the agent session is ended) and the state is where the move put
   // it — the tracker asks the platform, never a flag of its own.
+  // And a third boot asks nothing: the pair was **settled** when the closing
+  // landed at the second boot, so Linear is not consulted about it at all —
+  // settled history never weighs on a boot. (The platform check itself is
+  // untouched: an owed pair is still reconciled against Linear's real state,
+  // so a half-landed closing says nothing twice.)
   await restarted.stop();
   const third = new FakeTracker(linearBlock(config));
   third.issues.set(
@@ -1177,19 +1182,46 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
     }),
   );
   third.shown.add('dev:as-auto-1');
-  // Linear's real state carries the standing closing note too: the third
-  // boot must not post it twice (the marker is the agent session id, which
-  // the fake's text-equality guard stands in for).
+  // Linear's real state carries the standing closing note too, in case the
+  // pair were still asked about.
   third.closingNotes.push({ conversation: 'dev:as-auto-1', issueId: 'api-9', text: 'It ships.' });
   const again = await createLinearModule(
     linearBlock(config),
     async () => third,
     () => board,
   ).start(restartServices(services));
+  assert.equal(third.resultShownCalls, 0, 'a settled pair is not asked about at all');
   assert.deepEqual(third.comments, [], 'a catch-up that already happened is silent');
   assert.deepEqual(board.moves, ['api-9->Done'], 'and nothing re-moves');
   assert.equal(third.closingNotes.length, 1, 'a standing closing note is not posted twice');
   await again.stop();
+
+  // A home written before the stamp exists (live homes do): its landed pairs
+  // carry no stamp, so the boot asks Linear once, the platform's own state
+  // says everything landed, nothing is said twice, and the pair settles for
+  // good. The stamp records that the asking happened — it never replaces it.
+  store.db.prepare('UPDATE tracker_linear_run_links SET ended_at=NULL').run();
+  const fourth = new FakeTracker(linearBlock(config));
+  fourth.issues.set(
+    'api-9',
+    issue('api-9', {
+      identifier: 'API-9',
+      title: 'Ship it',
+      state: { id: 's-Done', name: 'Done', type: 'completed' },
+      delegateId: null,
+    }),
+  );
+  fourth.shown.add('dev:as-auto-1');
+  fourth.closingNotes.push({ conversation: 'dev:as-auto-1', issueId: 'api-9', text: 'It ships.' });
+  const legacy = await createLinearModule(
+    linearBlock(config),
+    async () => fourth,
+    () => board,
+  ).start(restartServices(services));
+  assert.ok(fourth.resultShownCalls > 0, 'an unstamped pair is asked about once');
+  assert.deepEqual(fourth.comments, [], 'Linear’s own state answers it all: nothing is said twice');
+  assert.deepEqual(new RunLinks(store).owed(), [], 'and the pair settles on the spot');
+  await legacy.stop();
   store.close();
 });
 
@@ -1249,7 +1281,7 @@ test('a deleted ticket drops the owed closing: no ceremony on a grave, and the d
   // The boot pass must not re-die on the pair: the drop retires the pair
   // itself, so Linear is never asked about the dead session again.
   await running.stop();
-  assert.deepEqual(new RunLinks(store).attached(), [], 'the dead pair is retired, not merely unpaid');
+  assert.deepEqual(new RunLinks(store).owed(), [], 'the dead pair is retired, not merely unpaid');
   const second = new FakeTracker(linearBlock(config));
   second.goneFor.add('dev:as-auto-1');
   const restarted = await createLinearModule(

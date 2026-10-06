@@ -14,6 +14,9 @@ export interface RunLink {
   agentSession: string;
   ticketId: string;
   opencodeSession?: string;
+  /** When the closing landed — the pair is settled and boot asks Linear
+   *  about it no more. Absent means the closing is still owed. */
+  endedAt?: number;
 }
 
 type Row = Record<string, unknown>;
@@ -22,6 +25,7 @@ const map = (r: Row): RunLink => ({
   agentSession: String(r.agent_session),
   ticketId: String(r.ticket_id),
   ...(r.opencode_session === null ? {} : { opencodeSession: String(r.opencode_session) }),
+  ...(r.ended_at === null || r.ended_at === undefined ? {} : { endedAt: Number(r.ended_at) }),
 });
 
 const migrations = [
@@ -29,6 +33,11 @@ const migrations = [
      agent_session TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, opencode_session TEXT UNIQUE,
      created_at INTEGER NOT NULL);
    CREATE INDEX tracker_linear_run_links_ticket ON tracker_linear_run_links(ticket_id);`,
+  // The boot pass reads only the pairs whose closing has not landed, so the
+  // index is **partial**: it holds the owed rows and nothing else, and the
+  // settled history never weighs on a boot.
+  `ALTER TABLE tracker_linear_run_links ADD COLUMN ended_at INTEGER;
+   CREATE INDEX tracker_linear_run_links_owed ON tracker_linear_run_links(created_at) WHERE ended_at IS NULL;`,
 ];
 
 export class RunLinks {
@@ -79,14 +88,29 @@ export class RunLinks {
     return row && map(row);
   }
 
-  /** Every pair that has a worker session: the boot pass reads the run state
-   *  for each and catches Linear up wherever the run has ended. */
-  attached(): RunLink[] {
+  /** Every pair whose closing has not landed: the boot pass reads the run
+   *  state for each and catches Linear up wherever the run has ended. A
+   *  settled pair is absent — its closing spoke Linear's own state once, and
+   *  asking again forever was the bug (live, 2026-10-06). Follow-up routing
+   *  never comes through here: it asks `byAgentSession` directly, settled or
+   *  not. The lane move is not this list's business: it is the orchestrator's
+   *  own debt in its own ledger. */
+  owed(): RunLink[] {
     return (
       this.store.db
-        .prepare('SELECT * FROM tracker_linear_run_links WHERE opencode_session IS NOT NULL ORDER BY created_at')
+        .prepare(
+          'SELECT * FROM tracker_linear_run_links WHERE opencode_session IS NOT NULL AND ended_at IS NULL ORDER BY created_at',
+        )
         .all() as Row[]
     ).map(map);
+  }
+
+  /** The closing landed: settle the pair. The row stays — it is still the
+   *  route a person's later message finds its run through. */
+  closingLanded(agentSession: string, now = Date.now()): void {
+    this.store.db
+      .prepare('UPDATE tracker_linear_run_links SET ended_at=? WHERE agent_session=?')
+      .run(now, agentSession);
   }
 
   /** Retire a pair for good. Its use today is the gone-closing: Linear
