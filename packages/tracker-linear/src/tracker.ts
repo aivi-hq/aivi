@@ -18,6 +18,7 @@ import type { RunPlan, RunQuestion } from '@aivi/plugin/run';
 import type {
   Platform,
   TrackerChange,
+  TrackerComment,
   TrackerCommentKind,
   TrackerEvent,
   TrackerIssue,
@@ -293,6 +294,45 @@ export class LinearPlatform implements Platform {
    *  (docs/agent-interaction, Agent Plans). */
   async plan(conversation: string, plan: RunPlan): Promise<void> {
     await this.of(conversation).client.setPlan(this.sessionOf(conversation), plan.steps);
+  }
+
+  /** The ticket desk, worked on the **issue** directly with the app's own
+   *  token — these calls carry no agent session, so `conversation` is only
+   *  the app selector here, as in `notify`. */
+  async ticketComments(conversation: string, issueId: string): Promise<TrackerComment[]> {
+    return this.of(conversation).client.issueComments(issueId);
+  }
+
+  async addComment(conversation: string, issueId: string, text: string): Promise<void> {
+    await this.of(conversation).client.createComment(issueId, text);
+  }
+
+  async editIssue(
+    conversation: string,
+    issueId: string,
+    changes: { title?: string; description?: string },
+  ): Promise<TrackerIssue> {
+    return neutralIssue(await this.of(conversation).client.issueUpdate(issueId, changes));
+  }
+
+  async createIssue(
+    conversation: string,
+    input: { teamId: string; title: string; description?: string; lane?: string },
+  ): Promise<TrackerIssue> {
+    const client = this.of(conversation).client;
+    const { lane, ...fields } = input;
+    let stateId: string | undefined;
+    if (lane) {
+      const teams = await client.listTeams();
+      stateId = teams.find(t => t.id === input.teamId)?.states.find(s => s.name === lane)?.id;
+      if (!stateId)
+        throw new Error(`Linear team ${input.teamId} has no state named "${lane}" — check createLane in config`);
+    }
+    return neutralIssue(await client.createIssue({ ...fields, ...(stateId ? { stateId } : {}) }));
+  }
+
+  async teamLabels(conversation: string, teamId: string): Promise<string[]> {
+    return this.of(conversation).client.teamLabelNames(teamId);
   }
 
   /** Linear's word for "the result was shown": the response activity that
