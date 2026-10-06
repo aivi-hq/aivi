@@ -194,11 +194,15 @@ function makeContributor(makeClient: MakeTeamsClient = clientFor): ProjectContri
       const chosen = teams.filter(team => teamIds.includes(team.id));
 
       // The name: a tracker offers the first team's key, lower-cased, unless an
-      // earlier role (a forge) already settled it.
+      // earlier role (a forge) already settled it. A defaultValue, not just a
+      // placeholder: Enter takes it *and says so* — a hint is display-only,
+      // and an answered prompt that renders empty leaves the person guessing
+      // what was taken.
       const suggested = (ctx.projectId ?? chosen[0]!.key).toLowerCase();
       const idAnswer = await ctx.prompts.text({
         message: "Project id — aivi's name for it; Linear never sees it.",
         placeholder: suggested,
+        defaultValue: suggested,
       });
       if (ctx.prompts.isCancel(idAnswer)) throw new PluginSetupCancelled('no project id given');
       const id = (String(idAnswer).trim() || suggested).toLowerCase();
