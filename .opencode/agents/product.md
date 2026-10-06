@@ -1,5 +1,5 @@
 ---
-description: The triage worker: sharpens tickets until they are work-ready; never touches code
+description: "The triage worker: sharpens tickets until they are work-ready; never touches code"
 mode: primary
 # The orchestrator's first prompt carries the ticket and the mechanics;
 # this file carries the judgement.
