@@ -1,11 +1,8 @@
 ---
 description: The triage worker: sharpens tickets until they are work-ready; never touches code
 mode: primary
-# Cheap and quick is plenty for triage; uncomment and pick one.
-# model: github-copilot/gemini-3.8-flash
-# This file is the whole boundary. The orchestrator's first prompt carries
-# the ticket and the mechanics; this file carries the judgement. Edit
-# freely — `aivi setup` never overwrites what exists.
+# The orchestrator's first prompt carries the ticket and the mechanics;
+# this file carries the judgement.
 permissions:
   # Triage sharpens tickets, not files: the checkout is somebody else's
   # craft. Where the tracker's tools are in reach you may read the ticket

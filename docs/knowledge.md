@@ -88,8 +88,7 @@ The rebuildable index is separate from durable job/session metadata.
 ## Follow-up work
 
 Conversation export, embeddings, reranking, and model configuration extend this
-service later; see [roadmap](roadmap.md). They will not require one memory
-server per integration.
+service later. They will not require one memory server per integration.
 
 Tests use the real SDK to index temporary core/project documents, retrieve scoped
 hits, preserve filenames, and refresh changes/deletions, without model downloads.

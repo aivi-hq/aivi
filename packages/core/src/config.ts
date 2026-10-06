@@ -209,7 +209,7 @@ export const projectLaneSchema = z.strictObject({
     .min(1)
     .optional()
     .describe(
-      'The dispatcher pool this lane’s work draws capacity from (the dispatcher names it; lanes that name none draw from the default pool). Inert until the dispatcher is built.',
+      'The dispatcher pool this lane’s work draws capacity from (the dispatcher names it; lanes that name none draw from the default pool).',
     ),
   worktree: z
     .boolean()
@@ -344,7 +344,7 @@ export const projectSchema = z.strictObject({
   lanes: projectLanesSchema
     .optional()
     .describe(
-      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to the `next` lane, failure to the `previous` one — neighbours by default, overridden per lane; a stop moves nothing. `queue: true` marks the workflow’s one queue lane, waiting fresh work for the worker lane it feeds; `pool` names the dispatcher pool the lane draws from (inert until the dispatcher is built). Closed states are never written: the tracker recognizes them by type.',
+      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to the `next` lane, failure to the `previous` one — neighbours by default, overridden per lane; a stop moves nothing. `queue: true` marks the workflow’s one queue lane, waiting fresh work for the worker lane it feeds; `pool` names the dispatcher pool the lane draws from. Closed states are never written: the tracker recognizes them by type.',
     ),
 });
 /**

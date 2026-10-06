@@ -8,6 +8,16 @@ commands. Platform specifics live in [discord.md](discord.md) and
 [slack.md](slack.md). This page owns the contract, the shared machinery, the
 identifiers and the `report` shape.
 
+## Vocabulary
+
+| Word | Meaning |
+| --- | --- |
+| channel module | a chat platform adapter (`discord`, `slack`) implementing the host's `ChannelModule` contract; the host owns its inbox, bindings, engine and turn runner |
+| conversation | what a channel module binds to one OpenCode session: a thread, a DM, or a whole channel |
+| progress / placeholder | one message in the conversation while a turn runs, edited in place with the agent's phase and tool calls from the host's OpenCode event stream, gone when the answer lands ([below](#progress-while-a-turn-runs)) |
+| model pin | a conversation's `/model` choice, stored on its session binding and applied to the OpenCode session before each turn until `/new`; without one the agent file's model runs |
+| chat command | a slash command on a channel platform (`/new`, `/status`, `/context`, `/search`, `/model`, `/stop`, `/queue`, `/jobs`, `/link`, `/help`): one shared table in the host, each platform only translates. A message arriving mid-turn **interjects** (steers) by default; `/queue` is the way behind ([below](#chat-commands)) |
+
 ## The contract
 
 A module is an `AiviModule` (`id`, `start(services)` → `stop()`; the name a
@@ -274,5 +284,4 @@ a mention, a queued message showing the waiting signal, the progress
 placeholder changing while the agent works and vanishing with the answer, a
 job outcome
 re-entering a thread, a report opening a thread that continues the job
-session, and the slash commands. Record the result in
-[roadmap](roadmap.md#live-gates).
+session, and the slash commands.

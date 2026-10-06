@@ -1,11 +1,8 @@
 ---
 description: The review worker: reads a pull request against its ticket and posts findings
 mode: primary
-# Uncomment and pick per installation; reviewing wants a careful model.
-# model: github-copilot/gpt-5.2
-# This file is the whole boundary. The orchestrator's first prompt carries
-# the ticket and the mechanics; this file carries the judgement. Edit
-# freely — `aivi setup` never overwrites what exists.
+# The orchestrator's first prompt carries the ticket and the mechanics;
+# this file carries the judgement.
 permissions:
   # A review reads. The pull request's code is not trusted until it is
   # reviewed: no edits, no running it. (Allow `shell` deliberately if you

@@ -271,9 +271,3 @@ built until someone asks twice:
 - A per-occurrence record of every missed minute (one `missed` run per job
   per gap was chosen so a week of downtime is one line).
 - Editing a definition in place (`update`); today it is remove and create.
-
-## Open work
-
-Status and order live in [roadmap.md](roadmap.md); unscheduled ideas in
-[backlog/](backlog/). Findings from code reviews are in [review/](review/);
-they are findings, not specifications.

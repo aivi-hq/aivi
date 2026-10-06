@@ -243,7 +243,7 @@ Socket Mode client itself is only exercised live.
 
 ## Later
 
-- Live gate on the owner's workspace ([roadmap](roadmap.md#live-gates)).
+- Live gate on the owner's workspace.
 - Reply to a top-level message in `channel` mode as a thread when the person
   started one.
 - Several Slack agents per installation; the config already carries `agent`

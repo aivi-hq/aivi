@@ -302,6 +302,11 @@ with the session.
 
 ## Running remotely
 
+| Word | Meaning |
+| --- | --- |
+| exec channel / relay | `aivi --remote`: a websocket (`/exec`) on the host's own port carrying terminal bytes — argv and keystrokes go out, the child's terminal comes back; commands are never remapped to JSON operations, the CLI itself is the protocol |
+| driven session | the far end of an exec channel: the host's child with a closed environment, `(remote)` in its banner, refusing at invocation the commands that act on the machine you type on |
+
 `aivi -r <command>` types the command on the machine the host runs on.
 The transport is a websocket upgrade on the host's own port (`/exec`):
 the client presents the bearer from its client config, sends the argv,

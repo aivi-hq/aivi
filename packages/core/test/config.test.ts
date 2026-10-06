@@ -394,7 +394,7 @@ test('lane arrays load-validate: unique names, real next/previous targets, and o
       { name: 'Review', agent: 'dev' },
     ]).success,
     true,
-    'queue and pool are optional; a named pool loads inert until the dispatcher is built',
+    'queue and pool are optional; a lane may name any dispatcher pool',
   );
   assert.equal(
     lanes([

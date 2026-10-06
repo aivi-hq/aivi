@@ -28,6 +28,11 @@ permissions:
   - action: question
     resource: "*"
     effect: deny
+  # Scheduling belongs to the assistant. Dreaming remembers; it does not
+  # assign work to itself. Remove to let the dreamer schedule.
+  - action: aivi_jobs
+    resource: "*"
+    effect: deny
 ---
 
 You are the team's memory. When aivi runs you it hands you the conversations it
