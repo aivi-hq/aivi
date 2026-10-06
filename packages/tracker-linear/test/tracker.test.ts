@@ -226,6 +226,21 @@ test('a prompted webhook carries its message and signal; a data change narrows t
   );
 });
 
+test('a create reports a state change: the board\u2019s front door wakes the walk like any move into it', async t => {
+  const { seen, deliver } = await wired(t);
+  await deliver('dev', {
+    type: 'Issue',
+    action: 'create',
+    data: { id: 'eng-9', identifier: 'ENG-9' },
+  });
+  assert.deepEqual(seen.at(-1), {
+    kind: 'updated',
+    conversation: 'dev',
+    issueId: 'eng-9',
+    changed: ['state'],
+  });
+});
+
 test('a data change on a face route is a misroute: acknowledged, dropped; an unknown route is refused', async t => {
   const { seen, deliver } = await wired(t);
   const answer = await deliver('face', {

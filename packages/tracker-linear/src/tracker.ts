@@ -431,7 +431,14 @@ function closingNoteStands(body: string, session: string, url: string | undefine
   return last.includes(session) || (url !== undefined && last.includes(url));
 }
 
+/** What an issue event changed, in the tracker's words. An update reports the
+ *  fields its `updatedFrom` carries. A create reports **state**: the issue
+ *  just entered its state, and a board's front door — Linear's Triage, a
+ *  lane like any other — must wake the walk the same way a move into it
+ *  does. A create with no wake was a ticket never picked up until someone
+ *  nudged it by hand. */
 function changedFields(payload: IssueEventPayload): TrackerChange[] {
+  if (payload.action === 'create') return ['state'];
   const changed: TrackerChange[] = [];
   for (const [field, change] of [
     ['stateId', 'state'],
