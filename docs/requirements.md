@@ -1,6 +1,6 @@
 # aivi: requirements
 
-Product requirements (v0.9; 2026-09-13, worker lifecycle revised 2026-09-16). Decisions taken since live in [architecture.md](architecture.md); implementation status lives in the operator's tracker.
+Product requirements (v0.9; 2026-09-13, worker lifecycle revised 2026-09-16). Decisions taken since live in [architecture.md](architecture.md).
 
 ## 1. Product
 

@@ -284,5 +284,4 @@ a mention, a queued message showing the waiting signal, the progress
 placeholder changing while the agent works and vanishing with the answer, a
 job outcome
 re-entering a thread, a report opening a thread that continues the job
-session, and the slash commands. Record the result on the tracker's live-gate
-ticket.
+session, and the slash commands.
