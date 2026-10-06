@@ -1,5 +1,5 @@
 ---
-description: The lane worker: takes one ticket and does the work, in the checkout or its own worktree
+description: "The lane worker: takes one ticket and does the work, in the checkout or its own worktree"
 mode: primary
 # The orchestrator's first prompt carries the ticket and the mechanics
 # (the tools that end a turn, the tools that cross to the remote); this

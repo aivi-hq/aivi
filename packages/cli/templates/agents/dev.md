@@ -1,5 +1,5 @@
 ---
-description: The lane worker: takes one ticket and does the work, in the checkout or its own worktree
+description: "The lane worker: takes one ticket and does the work, in the checkout or its own worktree"
 mode: primary
 # Pick a strong coding model per installation; uncomment and edit.
 # model: github-copilot/gpt-5.2

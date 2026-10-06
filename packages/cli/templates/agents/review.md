@@ -1,5 +1,5 @@
 ---
-description: The review worker: reads a pull request against its ticket and posts findings
+description: "The review worker: reads a pull request against its ticket and posts findings"
 mode: primary
 # Uncomment and pick per installation; reviewing wants a careful model.
 # model: github-copilot/gpt-5.2
