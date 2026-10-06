@@ -626,7 +626,7 @@ export const dispatcherPoolSchema = z.strictObject({
     .min(1)
     .optional()
     .describe(
-      'provider/model. The pool decides the model at session create; an agent file names a model only in a pool that names none (ruled 2026-10-02).',
+      'provider/model[#variant] — OpenCode’s own spelling. The pool decides the model at session create; an agent file names a model only in a pool that names none (ruled 2026-10-02).',
     ),
   capacity: z.number().int().min(1).max(64).describe('Slots; one active lease occupies one.'),
   fallback: z

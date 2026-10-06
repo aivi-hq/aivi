@@ -43,6 +43,7 @@
     "@hono/node-server": "2.1.1",
     "@hono/zod-validator": "0.9.1",
     "@opencode/client": "2.0.23",
+    "@opencode/schema": "2.0.23",
     "commander": "15.0.0",
     "hono": "4.13.9",
     "node-pty": "1.1.0",
