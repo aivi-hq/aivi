@@ -165,7 +165,7 @@ async function askProjectName(): Promise<string | undefined> {
  *  the source, or the directory is untracked and says so. */
 function outroFor(projectId: string, answers: SetupAnswers): string {
   if (answers.cloned)
-    return `${projectId} is set up.${sectionsTrailing(answers.sections)} Restart \`aivi serve\` to index it.`;
+    return `${projectId} is set up. ${sectionsTrailing(answers.sections)}Restart \`aivi serve\` to index it.`;
   return `${projectId} has no source host (no forge configured); its directory is untracked and holds a note. ${sectionsTrailing(answers.sections)}Restart \`aivi serve\` to index it.`;
 }
 
