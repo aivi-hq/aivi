@@ -5,7 +5,9 @@ This is the package you import to write an aivi plugin — not the package
 module the host composes, a `./setup` entry `aivi install` runs, and a
 `./cli` entry whose commands join `aivi --help`. The kit holds every
 contract a plugin author needs and nothing more; the host stays the
-runtime that implements them.
+runtime that implements them. The seam words — tracker, forge adapter,
+platform adapter, project contributor — are defined in
+[docs/vocabulary.md](docs/vocabulary.md).
 
 ## Exports
 

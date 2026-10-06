@@ -54,55 +54,30 @@ aivi:cli setup` against your local build; it builds first (incremental,
 TypeScript 7) and runs the compiled `dist/` — the same artifact npm publishes,
 so local and installed behavior are identical.
 
+`npm run agentic:verify` runs Biome and `npm run check` (build, tests against
+real SQLite, real QMD and the real v2 client on a mock server, schema check,
+CLI and daemon smoke); its exit code is the verdict. Live gates:
+`npm run live:opencode`, `npm run smoke:browser`.
+
 ## Packages
 
-| Package                 | Responsibility                                                                                                                                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@aivi/cli`             | The CLI: one `setup` signs a machine in or creates the server (identity minting stays in the installed server's own code), mounts every operator command in-process, runs the server in the background (`service`), updates it (`update`/`upgrade`)                            |
-| `@aivi/core`            | Config and access-policy schemas, knowledge kinds, contracts, logger                                                                                                                               |
+| Package                 | Responsibility                                                                                                                                                                                                                                                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@aivi/cli`             | The CLI: one `setup` signs a machine in or creates the server (identity minting stays in the installed server's own code), mounts every operator command in-process, runs the server in the background (`service`), updates it (`update`/`upgrade`)                                                   |
+| `@aivi/core`            | Config and access-policy schemas, knowledge kinds, contracts, logger                                                                                                                                                                                                                                  |
 | `@aivi/host`            | Lifecycle, API, scheduler, SQLite store, capacity leases, OpenCode connection, session driver, dreaming, the channel module contract with the shared inbox, engine and turn runner, report routing — plus `./cli`, the command surface the CLI collects, and `./server`, the boot launchd/systemd run |
-| `@aivi/knowledge`       | QMD-backed document indexing and scoped keyword search                                                                                                                                             |
-| `@aivi/browser`         | Chrome DevTools MCP, persistent profile, session-owned tabs                                                                                                                                        |
-| `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads                                                                                                        |
-| `@aivi/channel-slack`   | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads                                                                                             |
-| `@aivi/plugin`          | The plugin kit: the setup and CLI command contracts, `resolveBlocked`, the module contract under its authoring names — and `./api`, the fetch-only host client. The package you import to write an aivi plugin; never depends on the host at runtime ([plugin](packages/plugin/README.md)) |
-| `@aivi/tracker-linear`  | Linear module: one app receiving every webhook, the assistant for people, the tracker the orchestrator walks (checkout or own-worktree workers), the Linear MCP proxy ([linear](docs/linear.md))                                                |
-| `@aivi/forge-github`    | GitHub forge: the app's authenticated crossing to `origin` — clone, checkout sync, push, PR facts and review threads — plus the `projects add` contributor ([github](packages/forge-github/docs/github.md)) |
-| `@aivi/opencode`        | OpenCode plugin: registers exactly what the host's tool list answered at load — `aivi_status`, `aivi_sources`, `aivi_context`, `aivi_config`, `aivi_jobs`, `aivi_browser`, `knowledge_search`, `knowledge_projects`, and in aivi runs the worker tools (`aivi_work_complete`, `aivi_ask`, `aivi_plan`, `aivi_push`, `aivi_sync`, `aivi_pr`, `aivi_review`, `aivi_respond_feedback`, `aivi_submit_review`) — plus `aivi_connection`, which answers about its own loading |
+| `@aivi/knowledge`       | QMD-backed document indexing and scoped keyword search                                                                                                                                                                                                                                                |
+| `@aivi/browser`         | Chrome DevTools MCP, persistent profile, session-owned tabs                                                                                                                                                                                                                                           |
+| `@aivi/channel-discord` | Discord channel module: gateway, DM/thread routing, sending, slash commands, report threads                                                                                                                                                                                                           |
+| `@aivi/channel-slack`   | Slack channel module: Socket Mode, DM/thread routing, sending, manifest slash commands, report threads                                                                                                                                                                                                |
+| `@aivi/plugin`          | The plugin kit: the setup and CLI command contracts, `resolveBlocked`, the module contract under its authoring names — and `./api`, the fetch-only host client. The package you import to write an aivi plugin; never depends on the host at runtime ([plugin](packages/plugin/README.md))            |
+| `@aivi/tracker-linear`  | Linear module: one app receiving every webhook, the assistant for people, the tracker the orchestrator walks (checkout or own-worktree workers), the Linear MCP proxy ([linear](docs/linear.md))                                                                                                      |
+| `@aivi/forge-github`    | GitHub forge: the app's authenticated crossing to `origin` — clone, checkout sync, push, PR facts and review threads — plus the `projects add` contributor ([github](packages/forge-github/docs/github.md))                                                                                           |
+| `@aivi/opencode`        | OpenCode plugin: registers exactly the tools the host offers it at load — the plugin hardcodes none — plus `aivi_connection`, which answers about its own loading ([opencode](docs/opencode.md))                                                                                                      |
 
 Modules and jobs call shared services in-process. The plugin reaches the same
 services over the authenticated host API. Linear is an in-process module with
 a webhook route per app on the same listener (`/linear/webhooks/app/<id>`).
-
-## Status
-
-- Live-verified against the OpenCode v2 family (the pinned `@opencode/*` set,
-  today 2.0.23) and a Discord test server on the target
-  Mac: discovery and auth, plugin tools, the session driver (jobs, dreaming,
-  Discord turns all end in a verified final answer), Discord DMs/channels/
-  threads with slash commands and job reports.
-- Browser control: live-verified against headless Chrome on the target Mac
-  (`npm run smoke:browser`); login takeover and extensions still to exercise.
-- Knowledge: core and per-project sources with kinds (`doc`, `decision`,
-  `memory`, `conversation`, `manual` — docs shipped by installed packages);
-  scope never widens on unknown IDs. Projects are
-  clean checkouts under `<home>/projects/`, described from the home by a
-  `docs/` convention ([docs/projects.md](docs/projects.md)).
-- Jobs: definitions (cron or one-off `at`) and their runs in SQLite, Croner
-  as the calendar, `shell` and `prompt` tasks plus claimed system operations
-  (`invocation`), dedupe, pools and leases, restart recovery, missed-run accounting,
-  retention, reports.
-- Dreaming: a scheduled agent maintains `facts.md` and proposals from
-  conversations since its last run ([docs/dreaming.md](docs/dreaming.md)).
-
-Next, in order: the forge walkthrough and the live round trip on the
-operator's host, then the v1 rc; installation on other machines after that.
-Details and milestone status: [docs/roadmap.md](docs/roadmap.md);
-unscheduled ideas: `docs/backlog/`.
-
-`npm run agentic:verify` runs Biome and `npm run check` (build, tests against
-real SQLite, real QMD and the real v2 client on a mock server, schema check,
-CLI and daemon smoke). Live gates: `npm run live:opencode`, `npm run smoke:browser`.
 
 ## Releases
 
@@ -118,8 +93,8 @@ with provenance — no tags, no manual publishing.
 New here? [Getting started](docs/getting-started.md) to run it,
 [operations](docs/operations.md) to keep it running,
 [configuration](docs/configuration.md) for every field. Working on it? Start
-with [CONTEXT.md](CONTEXT.md), then [architecture decisions](docs/architecture.md),
+with [AGENTS.md](AGENTS.md), then [architecture decisions](docs/architecture.md),
 [OpenCode integration](docs/opencode.md), [channel modules](docs/channels.md),
 [projects](docs/projects.md), [knowledge search](docs/knowledge.md),
 [dreaming](docs/dreaming.md), [Discord](docs/discord.md), [Slack](docs/slack.md),
-[browser](docs/browser.md), and [roadmap](docs/roadmap.md).
+and [browser](docs/browser.md).

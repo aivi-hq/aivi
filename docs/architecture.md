@@ -274,6 +274,6 @@ built until someone asks twice:
 
 ## Open work
 
-Status and order live in [roadmap.md](roadmap.md); unscheduled ideas in
-[backlog/](backlog/). Findings from code reviews are in [review/](review/);
-they are findings, not specifications.
+Status and order live in the operator's tracker, not in the repository.
+Review findings are tracked there too; they are findings, not
+specifications.
