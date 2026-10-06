@@ -154,7 +154,11 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    moment it fails — the human label rides the ticket and the session says
    why — the move lands and the slot comes back anyway, and the closing stays
    owed to the next wake and the next boot (the label stands until a person
-   removes it). And when the dispatcher gives up on killing a stubborn worker
+   removes it). A closing whose conversation is **gone** — Linear answers
+   `Entity not found`, the ticket was deleted — is the one exception: the
+   debt is dropped where it stands, said once in the log. There is no
+   surface left to close, no help to ask of a grave, and a boot that
+   re-cried it every time would only teach the log to be unread. And when the dispatcher gives up on killing a stubborn worker
    (`dispatcher.killAttempts`, `kill-unconfirmed`), or OpenCode would not
    answer the interrupt for a person's stop (`stop-unconfirmed`), the ticket
    carries the human label and says plainly that a worker may still be

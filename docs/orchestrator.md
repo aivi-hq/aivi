@@ -185,6 +185,8 @@ A turn ended is `session.execution.succeeded` followed by `orchestrator.turnEndD
 
 A worker's **permission prompt** is answered by aivi, not by a person: the contract says a blocked worker asks on the ticket, so the orchestrator rejects the request at once with the operator's editable `permission-denied` words, naming `aivi_ask`. Only watched sessions — aivi's own workers — are answered; a person's session is never watched, and its prompts stay the person's.
 
+An execution that **fails** — a model that would not load, a provider that died — is not a turn end: the session speaks no more, so there is nothing to judge and nobody to nudge. The run fails visibly with the wire's own words, and the ticket stays where the person can see it, because the worker never got to work on it.
+
 ## The dispatcher
 
 The dispatcher manages configured resources through capacity pools.

@@ -96,10 +96,26 @@ export interface LinearTeam {
 
 export class LinearApiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** GraphQL error codes (`extensions.code`), kept apart because the HTTP
+   *  status says nothing about them — Linear answers entity-not-found with a
+   *  200. Empty for transport and token errors. */
+  readonly codes: readonly string[];
+  constructor(message: string, status: number, codes: readonly string[] = []) {
     super(message);
     this.name = 'LinearApiError';
     this.status = status;
+    this.codes = codes;
+  }
+
+  /** Linear's word for "that entity is gone": a deleted issue takes its agent
+   *  session with it, and every later call names it. The message is the
+   *  stable part (`Entity not found: AgentSession`); the code is a newer
+   *  shape, so both answer. */
+  static isGone(error: unknown): boolean {
+    return (
+      error instanceof LinearApiError &&
+      (error.codes.includes('EntityNotFound') || /entity not found/i.test(error.message))
+    );
   }
 }
 
@@ -213,8 +229,13 @@ export class LinearClient {
     }
     const text = await response.text();
     if (!response.ok) throw new LinearApiError(`Linear API ${response.status}: ${describe(text)}`, response.status);
-    const parsed = JSON.parse(text) as { data?: T; errors?: { message: string }[] };
-    if (parsed.errors?.length) throw new LinearApiError(parsed.errors.map(e => e.message).join('; '), 200);
+    const parsed = JSON.parse(text) as { data?: T; errors?: { message: string; extensions?: { code?: string } }[] };
+    if (parsed.errors?.length)
+      throw new LinearApiError(
+        parsed.errors.map(e => e.message).join('; '),
+        200,
+        parsed.errors.map(e => e.extensions?.code ?? ''),
+      );
     if (parsed.data === undefined) throw new LinearApiError('Linear API returned no data', 502);
     return parsed.data;
   }
@@ -411,9 +432,14 @@ export class LinearClient {
   }
 
   async issue(id: string): Promise<LinearIssue> {
-    const data = await this.graphql<{ issue: RawIssue }>(`query($id: String!) { issue(id: $id) { ${ISSUE_FIELDS} } }`, {
-      id,
-    });
+    const data = await this.graphql<{ issue: RawIssue | null }>(
+      `query($id: String!) { issue(id: $id) { ${ISSUE_FIELDS} } }`,
+      { id },
+    );
+    // A deleted issue answers as missing, in words the closing already
+    // knows: without this a null would crash the caller instead of saying
+    // what it means.
+    if (!data.issue) throw new LinearApiError('Entity not found: Issue', 200);
     return issueOf(data.issue);
   }
 

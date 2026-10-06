@@ -33,6 +33,7 @@ import {
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { Platform, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
+import { LinearApiError } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
 import { RunLinks } from './links.ts';
@@ -310,6 +311,17 @@ async function startLinear(
         closings.delete(runId);
         log.info('run.caughtup', { run: runId, ticket: entry.ticketId });
       } catch (error) {
+        // A deleted ticket takes its agent session with it, and Linear then
+        // answers every step with `Entity not found`. The closing is owed to
+        // a surface that no longer exists: drop the debt and say it plainly
+        // once — the person deleted the ticket, they need no help label on a
+        // grave, and a boot that re-cries this every time teaches nobody to
+        // read the log.
+        if (LinearApiError.isGone(error)) {
+          closings.delete(runId);
+          log.warn('closing.dropped', { run: runId, ticket: entry.ticketId, error });
+          return;
+        }
         // The closing failed: the person hears it NOW — the operator must be
         // informed — and the closing stays owed: the next wake and the next
         // boot try again, and each step asks Linear's real state first so a
@@ -360,7 +372,10 @@ async function startLinear(
        *  deleted or on a team this project does not map. The orchestrator
        *  asks before every ending move (ruled 2026-10-02). */
       ticketLane: async (projectId, ticketId) => {
-        const words = await board.issue(ticketId);
+        const words = await board.issue(ticketId).catch((error: unknown) => {
+          if (LinearApiError.isGone(error)) return undefined; // deleted says the same in other words
+          throw error;
+        });
         if (!words) return undefined;
         const teams = projectLinear(services.loaded, projectId)?.teams ?? [];
         return teams.includes(words.teamId) ? words.stateName : undefined;

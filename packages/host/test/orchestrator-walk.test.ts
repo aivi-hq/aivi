@@ -552,6 +552,70 @@ test('a turn that ends without a report earns the nudge; the spent budget fails 
   assert.match(outcome.reason, /ended its turn without reporting/, 'the failure names the silence it died of');
 });
 
+test('an execution that fails on the wire ends the run visibly with the wire’s own words', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { turnEndMs: 5 } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1 in Doing',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+
+  // Live 2026-10-06: an unloadable model variant failed the drain 3 ms in,
+  // and the old watcher never told anybody — the run sat `working` forever.
+  fake.events.emit(sessionId, 'session.execution.failed', {
+    error: { type: 'model_unavailable', message: 'Model unavailable: mlx-serve/demo#high' },
+  });
+  await until(() => ledger.get(runId)!.state === 'failed', 'the failure lands the moment the wire speaks');
+  const outcome = ledger.get(runId)!.outcome;
+  if (outcome?.kind !== 'failure')
+    throw new Error(`the run ended ${JSON.stringify(outcome ?? 'nothing')}, not a failure`);
+  assert.match(outcome.reason, /Model unavailable: mlx-serve\/demo#high/, 'the wire’s words are the reason');
+  assert.equal(fake.prompts.length, 1, 'a dead session is never nudged');
+  assert.ok(fake.sessions.has(sessionId), 'the session is left as it is, for a person to read');
+});
+
+test('an execution that failed with no words still ends the run, saying so', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { turnEndMs: 5 } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1 in Doing',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+
+  fake.events.emit(sessionId, 'session.execution.failed', { error: undefined });
+  await until(() => ledger.get(runId)!.state === 'failed', 'even a silent failure is a verdict');
+  const outcome = ledger.get(runId)!.outcome;
+  assert.equal(outcome?.kind, 'failure');
+  if (outcome?.kind === 'failure')
+    assert.match(outcome.reason, /OpenCode reported no reason/, 'the silence is named as such');
+});
+
 test('an unanswered question spares the nudge — only silence earns it', async () => {
   const fake = fakeOpenCode();
   const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
