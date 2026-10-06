@@ -19,6 +19,7 @@ import { join } from 'node:path';
 export const PROMPT_NAMES = [
   'worker-contract',
   'nudge',
+  'permission-denied',
   'feedback-loop',
   'review-posture',
   'pr-body',
@@ -46,6 +47,10 @@ export const promptDefaults: Record<PromptName, string> = {
     'Your turn ended without reporting. If you are finished, call the aivi_work_complete tool ' +
     '(outcome "success" or "failure") with a one-line summary. If you are blocked or need a ' +
     'decision from a person, call the aivi_ask tool with your question. Do not just reply in text.',
+  'permission-denied':
+    'Permission denied: {action} on {resources} was refused by aivi. Stay inside your working ' +
+    'directory; do not look for another path to the same thing. If a person must approve this, ' +
+    'call aivi_ask and explain what you need and why; they answer on the ticket.',
   'feedback-loop':
     'This ticket is returning work: the pull request {pull} has unresolved review comments. ' +
     'Process each one by either agreeing (do the work, move it with aivi_push) or disagreeing ' +

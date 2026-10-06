@@ -703,6 +703,11 @@ const orchestratorSchema = z.strictObject({
     .describe(
       'How long an open elicitation holds its slot (an in-session question to a person, like Linear elicitation). After it the lease releases and the ticket waits; the answer reacquires capacity and resumes the same session — fallback never applies to a resume.',
     ),
+  turnEndDebounce: durationString
+    .default('5s')
+    .describe(
+      'How long a session must stay quiet after its execution ends before the orchestrator asks OpenCode whether the worker ended its turn without reporting. A new execution cancels the wait; a queued prompt, an open question or a pending permission spares the worker; only silence earns the nudge.',
+    ),
 });
 
 const configShape = z.strictObject({

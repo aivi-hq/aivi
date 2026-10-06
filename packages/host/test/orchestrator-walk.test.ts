@@ -25,7 +25,6 @@ const git = (cwd: string, ...args: string[]) =>
  *  ledger — only OpenCode and the tracker are faked, because the walk's
  *  decisions are the point and they must not need a platform to be pinned. */
 
-const noEvents: SessionEvents = { watch: () => () => {} };
 const quiet = {
   info: () => {},
   debug: () => {},
@@ -34,6 +33,23 @@ const quiet = {
   getChild: () => quiet,
   with: () => quiet,
 } as unknown as Logger;
+
+/** An event stream a test can speak into: `emit` is the server putting an
+ *  event on the wire for the sessions that are watching. */
+function liveEvents(): SessionEvents & { emit(sessionID: string, type: string, data?: Record<string, unknown>): void } {
+  const listeners = new Map<string, Set<(event: { type: string; data?: { sessionID?: string } }) => void>>();
+  return {
+    watch(sessionID, listener) {
+      const set = listeners.get(sessionID) ?? new Set();
+      listeners.set(sessionID, set);
+      set.add(listener);
+      return () => set.delete(listener);
+    },
+    emit(sessionID, type, data) {
+      for (const listener of listeners.get(sessionID) ?? []) listener({ type, data: { sessionID, ...data } });
+    },
+  };
+}
 
 interface Fake {
   client: OpenCodeClient;
@@ -53,6 +69,11 @@ interface Fake {
   /** Prompts OpenCode refused while `promptFails` stood: the test's signal
    *  that a delivery was attempted and failed. */
   rejected: string[];
+  /** Permission requests aivi answered with a reject: the audit trail the
+   *  turn-end watcher writes when a worker's prompt reaches the wire. */
+  permissionReplies: { sessionID: string; requestID: string; decision: string; message?: string }[];
+  /** The wire: a test emits the events the server would, per session. */
+  events: ReturnType<typeof liveEvents>;
 }
 
 function fakeOpenCode(): Fake {
@@ -67,6 +88,8 @@ function fakeOpenCode(): Fake {
     forms: [],
     ctl: { promptFails: false },
     rejected: [],
+    permissionReplies: [],
+    events: liveEvents(),
   };
   fake.client = {
     agent: { list: async () => ({ data: [{ id: 'dev', model: { providerID: 'agentprov', id: 'agentmodel' } }] }) },
@@ -105,6 +128,11 @@ function fakeOpenCode(): Fake {
           form.answered = input.answer;
           return form;
         },
+      },
+    },
+    permission: {
+      reply: async (input: { sessionID: string; requestID: string; decision: string; message?: string }) => {
+        fake.permissionReplies.push(input);
       },
     },
   } as unknown as OpenCodeClient;
@@ -193,7 +221,7 @@ function harness(
   // a config duration — the strings are the person's surface, numbers are
   // the unit's. Whatever is left goes to the config schema untouched.
   const { clocks = {}, ...configWritten } = written as {
-    clocks?: { idleMs?: number; prepareMs?: number; keepAliveMs?: number };
+    clocks?: { idleMs?: number; prepareMs?: number; keepAliveMs?: number; turnEndMs?: number };
   } & Record<string, unknown>;
   const store = new Store(':memory:');
   const ledger = new RunLedger(store);
@@ -211,11 +239,12 @@ function harness(
   const orchestrator = new Orchestrator({
     ledger,
     opencode: async () => fake.client,
-    events: noEvents,
+    events: fake.events,
     log: quiet,
     signal: abort.signal,
     lanes: () => lanes,
     keepAliveMs: clocks.keepAliveMs ?? 300_000,
+    turnEndDebounceMs: clocks.turnEndMs ?? 25,
     directory,
     identity: async () => ({ name: 't', email: 't@t' }),
     dispatcher,
@@ -485,6 +514,154 @@ test('an open elicitation holds its slot for the keep-alive, then gives the slot
   assert.ok(ledger.get(runId)!.leaseId, 'the answer reacquired capacity — in a fresh lease');
   assert.match(fake.prompts.at(-1)!.text, /The person answered your question: the deep one/);
   assert.deepEqual(form.answered, { answer: 'the deep one' }, 'the form closes as the record');
+});
+
+test('a turn that ends without a report earns the nudge; the spent budget fails the run visibly', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { turnEndMs: 5 } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1 in Doing',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+
+  fake.events.emit(sessionId, 'session.execution.succeeded');
+  await until(() => fake.prompts.length === 2, 'the quiet span ends and the nudge goes out');
+  assert.match(fake.prompts.at(-1)!.text, /Your turn ended without reporting/, 'the nudge says what to do');
+  assert.equal(ledger.get(runId)!.state, 'working', 'the first nudge is a second chance, not a verdict');
+
+  fake.events.emit(sessionId, 'session.execution.succeeded');
+  await until(() => fake.prompts.length === 3, 'the second silence earns the second nudge');
+  fake.events.emit(sessionId, 'session.execution.succeeded');
+  await until(() => ledger.get(runId)!.state === 'failed', 'the budget is spent: the run fails visibly');
+  const outcome = ledger.get(runId)!.outcome;
+  if (outcome?.kind !== 'failure')
+    throw new Error(`the run ended ${JSON.stringify(outcome ?? 'nothing')}, not a failure`);
+  assert.match(outcome.reason, /ended its turn without reporting/, 'the failure names the silence it died of');
+});
+
+test('an unanswered question spares the nudge — only silence earns it', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { turnEndMs: 5 } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1 in Doing',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+
+  fake.forms.push({ id: 'form-quiet', sessionID: sessionId });
+  fake.events.emit(sessionId, 'session.execution.succeeded');
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(fake.prompts.length, 1, 'an unanswered question is a wait, not an ending');
+  assert.equal(ledger.get(runId)!.state, 'working', 'the run lived through the silence');
+
+  fake.forms.length = 0;
+  fake.events.emit(sessionId, 'session.execution.succeeded');
+  await until(() => fake.prompts.length === 2, 'nothing pending anywhere: the nudge finally speaks');
+});
+
+test("a worker's permission prompt is answered with a reject that names aivi_ask, in the operator's words", async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const prompt = async (name: PromptName) =>
+    name === 'permission-denied' ? `DENIED {action}: {resources}` : `do {directory}`;
+  const { ledger, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { turnEndMs: 5 } },
+    feed,
+    fake,
+    undefined,
+    undefined,
+    undefined,
+    prompt,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1 in Doing',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+
+  fake.events.emit(sessionId, 'permission.asked', {
+    id: 'ask-1',
+    action: 'external_directory',
+    resources: ['/elsewhere/*'],
+  });
+  await until(() => fake.permissionReplies.length === 1, 'the prompt is answered at once');
+  const reply = fake.permissionReplies[0]!;
+  assert.equal(reply.decision, 'reject', 'nobody is at the wheel: aivi answers');
+  assert.equal(reply.message, 'DENIED external_directory: /elsewhere/*', 'the operator’s words carry the slots');
+
+  fake.events.emit(sessionId, 'permission.asked', {
+    id: 'ask-1',
+    action: 'external_directory',
+    resources: ['/elsewhere/*'],
+  });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(fake.permissionReplies.length, 1, 'a repeated event for one request answers it once');
+
+  // The reject is not a turn end: no nudge rides it. The turn stays open.
+  assert.equal(ledger.get(runId)!.state, 'working', 'the worker keeps its run');
+  assert.equal(fake.prompts.length, 1, 'a rejected permission does not earn a nudge');
+});
+
+test('a new execution cancels the pending judgement — the debounce outlives neither silence nor noise', async () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const { ledger, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { turnEndMs: 5 } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1 in Doing',
+  });
+  await until(() => fake.prompts.length === 1, 'the worker starts');
+  const sessionId = ledger.get(runId)!.sessionId!;
+
+  fake.events.emit(sessionId, 'session.execution.succeeded');
+  fake.events.emit(sessionId, 'session.execution.started');
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(fake.prompts.length, 1, 'a new execution ate the pending judgement');
+
+  fake.events.emit(sessionId, 'session.execution.succeeded');
+  await until(() => fake.prompts.length === 2, 'the next quiet span is the one that counts');
 });
 
 test('the answer reacquires capacity in its own pool and waits there — the fallback never applies to a resume', async () => {

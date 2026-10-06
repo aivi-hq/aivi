@@ -16,7 +16,16 @@ import {
 test('every ruled name has a built-in carrying the slots composition fills', () => {
   assert.deepEqual(
     [...PROMPT_NAMES],
-    ['worker-contract', 'nudge', 'feedback-loop', 'review-posture', 'pr-body', 'escalation', 'job-result'],
+    [
+      'worker-contract',
+      'nudge',
+      'permission-denied',
+      'feedback-loop',
+      'review-posture',
+      'pr-body',
+      'escalation',
+      'job-result',
+    ],
     'the set grows only by ruling',
   );
   for (const name of PROMPT_NAMES) assert.ok(promptDefaults[name].trim().length, `${name} has words`);

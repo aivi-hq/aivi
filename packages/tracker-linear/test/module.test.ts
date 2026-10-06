@@ -498,6 +498,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
     forges: new Forges(),
     identity: async () => ({ name: 't', email: 't@t' }),
     keepAliveMs: 300_000,
+    turnEndDebounceMs: 300_000,
     ...(git ? { git } : {}),
   });
   return {
