@@ -131,22 +131,26 @@ async function askLanes(
     });
     if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
     const agent = String(answer).trim();
-    // A worked lane with git possible: does its work write files? Only a
-    // yes is written — core's default is false, and a key stating the
-    // default is noise. "No" is not a promise of read-only: that is the
-    // agent file's own deny, never aivi's. Without a forge there are no
-    // worktrees to promise, so nothing is asked.
+    // A worked lane with git possible: does it work on the ticket's branch?
+    // The worktree belongs to the branch, not to writing: a review lane
+    // changes nothing yet must read the pull request's branch, and that
+    // branch lives nowhere but a worktree — a run on a branch reuses the
+    // worktree already holding it. Only a yes is written — core's default
+    // is false, and a key stating the default is noise. "No" means the
+    // project's own checkout; it is never a promise of read-only: that is
+    // the agent file's own deny, never aivi's. Without a forge there are
+    // no worktrees to promise, so nothing is asked.
     let worktree = false;
     if (agent && ctx.forgeConfigured) {
-      const writes = await ctx.prompts.select({
-        message: `Does work in the "${state.name}" lane write files (will use git worktrees)?`,
+      const onBranch = await ctx.prompts.select({
+        message: `Does work in the "${state.name}" lane happen on the ticket's branch (git worktree)?`,
         options: [
-          { value: 'yes', label: 'yes — it writes, give it its own worktree' },
-          { value: 'no', label: 'no — it works in the checkout itself' },
+          { value: 'yes', label: "yes — on the ticket's branch, in its own worktree" },
+          { value: 'no', label: 'no — in the project checkout itself' },
         ],
       });
-      if (ctx.prompts.isCancel(writes)) throw new PluginSetupCancelled('lane setup incomplete');
-      worktree = writes === 'yes';
+      if (ctx.prompts.isCancel(onBranch)) throw new PluginSetupCancelled('lane setup incomplete');
+      worktree = onBranch === 'yes';
     }
     lanes.push({ name: state.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
   }
@@ -190,11 +194,15 @@ function makeContributor(makeClient: MakeTeamsClient = clientFor): ProjectContri
       const chosen = teams.filter(team => teamIds.includes(team.id));
 
       // The name: a tracker offers the first team's key, lower-cased, unless an
-      // earlier role (a forge) already settled it.
+      // earlier role (a forge) already settled it. A defaultValue, not just a
+      // placeholder: Enter takes it *and says so* — a hint is display-only,
+      // and an answered prompt that renders empty leaves the person guessing
+      // what was taken.
       const suggested = (ctx.projectId ?? chosen[0]!.key).toLowerCase();
       const idAnswer = await ctx.prompts.text({
         message: "Project id — aivi's name for it; Linear never sees it.",
         placeholder: suggested,
+        defaultValue: suggested,
       });
       if (ctx.prompts.isCancel(idAnswer)) throw new PluginSetupCancelled('no project id given');
       const id = (String(idAnswer).trim() || suggested).toLowerCase();

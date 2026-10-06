@@ -177,6 +177,14 @@ A workflow can have at most one queue lane. Queue lanes are optional: without on
 
 The setup wizard asks for the queue lane as **one question after all lanes are configured** (ruled 2026-10-02): a select of the configured lanes, plus `-- None --` — not a question per lane.
 
+#### Turn end
+
+A worker's turn should end with a report: the completion tool or a question to a person. A turn that ends with neither is not taken at its word — OpenCode's records decide.
+
+A turn ended is `session.execution.succeeded` followed by `orchestrator.turnEndDebounce` (default **5 seconds**) of no new execution, and an empty read of the session's unanswered questions (forms). A new execution cancels the judgement outright. A queued prompt and a pending permission never reach this test: both hold the execution open, so no ending event fires while they wait. Only true silence earns the **nudge** — the operator's editable `nudge` prompt, bounded in number, and once the budget is spent the run fails visibly: ended its turn without reporting — and the ticket moves like any failure.
+
+A worker's **permission prompt** is answered by aivi, not by a person: the contract says a blocked worker asks on the ticket, so the orchestrator rejects the request at once with the operator's editable `permission-denied` words, naming `aivi_ask`. Only watched sessions — aivi's own workers — are answered; a person's session is never watched, and its prompts stay the person's.
+
 ## The dispatcher
 
 The dispatcher manages configured resources through capacity pools.

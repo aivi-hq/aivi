@@ -1,5 +1,5 @@
 ---
-description: The review worker: reads a pull request against its ticket and posts findings
+description: "The review worker: reads a pull request against its ticket and posts findings"
 mode: primary
 # The orchestrator's first prompt carries the ticket and the mechanics;
 # this file carries the judgement.

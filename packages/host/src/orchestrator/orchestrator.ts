@@ -97,6 +97,9 @@ export interface OrchestratorDeps {
   /** How long an open elicitation holds its slot. The orchestrator's own
    *  dial (docs/orchestrator.md, "When a worker needs human input"). */
   keepAliveMs: number;
+  /** How long a session stays quiet after an execution ends before the
+   *  turn-end check runs (config's `orchestrator.turnEndDebounce`). */
+  turnEndDebounceMs: number;
   /** Premature turn-ends tolerated before the run fails visibly. A safety net, not a poller. */
   nudgeBudget?: number;
   /** The editable prompt texts (core's `prompts/` set), read at use: an
@@ -168,6 +171,9 @@ export class Orchestrator implements OrchestratorApi {
    *  expires. Re-armed by the question and the answer, cleared by every
    *  ending — never an interval. */
   private readonly elicitations = new Map<string, ReturnType<typeof setTimeout>>();
+  /** One pending turn-end judgement per session, armed by an execution's
+   *  end, cancelled by a new execution or superseded by a newer ending. */
+  private readonly turnEnds = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(deps: OrchestratorDeps) {
     this.deps = deps;
@@ -780,13 +786,68 @@ export class Orchestrator implements OrchestratorApi {
   }
 
   /** The one event rule, used at start and at boot: every event says the
-   *  session lives — the dispatcher's silence clock restarts here — and a
-   *  turn's end sends the run through the policy. */
+   *  session lives — the dispatcher's silence clock restarts here — and an
+   *  execution's end debounces into the turn-end policy. `session.idle` is
+   *  what this once waited for: OpenCode's schema declares it deprecated and
+   *  the server never sends it (verified 2026-10-06 against 2.0.23 — a turn
+   *  ends with `session.execution.succeeded`, and queued prompts fold into
+   *  the running execution before it). */
   #watch(sessionId: string, leaseId?: string): void {
+    const answered = new Set<string>();
     this.deps.events.watch(sessionId, event => {
       if (leaseId) this.deps.dispatcher.activity(leaseId);
-      if (event.type === 'session.idle') void this.#turnEnded(sessionId);
+      if (event.type === 'session.execution.started') this.#cancelTurnEnd(sessionId);
+      if (event.type === 'session.execution.succeeded') this.#debounceTurnEnd(sessionId);
+      if (event.type === 'permission.asked') {
+        const { id } = event.data as { id: string };
+        if (answered.has(id)) return;
+        answered.add(id);
+        void this.#denyPermission(sessionId, event.data as { id: string; action: string; resources: string[] }).catch(
+          error => this.deps.log.warn('permission.reply.failed', { session: sessionId, error }),
+        );
+      }
     });
+  }
+
+  /**
+   * A worker's permission prompt is answered by aivi, not by a person: the
+   * contract says a blocked worker asks on the ticket, so a prompt that
+   * reached the wire is answered **reject** with the operator's
+   * `permission-denied` words. Nobody is at the wheel otherwise: an answered
+   * prompt keeps the execution parked, and an unanswered one parks the worker
+   * until the dispatcher's idle clock kills it. Only watched sessions — the
+   * orchestrator's own workers — are ever asked; a person's session is never
+   * watched, so their prompts stay theirs.
+   */
+  async #denyPermission(sessionId: string, ask: { id: string; action: string; resources: string[] }): Promise<void> {
+    const run = this.deps.ledger.bySession(sessionId);
+    if (!run || isTerminal(run.state)) return;
+    const client = await this.deps.opencode();
+    const message = fillPrompt(await this.prompt('permission-denied'), {
+      action: ask.action,
+      resources: (ask.resources ?? []).join(', '),
+    });
+    await client.permission.reply({ sessionID: sessionId, requestID: ask.id, decision: 'reject', message });
+    this.deps.log.warn('permission.rejected', { run: run.id, action: ask.action, resources: ask.resources });
+  }
+
+  /** A turn ended visibly; after the quiet span it is judged. A new ending
+   *  replaces the pending one, a new execution cancels it — the debounce is
+   *  why a prompt queued at the last second can never be mistaken for a
+   *  done session. One timer per session, never an interval. */
+  #debounceTurnEnd(sessionId: string): void {
+    this.#cancelTurnEnd(sessionId);
+    const handle = setTimeout(() => {
+      this.turnEnds.delete(sessionId);
+      void this.#turnEnded(sessionId);
+    }, this.deps.turnEndDebounceMs);
+    this.turnEnds.set(sessionId, handle);
+  }
+
+  #cancelTurnEnd(sessionId: string): void {
+    const previous = this.turnEnds.get(sessionId);
+    if (previous) clearTimeout(previous);
+    this.turnEnds.delete(sessionId);
   }
 
   /**
@@ -998,28 +1059,32 @@ export class Orchestrator implements OrchestratorApi {
   }
 
   /**
-   * A turn ended. The ledger state plus one read of OpenCode are the whole
-   * discriminator — no guessing from text:
+   * A turn ended, and the quiet span held. The ledger state plus one read of
+   * OpenCode are the whole discriminator — no guessing from text:
    * - terminal → say nothing; the run is over.
    * - a form still `pending` → the worker asked and the person has not
    *   answered: wait, silently. The form is OpenCode's record and the
    *   follower has rendered it; the answer resumes the session on its own.
-   * - nothing pending (neither tool fired this turn) → a bounded, visible
-   *   nudge; once the budget is spent, the run fails visibly. Never silence.
+   *   (A queued prompt and a pending permission never reach here: both hold
+   *   the execution open, so no ending event fires at all — verified on the
+   *   wire 2026-10-06.)
+   * - nothing pending → a bounded, visible nudge; once the budget is spent,
+   *   the run fails visibly. Never silence.
    */
   async #turnEnded(sessionId: string): Promise<void> {
     const run = this.deps.ledger.bySession(sessionId);
     if (run?.state !== 'working') return;
     try {
-      const forms = (await this.deps.opencode()).session.form.list({ sessionID: sessionId });
-      if ((await forms).length) {
-        this.deps.log.debug('run.waiting', { run: run.id });
+      const client = await this.deps.opencode();
+      const forms = await client.session.form.list({ sessionID: sessionId });
+      if (forms.length) {
+        this.deps.log.debug('run.waiting', { run: run.id, forms: forms.length });
         return;
       }
     } catch (error) {
       // OpenCode unreadable: nudging into an outage helps nobody. The next
       // turn end asks again; a run never dies on a failed read.
-      this.deps.log.warn('run.form.list.failed', { run: run.id, error });
+      this.deps.log.warn('run.turn.reads.failed', { run: run.id, error });
       return;
     }
     if (run.nudges >= this.budget) {

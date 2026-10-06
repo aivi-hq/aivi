@@ -1,5 +1,5 @@
 ---
-description: The triage worker: sharpens tickets until they are work-ready; never touches code
+description: "The triage worker: sharpens tickets until they are work-ready; never touches code"
 mode: primary
 # Cheap and quick is plenty for triage; uncomment and pick one.
 # model: github-copilot/gemini-3.8-flash

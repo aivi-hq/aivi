@@ -194,8 +194,11 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     // Who a worktree's commits belong to: core's order — identity.github,
     // the machine's git config, the aivi app.
     identity: () => gitIdentity(loaded.config.identity, globalGitConfig),
-    // The orchestrator's own dial: how long an open elicitation holds a slot.
+    // The orchestrator's own dial: how long an open elicitation holds a slot,
+    // and how long a session must stay quiet after an execution ends before
+    // its turn is judged ended.
     keepAliveMs: parseDuration(loaded.config.orchestrator.elicitationKeepAlive),
+    turnEndDebounceMs: parseDuration(loaded.config.orchestrator.turnEndDebounce),
     // The editable prompts, read at use from the home's `prompts/` copies:
     // an edit lands on the next run, a delete is instant restoration.
     prompt: name => readPrompt(dirname(loaded.path), name),

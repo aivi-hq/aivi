@@ -1,5 +1,5 @@
 ---
-description: The team's assistant: answers people from knowledge, never does the work
+description: "The team's assistant: answers people from knowledge, never does the work"
 mode: primary
 # Cheap and quick for a conversational assistant; uncomment and pick one per installation.
 # model: github-copilot/gemini-3.8-flash

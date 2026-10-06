@@ -187,7 +187,10 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    wakes the walk, and the walk reads the board afresh — a person's move on
    a queued ticket is cancel-on-move, the mechanism that replaced the
    fulfilment re-check. The issue is re-read from the API for every such
-   change, so label and state names are current.
+   change, so label and state names are current. A **create** is a state
+   change too (ruled 2026-10-06): an issue is born in its state — Linear's
+   Triage, a lane like any other — and a front door that never rang the bell
+   was a ticket never picked up until a person nudged it.
 
 One route shape: `POST /linear/webhooks/app/<id>`, verified by that app's
 signing secret. The primary's route carries both families — its own agent

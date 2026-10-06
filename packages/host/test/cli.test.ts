@@ -437,7 +437,16 @@ test('the prompts set rides with the home and answers list, install and show', a
   const rows = JSON.parse(listed.stdout) as { name: string; source: string; path: string }[];
   assert.deepEqual(
     rows.map(r => r.name),
-    ['worker-contract', 'nudge', 'feedback-loop', 'review-posture', 'pr-body', 'escalation', 'job-result'],
+    [
+      'worker-contract',
+      'nudge',
+      'permission-denied',
+      'feedback-loop',
+      'review-posture',
+      'pr-body',
+      'escalation',
+      'job-result',
+    ],
   );
   assert.ok(rows.every(r => r.source === 'file' && r.path === join(home, 'prompts', `${r.name}.md`)));
   const nudge = await readFile(join(home, 'prompts', 'nudge.md'), 'utf8');
