@@ -15,10 +15,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Logger } from '@aivi/core';
+import { GitHubApp, type GitRunner } from '@aivi/github';
 import type { RepoRef } from '@aivi/plugin/forge';
 import { createGitHubForge, type GitHubForge } from '../src/forge.ts';
-import type { GitRunner } from '../src/github.ts';
-import { GitHubApp } from '../src/index.ts';
 import type { Answer, Seen } from './github-api.ts';
 import { installationToken, scripted } from './github-api.ts';
 
@@ -87,7 +86,7 @@ async function forgeWith(
     'POST /app/installations/99/access_tokens': () => installationToken(),
     ...routes,
   });
-  const app = await GitHubApp.connect({ app: 7 }, { fetch: api.fetch });
+  const app = await GitHubApp.connect({ fetch: api.fetch });
   const options = { ...(git ? { git } : {}), ...(log ? { log } : {}) };
   return { forge: createGitHubForge(app, options), calls: api.calls, seen: api.seen };
 }

@@ -12,9 +12,8 @@
 import { mkdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getLogger, PROJECT_ID } from '@aivi/core';
+import { type GitHubApp, gitCredential, githubApp, runGit } from '@aivi/github';
 import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
-import { forgeGithubSchema } from './config.ts';
-import { GitHubApp, gitCredential, runGit } from './github.ts';
 import { httpsRemote, isGitHub, parseRemote } from './remote.ts';
 
 /** The project name a repository suggests: GitHub's `My-Repo` becomes aivi's
@@ -83,8 +82,9 @@ export const contributor: ProjectContributor = {
   role: 'forge',
   async setup(ctx: ProjectSetupContext) {
     const log = getLogger(['aivi', 'forge-github']);
-    const config = forgeGithubSchema.parse(ctx.config);
-    const app = await GitHubApp.connect(config, { log });
+    // The app is the home's: the credential comes from <home>/.env, the same
+    // one the forge module and the tracker speak through (ruled 2026-10-07).
+    const app = await githubApp({ log });
     const remote = await askRepository(ctx, app);
     if (!remote) throw new Error('no repository named');
     const id = `${remote.owner}/${remote.repo}`;

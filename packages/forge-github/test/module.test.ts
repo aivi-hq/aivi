@@ -11,21 +11,24 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { getLogger } from '@aivi/core';
+import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV } from '@aivi/github';
 import { Forges } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
-import type { ForgeGithubConfig } from '../src/config.ts';
-import { GITHUB_PRIVATE_KEY_ENV } from '../src/config.ts';
 import { createForgeGithubModule } from '../src/module.ts';
 import { privateKey, scripted } from './github-api.ts';
 
 const run = promisify(execFile);
 
 test('the module registers its forge at start; the registry answers for a GitHub remote, and stop unregisters', async t => {
-  const previous = process.env[GITHUB_PRIVATE_KEY_ENV];
+  const previousKey = process.env[GITHUB_PRIVATE_KEY_ENV];
+  const previousId = process.env[GITHUB_APP_ID_ENV];
   process.env[GITHUB_PRIVATE_KEY_ENV] = privateKey;
+  process.env[GITHUB_APP_ID_ENV] = '7';
   t.after(() => {
-    if (previous === undefined) delete process.env[GITHUB_PRIVATE_KEY_ENV];
-    else process.env[GITHUB_PRIVATE_KEY_ENV] = previous;
+    if (previousKey === undefined) delete process.env[GITHUB_PRIVATE_KEY_ENV];
+    else process.env[GITHUB_PRIVATE_KEY_ENV] = previousKey;
+    if (previousId === undefined) delete process.env[GITHUB_APP_ID_ENV];
+    else process.env[GITHUB_APP_ID_ENV] = previousId;
   });
   const { fetch } = scripted({
     'GET /app': () => ({ status: 200, body: { id: 7, slug: 'aivi-agent' } }),
@@ -47,7 +50,7 @@ test('the module registers its forge at start; the registry answers for a GitHub
 
   const forges = new Forges();
   const services = { log: getLogger(['aivi', 'test']), forges } as unknown as AiviServices;
-  const running = await createForgeGithubModule({ app: 7 } satisfies ForgeGithubConfig).start(services);
+  const running = await createForgeGithubModule().start(services);
 
   const owned = await forges.owner({ id: 'site', directory: source });
   assert.equal(owned?.repo.id, 'acme/site', 'the registered forge owns the GitHub remote');

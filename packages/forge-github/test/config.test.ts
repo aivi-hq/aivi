@@ -13,41 +13,44 @@ const composed = composeConfigSchema({ 'forge-github': forgeGithubSchema });
 test('the declaration names the module the config block and the logs are keyed by', () => {
   assert.equal(plugin.id, 'forge-github');
   assert.equal(typeof plugin.createModule, 'function');
-  // Which is why it holds nothing else: the repositories come off each project's
-  // own remote, the key comes from the environment.
+  // Which is why the block holds nothing: the repositories come off each
+  // project's own remote, and the app's identity — id and key both — is the
+  // environment's, shared with every other plugin that speaks GitHub
+  // (ruled 2026-10-07).
   assert.equal(plugin.projectSchema, undefined);
   assert.equal(plugin.projectDefaultsSchema, undefined);
 });
 
-test('a configured block is one number, and it reaches the config the registry parses', () => {
-  const parsed = composed.parse({ version: 1, plugins: { 'forge-github': { app: 12345 } } });
-  assert.deepEqual(parsed.plugins['forge-github'], { app: 12345 });
+test('an empty block is the whole block, and it reaches the config the registry parses', () => {
+  const parsed = composed.parse({ version: 1, plugins: { 'forge-github': {} } });
+  assert.deepEqual(parsed.plugins['forge-github'], {});
+  // The empty block is not decoration: core offers the forge role to a
+  // project only when the block stands, so `aivi add` writes this byte.
 });
 
-test('a block that holds more than the app id is refused: there is no knob for a second installation', () => {
+test('a block that holds anything is refused: there is no knob the block owns any more', () => {
   for (const written of [
+    { app: 12345 },
     { app: '12345' },
-    { app: 0 },
-    { app: -1 },
-    { app: 1.5 },
-    { app: 12345, installation: 99 },
-    { app: 12345, installationId: 99 },
-    { app: 12345, token: 'ghs_x' },
-    {},
+    { installation: 99 },
+    { token: 'ghs_x' },
+    { privateKey: 'pem' },
   ])
     assert.equal(forgeGithubSchema.safeParse(written).success, false, `${JSON.stringify(written)} is not the block`);
 });
 
-test('listed with no block is a failure that says what is missing, not a module that starts blind', () => {
-  const missing = forgeGithubSchema.safeParse({});
-  assert.equal(missing.success, false);
-  assert.match(missing.error?.issues[0]?.path.join('.') ?? '', /^app$/);
+test('listed with no block starts blind and says so at the connection, not at the parser', () => {
+  // Nothing to parse, so no parse-time complaint: the module boots, reaches
+  // for GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, and the ConfigurationError
+  // from the credential reader is the complaint — it names what to put in
+  // <home>/.env, which is the only place a credential lives.
+  assert.equal(forgeGithubSchema.safeParse({}).success, true);
 });
 
 test('the module the declaration hands the host is the one id it is listed under', async () => {
   // `createModule` reaches the module code lazily: the CLI imports `./config`
   // for every command, and octokit has no business being in that import graph.
-  const created = await plugin.createModule?.({ app: 7 }, '/tmp/aivi-home');
+  const created = await plugin.createModule?.({}, '/tmp/aivi-home');
   assert.equal(created?.id, 'forge-github');
   assert.equal(typeof created?.start, 'function');
 });

@@ -1,8 +1,8 @@
-/** The bytes the setup writes, tested where they land: core's `.env` writer, the
- *  file, Node's own loader, and the reader that hands the key to octokit. A
- *  private key is many lines and the file is line-based, so the escaping is the
- *  thing that breaks in real life — hence testing the whole round trip rather
- *  than the function alone.
+/** The bytes setup writes, tested where they land: core's `.env` writer, the
+ *  file, Node's own loader, and the reader that hands the credential to
+ *  octokit. A private key is many lines and the file is line-based, so the
+ *  escaping is the thing that breaks in real life — hence testing the whole
+ *  round trip rather than the function alone.
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -11,9 +11,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { parseEnv } from 'node:util';
 import { upsertEnvFile } from '@aivi/core';
-import { GITHUB_PRIVATE_KEY_ENV } from '../src/config.ts';
-import { githubCredentials } from '../src/github.ts';
-import { pemForEnvFile } from '../src/setup.ts';
+import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, githubCredentials, pemForEnvFile } from '../src/github.ts';
 import { privateKey } from './github-api.ts';
 
 function envFile(body = ''): { path: () => string; read: () => string } {
@@ -43,11 +41,14 @@ test('a PEM written to <home>/.env is read back as the key it was', () => {
 
 test('and the bytes Node hands over are the bytes octokit signs with', () => {
   const file = envFile();
+  upsertEnvFile(file.path(), GITHUB_APP_ID_ENV, '7');
   upsertEnvFile(file.path(), GITHUB_PRIVATE_KEY_ENV, pemForEnvFile(privateKey));
   const loaded = parseEnv(file.read());
   // The key as read is PEM-shaped, so the credential reader takes it as it
   // stands — no second unescaping needed for the shape Node produces.
-  assert.equal(githubCredentials({ app: 7 }, loaded).privateKey, privateKey.trim().replaceAll('\r', ''));
+  const creds = githubCredentials(loaded);
+  assert.equal(creds.appId, 7, 'the id rides in the same file as the key');
+  assert.equal(creds.privateKey, privateKey.trim().replaceAll('\r', ''));
 });
 
 test('writing the key again replaces it, it does not append a second one', () => {

@@ -4,23 +4,27 @@
  *  answer**: an app whose key was rotated, an installation that was revoked
  *  or was never made, a grant that turned into two — each is said once,
  *  loudly, where `/status` shows it, rather than at the first push a worker
- *  is waiting on. The registry question — *"who owns this project's
- *  remote?"* — is asked now (built 2026-10-02): the projects-sync task was
- *  the first, and a checkout whose `origin` this app recognises syncs
+ *  is waiting on. The credential is the environment's (`GITHUB_APP_ID`,
+ *  `GITHUB_APP_PRIVATE_KEY` in `<home>/.env`), shared with every other plugin
+ *  that speaks GitHub (ruled 2026-10-07). The registry question — *"who owns
+ *  this project's remote?"* — is asked now (built 2026-10-02): the projects-sync
+ *  task was the first, and a checkout whose `origin` this app recognises syncs
  *  through this forge, authenticated as its own installation. The push asks
  *  it today — the worker's `aivi_pr` call ends here — and the review gather
  *  will ask it when it comes.
  */
+import { githubApp } from '@aivi/github';
 import type { AiviModule, AiviServices } from '@aivi/plugin';
-import type { ForgeGithubConfig } from './config.ts';
 import { createGitHubForge } from './forge.ts';
-import { GitHubApp } from './github.ts';
 
-async function startForge(config: ForgeGithubConfig, services: AiviServices): Promise<{ stop: () => Promise<void> }> {
+async function startForge(services: AiviServices): Promise<{ stop: () => Promise<void> }> {
   const log = services.log.getChild('forge-github');
   // Every failure here is a ConfigurationError naming what to fix on GitHub or
   // in .env: the module goes to error, `/status` says so, and nothing retries.
-  const app = await GitHubApp.connect(config, { log });
+  // The client is the process's one app: a tracker module started beside this
+  // one shares the connection rather than paying the JWT and installation
+  // reads again.
+  const app = await githubApp({ log });
   const unregister = services.forges.register(createGitHubForge(app, { log }));
   log.info('ready', {
     installation: app.installationId,
@@ -35,6 +39,6 @@ async function startForge(config: ForgeGithubConfig, services: AiviServices): Pr
   };
 }
 
-export function createForgeGithubModule(config: ForgeGithubConfig): AiviModule {
-  return { id: 'forge-github', start: services => startForge(config, services) };
+export function createForgeGithubModule(): AiviModule {
+  return { id: 'forge-github', start: services => startForge(services) };
 }

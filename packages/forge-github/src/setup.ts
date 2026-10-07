@@ -6,6 +6,12 @@
  *  the installation really reads a repository, by reading that repository's
  *  pull requests through it.
  *
+ *  The app's identity lands in `<home>/.env` — `GITHUB_APP_ID` beside
+ *  `GITHUB_APP_PRIVATE_KEY` (ruled 2026-10-07): the forge and the tracker are
+ *  one app, so the credential is a home fact, not a plugin block's. The block
+ *  written to `config.json` is empty: it only marks the forge as configured,
+ *  which is what makes core offer the forge role to a new project.
+ *
  *  The installation is a human's act and aivi cannot do it: no throwaway
  *  ticket, no write, is asked of a person to prove the grant — one read is
  *  enough. Writes are proven once, at the live gate.
@@ -15,29 +21,12 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { getLogger } from '@aivi/core';
+import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, GitHubApp, pemForEnvFile } from '@aivi/github';
 import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
-import { type ForgeGithubConfig, GITHUB_PRIVATE_KEY_ENV } from './config.ts';
-import { GitHubApp } from './github.ts';
 
 /** The app's numeric id, which is what aivi authenticates with. Its *name* is
  *  for the links a person opens; the number is for everything else. */
 const APP_ID = /^\d{1,20}$/;
-
-/**
- * A PEM as one line of a dotenv file: double-quoted, its newlines written as
- * `\n`. A private key is many lines and the file is line-based — quoting is
- * what Node's own loader understands, and the reader in `github.ts` unwraps
- * the same shape again in case anything reads it more plainly.
- */
-export function pemForEnvFile(privateKey: string): string {
-  const escaped = privateKey
-    .trim()
-    .replaceAll('\\', '\\\\')
-    .replaceAll('"', '\\"')
-    .replaceAll('\n', '\\n')
-    .replaceAll('\r', '');
-  return `"${escaped}"`;
-}
 
 /** `~` is the operator's home, the path they mean when they type it; anything
  *  else is relative to where they are standing. */
@@ -54,9 +43,6 @@ async function settled<T>(ctx: PluginSetupContext, answer: Promise<T | symbol>):
 
 const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupResult> => {
   const log = getLogger(['aivi', 'forge-github']);
-  const already = (ctx.config.plugins as Record<string, unknown> | undefined)?.['forge-github'] as
-    | { app?: number }
-    | undefined;
 
   ctx.prompts.note(
     [
@@ -76,7 +62,9 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     [
       '1. Open https://github.com/settings/apps/new',
       '2. GitHub App name is the bot’s name; homepage and contact do not',
-      '   matter. No webhooks: aivi receives nothing, it only calls out.',
+      '   matter. Webhooks: point them at',
+      '   https://<your aivi host>/github/webhooks, where the tracker',
+      '   listens (harmless to leave unset if you only want the forge).',
       '3. Under "Repository permissions", set:',
       '   - Contents: Read & write       (aivi reads and pushes branches)',
       '   - Pull requests: Read & write  (pull requests, reviews, replies)',
@@ -96,21 +84,19 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     'Creating the GitHub app',
   );
 
-  const appId =
-    already?.app ??
-    Number(
-      String(
-        await settled(
-          ctx,
-          ctx.prompts.text({
-            message: 'The App ID — the number on the app page (step 4)',
-            placeholder: 'e.g. 12345',
-            validate: value =>
-              value !== undefined && APP_ID.test(value.trim()) ? undefined : 'the numeric App ID, as on the app page',
-          }),
-        ),
-      ).trim(),
-    );
+  const appId = Number(
+    String(
+      await settled(
+        ctx,
+        ctx.prompts.text({
+          message: 'The App ID — the number on the app page (step 4)',
+          placeholder: 'e.g. 12345',
+          validate: value =>
+            value !== undefined && APP_ID.test(value.trim()) ? undefined : 'the numeric App ID, as on the app page',
+        }),
+      ),
+    ).trim(),
+  );
 
   // The key is asked for as a file because it is many lines: a paste prompt
   // takes one. GitHub hands this file out when the app is created. The path
@@ -135,16 +121,13 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     throw new Error(
       'that file is not a PEM private key (no "-----BEGIN … PRIVATE KEY-----" line) — GitHub gives it to you as a .pem when the app is created',
     );
+  await ctx.writeSecret(GITHUB_APP_ID_ENV, String(appId));
   await ctx.writeSecret(GITHUB_PRIVATE_KEY_ENV, pemForEnvFile(privateKey));
-  // The proof below runs in this process, which read `.env` before the key was
-  // in it: hand the credential to the environment the reader looks in, so what
-  // is tested here is the bytes that were just written.
-  process.env[GITHUB_PRIVATE_KEY_ENV] = privateKey;
 
-  // One call for three facts: that the key signs a JWT this app accepts, that
-  // the app is installed, and that exactly one installation grants it — each
-  // failure names what to fix on GitHub or in `.env`.
-  const app = await GitHubApp.connect({ app: appId } satisfies ForgeGithubConfig, { log });
+  // The proof below runs in this process, which read `.env` before the key was
+  // in it: hand the credential to the connection directly, so what is tested
+  // here is the bytes that were just written.
+  const app = await GitHubApp.connect({ log, credentials: { appId, privateKey } });
   await ctx.prompts.log.message(
     `The key is app ${app.appSlug}’s, installed on ${app.accountLogin} as installation #${app.installationId}.`,
   );
@@ -165,10 +148,12 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     `It reaches ${grant.total_count >= 100 ? 'more than 100' : grant.total_count} repositories; ${first.full_name} answered with ${pulls.length} pull ${pulls.length === 1 ? 'request' : 'requests'}.`,
   );
 
-  await ctx.writeConfigBlock(['plugins', 'forge-github'], { app: appId });
+  // The block is empty and says so in the summary: the identity lives in
+  // .env, and this byte in config.json only marks the forge as configured.
+  await ctx.writeConfigBlock(['plugins', 'forge-github'], {});
   return {
     module: 'forge-github',
-    summary: `The GitHub forge is set up: app ${app.appSlug} works as installation #${app.installationId} on ${app.accountLogin}, and read ${first.full_name} through it.`,
+    summary: `The GitHub forge is set up: app ${app.appSlug} works as installation #${app.installationId} on ${app.accountLogin} (identity in .env), and read ${first.full_name} through it.`,
   };
 };
 

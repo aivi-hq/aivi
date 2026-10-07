@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { GITHUB_PRIVATE_KEY_ENV } from '../src/config.ts';
+import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV } from '@aivi/github';
 
 /** A throwaway key, generated here and secret to nothing: what the tests prove
  *  is which bytes octokit signs with and where they are sent, not that a key is
@@ -13,6 +13,7 @@ export const privateKey = generateKeyPairSync('rsa', {
 }).privateKey;
 
 process.env[GITHUB_PRIVATE_KEY_ENV] = privateKey;
+process.env[GITHUB_APP_ID_ENV] ??= '7';
 
 /** A GitHub that only says what the test wrote. Shared by this package's tests,
  *  and named so it is not a `*.test.ts` file — `node --test` never runs it.

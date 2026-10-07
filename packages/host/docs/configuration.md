@@ -283,8 +283,9 @@ set: `<home>/.env`. `fnox exec` works the same way. Variables: `DISCORD_BOT_TOKE
 `OPENCODE_USERNAME`/`OPENCODE_PASSWORD` (only with `opencode.url`), for
 Linear the bare `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`,
 `LINEAR_WEBHOOK_SECRET` (the primary app) plus `LINEAR_<APP>_…` per extra app
-([Linear](#linear)), and `GITHUB_APP_PRIVATE_KEY` — the GitHub App's PEM
-private key, which is many lines, so the setup writes it as one quoted line and
+([Linear](#linear)), and `GITHUB_APP_ID` plus `GITHUB_APP_PRIVATE_KEY` — the
+GitHub App's numeric id and PEM private key, which is many lines, so the setup
+writes it as one quoted line and
 Node's loader gives it back with its newlines
 ([the forge](../../../docs/plans/forge-github.md)). `AIVI_OPERATOR_BEARER` is the one name in that list no
 one sets: the exec door stamps it with the bearer this connection presented
