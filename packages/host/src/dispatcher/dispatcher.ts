@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { type Config, errorMessage, getLogger, type Logger } from '@aivi/core';
 import type { OpenCodeClient } from '@aivi/plugin/module';
 import type { FailureCode } from '@aivi/plugin/run';
+import { Ref } from '@opencode/schema/model';
 import { agentModel, type NativeModel } from '../session.ts';
 import { type DispatcherLease, type LeaseStore, UNLIMITED } from './leases.ts';
 
@@ -66,16 +67,13 @@ export interface DispatcherDeps {
   onEnded?: (lease: DispatcherLease, reason: string, code?: FailureCode) => void;
 }
 
-/** `provider/model[@variant]`, the one spelling pools use; a name the pool
- *  cannot answer with is said at startup, never at a grant. */
-function parseModelSpec(spec: string): NativeModel {
-  const at = spec.indexOf('/');
-  const [providerID, rest] = at < 0 ? ['', spec] : [spec.slice(0, at), spec.slice(at + 1)];
-  const [modelID, variant] = rest?.includes('@') ? (rest.split('@') as [string, string]) : [rest, undefined];
-  if (!providerID || !modelID)
-    throw new Error(`dispatcher pool model "${spec}" must read provider/model (or provider/model@variant)`);
-  return { providerID, id: modelID, ...(variant ? { variant } : {}) };
-}
+/** `provider/model[#variant]`: OpenCode's own spelling, parsed by OpenCode's
+ *  own `Ref.parse` — the one the agent-file frontmatter goes through. A name
+ *  the pool cannot answer with is said at startup, never at a grant. */
+const parseModelSpec = (spec: string): NativeModel => {
+  const ref = Ref.parse(spec);
+  return { providerID: ref.providerID, id: ref.id, ...(ref.variant ? { variant: ref.variant } : {}) };
+};
 
 export class Dispatcher {
   readonly leases: LeaseStore;

@@ -96,10 +96,25 @@ export interface LinearTeam {
 
 export class LinearApiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** GraphQL error codes (`extensions.code`), kept apart because the HTTP
+   *  status says nothing about them — Linear answers entity-not-found with a
+   *  200. Empty for transport and token errors. */
+  readonly codes: readonly string[];
+  constructor(message: string, status: number, codes: readonly string[] = []) {
     super(message);
     this.name = 'LinearApiError';
     this.status = status;
+    this.codes = codes;
+  }
+
+  /** Linear's word for "that entity is gone", whatever shape it comes in: a
+   *  deleted issue takes its agent session with it, and every later call
+   *  names it. The message is the stable part (`Entity not found: …`); the
+   *  codes only say *how* Linear refused (`INPUT_ERROR` for a lookup of a
+   *  dead session, live 2026-10-06), never *what*, so no code may stand in
+   *  for the words. */
+  static isGone(error: unknown): boolean {
+    return error instanceof LinearApiError && /entity not found/i.test(error.message);
   }
 }
 
@@ -213,8 +228,13 @@ export class LinearClient {
     }
     const text = await response.text();
     if (!response.ok) throw new LinearApiError(`Linear API ${response.status}: ${describe(text)}`, response.status);
-    const parsed = JSON.parse(text) as { data?: T; errors?: { message: string }[] };
-    if (parsed.errors?.length) throw new LinearApiError(parsed.errors.map(e => e.message).join('; '), 200);
+    const parsed = JSON.parse(text) as { data?: T; errors?: { message: string; extensions?: { code?: string } }[] };
+    if (parsed.errors?.length)
+      throw new LinearApiError(
+        parsed.errors.map(e => e.message).join('; '),
+        200,
+        parsed.errors.map(e => e.extensions?.code ?? ''),
+      );
     if (parsed.data === undefined) throw new LinearApiError('Linear API returned no data', 502);
     return parsed.data;
   }
@@ -333,6 +353,44 @@ export class LinearClient {
     if (!data.commentCreate.success) throw new LinearApiError('commentCreate was not successful', 200);
   }
 
+  /** The ticket's comment trail, oldest first — what `aivi_ticket_comments`
+   *  reads back. The author is the writer's display name when Linear gives
+   *  one; the app's own comments carry the app's name like any other. */
+  async issueComments(issueId: string): Promise<{ author: string | null; body: string; at: string }[]> {
+    const data = await this.graphql<{
+      issue: { comments: { nodes: { body: string; createdAt: string; user: { name: string } | null }[] } } | null;
+    }>(`query($id: String!) { issue(id: $id) { comments(first: 100) { nodes { body createdAt user { name } } } } }`, {
+      id: issueId,
+    });
+    if (!data.issue) throw new LinearApiError('Entity not found: Issue', 200);
+    return data.issue.comments.nodes
+      .map(c => ({ author: c.user?.name ?? null, body: c.body, at: c.createdAt }))
+      .sort((a, b) => a.at.localeCompare(b.at));
+  }
+
+  /** Rewrite the ticket's own words — what `aivi_ticket_edit` performs.
+   *  Only the fields named are touched; Linear answers with the ticket as
+   *  it now stands. */
+  async issueUpdate(issueId: string, changes: { title?: string; description?: string }): Promise<LinearIssue> {
+    const data = await this.graphql<{ issueUpdate: { success: boolean; issue: RawIssue | null } }>(
+      `mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { ${ISSUE_FIELDS} } } }`,
+      { id: issueId, input: changes },
+    );
+    if (!data.issueUpdate.success || !data.issueUpdate.issue)
+      throw new LinearApiError('issueUpdate was not successful', 200);
+    return issueOf(data.issueUpdate.issue);
+  }
+
+  /** The team's label catalogue — the names a worker may add or remove. */
+  async teamLabelNames(teamId: string): Promise<string[]> {
+    const data = await this.graphql<{ team: { labels: { nodes: { name: string }[] } } | null }>(
+      `query($id: String!) { team(id: $id) { labels(first: 50) { nodes { name } } } }`,
+      { id: teamId },
+    );
+    if (!data.team) throw new LinearApiError(`team ${teamId} not found`, 200);
+    return data.team.labels.nodes.map(l => l.name);
+  }
+
   /** What a closing note asks Linear for in one round: the issue's comment
    *  bodies (the idempotence check — a note already standing is never
    *  posted twice) and the agent sessions with their web urls (the note's
@@ -411,9 +469,14 @@ export class LinearClient {
   }
 
   async issue(id: string): Promise<LinearIssue> {
-    const data = await this.graphql<{ issue: RawIssue }>(`query($id: String!) { issue(id: $id) { ${ISSUE_FIELDS} } }`, {
-      id,
-    });
+    const data = await this.graphql<{ issue: RawIssue | null }>(
+      `query($id: String!) { issue(id: $id) { ${ISSUE_FIELDS} } }`,
+      { id },
+    );
+    // A deleted issue answers as missing, in words the closing already
+    // knows: without this a null would crash the caller instead of saying
+    // what it means.
+    if (!data.issue) throw new LinearApiError('Entity not found: Issue', 200);
     return issueOf(data.issue);
   }
 
@@ -429,8 +492,15 @@ export class LinearClient {
     return data.issueUpdate;
   }
 
-  /** Create an issue in a team; the installer's throwaway ticket. */
-  async createIssue(input: { teamId: string; title: string; description?: string }): Promise<LinearIssue> {
+  /** Create an issue in a team — the installer's throwaway ticket and the
+   *  worker's escape hatch. `stateId` lands it in a named workflow state;
+   *  omitted, Linear's own default (the team's triage) takes it. */
+  async createIssue(input: {
+    teamId: string;
+    title: string;
+    description?: string;
+    stateId?: string;
+  }): Promise<LinearIssue> {
     const data = await this.graphql<{ issueCreate: { success: boolean; issue: RawIssue } }>(
       `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { ${ISSUE_FIELDS} } } }`,
       { input },

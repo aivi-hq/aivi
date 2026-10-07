@@ -162,6 +162,35 @@ export interface TrackerIssue {
  *  platform reports is the adapter's to notice and drop. */
 export type TrackerChange = 'state' | 'labels' | 'delegate' | 'archive';
 
+/** One comment on a ticket, read back by the ticket-desk tools: who wrote
+ *  it (null when the platform hides the author), the text, and the moment
+ *  in the platform's own timestamp. */
+export interface TrackerComment {
+  author: string | null;
+  body: string;
+  at: string;
+}
+
+/** The ticket desk: the effective tool ids of a worker's hand on the ticket
+ *  itself. Named once here because three packages must speak the same words
+ *  without one importing another's world: a tracker module **claims** these
+ *  ids, `aivi setup` seeds a single `aivi_ticket_*` wildcard **deny** (the
+ *  CLI treats modules as opaque and imports nothing from them), and the
+ *  agent file that works tickets **allows** them by the same wildcard.
+ *  Tests hold the claims and the wildcard against this list — the prefix is
+ *  part of the contract, or the seeded deny stops covering a renamed id. */
+export const TICKET_TOOL_ACTIONS = [
+  'aivi_ticket_read',
+  'aivi_ticket_comments',
+  'aivi_ticket_labels',
+  'aivi_ticket_edit',
+  'aivi_ticket_comment',
+  'aivi_ticket_create',
+  'aivi_ticket_add_label',
+  'aivi_ticket_remove_label',
+] as const;
+export type TicketToolAction = (typeof TICKET_TOOL_ACTIONS)[number];
+
 /**
  * The normalized signals everything downstream keys off — never raw
  * webhooks. `started` is a working session opened on a ticket (a
@@ -326,6 +355,36 @@ export interface Platform {
    * and nothing about a run waits on its delivery.
    */
   plan(conversation: string, plan: RunPlan): Promise<void>;
+  /**
+   * The ticket desk — what `aivi_ticket_*` tools do to tickets **directly**,
+   * with no agent session to speak through (the `conversation` is the app's
+   * own feed, as in `notify`). Optional as a set: a module claims its desk
+   * only over a platform that answers these, so a worker of another tracker
+   * simply never sees the tools. All of it is the **worker's hand on the
+   * ticket**, gated by OpenCode permissions (denied by default, allowed per
+   * agent); nothing here decides who may call.
+   */
+  ticketComments?(conversation: string, issueId: string): Promise<TrackerComment[]>;
+  /** A plain comment on the ticket, as the app's own — no activity type,
+   *  no marker: what a person typed lands as what a person reads. */
+  addComment?(conversation: string, issueId: string, text: string): Promise<void>;
+  /** Rewrite the ticket's own words: title and/or description. Returns the
+   *  ticket as it now stands, so the caller reports the truth it wrote. */
+  editIssue?(
+    conversation: string,
+    issueId: string,
+    changes: { title?: string; description?: string },
+  ): Promise<TrackerIssue>;
+  /** Open a new ticket in the named team, landing it in `lane` when a lane
+   *  is named (the adapter resolves the name against the team's states and
+   *  says so when none matches). */
+  createIssue?(
+    conversation: string,
+    input: { teamId: string; title: string; description?: string; lane?: string },
+  ): Promise<TrackerIssue>;
+  /** The team's label catalogue — every name the team knows, so a worker
+   *  can pick honestly instead of guessing. */
+  teamLabels?(conversation: string, teamId: string): Promise<string[]>;
   /** Subscribe to the normalized events. The adapter owns the platform's
    *  whole inbound surface — endpoints, signatures, acknowledgements;
    *  registration happens at module start. Returns the unsubscribe. */

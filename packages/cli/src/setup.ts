@@ -412,7 +412,14 @@ function opencodeJsonc(pluginSpec: string): string {
   "$schema": "https://opencode.ai/config.json",
   // aivi's OpenCode home: the service \`aivi serve\` runs loads this file and
   // \`.opencode/agents/\`. Edit freely — \`aivi setup\` never overwrites what exists.
-  "plugins": ["${pluginSpec}"]
+  "plugins": ["${pluginSpec}"],
+  // The ticket desk is denied to every agent by default: a worker reads and
+  // writes tickets only if its own agent file allows the actions (product
+  // does). A denied tool is invisible to the model; the action takes a
+  // wildcard, so this one line covers the whole desk.
+  "permissions": [
+    { "action": "aivi_ticket_*", "resource": "*", "effect": "deny" }
+  ]
   // Linear's hosted MCP through aivi's loopback forwarder: enable the \`linear\`
   // block in config.json (default port 4101) and add:
   // "mcp": { "linear": { "type": "remote", "url": "http://127.0.0.1:4101/mcp" } }

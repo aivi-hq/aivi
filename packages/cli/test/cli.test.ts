@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { TICKET_TOOL_ACTIONS } from '@aivi/plugin';
 import { clientConfigSchema, loadClientConfig, saveClientConfig } from '../src/client-config.ts';
 import { extractLinkArgs, link } from '../src/link.ts';
 import type { IdentityStep, SetupIo } from '../src/setup.ts';
@@ -175,6 +176,17 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
   assert.deepEqual(calls.identity, [[{ use: 'this-machine', name: 'Ada' }]]);
   const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
   assert.match(jsonc, /"@aivi\/opencode@9\.9\.9"/);
+  // The seeded config hides the whole ticket desk with one wildcard deny —
+  // the CLI treats modules as opaque and imports nothing from them at
+  // runtime. This test is the loop that keeps the wildcard honest: it must
+  // be seeded, and it must actually cover every id the kit names.
+  assert.match(
+    jsonc,
+    /"action": "aivi_ticket_\*", "resource": "\*", "effect": "deny"/,
+    'the desk is denied to every agent by one line',
+  );
+  for (const action of TICKET_TOOL_ACTIONS)
+    assert.ok(action.startsWith('aivi_ticket_'), `${action} falls under the wildcard`);
   for (const agent of ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md'])
     assert.equal(existsSync(join(home, '.opencode', 'agents', agent)), true, agent);
   const assistant = readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8');

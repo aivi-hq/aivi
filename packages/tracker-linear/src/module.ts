@@ -33,12 +33,14 @@ import {
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { Platform, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
+import { LinearApiError } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
 import { RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue, projectLinear } from './projects.ts';
 import { RunProgress } from './runprogress.ts';
+import { createTicketTools } from './tools.ts';
 import { createLinearPlatform } from './tracker.ts';
 import type { LinearBoard } from './work.ts';
 import { issueDossier, linearBoard } from './work.ts';
@@ -144,6 +146,13 @@ async function startLinear(
   // that speak through the adapter join it below; webhooks keep pushing
   // conversations, and the walk needs none of them.
   const board = makeBoard(services);
+  // The ticket desk: a worker's hand on the ticket itself (`aivi_ticket_*`).
+  // The seeded OpenCode config denies every one of these actions to every
+  // agent; an agent file that works tickets allows the ones it speaks
+  // (docs/linear.md). The desk is claimed for the whole host — permission
+  // per agent is OpenCode's decision, never ours.
+  const ticketTools = createTicketTools(services, config, tracker);
+  for (const tool of ticketTools) services.tools.claim(tool.descriptor, tool.handler);
 
   const abort = new AbortController();
   let engine: ChannelEngine | undefined;
@@ -308,8 +317,21 @@ async function startLinear(
         await tellUnconfirmed(runId, conversation, entry);
         await tracker.unassign(conversation, entry.ticketId).catch(error => log.warn('delegate.undone', { error }));
         closings.delete(runId);
+        links.closingLanded(link.agentSession); // settled: no boot asks Linear about this pair again
         log.info('run.caughtup', { run: runId, ticket: entry.ticketId });
       } catch (error) {
+        // A deleted ticket takes its agent session with it, and Linear then
+        // answers every step with `Entity not found`. The closing is owed to
+        // a surface that no longer exists: drop the debt, retire the pair,
+        // and say it plainly once. The person deleted the ticket; they need
+        // no help label on a grave, and a boot that re-asked Linear about a
+        // dead pair every time would only teach the log to be unread.
+        if (LinearApiError.isGone(error)) {
+          closings.delete(runId);
+          links.drop(link.agentSession);
+          log.warn('closing.dropped', { run: runId, ticket: entry.ticketId, error });
+          return;
+        }
         // The closing failed: the person hears it NOW — the operator must be
         // informed — and the closing stays owed: the next wake and the next
         // boot try again, and each step asks Linear's real state first so a
@@ -360,7 +382,10 @@ async function startLinear(
        *  deleted or on a team this project does not map. The orchestrator
        *  asks before every ending move (ruled 2026-10-02). */
       ticketLane: async (projectId, ticketId) => {
-        const words = await board.issue(ticketId);
+        const words = await board.issue(ticketId).catch((error: unknown) => {
+          if (LinearApiError.isGone(error)) return undefined; // deleted says the same in other words
+          throw error;
+        });
         if (!words) return undefined;
         const teams = projectLinear(services.loaded, projectId)?.teams ?? [];
         return teams.includes(words.teamId) ? words.stateName : undefined;
@@ -813,13 +838,15 @@ async function startLinear(
         'outcome',
       );
 
-    // Our boot pass, ours alone: every pair whose run has ended owes Linear
-    // its closing — the result may have died in an outage. Each step asks
-    // Linear's real state first, so a catch-up that already happened says
-    // nothing twice. Walk-picked work has a pair too now (initWork delegates
-    // for every run), so the pairs are the whole list; the lane moves are the
-    // orchestrator's own debt and its boot pass re-drives them.
-    for (const link of links.attached()) {
+    // Our boot pass, ours alone: every pair whose closing has **not landed**
+    // and whose run has ended owes Linear its closing — the result may have
+    // died in an outage. Each step asks Linear's real state first, so a
+    // catch-up that already happened says nothing twice, and a pair whose
+    // closing landed is settled — never asked again. Walk-picked work has a
+    // pair too now (initWork delegates for every run), so the owed pairs are
+    // the whole list; the lane moves are the orchestrator's own debt and its
+    // boot pass re-drives them.
+    for (const link of links.owed()) {
       const run = services.orchestrator.runBySession(link.opencodeSession!);
       if (run && isTerminal(run.state)) {
         closings.set(run.id, run);
@@ -852,6 +879,7 @@ async function startLinear(
         unsubscribeEvents();
         unregister();
         unsubscribeWake();
+        for (const tool of ticketTools) services.tools.release(`${tool.descriptor.namespace}_${tool.descriptor.name}`);
         await teardown();
       },
     };

@@ -31,5 +31,8 @@
     "semver": "7.8.5",
     "ws": "8.22.0",
     "zod": "4.1.13"
+  },
+  "devDependencies": {
+    "@aivi/plugin": "^0.1.0"
   }
 }

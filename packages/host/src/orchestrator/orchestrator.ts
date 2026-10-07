@@ -786,8 +786,9 @@ export class Orchestrator implements OrchestratorApi {
   }
 
   /** The one event rule, used at start and at boot: every event says the
-   *  session lives — the dispatcher's silence clock restarts here — and an
-   *  execution's end debounces into the turn-end policy. `session.idle` is
+   *  session lives — the dispatcher's silence clock restarts here — an
+   *  execution's end debounces into the turn-end policy, and an execution's
+   *  **failure** ends the run with the wire's words. `session.idle` is
    *  what this once waited for: OpenCode's schema declares it deprecated and
    *  the server never sends it (verified 2026-10-06 against 2.0.23 — a turn
    *  ends with `session.execution.succeeded`, and queued prompts fold into
@@ -798,6 +799,12 @@ export class Orchestrator implements OrchestratorApi {
       if (leaseId) this.deps.dispatcher.activity(leaseId);
       if (event.type === 'session.execution.started') this.#cancelTurnEnd(sessionId);
       if (event.type === 'session.execution.succeeded') this.#debounceTurnEnd(sessionId);
+      if (event.type === 'session.execution.failed') {
+        void this.#executionFailed(
+          sessionId,
+          (event.data as { error?: { message?: string } } | undefined)?.error,
+        ).catch(error => this.deps.log.warn('run.execution.failed.reply', { session: sessionId, error }));
+      }
       if (event.type === 'permission.asked') {
         const { id } = event.data as { id: string };
         if (answered.has(id)) return;
@@ -829,6 +836,24 @@ export class Orchestrator implements OrchestratorApi {
     });
     await client.permission.reply({ sessionID: sessionId, requestID: ask.id, decision: 'reject', message });
     this.deps.log.warn('permission.rejected', { run: run.id, action: ask.action, resources: ask.resources });
+  }
+
+  /**
+   * The execution **failed** on the wire — a model that would not load, a
+   * provider that died mid-step. OpenCode's drain is over: the session speaks
+   * no more, so there is no turn to judge and no nudge to send. The run ends
+   * visibly with the wire's own words, like any failure; the ticket stays
+   * where the person can see it, because the worker never got to work on it.
+   * (Found live 2026-10-06: an unloadable model variant failed the drain 3 ms
+   * after the prompt, and the run sat `working` forever behind a keep-alive
+   * that promised "still working" to nobody.)
+   */
+  async #executionFailed(sessionId: string, error?: { message?: string }): Promise<void> {
+    const run = this.deps.ledger.bySession(sessionId);
+    if (!run || isTerminal(run.state)) return;
+    const reason = `The worker's execution failed: ${error?.message?.trim() || 'OpenCode reported no reason.'}`;
+    this.deps.log.error('run.execution.failed', { run: run.id, reason });
+    await this.#fail(run.id, reason);
   }
 
   /** A turn ended visibly; after the quiet span it is judged. A new ending

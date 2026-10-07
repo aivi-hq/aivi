@@ -34,7 +34,8 @@ export function projectLinear(loaded: LoadedConfig, projectId: string): ProjectL
   const entry = writtenLinear(loaded, projectId);
   if (!entry) return undefined;
   const workspaceId = entry.workspaceId ?? writtenDefaults(loaded)?.workspaceId;
-  return { teams: entry.teams, ...(workspaceId ? { workspaceId } : {}) };
+  const createLane = entry.createLane ?? writtenDefaults(loaded)?.createLane;
+  return { teams: entry.teams, ...(workspaceId ? { workspaceId } : {}), ...(createLane ? { createLane } : {}) };
 }
 
 /** A checkout receives one issue stream, so a Linear team may belong to

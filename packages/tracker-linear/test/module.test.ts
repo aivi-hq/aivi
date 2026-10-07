@@ -44,6 +44,7 @@ import type {
   TrackerIssue,
   TrackerUpdate,
 } from '@aivi/plugin/tracker';
+import { LinearApiError } from '../src/client.ts';
 import type { LinearConfig } from '../src/config.ts';
 import { linearSchema } from '../src/config.ts';
 import { RunLinks } from '../src/links.ts';
@@ -255,6 +256,10 @@ class FakeTracker implements Platform {
   /** Linear unreachable for the closings: results and closing notes throw
    *  while set — the outage the owed closing is built for. */
   closingDown = false;
+  /** Conversations whose ticket a person deleted: every later call answers
+   *  as Linear does — `Entity not found`, HTTP 200. Keyed by conversation,
+   *  the one name that survives a restart of the fake. */
+  goneFor = new Set<string>();
   delegated: [string, string | null][] = [];
   sessionsCreated: string[] = [];
   moves: { conversation: string; issueId: string; update: TrackerUpdate }[] = [];
@@ -328,7 +333,10 @@ class FakeTracker implements Platform {
     return undefined;
   }
   /** Linear's word for "the result was shown": the response ends the session. */
+  resultShownCalls = 0;
   async resultShown(conversation: string): Promise<boolean> {
+    this.resultShownCalls++;
+    if (this.goneFor.has(conversation)) throw new LinearApiError('Entity not found: AgentSession', 200);
     return this.shown.has(conversation);
   }
   /** Closing notes on the ticket, as the real adapter records them — and
@@ -1157,6 +1165,11 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
   // And a third boot says nothing twice: Linear itself says the result was
   // shown (the agent session is ended) and the state is where the move put
   // it — the tracker asks the platform, never a flag of its own.
+  // And a third boot asks nothing: the pair was **settled** when the closing
+  // landed at the second boot, so Linear is not consulted about it at all —
+  // settled history never weighs on a boot. (The platform check itself is
+  // untouched: an owed pair is still reconciled against Linear's real state,
+  // so a half-landed closing says nothing twice.)
   await restarted.stop();
   const third = new FakeTracker(linearBlock(config));
   third.issues.set(
@@ -1169,19 +1182,117 @@ test('boot reconcile pays a closing Linear missed, and says nothing twice', asyn
     }),
   );
   third.shown.add('dev:as-auto-1');
-  // Linear's real state carries the standing closing note too: the third
-  // boot must not post it twice (the marker is the agent session id, which
-  // the fake's text-equality guard stands in for).
+  // Linear's real state carries the standing closing note too, in case the
+  // pair were still asked about.
   third.closingNotes.push({ conversation: 'dev:as-auto-1', issueId: 'api-9', text: 'It ships.' });
   const again = await createLinearModule(
     linearBlock(config),
     async () => third,
     () => board,
   ).start(restartServices(services));
+  assert.equal(third.resultShownCalls, 0, 'a settled pair is not asked about at all');
   assert.deepEqual(third.comments, [], 'a catch-up that already happened is silent');
   assert.deepEqual(board.moves, ['api-9->Done'], 'and nothing re-moves');
   assert.equal(third.closingNotes.length, 1, 'a standing closing note is not posted twice');
   await again.stop();
+
+  // A home written before the stamp exists (live homes do): its landed pairs
+  // carry no stamp, so the boot asks Linear once, the platform's own state
+  // says everything landed, nothing is said twice, and the pair settles for
+  // good. The stamp records that the asking happened — it never replaces it.
+  store.db.prepare('UPDATE tracker_linear_run_links SET ended_at=NULL').run();
+  const fourth = new FakeTracker(linearBlock(config));
+  fourth.issues.set(
+    'api-9',
+    issue('api-9', {
+      identifier: 'API-9',
+      title: 'Ship it',
+      state: { id: 's-Done', name: 'Done', type: 'completed' },
+      delegateId: null,
+    }),
+  );
+  fourth.shown.add('dev:as-auto-1');
+  fourth.closingNotes.push({ conversation: 'dev:as-auto-1', issueId: 'api-9', text: 'It ships.' });
+  const legacy = await createLinearModule(
+    linearBlock(config),
+    async () => fourth,
+    () => board,
+  ).start(restartServices(services));
+  assert.ok(fourth.resultShownCalls > 0, 'an unstamped pair is asked about once');
+  assert.deepEqual(fourth.comments, [], 'Linear’s own state answers it all: nothing is said twice');
+  assert.deepEqual(new RunLinks(store).owed(), [], 'and the pair settles on the spot');
+  await legacy.stop();
+  store.close();
+});
+
+test('a deleted ticket drops the owed closing: no ceremony on a grave, and the debt does not return', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-gone-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await checkout(root, 'api');
+  const opencode = await fakeOpenCode(t, 'Deployed.');
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: opencode.url },
+    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false } },
+    projects: {
+      api: {
+        'tracker-linear': { teams: ['t'] },
+        lanes: [{ name: 'Todo' }, { name: 'In Progress', agent: 'developer' }, { name: 'Done' }],
+      },
+    },
+  });
+  const loaded: LoadedConfig = {
+    config,
+    path: join(root, 'home/config.json'),
+    projects: [{ id: 'api', directory: source, lanes: config.projects.api!.lanes! }],
+    sources: [],
+  };
+  const first = new FakeTracker(linearBlock(config));
+  first.issues.set('api-9', issue('api-9', { identifier: 'API-9', title: 'Ship it', delegateId: null }));
+  const store = new Store(':memory:');
+  const abort = new AbortController();
+  const services = makeServices(loaded, store, abort);
+  const board = fakeBoard(first, 'api');
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => first,
+    () => board,
+  ).start(services);
+
+  await services.orchestrator.wake('api');
+  await until(() => opencode.prompts.length === 1, 'the worker was prompted');
+  const worker = workerSession(opencode.sessions);
+
+  // A person deletes the ticket's agent session mid-run (live, 2026-10-06:
+  // Linear answers every call about it with `Entity not found`). The ticket
+  // itself still moves — that is the orchestrator's debt, not the closing's.
+  first.goneFor.add('dev:as-auto-1');
+  await (services.orchestrator as Orchestrator).completeTool({
+    sessionId: worker,
+    input: { outcome: 'success', summary: 'It ships.' },
+  });
+  await until(() => board.moves.length === 1, 'the ending chain ran to its end though the closing is dead');
+  const ended = services.orchestrator.runBySession(worker)!;
+  assert.equal(ended.state, 'completed', 'the worker did report: the run still ends honestly');
+  assert.equal(first.ofKind('answer').length + first.ofKind('outcome').length, 0, 'no words into a grave');
+  assert.equal(first.closingNotes.length, 0, 'no closing note on a deleted session either');
+  assert.deepEqual(first.moves, [], 'no help label is stuck on a dead conversation');
+
+  // The boot pass must not re-die on the pair: the drop retires the pair
+  // itself, so Linear is never asked about the dead session again.
+  await running.stop();
+  assert.deepEqual(new RunLinks(store).owed(), [], 'the dead pair is retired, not merely unpaid');
+  const second = new FakeTracker(linearBlock(config));
+  second.goneFor.add('dev:as-auto-1');
+  const restarted = await createLinearModule(
+    linearBlock(config),
+    async () => second,
+    () => board,
+  ).start(restartServices(services));
+  assert.equal(second.resultShownCalls, 0, 'no boot asks Linear about a retired pair');
+  assert.deepEqual(second.comments, [], 'the boot pass pays nothing to a deleted ticket');
+  assert.deepEqual(second.moves, [], 'and asks nobody for help on its behalf');
+  await restarted.stop();
   store.close();
 });
 

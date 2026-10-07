@@ -159,6 +159,13 @@ export const linearProjectSchema = z.strictObject({
     .array(z.string().min(1))
     .min(1)
     .describe('Linear team ids whose issues belong to this project; a team maps to at most one project.'),
+  createLane: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Where `aivi_ticket_create` lands a new ticket in this project — a lane name from the team’s states. Default: the project’s first configured lane; with none matching, Linear’s own default state.',
+    ),
 });
 export type LinearProjectEntry = z.infer<typeof linearProjectSchema>;
 
@@ -169,6 +176,13 @@ export const linearProjectDefaultsSchema = z.strictObject({
     .min(1)
     .optional()
     .describe('Linear organization id every project gets unless it names its own.'),
+  createLane: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Where `aivi_ticket_create` lands a new ticket in every project unless it names its own — a lane name from the team’s states.',
+    ),
 });
 export type LinearProjectDefaults = z.infer<typeof linearProjectDefaultsSchema>;
 
@@ -178,6 +192,11 @@ export type LinearProjectDefaults = z.infer<typeof linearProjectDefaultsSchema>;
 export interface ProjectLinear {
   workspaceId?: string;
   teams: string[];
+  /** Where `aivi_ticket_create` lands a new ticket, as it takes effect: the
+   *  project's own `createLane`, else `projectDefaults`', else absent — and
+   *  absent means the project's first configured lane, read from the core
+   *  `Project`, not from this section. */
+  createLane?: string;
 }
 
 /** The registry entry: the block holds no paths (credentials live in the

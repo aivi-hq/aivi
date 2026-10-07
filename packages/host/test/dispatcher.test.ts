@@ -131,14 +131,14 @@ test('capacity is the pool’s: slots fill, the fallback takes the overflow, and
 });
 
 test('the pool decides the model at session create; the agent file wins only where no pool names one', async () => {
-  const owned = harness({ dispatcher: { pools: { default: { capacity: 2, model: 'poolprov/poolmodel@fast' } } } });
+  const owned = harness({ dispatcher: { pools: { default: { capacity: 2, model: 'poolprov/poolmodel#fast' } } } });
   const granted = owned.dispatcher.request({ service: 'orchestrator' });
   if (!('lease' in granted)) throw assert.fail('granted');
   await owned.dispatcher.provide(granted.lease.id, { agent: 'dev', directory: '/w' });
   assert.deepEqual(
     owned.fake.created[0]!.model,
     { providerID: 'poolprov', id: 'poolmodel', variant: 'fast' },
-    'the pool’s model, in the one spelling, over the agent file’s',
+    'the pool’s model, in OpenCode’s own spelling, over the agent file’s',
   );
 
   const bare = harness({ dispatcher: { pools: { quiet: { capacity: 2 } } } });
@@ -146,6 +146,19 @@ test('the pool decides the model at session create; the agent file wins only whe
   if (!('lease' in quiet)) throw assert.fail('granted');
   await bare.dispatcher.provide(quiet.lease.id, { agent: 'dev', directory: '/w' });
   assert.deepEqual(bare.fake.created[0]!.model, { providerID: 'agentprov', id: 'agentmodel' });
+});
+
+test('a pool model that is no model reference is said at startup, by OpenCode’s own parser', async () => {
+  // The `@` spelling was ours and wrong: OpenCode's parser never splits on
+  // it, so `#high` rode inside the model id and the wire answered
+  // `Model unavailable` (live, 2026-10-06). The one spelling is OpenCode's:
+  // provider/model#variant, and its parser is the startup gate.
+  assert.throws(
+    () => harness({ dispatcher: { pools: { default: { capacity: 1, model: 'poolprov/poolmodel#' } } } }),
+    /Invalid model reference/,
+  );
+  const good = harness({ dispatcher: { pools: { default: { capacity: 1, model: 'poolprov/poolmodel#fast' } } } });
+  assert.ok(good.dispatcher, 'the # spelling is a reference, said never');
 });
 
 test('a session keeps its pool for life: a resume returns to the original pool even when only the fallback has room', async () => {
