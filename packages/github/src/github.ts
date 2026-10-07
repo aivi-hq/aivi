@@ -124,16 +124,23 @@ export interface GitHubOptions {
    *  just read the bytes it is proving and must not wait on a reload. Nothing
    *  else passes this; the environment is the source (ruled 2026-10-07). */
   credentials?: GitHubCredentials;
+  /** Whether octokit silently retries failed requests with backoff — on by
+   *  default. A test that scripts its own failures turns it off: a scripted
+   *  5xx must stand as the answer, not invite a minute of hidden re-asks.
+   *  aivi's own retries are its own (closings, wakes); this one is the
+   *  transport's. */
+  retry?: { enabled?: boolean };
 }
 
 /** The app authenticated as **itself**: it can name itself and list its
  *  installations, and no repository at all — the installation is what grants
  *  those. Used to find the one grant and to prove the key matches the id. */
-function appClient(creds: GitHubCredentials, fetch?: typeof globalThis.fetch): Octokit {
+function appClient(creds: GitHubCredentials, fetch?: typeof globalThis.fetch, retry?: { enabled?: boolean }): Octokit {
   return new Octokit({
     authStrategy: createAppAuth,
     auth: { appId: creds.appId, privateKey: creds.privateKey },
     ...(fetch ? { request: { fetch } } : {}),
+    ...(retry ? { retry } : {}),
   });
 }
 
@@ -171,7 +178,7 @@ export class GitHubApp {
   static async connect(options: GitHubOptions = {}): Promise<GitHubApp> {
     const log = options.log ?? getLogger(['aivi', 'github']);
     const creds = options.credentials ?? githubCredentials();
-    const app = appClient(creds, options.fetch);
+    const app = appClient(creds, options.fetch, options.retry);
     let slug: string;
     try {
       const { data: itself } = await app.rest.apps.getAuthenticated();
@@ -200,6 +207,7 @@ export class GitHubApp {
       authStrategy: createAppAuth,
       auth: { appId: creds.appId, privateKey: creds.privateKey, installationId: installation.id },
       ...(options.fetch ? { request: { fetch: options.fetch } } : {}),
+      ...(options.retry ? { retry: options.retry } : {}),
     });
     const account = installation.account?.login ?? String(installation.id);
     log.info('github.ready', { app: slug, installation: installation.id, account });

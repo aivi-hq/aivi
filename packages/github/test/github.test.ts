@@ -116,6 +116,22 @@ test('an app nobody installed says so with the link that fixes it', async () => 
   });
 });
 
+test('the transport retries are the caller’s: off, a refused request stands as the answer', async () => {
+  let asks = 0;
+  const { fetch } = scripted({
+    'GET /app': () => {
+      asks += 1;
+      return { status: 502, body: { message: 'bad gateway' } };
+    },
+  });
+  await assert.rejects(GitHubApp.connect({ fetch, retry: { enabled: false } }), (error: unknown) => {
+    assert.ok(error instanceof ConfigurationError);
+    assert.match((error as Error).message, /refused the credential/);
+    return true;
+  });
+  assert.equal(asks, 1, 'no hidden re-asks: the scripted answer was the answer');
+});
+
 test('an app installed twice is a setup error naming the grants, never a choice aivi makes', async () => {
   const { fetch } = scripted({
     'GET /app': () => ({ status: 200, body: { id: 7, slug: 'aivi-agent' } }),
