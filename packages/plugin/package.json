@@ -1,6 +1,6 @@
 {
   "name": "@aivi/plugin",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
@@ -30,7 +30,7 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.1",
+    "@aivi/core": "^0.8.0",
     "@clack/prompts": "1.8.1",
     "@opencode/client": "2.0.23",
     "zod": "4.1.13"

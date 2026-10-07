@@ -1,5 +1,57 @@
 # @aivi/opencode
 
+## 0.4.0
+
+### Minor Changes
+
+- [#41](https://github.com/aivi-hq/aivi/pull/41) [`782bd72`](https://github.com/aivi-hq/aivi/commit/782bd72a9dfa5296edcb67607c301ee62a9da260) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - **The client record moves to `~/.config/aivi/config.json`.** One
+  `aivi.json` file among unrelated tools' files became a directory of its
+  own, which is also where a plugin's secrets can live out of every
+  agent's reach (the forge's .pem placeholder now names it). The path is
+  now one fact in core — `clientConfigPath()` — that the host and the
+  OpenCode plugin share; the CLI keeps its own computation, because the
+  CLI may not import core (the packaging test is that wall). `AIVI_CONFIG`
+  and `XDG_CONFIG_HOME` precedence is untouched. No migration: fresh
+  homes write the new path and nothing reads the old one.
+
+- [#36](https://github.com/aivi-hq/aivi/pull/36) [`e2307ae`](https://github.com/aivi-hq/aivi/commit/e2307ae85150791de09967e164b5dfb6020651a1) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - **The redirect hook.** aivi's own plugin now denies boundary git — `git
+  push`, `fetch`, `pull`, `clone`, `ls-remote`, `remote`, behind any flags or
+  `-c` prefixes — **in aivi's runs only**, and says the way across instead:
+  "git push is disabled in aivi runs — use aivi_push (and aivi_sync first if
+  the remote moved)". Scoped by sessionID: the plugin asks the host's new
+  `GET /run?session=` once per session (answered from the run ledger) and
+  caches; a person's sessions never see the deny, and a host that cannot
+  answer fails open — the worktree's no-credential mark is the wall, the
+  hook is the signpost.
+
+### Patch Changes
+
+- [#39](https://github.com/aivi-hq/aivi/pull/39) [`c2cce34`](https://github.com/aivi-hq/aivi/commit/c2cce34995e27779eb1f20cd2c855eff98a0c288) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The pinned `@opencode/*` family moved to 2.0.23. Nothing in aivi changed: the same endpoints under the same discovery rules — the release only added routes (`/api/credential`, `/api/vcs/init`), none moved — a server that answers HTTP on its registered endpoint is alive whatever its version, and version skew is logged, never fatal.
+
+- [#36](https://github.com/aivi-hq/aivi/pull/36) [`53e55f4`](https://github.com/aivi-hq/aivi/commit/53e55f42307eff1f4c8ebb7197215eb368c9298d) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The OpenCode-side plugin takes its host client from `@aivi/plugin/api` (was `@aivi/host/client`); the tools it registers and the way it talks to the host are unchanged.
+
+- [#36](https://github.com/aivi-hq/aivi/pull/36) [`692c39f`](https://github.com/aivi-hq/aivi/commit/692c39fac85003287b92a568a185b9197b2210db) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The small honest fixes from the code sweep. `ToolError` and
+  `ConfigurationError` are defined in the kit's module contract and
+  re-exported by the host, so plugin packages no longer import them from
+  `@aivi/host`. Every durable write lands whole or not at all — temp next
+  door, rename over; `.env`'s temp is created 0600 so a secret never sits
+  world-readable. `manualSources` tells an absent install record from a
+  corrupt one, naming the file like the host's registry reader already did.
+  An interjection neither steered nor queued is said in the conversation,
+  never a log line alone. A lane that lost its worker while a run waited
+  releases its slot and says `lane-workless` instead of writing an
+  `undefined` agent into a run row. The redirect hook reads `git remote`
+  by the sub-verb: the name list and `get-url` cross nothing and pass;
+  rewriting them stays refused. `aivi_config read` of a corrupt
+  config.json names itself instead of a shapeless "Internal error". The
+  Linear MCP proxy caps its body at 1 MiB like every other reader. The
+  dreaming transcript says a *channel* names its speaker — the prefix is
+  the shared engine's, not one platform's. The dead `--lane`/`--unlane`
+  flag readers are gone; the wizard asks per lane now.
+- Updated dependencies [[`fdeb03d`](https://github.com/aivi-hq/aivi/commit/fdeb03d3f85ec650f6628e15c5fcd3b0c47c41c9), [`1b7a209`](https://github.com/aivi-hq/aivi/commit/1b7a2092b65170f4e91e86c37a00f97effc4bb8f), [`49977a5`](https://github.com/aivi-hq/aivi/commit/49977a51a8186c4fffecd740b41bdd6590b2a653), [`9a68ba8`](https://github.com/aivi-hq/aivi/commit/9a68ba8be05b321f8558d7bd79073ab3bcdacc69), [`059eff9`](https://github.com/aivi-hq/aivi/commit/059eff9fcb90e85bde1c9a3f8d303085f0ed8ad4), [`3a1f320`](https://github.com/aivi-hq/aivi/commit/3a1f320833924e764c098fbd0ad915f8adfd9947), [`782bd72`](https://github.com/aivi-hq/aivi/commit/782bd72a9dfa5296edcb67607c301ee62a9da260), [`5db22c0`](https://github.com/aivi-hq/aivi/commit/5db22c0967918e90e7f4283349dd947dfdcffab4), [`5aadd11`](https://github.com/aivi-hq/aivi/commit/5aadd11c933366a995ceecad3610925cc3578973), [`955f2d6`](https://github.com/aivi-hq/aivi/commit/955f2d63d04b1ed4b2ad815ae7c02dc6bab45420), [`029c8ea`](https://github.com/aivi-hq/aivi/commit/029c8eadbee74e7cd11165535911545a69897c60), [`b45e357`](https://github.com/aivi-hq/aivi/commit/b45e35767ad5d77d3c4e9cc5672e596b46defb2b), [`77bbf5e`](https://github.com/aivi-hq/aivi/commit/77bbf5efd67f3868a9076c69c31444f67a64e5f0), [`5b7a113`](https://github.com/aivi-hq/aivi/commit/5b7a113ee23d3cc1c88b81fc7ffd9dd9fd52ce6a), [`69735bd`](https://github.com/aivi-hq/aivi/commit/69735bd7b7842dc4c4e311b49fb7c7ece7f28c3d), [`5eb13d2`](https://github.com/aivi-hq/aivi/commit/5eb13d21bb5df7ac0e738929c50a5e9400207147), [`be7ae66`](https://github.com/aivi-hq/aivi/commit/be7ae661699b53cd508c48d70059e51a489289c6), [`3d5fcfe`](https://github.com/aivi-hq/aivi/commit/3d5fcfef39f642e66117948c2a6cdb620a76487c), [`e506772`](https://github.com/aivi-hq/aivi/commit/e50677218b2f3fa546323eca77f1cb71599ef2b6), [`e768f5f`](https://github.com/aivi-hq/aivi/commit/e768f5fec26490bceaf94d0e2824ff06f81fa862), [`7faf7c5`](https://github.com/aivi-hq/aivi/commit/7faf7c5b130ad0822870b04a7695a9d17ec24a7c), [`551d893`](https://github.com/aivi-hq/aivi/commit/551d893fa140af07b00f5a9253334f0d346dd464), [`53e55f4`](https://github.com/aivi-hq/aivi/commit/53e55f42307eff1f4c8ebb7197215eb368c9298d), [`c2cce34`](https://github.com/aivi-hq/aivi/commit/c2cce34995e27779eb1f20cd2c855eff98a0c288), [`853e799`](https://github.com/aivi-hq/aivi/commit/853e799f4722a52931f9eaf4da0e5ea8ee63b485), [`53e55f4`](https://github.com/aivi-hq/aivi/commit/53e55f42307eff1f4c8ebb7197215eb368c9298d), [`fca4e0c`](https://github.com/aivi-hq/aivi/commit/fca4e0ca8ec58a0d7608981396042d0263696fef), [`4d2e509`](https://github.com/aivi-hq/aivi/commit/4d2e5091c0351920c9dbdd6af351cf66f26212b3), [`8948624`](https://github.com/aivi-hq/aivi/commit/894862421ad6b648d4a5b9950a24f9336cda2009), [`3ef4d17`](https://github.com/aivi-hq/aivi/commit/3ef4d170bbd3e9490e960a13d75822e402a88a91), [`84de686`](https://github.com/aivi-hq/aivi/commit/84de68697cc0956859093432517b43392cec66ae), [`fca4e0c`](https://github.com/aivi-hq/aivi/commit/fca4e0ca8ec58a0d7608981396042d0263696fef), [`06883a4`](https://github.com/aivi-hq/aivi/commit/06883a48e5b5e9805bbafd86edbd4d2628bd4f3b), [`bf6c5b0`](https://github.com/aivi-hq/aivi/commit/bf6c5b052735c0f6b2331cb972519f08b2d9ed43), [`692c39f`](https://github.com/aivi-hq/aivi/commit/692c39fac85003287b92a568a185b9197b2210db), [`925b96d`](https://github.com/aivi-hq/aivi/commit/925b96d2a91faf5e77c21944aaa369ecd2681ba9), [`1ba4d46`](https://github.com/aivi-hq/aivi/commit/1ba4d46ea25ec79cb28a421fd511f462f70f39d1), [`7299b43`](https://github.com/aivi-hq/aivi/commit/7299b43853c16ec348eff3e6aaf42d7324585c72), [`7b061e2`](https://github.com/aivi-hq/aivi/commit/7b061e291808863fea1c152853f3f79faa6248aa), [`a253aab`](https://github.com/aivi-hq/aivi/commit/a253aab2d0910e7052f8a3c3727996ea11aa4090), [`d482625`](https://github.com/aivi-hq/aivi/commit/d482625fee48116465ffbfe75ba650443a4c5e4e), [`e2307ae`](https://github.com/aivi-hq/aivi/commit/e2307ae85150791de09967e164b5dfb6020651a1), [`0ec3f65`](https://github.com/aivi-hq/aivi/commit/0ec3f655de2817fa244d673abe797157282dc3c4), [`d337a15`](https://github.com/aivi-hq/aivi/commit/d337a15ee5e58fec7b9407db28fe38bbd91a87f9), [`343d0f8`](https://github.com/aivi-hq/aivi/commit/343d0f8f5d22e5319071d7bfa4d6189edd51736f), [`8e26ad6`](https://github.com/aivi-hq/aivi/commit/8e26ad6aab5d49460cc54d965a36adfc31e651d8), [`3ef9b9a`](https://github.com/aivi-hq/aivi/commit/3ef9b9a19f023da3273a2785b5c417478805769d)]:
+  - @aivi/plugin@0.9.0
+  - @aivi/core@0.8.0
+
 ## 0.3.1
 
 ### Patch Changes
