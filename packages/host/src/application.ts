@@ -24,6 +24,7 @@ import { createExecutor } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import type { Store } from './store.ts';
 import { TaskRegistry } from './tasks.ts';
+import { createTicketDesk } from './ticket-desk.ts';
 import { ToolRegistry } from './tools.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
@@ -205,6 +206,19 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   });
   clearClaim = (lease, reason) => void orchestrator.leaseEnded(lease, reason);
   for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);
+  // The ticket desk, claimed once for the whole home (ruled 2026-10-07): the
+  // host owns the aivi_ticket_* ids and routes each call to the desk of the
+  // tracker that works the calling run's ticket, so every tracker's workers
+  // get the same desk and no tracker claims the ids itself.
+  const deskTools = createTicketDesk(
+    {
+      runBySession: session => orchestrator.runBySession(session),
+      tracker: id => orchestrator.tracker(id),
+      wake: project => orchestrator.wake(project),
+    },
+    log.getChild('tickets'),
+  );
+  for (const tool of deskTools) tools.claim('host', tool.descriptor, tool.handler);
 
   const serve = async (scheduler: Scheduler, channels: Channels, knowledge: KnowledgeService) => {
     // With lifecycle "own", a running service is replaced now, before any module or job needs it:

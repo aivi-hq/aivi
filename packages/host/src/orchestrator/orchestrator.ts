@@ -17,6 +17,7 @@ import type {
 import { isTerminal } from '@aivi/plugin/run';
 import type { Tracker, WorkEntry } from '@aivi/plugin/tracker';
 import type { Dispatcher, DispatcherLease } from '../dispatcher/dispatcher.ts';
+import { ConfigurationError } from '../modules.ts';
 import { ToolError } from '../tools.ts';
 import type { Run, RunLedger } from './ledger.ts';
 import { view } from './ledger.ts';
@@ -204,7 +205,25 @@ export class Orchestrator implements OrchestratorApi {
    * retries its own renders in its own time.
    */
   addTracker(tracker: Tracker): void {
+    // One tracker per project (ruled 2026-10-07): the lanes are core's, so
+    // two trackers over one project would walk the same lane array twice and
+    // race for the same tickets. The board is one tracker's to speak for.
+    const projects = new Set(tracker.projects());
+    for (const [id, other] of this.trackers) {
+      if (id === tracker.id) continue; // a module restarted; it replaces itself
+      const shared = other.projects().filter(p => projects.has(p));
+      if (shared.length)
+        throw new ConfigurationError(
+          `Trackers "${id}" and "${tracker.id}" both speak for project ${shared.join(', ')}; a project has one tracker.`,
+        );
+    }
     this.trackers.set(tracker.id, tracker);
+  }
+
+  /** The tracker registered under this id, if one is: the desk router's
+   *  lookup — a run's tracker id names whose desk answers for its ticket. */
+  tracker(trackerId: string): Tracker | undefined {
+    return this.trackers.get(trackerId);
   }
 
   /** Call a render stage: fire-and-forget, said in the log, never carried

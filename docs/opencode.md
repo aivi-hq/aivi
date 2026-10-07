@@ -53,7 +53,7 @@ signpost). See [git workflow](plans/git-workflow.md#the-redirect-hook).
 | `aivi_jobs` | `aivi_jobs` | Create/list/pause/resume/remove/run jobs | Schedules work. Turn the tool off host-wide with `scheduler.agentSchedules: false`. |
 | `aivi_config` | `aivi_config` | Read the live `config.json`, write one block, or remove one — validated against the composed closed schema | The doing side of self-knowledge. A refused write leaves the file byte-identical. Turn it off host-wide with `host.agentConfigEdits: false` (then the tool is absent, not present-failing). Secrets stay `.env` territory. |
 | `aivi_browser` | `aivi_browser` | aivi's own Chrome for unattended sessions | Distinct from OpenCode's `browser.*` desktop tools. The seeded assistant denies `browser` (OpenCode's), **not** this one. |
-| `aivi_ticket_*` (8) | id | The ticket desk — a worker's hand on the ticket: read, trail, labels, edit, comment, create, add/remove a label. Claimed by `tracker-linear` | The one seeded **deny**: `aivi setup` writes a single `aivi_ticket_*` deny for every agent — actions take wildcards; the agent file that works tickets allows them by the same wildcard (`product.md` ships the desk). See [linear](linear.md#the-ticket-desk). |
+| `aivi_ticket_*` (8) | id | The ticket desk — a worker's hand on the ticket: read, trail, labels, edit, comment, create, add/remove a label. Claimed by the **host**, routed to the desk of the tracker that works the run's ticket | The one seeded **deny**: `aivi setup` writes a single `aivi_ticket_*` deny for every agent — actions take wildcards; the agent file that works tickets allows them by the same wildcard (`product.md` ships the desk). See [linear](linear.md#the-ticket-desk). |
 
 ### Giving tools to an agent
 

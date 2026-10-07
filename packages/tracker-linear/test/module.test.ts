@@ -348,6 +348,39 @@ class FakeTracker implements Platform {
     if (this.closingNotes.some(n => n.issueId === issueId && n.text === text)) return;
     this.closingNotes.push({ conversation, issueId, text });
   }
+  /** The ticket-desk members, in the fake's own records. The desk's contract
+   *  is the host's test (`packages/host/test/ticket-desk.test.ts`); these
+   *  exist because the desk is required of every Platform. */
+  ticketTrail: Record<string, { author: string | null; body: string; at: string }[]> = {};
+  createdIssues: { teamId: string; title: string; description?: string; lane?: string }[] = [];
+  async ticketComments(_conversation: string, issueId: string) {
+    return this.ticketTrail[issueId] ?? [];
+  }
+  async addComment(_conversation: string, issueId: string, text: string): Promise<void> {
+    const trail = this.ticketTrail[issueId] ?? [];
+    trail.push({ author: 'aivi', body: text, at: '2026-10-07' });
+    this.ticketTrail[issueId] = trail;
+  }
+  async editIssue(_conversation: string, issueId: string, changes: { title?: string; description?: string }) {
+    const found = this.issues.get(issueId)!;
+    if (changes.title !== undefined) found.title = changes.title;
+    if (changes.description !== undefined) found.description = changes.description;
+    return found;
+  }
+  async createIssue(
+    _conversation: string,
+    input: { teamId: string; title: string; description?: string; lane?: string },
+  ): Promise<TrackerIssue> {
+    this.createdIssues.push(input);
+    return issue('t-new', {
+      identifier: 'AIV-9',
+      title: input.title,
+      state: { id: 's-new', name: input.lane ?? 'Triage', type: 'triage' },
+    });
+  }
+  async teamLabels(): Promise<string[]> {
+    return ['needs-human', 'ready'];
+  }
   /** Questions the follower rendered from the run's `question` events. */
   asks: { conversation: string; question: RunQuestion }[] = [];
   async ask(conversation: string, question: RunQuestion): Promise<void> {

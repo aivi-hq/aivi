@@ -36,11 +36,11 @@ import type { Platform, TrackerChange, TrackerCommentKind, TrackerEvent, Tracker
 import { LinearApiError } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
+import { createLinearDesk } from './desk.ts';
 import { RunLinks } from './links.ts';
 import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue, projectLinear } from './projects.ts';
 import { RunProgress } from './runprogress.ts';
-import { createTicketTools } from './tools.ts';
 import { createLinearPlatform } from './tracker.ts';
 import type { LinearBoard } from './work.ts';
 import { issueDossier, linearBoard } from './work.ts';
@@ -146,13 +146,12 @@ async function startLinear(
   // that speak through the adapter join it below; webhooks keep pushing
   // conversations, and the walk needs none of them.
   const board = makeBoard(services);
-  // The ticket desk: a worker's hand on the ticket itself (`aivi_ticket_*`).
-  // The seeded OpenCode config denies every one of these actions to every
-  // agent; an agent file that works tickets allows the ones it speaks
-  // (docs/linear.md). The desk is claimed for the whole host — permission
-  // per agent is OpenCode's decision, never ours.
-  const ticketTools = createTicketTools(services, config, tracker);
-  for (const tool of ticketTools) services.tools.claim(tool.descriptor, tool.handler);
+  // The ticket desk: Linear's answers for the `aivi_ticket_*` tools the *host*
+  // claims (packages/host/src/ticket-desk.ts) — this module builds no tools
+  // and claims nothing; the desk travels on the Tracker registered below.
+  // The seeded OpenCode config still denies every action to every agent, and
+  // an agent file that works tickets allows the ones it speaks (docs/linear.md).
+  const desk = createLinearDesk(services.loaded, config, tracker);
 
   const abort = new AbortController();
   let engine: ChannelEngine | undefined;
@@ -251,7 +250,6 @@ async function startLinear(
 
     /** Our platform's word for "a person, please": the human label. */
     const markForHuman = async (conversation: string, ticketId: string): Promise<void> => {
-      if (!tracker.apply) return void log.warn('help.unavailable', { ticket: ticketId });
       try {
         await tracker.apply(conversation, ticketId, { kind: 'label', label: config.humanLabel, on: true });
       } catch (error) {
@@ -378,6 +376,7 @@ async function startLinear(
       projects: board.projects,
       tickets: board.tickets,
       moveTo: board.moveTo,
+      desk,
       /** Where the ticket sits right now, in the walk's own read: gone means
        *  deleted or on a team this project does not map. The orchestrator
        *  asks before every ending move (ruled 2026-10-02). */
@@ -879,7 +878,6 @@ async function startLinear(
         unsubscribeEvents();
         unregister();
         unsubscribeWake();
-        for (const tool of ticketTools) services.tools.release(`${tool.descriptor.namespace}_${tool.descriptor.name}`);
         await teardown();
       },
     };

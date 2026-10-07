@@ -36,7 +36,7 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
 | lane | One entry of the **core** ordered array `projects.<id>.lanes` — `{ name, agent?, queue?, pool?, worktree?, next?, previous? }`. A lane naming an `agent` is worked; naming none is worked by humans; `queue: true` marks the workflow's one queue lane (owner: [orchestrator.md](orchestrator.md)). Success moves a ticket to the **next** entry, failure to the **previous** one — overridden per lane by `next`/`previous`; a stop moves nothing |
 | tracker | What the Linear module is to the orchestrator: ONE `Tracker` (`@aivi/plugin`) — the board the eligibility walk reads (`projects`, `tickets`, `moveTo`, idempotent) and the stages every run walks through (`initWork`, `ready`, `question`, `plan`, `endWork`). It records the pair (agent session ↔ OpenCode session ↔ ticket) in **its own table**, posts people's messages into the worker's session itself, and retries **its own** closings at wake and boot. The orchestrator never learns what Linear is |
 | worker | The run's OpenCode session (`ses_run_…`): the lane's agent, working in the project's checkout or, on a `worktree: true` lane, its own git worktree on the ticket's branch. The session is kept for the whole run and stays after a stop for inspection; a stopped **worktree** does not — the stop tears the attempt down, commits of the stopped attempt and all |
-| ticket desk | The `aivi_ticket_*` tools — a worker's hand on the ticket itself: read, trail, label catalogue, edit the words, comment, create, add and remove a label. Denied to every agent by the seeded config; the agent file that works tickets (product) allows them. The ids are `TICKET_TOOL_ACTIONS` (`@aivi/plugin`); tests hold the module's claims and the installer's `aivi_ticket_*` wildcard against it |
+| ticket desk | The `aivi_ticket_*` tools — a worker's hand on the ticket itself: read, trail, label catalogue, edit the words, comment, create, add and remove a label. Denied to every agent by the seeded config; the agent file that works tickets (product) allows them. The ids are `TICKET_TOOL_ACTIONS` (`@aivi/plugin`); the host claims them once for the home and routes each call to the desk of the tracker that works the run's ticket — tests hold those claims and the installer's `aivi_ticket_*` wildcard against it |
 
 ## What happens
 
@@ -236,12 +236,14 @@ with the extraction. Worktree pruning is not built yet.
 
 ## The ticket desk
 
-Eight tools, claimed by this module: `aivi_ticket_read`, `_comments`,
-`_labels`, `_edit`, `_comment`, `_create`, `_add_label`, `_remove_label` —
-the base kit a triage worker needs on the ticket, with no agent session in
-between. The desk is deliberately generic; an agent that needs more of
-Linear upgrades to the MCP below in its own agent file — that is the ruled
-replacement path, not a bigger desk.
+Eight tools — `aivi_ticket_read`, `_comments`, `_labels`, `_edit`,
+`_comment`, `_create`, `_add_label`, `_remove_label` — claimed once by the
+**host** for the whole home (ruled 2026-10-07), and answered here in Linear's
+own words: which app's feed a plain comment lands on, which team a new
+ticket is born in. The base kit a triage worker needs on the ticket, with no
+agent session in between. The desk is deliberately generic; an agent that
+needs more of Linear upgrades to the MCP below in its own agent file — that
+is the ruled replacement path, not a bigger desk.
 
 **Permission is OpenCode's, not aivi's.** `aivi setup` seeds one deny —
 `aivi_ticket_*` — into the home's `opencode.jsonc`, so the desk is invisible
