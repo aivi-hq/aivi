@@ -287,3 +287,21 @@ test('the grant, the hook, and its deliveries read with the app’s own JWT', as
     assert.equal(jwtClaims(call.authorization).iss, '7', `${path} carries the app JWT`);
   }
 });
+
+test('a replayed delivery keeps its id byte-exact and carries the app’s JWT', async () => {
+  const { fetch, seen } = scripted({
+    'GET /app': () => ({ status: 200, body: { id: 7, slug: 'aivi-agent' } }),
+    'GET /app/installations': () => ({ status: 200, body: [{ id: 9, account: { login: 'aivi-hq' } }] }),
+    'POST /app/hook/deliveries/28173922244/attempts': () => ({ status: 204, body: null }),
+  });
+  const app = await GitHubApp.connect({ fetch });
+  await app.redeliverWebhook('28173922244');
+  const attempt = seen.find(call => call.method === 'POST');
+  assert.ok(attempt, 'the attempt was asked for');
+  assert.equal(
+    attempt.path,
+    '/app/hook/deliveries/28173922244/attempts',
+    'the id survives: not coerced through a number',
+  );
+  assert.equal(jwtClaims(attempt.authorization).iss, '7', 'the replay is the app asking, not an installation');
+});

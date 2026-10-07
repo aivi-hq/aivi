@@ -326,6 +326,17 @@ export class GitHubApp {
       statusCode: Number(delivery.status_code),
     }));
   }
+
+  /** Ask GitHub to post a past delivery again — the installer's way to make a
+   *  delivery land while it watches, rather than waiting on an event that may
+   *  have fired before anyone was listening. The replay carries the app's
+   *  current secret; a replay that fails the installer's own seal check says
+   *  the secret pasted is not the one GitHub sends. `deliveryId` stays a
+   *  **string** into the path: a >2^53 id coerced to a number loses digits and
+   *  the attempt 404s (live, 2026-10-07). */
+  async redeliverWebhook(deliveryId: string): Promise<void> {
+    await this.app.rest.apps.redeliverWebhookDelivery({ delivery_id: deliveryId as unknown as number });
+  }
 }
 
 /** The connected app, **once per process** (ruled 2026-10-07): the forge and
