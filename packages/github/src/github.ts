@@ -144,6 +144,30 @@ function appClient(creds: GitHubCredentials, fetch?: typeof globalThis.fetch, re
   });
 }
 
+/** What the grant itself says it allows, read with the app's JWT. */
+export interface GitHubGrant {
+  /** What the app's webhook subscribes to (`*` when it subscribes to all). */
+  events: string[];
+  /** What the grant lets the app touch, e.g. `{ issues: 'write' }`. */
+  permissions: Record<string, string>;
+}
+
+/** The webhook on the app's own settings page: where GitHub posts. */
+export interface GitHubWebhookConfig {
+  url: string;
+  insecureSsl: boolean;
+}
+
+/** One delivery to that webhook and the answer the host gave — the trail a
+ *  setup flow reads before it believes its own URL. */
+export interface GitHubWebhookDelivery {
+  id: string;
+  event: string;
+  action: string | null;
+  status: string;
+  statusCode: number;
+}
+
 /**
  * The app as aivi uses it: installed on one account, holding one installation
  * token, ready to speak about the repositories under that grant.
@@ -158,10 +182,22 @@ export class GitHubApp {
   /** The installation-authenticated client: every API call aivi makes. */
   readonly octokit: Octokit;
 
+  /** The app-JWT client: the app's own settings, which no installation token
+   *  reaches. Only the setup-side reads below cross to it. */
+  private readonly app: Octokit;
+
   private readonly log: Logger;
 
-  private constructor(octokit: Octokit, installationId: number, accountLogin: string, appSlug: string, log: Logger) {
+  private constructor(
+    octokit: Octokit,
+    app: Octokit,
+    installationId: number,
+    accountLogin: string,
+    appSlug: string,
+    log: Logger,
+  ) {
     this.octokit = octokit;
+    this.app = app;
     this.installationId = installationId;
     this.accountLogin = accountLogin;
     this.appSlug = appSlug;
@@ -211,7 +247,7 @@ export class GitHubApp {
     });
     const account = installation.account?.login ?? String(installation.id);
     log.info('github.ready', { app: slug, installation: installation.id, account });
-    return new GitHubApp(octokit, installation.id, account, slug, log);
+    return new GitHubApp(octokit, app, installation.id, account, slug, log);
   }
 
   /** The installation token itself, for the git transport — the same token
@@ -254,6 +290,41 @@ export class GitHubApp {
       if (status === 404 || status === 403) return undefined;
       throw error;
     }
+  }
+
+  /** The grant's own record, read with the app's JWT: the events GitHub posts
+   *  to this app and the permissions it was given. No installation token reads
+   *  its own grant, so this is the setup-side vantage — prove what the tracker
+   *  lives on before a byte is written. */
+  async grantFacts(): Promise<GitHubGrant> {
+    const { data: installation } = await this.app.rest.apps.getInstallation({ installation_id: this.installationId });
+    const permissions: Record<string, string> = {};
+    for (const [name, level] of Object.entries(installation.permissions ?? {}))
+      if (typeof level === 'string') permissions[name] = level;
+    return { events: (installation.events ?? []).map(String), permissions };
+  }
+
+  /** Where the app's webhook posts, from the app's own settings page. */
+  async webhookConfig(): Promise<GitHubWebhookConfig> {
+    const { data: hook } = await this.app.rest.apps.getWebhookConfigForApp();
+    // GitHub answers `insecure_ssl` as 0/1 (sometimes as a string), not a
+    // boolean — anything but the zero is the downgrade.
+    const insecure = hook.insecure_ssl;
+    return { url: hook.url ?? '', insecureSsl: insecure === undefined ? false : Number(insecure) !== 0 };
+  }
+
+  /** Recent deliveries to that webhook, newest first, each with the answer the
+   *  host gave. Delivery ids exceed 2^53 (live, 2026-10-07) — strings here,
+   *  never numbers. */
+  async webhookDeliveries(cap = 5): Promise<GitHubWebhookDelivery[]> {
+    const { data: deliveries } = await this.app.rest.apps.listWebhookDeliveries({ per_page: cap });
+    return deliveries.slice(0, cap).map(delivery => ({
+      id: String(delivery.id),
+      event: String(delivery.event),
+      action: delivery.action ? String(delivery.action) : null,
+      status: String(delivery.status),
+      statusCode: Number(delivery.status_code),
+    }));
   }
 }
 

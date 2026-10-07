@@ -212,3 +212,78 @@ test('a transfer authenticates in the environment, where a process listing canno
   assert.equal(env.GIT_CONFIG_KEY_1, 'credential.helper', 'the person’s stored credential is switched off');
   assert.equal(env.GIT_CONFIG_VALUE_1, '');
 });
+
+test('the grant, the hook, and its deliveries read with the app’s own JWT', async () => {
+  const { fetch, seen } = scripted({
+    'GET /app': () => ({ status: 200, body: { id: 7, slug: 'aivi-agent' } }),
+    'GET /app/installations': () => ({ status: 200, body: [{ id: 9, account: { login: 'aivi-hq' } }] }),
+    'GET /app/installations/9': () => ({
+      status: 200,
+      body: {
+        id: 9,
+        events: ['issues', 'issue_comment'],
+        permissions: { issues: 'write', organization_projects: 'read', members: null },
+      },
+    }),
+    'GET /app/hook/config': () => ({
+      status: 200,
+      body: { url: 'https://my-machine.ts.net/github/webhooks', insecure_ssl: 0 },
+    }),
+    'GET /app/hook/deliveries': () => ({
+      status: 200,
+      body: [
+        {
+          id: 28173922244,
+          guid: 'g-1',
+          delivered_at: '2026-10-07T00:00:00Z',
+          redelivery: false,
+          duration: 0.04,
+          status: 'failed',
+          status_code: 405,
+          event: 'issues',
+          action: null,
+        },
+        {
+          id: 2,
+          guid: 'g-2',
+          delivered_at: '2026-10-07T00:00:01Z',
+          redelivery: false,
+          duration: 0.03,
+          status: 'ok',
+          status_code: 204,
+          event: 'issue_comment',
+          action: 'created',
+        },
+      ],
+    }),
+  });
+  const app = await GitHubApp.connect({ fetch });
+
+  assert.deepEqual(
+    await app.grantFacts(),
+    { events: ['issues', 'issue_comment'], permissions: { issues: 'write', organization_projects: 'read' } },
+    'the grant record in aivi words; a null permission level is not a level',
+  );
+  assert.deepEqual(await app.webhookConfig(), {
+    url: 'https://my-machine.ts.net/github/webhooks',
+    insecureSsl: false,
+  });
+  const deliveries = await app.webhookDeliveries(2);
+  assert.equal(deliveries[0]?.id, '28173922244', 'delivery ids exceed 2^53: strings, never numbers');
+  assert.deepEqual(deliveries[1], {
+    id: '2',
+    event: 'issue_comment',
+    action: 'created',
+    status: 'ok',
+    statusCode: 204,
+  });
+  assert.equal((await app.webhookDeliveries(1)).length, 1, 'the cap cuts the answer');
+
+  // The reads that answer “can the tracker work here” carry the app’s own JWT:
+  // no installation token reads its own grant.
+  for (const path of ['/app/installations/9', '/app/hook/config', '/app/hook/deliveries']) {
+    const call = seen.find(other => other.path === path);
+    assert.ok(call, `${path} was asked`);
+    assert.equal(jwtClaims(call.authorization).iss, '7', `${path} carries the app JWT`);
+  }
+});
