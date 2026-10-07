@@ -12,6 +12,8 @@ test('the block keeps no facts by default, and names the human label and the poo
   assert.equal(config.humanLabel, 'needs-human');
   assert.equal(config.resource, 'local-model');
   assert.equal(config.progress, 'tools');
+  assert.equal(config.trust, 'members', 'the divider line is the default on a public repository');
+  assert.throws(() => githubSchema.parse({ trust: 'everyone ' }), /trust/, 'one space is not a tier');
   assert.equal(assistantAgent(undefined), 'assistant');
   assert.equal(assistantAgent(config), 'assistant');
   assert.equal(assistantAgent(githubSchema.parse({ agent: 'helper' })), 'helper');

@@ -22,6 +22,23 @@ export interface GithubDeliveryHeaders {
 export const GITHUB_EVENT_HEADER = 'x-github-event';
 export const GITHUB_DELIVERY_HEADER = 'x-github-delivery';
 
+/** Who comments may reach aivi (ruled 2026-10-07): `members` is the divider
+ *  line for a public repository — GitHub's own association words decide it,
+ *  read per delivery so a promotion or a removal takes effect at once.
+ *  `everyone` opens the door to any GitHub user. */
+export type GithubTrust = 'members' | 'everyone';
+
+/** GitHub's words for who the author is to the repository: OWNER (the org
+ *  itself), MEMBER (invited to the org) and COLLABORATOR (outside, with
+ *  repository access) may talk to aivi. CONTRIBUTOR — merely someone with a
+ *  merged pull request — does not buy free access (ruled 2026-10-07), and
+ *  neither does NONE. A missing association fails closed: GitHub always
+ *  sends it, so its absence is a payload aivi does not know. */
+const MEMBER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+export const trustedAuthor = (association: string | undefined, trust: GithubTrust): boolean =>
+  trust === 'everyone' || (association !== undefined && MEMBER_ASSOCIATIONS.has(association));
+
 /** The comment author as GitHub answers it: `Bot` is an app, and aivi's own
  *  posts — the status comment, closings, questions — are how a run speaks.
  *  Inbound, every `Bot` post is filtered: aivi never answers itself. */
@@ -30,7 +47,12 @@ export const isBotAuthor = (user: { type?: string | null } | undefined | null): 
 /** An `issue_comment` delivery: a person's message inside a ticket. */
 export interface IssueCommentPayload {
   action: string;
-  comment: { id: number; body: string | null; user: { login: string; type?: string } | null };
+  comment: {
+    id: number;
+    body: string | null;
+    user: { login: string; type?: string } | null;
+    author_association?: string;
+  };
   issue: { number: number };
   repository: { full_name: string };
 }

@@ -40,6 +40,7 @@ export {
 } from './tracker.ts';
 export type {
   GithubDeliveryHeaders,
+  GithubTrust,
   IssueCommentPayload,
   IssuesPayload,
   ProjectsV2ItemPayload,
@@ -50,6 +51,7 @@ export {
   GITHUB_DELIVERY_HEADER,
   GITHUB_EVENT_HEADER,
   isBotAuthor,
+  trustedAuthor,
 } from './webhook.ts';
 export type { GithubBoard, GithubIssueWords } from './work.ts';
 export { githubBoard, issueDossier } from './work.ts';

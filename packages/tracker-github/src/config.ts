@@ -51,6 +51,12 @@ export const githubSchema = z.strictObject({
     .enum(['silent', 'status', 'tools'])
     .default('tools')
     .describe('What the status comment shows while a worker runs: silent, the one line, or the line with its tool.'),
+  trust: z
+    .enum(['members', 'everyone'])
+    .default('members')
+    .describe(
+      'Who comments may reach aivi — form answers, run steering, the assistant. `members`: GitHub’s OWNER, MEMBER and COLLABORATOR only; a CONTRIBUTOR or a stranger is heard as nothing, not a word and not a log line. `everyone`: any GitHub user.',
+    ),
 });
 export type GithubConfig = z.infer<typeof githubSchema>;
 

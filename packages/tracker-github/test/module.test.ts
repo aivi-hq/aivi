@@ -405,7 +405,7 @@ test('a person’s comment answers an open form or steers a running turn — nev
     h.forms.push({ id: 'frm_open' });
     await deliver(h, 'issue_comment', {
       action: 'created',
-      comment: { id: 7, body: 'use main', user: { login: 'person', type: 'User' } },
+      comment: { id: 7, body: 'use main', user: { login: 'person', type: 'User' }, author_association: 'MEMBER' },
       issue: { number: 47 },
       repository: { full_name: 'acme/shop' },
     });
@@ -418,7 +418,12 @@ test('a person’s comment answers an open form or steers a running turn — nev
       'issue_comment',
       {
         action: 'created',
-        comment: { id: 8, body: 'also fix the test', user: { login: 'person', type: 'User' } },
+        comment: {
+          id: 8,
+          body: 'also fix the test',
+          user: { login: 'person', type: 'User' },
+          author_association: 'MEMBER',
+        },
         issue: { number: 47 },
         repository: { full_name: 'acme/shop' },
       },

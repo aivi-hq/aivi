@@ -43,10 +43,12 @@ import {
   editedFieldName,
   GITHUB_DELIVERY_HEADER,
   GITHUB_EVENT_HEADER,
+  type GithubTrust,
   type IssueCommentPayload,
   type IssuesPayload,
   isBotAuthor,
   type ProjectsV2ItemPayload,
+  trustedAuthor,
 } from './webhook.ts';
 
 /** The app's own feed: desk calls and notices speak here — there is no
@@ -125,6 +127,10 @@ export class GithubPlatform implements Platform {
   private readonly log: Logger;
   private readonly deliveries = new DeliveryLedger();
   private readonly sinks = new Set<(event: TrackerEvent) => Promise<void>>();
+  /** The divider line for comments (ruled 2026-10-07): who GitHub says may
+   *  talk. Read per delivery from `author_association`; an untrusted comment
+   *  is nothing — no event, no reply, no log line. */
+  private readonly trust: GithubTrust;
   /** Which board node ids aivi speaks, by board number — warmed at start.
    *  A `projects_v2_item` delivery names its board by node id and nothing
    *  else; a board nobody configured is noise and says nothing. */
@@ -135,11 +141,13 @@ export class GithubPlatform implements Platform {
     client: GithubClient,
     webhookSecret: string,
     log: Logger = getLogger(['aivi', MODULE_ID]),
+    trust: GithubTrust = 'members',
   ) {
     this.loaded = loaded;
     this.client = client;
     this.webhookSecret = webhookSecret;
     this.log = log;
+    this.trust = trust;
   }
 
   /** Resolve every configured board's fields once, at module start: it says
@@ -441,6 +449,14 @@ export class GithubPlatform implements Platform {
     if (event === 'issue_comment') {
       const p = payload as IssueCommentPayload;
       if (p.action !== 'created' || isBotAuthor(p.comment?.user) || p.issue?.number === undefined) return;
+      // The divider line (ruled 2026-10-07): on a public repository anyone may
+      // comment, but only a trusted author reaches a worker or the assistant.
+      // An untrusted one is dropped here — the one gate for all three paths
+      // (form answer, steer, assistant) — with no reply (silence does not
+      // advertise the bot) and no log line (drive-by comments are a public
+      // repo's weather). A lane or label move needs board write access GitHub
+      // itself enforces, so the other two events need no gate.
+      if (!trustedAuthor(p.comment?.author_association, this.trust)) return;
       await this.emit({
         kind: 'prompted',
         id: `comment:${p.comment.id}`,

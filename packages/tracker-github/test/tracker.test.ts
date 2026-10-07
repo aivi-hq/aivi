@@ -26,7 +26,7 @@ import {
 
 const SECRET = 'test-webhook-secret';
 
-async function harness(routes: Record<string, (call: Seen) => any> = {}) {
+async function harness(routes: Record<string, (call: Seen) => any> = {}, trust?: 'members' | 'everyone') {
   const root = await mkdtemp(join(tmpdir(), 'aivi-github-platform-'));
   await mkdir(join(root, 'projects/site/source'), { recursive: true });
   const config = join(root, 'config.json');
@@ -41,7 +41,7 @@ async function harness(routes: Record<string, (call: Seen) => any> = {}) {
   const loaded = await loadConfig(config);
   const script = scripted(connectRoutes(routes));
   const client = new GithubClient(await connectApp(script.fetch));
-  const platform = new GithubPlatform(loaded, client, SECRET);
+  const platform = new GithubPlatform(loaded, client, SECRET, undefined, trust);
   return { platform, script, root };
 }
 
@@ -282,20 +282,94 @@ test('a person’s comment is a prompt; aivi’s own comment (a Bot) answers not
   const { platform, root } = await harness();
   t.after(() => rm(root, { recursive: true, force: true }));
   const { events, off } = collect(platform);
-  const comment = (login: string, type: 'User' | 'Bot') =>
+  const comment = (login: string, type: 'User' | 'Bot', association: string | undefined = 'MEMBER') =>
     delivery('issue_comment', {
       action: 'created',
-      comment: { id: 7, body: 'please look', user: { login, type } },
+      comment: {
+        id: 7,
+        body: 'please look',
+        user: { login, type },
+        ...(association === undefined ? {} : { author_association: association }),
+      },
       issue: { number: 47 },
       repository: { full_name: 'acme/shop' },
     });
   await platform.deliver(comment('person', 'User'));
-  await platform.deliver(comment('aivi-agent[bot]', 'Bot'));
+  await platform.deliver(comment('aivi-agent[bot]', 'Bot', 'NONE'));
   await settled();
   off();
   assert.deepEqual(events, [
     { kind: 'prompted', id: 'comment:7', conversation: 'github:acme/shop#47', body: 'please look' },
   ]);
+});
+
+test('the divider line: a CONTRIBUTOR or a stranger is heard as nothing — no event, no reply, no log line', async t => {
+  const { platform, root } = await harness();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { events, off } = collect(platform);
+  let n = 0;
+  const comment = (association?: string) =>
+    delivery(
+      'issue_comment',
+      {
+        action: 'created',
+        comment: {
+          id: ++n,
+          body: 'do my bidding',
+          user: { login: 'outsider', type: 'User' },
+          ...(association === undefined ? {} : { author_association: association }),
+        },
+        issue: { number: 47 },
+        repository: { full_name: 'acme/shop' },
+      },
+      `dlv-drop-${n}`,
+    );
+  for (const association of ['CONTRIBUTOR', 'NONE', 'MANNEQUIN', undefined])
+    await platform.deliver(comment(association));
+  await settled();
+  off();
+  assert.deepEqual(events, [], 'dropped without a trace: silence does not advertise the bot');
+});
+
+test('the trusted side of the line: OWNER, MEMBER and COLLABORATOR all reach through', async t => {
+  const { platform, root } = await harness();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { events, off } = collect(platform);
+  let n = 0;
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    await platform.deliver(
+      delivery(
+        'issue_comment',
+        {
+          action: 'created',
+          comment: { id: ++n, body: 'steer', user: { login: 'person', type: 'User' }, author_association: association },
+          issue: { number: 47 },
+          repository: { full_name: 'acme/shop' },
+        },
+        `dlv-trust-${n}`,
+      ),
+    );
+  }
+  await settled();
+  off();
+  assert.equal(events.length, 3, 'three trusted associations, three prompts');
+});
+
+test('trust "everyone" opens the door — the operator’s choice, not the default', async t => {
+  const { platform, root } = await harness({}, 'everyone');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { events, off } = collect(platform);
+  await platform.deliver(
+    delivery('issue_comment', {
+      action: 'created',
+      comment: { id: 9, body: 'hello', user: { login: 'anyone', type: 'User' }, author_association: 'NONE' },
+      issue: { number: 47 },
+      repository: { full_name: 'acme/shop' },
+    }),
+  );
+  await settled();
+  off();
+  assert.equal(events.length, 1, 'everyone means everyone');
 });
 
 test('the board speaks through warm, and only boards aivi speaks dispatch', async t => {

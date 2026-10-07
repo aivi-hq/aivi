@@ -102,7 +102,7 @@ export function createGithubModule(config: GithubConfig, makeTracker?: MakeTrack
         makeTracker ??
           (async ({ loaded, log }) => {
             const { client, webhookSecret } = await githubClient(log.getChild(MODULE_ID));
-            const platform = new GithubPlatform(loaded, client, webhookSecret, log.getChild(MODULE_ID));
+            const platform = new GithubPlatform(loaded, client, webhookSecret, log.getChild(MODULE_ID), config.trust);
             // Boards first: a missing `Status` or `Agent` field is said now,
             // with the remedy, not mid-run.
             await platform.warm();
