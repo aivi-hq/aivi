@@ -14,12 +14,31 @@
  *  cannot read is said with the permission that unlocks it. The `Agent` field
  *  is aivi's own surface (D5: apps cannot be assignees, proven 403): when the
  *  board lacks one, creating it is **asked** — a person's board changes only on
- *  a yes. The Status options aivi never creates or renames (D4). */
-import { getLogger, type Logger, type ProjectLaneInput } from '@aivi/core';
-import { type GitHubApp, githubApp } from '@aivi/github';
+ *  a yes — and the field is then appended to every view that does not show it,
+ *  operators included. The Status options aivi never creates or renames (D4).
+ *
+ *  A live aivi is asked as a choice, never presumed: silence offers "I started
+ *  the server. Retry" or "Continue anyway", and continuing writes the mapping
+ *  with the webhook's unproven state said. When one was there to watch, the
+ *  wizard ends with the board probe: a test card pays the tracker's every
+ *  mutation — issue, board add, Status move, Agent set, comment — the diary
+ *  must echo each back seal-verified, then cleanup. */
+import { readFile } from 'node:fs/promises';
+import { errorMessage, getLogger, type Logger, type ProjectLaneInput } from '@aivi/core';
+import { GITHUB_WEBHOOK_SECRET_ENV, type GitHubApp, githubApp } from '@aivi/github';
 import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
 import { GithubClient } from './client.ts';
 import { AGENT_FIELD, githubSchema, STATUS_FIELD } from './config.ts';
+import {
+  aboutIssue,
+  boardProbeVerdict,
+  gateHost,
+  hostIsUp,
+  probeWindowMs,
+  UNVERIFIED,
+  waitForSignals,
+} from './probe.ts';
+import { GITHUB_WEBHOOK_PATH } from './tracker.ts';
 
 const log = getLogger(['aivi', 'projects']);
 
@@ -39,7 +58,28 @@ export interface SetupBoard {
   orgId: string;
   title: string;
   statusOptions: SetupBoardOption[];
+  /** The `Status` field's own id — the probe mutates it directly. */
+  statusFieldId: string;
   agentFieldId?: string;
+  /** The `Agent` field's options; empty when the board has no such field yet. */
+  agentOptions: { id: string; name: string }[];
+}
+
+/** The board probe's test card: what the wait must hear back (`asked` names
+ *  the signals — probe.ts's `BOARD_SIGNALS` words), and everything cleanup
+ *  needs. `statusSkipped` is a board whose single open option cannot show a
+ *  move: said as skipped, never as a failure. */
+export interface ProbeHandles {
+  ref: string;
+  number: number;
+  /** The issue's node id: board deliveries name no number, only this. */
+  nodeId: string;
+  itemId: string;
+  projectId: string;
+  agentFieldId: string;
+  commentId: number;
+  asked: string[];
+  statusSkipped: boolean;
 }
 
 /** The wizard's crossing to GitHub, injectable like Linear's `MakeTeamsClient`:
@@ -50,8 +90,19 @@ export interface GithubSetupClient {
   readonly delegate: string;
   readBoard(boardNumber: number): Promise<SetupBoard>;
   createAgentField(board: SetupBoard, delegate: string): Promise<void>;
+  /** Append the `Agent` field to every view that does not show it — the
+   *  mutation replaces, so each view is read first and written back whole.
+   *  Answers the view names it changed; idempotent. */
+  showAgentOnViews(board: SetupBoard, agentFieldId: string): Promise<string[]>;
   repositories(): Promise<{ id: string }[]>;
   ensureLabel(repo: string, label: string): Promise<void>;
+  /** Pay the tracker's mutations on one throwaway issue: open, add to board,
+   *  move Status, set Agent, comment — everything the tracker will ever do,
+   *  and everything the diary must echo back. */
+  openProbe(repo: string, board: SetupBoard, open: SetupBoardOption[]): Promise<ProbeHandles>;
+  /** Lay the test card to rest: Agent cleared, item archived, issue closed
+   *  not-planned, comment deleted. GitHub has no API to delete an issue. */
+  closeProbe(handles: ProbeHandles): Promise<void>;
 }
 export type MakeSetupClient = (log: Logger) => Promise<GithubSetupClient>;
 
@@ -78,13 +129,74 @@ const CREATE_AGENT_FIELD = /* GraphQL */ `
   }
 `;
 
+/** The views and the fields each shows: the `fields` connection of a view is
+ *  its **visible** fields, and (live, 2026-10-07) its nodes carry the field's
+ *  own id under `ProjectV2FieldCommon` — the same ids `visibleFieldIds`
+ *  takes back. */
+const BOARD_VIEWS = /* GraphQL */ `
+  query BoardViews($owner: String!, $number: Int!) {
+    organization(login: $owner) {
+      projectV2(number: $number) {
+        views(first: 20) { nodes {
+          id name
+          fields(first: 50) { nodes { ... on ProjectV2FieldCommon { id } } }
+        } }
+      }
+    }
+  }
+`;
+
+/** `configuration` **replaces**, never appends: the visible list is read
+ *  first and written back with the Agent field added (live, 2026-10-07 —
+ *  `UpdateProjectV2ViewInput` takes no `projectId`). */
+const SHOW_AGENT_FIELD = /* GraphQL */ `
+  mutation ShowAgentField($viewId: ID!, $visibleFieldIds: [ID!]!) {
+    updateProjectV2View(input: { id: $viewId, configuration: { visibleFieldIds: $visibleFieldIds } }) {
+      projectV2View { id }
+    }
+  }
+`;
+
+/** The probe pays the tracker's own mutations directly — not through the
+ *  module's client, whose caches and resolutions are exactly what the probe
+ *  is there to prove. */
+const PROBE_ADD_ITEM = /* GraphQL */ `
+  mutation ProbeAddItem($projectId: ID!, $contentId: ID!) {
+    addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+  }
+`;
+
+const PROBE_SET_SELECT = /* GraphQL */ `
+  mutation ProbeSetSelect($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+    updateProjectV2ItemFieldValue(
+      input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }
+    ) { projectV2Item { id } }
+  }
+`;
+
+const PROBE_CLEAR_SELECT = /* GraphQL */ `
+  mutation ProbeClearSelect($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+    deleteProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId }) {
+      projectV2Item { id }
+    }
+  }
+`;
+
+const PROBE_ARCHIVE_ITEM = /* GraphQL */ `
+  mutation ProbeArchiveItem($projectId: ID!, $itemId: ID!) {
+    archiveProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) { archivedItem { id } }
+  }
+`;
+
 /** The production crossing: the home's app (D3 — the wizard and the module
  *  speak through one credential), read through the tracker's own client. */
 class BoardSetupClient implements GithubSetupClient {
   private readonly app: GitHubApp;
+  private readonly tracker: GithubClient;
 
   constructor(app: GitHubApp) {
     this.app = app;
+    this.tracker = new GithubClient(app);
   }
 
   get delegate(): string {
@@ -124,7 +236,9 @@ class BoardSetupClient implements GithubSetupClient {
         name: o.name,
         status: String(o.status ?? 'TODO'),
       })),
+      statusFieldId: status.id,
       ...(agent ? { agentFieldId: agent.id } : {}),
+      agentOptions: ((agent?.options ?? []) as any[]).map((o: any) => ({ id: o.id, name: o.name })),
     };
   }
 
@@ -132,12 +246,102 @@ class BoardSetupClient implements GithubSetupClient {
     await this.app.octokit.graphql(CREATE_AGENT_FIELD, { ownerId: board.orgId, option: delegate });
   }
 
+  async showAgentOnViews(board: SetupBoard, agentFieldId: string): Promise<string[]> {
+    const { organization } = await this.app.octokit.graphql<{ organization: any }>(BOARD_VIEWS, {
+      owner: this.app.accountLogin,
+      number: board.number,
+    });
+    const shown: string[] = [];
+    for (const view of organization?.projectV2?.views?.nodes ?? []) {
+      const ids = (view?.fields?.nodes ?? [])
+        .map((field: any) => field?.id)
+        .filter((id: unknown): id is string => typeof id === 'string');
+      if (ids.includes(agentFieldId)) continue; // already visible: idempotent, write nothing
+      await this.app.octokit.graphql(SHOW_AGENT_FIELD, { viewId: view.id, visibleFieldIds: [...ids, agentFieldId] });
+      shown.push(String(view.name ?? view.id));
+    }
+    return shown;
+  }
+
   repositories(): Promise<{ id: string }[]> {
     return this.app.repositories();
   }
 
   ensureLabel(repo: string, label: string): Promise<void> {
-    return new GithubClient(this.app).ensureLabel(repo, label);
+    return this.tracker.ensureLabel(repo, label);
+  }
+
+  async openProbe(repo: string, board: SetupBoard, open: SetupBoardOption[]): Promise<ProbeHandles> {
+    if (!board.agentFieldId)
+      throw new Error('the board has no Agent field: the wizard creates one before the probe, never the probe');
+    const issue = await this.tracker.createIssue(repo, {
+      title: 'aivi projects add test — safe to ignore',
+      body: 'A test card from `aivi projects add`: it proves GitHub’s deliveries reach this aivi. Closed and archived when the test ends.',
+    });
+    const { addProjectV2ItemById } = await this.app.octokit.graphql<{ addProjectV2ItemById: any }>(PROBE_ADD_ITEM, {
+      projectId: board.id,
+      contentId: issue.id,
+    });
+    const itemId: string = addProjectV2ItemById.item.id;
+    const asked = ['issue opened', 'card added', 'Agent set', 'comment posted'];
+    // Status: move the card to an option it does not already stand on — a
+    // mutation that changes nothing posts nothing, and a signal nobody paid
+    // for cannot land. A board with one open option and no other footing
+    // skips the signal; skipping is not failing.
+    const landing = await this.tracker.laneOn(issue.ref, board.number);
+    const target = open.find(option => option.name !== landing?.name);
+    let statusSkipped = true;
+    if (target) {
+      await this.app.octokit.graphql(PROBE_SET_SELECT, {
+        projectId: board.id,
+        itemId,
+        fieldId: board.statusFieldId,
+        optionId: target.id,
+      });
+      asked.push('Status moved');
+      statusSkipped = false;
+    }
+    const agentOption = board.agentOptions.find(option => option.name === this.delegate);
+    if (!agentOption)
+      throw new Error(
+        `the “${AGENT_FIELD}” field on board “${board.title}” has no option “${this.delegate}” — the app cannot be delegated there: add the option (or recreate the field) and run this again`,
+      );
+    await this.app.octokit.graphql(PROBE_SET_SELECT, {
+      projectId: board.id,
+      itemId,
+      fieldId: board.agentFieldId,
+      optionId: agentOption.id,
+    });
+    const comment = await this.tracker.createComment(issue.ref, 'aivi projects add test — safe to ignore.');
+    return {
+      ref: issue.ref,
+      number: issue.number,
+      nodeId: issue.id,
+      itemId,
+      projectId: board.id,
+      agentFieldId: board.agentFieldId,
+      commentId: comment.id,
+      asked,
+      statusSkipped,
+    };
+  }
+
+  async closeProbe(handles: ProbeHandles): Promise<void> {
+    await this.app.octokit.graphql(PROBE_CLEAR_SELECT, {
+      projectId: handles.projectId,
+      itemId: handles.itemId,
+      fieldId: handles.agentFieldId,
+    });
+    await this.app.octokit.graphql(PROBE_ARCHIVE_ITEM, { projectId: handles.projectId, itemId: handles.itemId });
+    const [owner = '', name = ''] = handles.ref.split('/');
+    await this.app.octokit.rest.issues.update({
+      owner,
+      repo: name.split('#')[0] ?? '',
+      issue_number: handles.number,
+      state: 'closed',
+      state_reason: 'not_planned',
+    });
+    await this.tracker.deleteComment(handles.ref, handles.commentId);
   }
 }
 
@@ -303,9 +507,14 @@ async function pickRepos(ctx: ProjectSetupContext, client: GithubSetupClient): P
 
 /** The delegate surface (D5): when the board has no `Agent` field, creating one
  *  is asked — a person's board changes only on a yes — and the no is a decision
- *  the tracker cannot work past. */
-async function ensureAgentField(ctx: ProjectSetupContext, client: GithubSetupClient, board: SetupBoard): Promise<void> {
-  if (board.agentFieldId) return;
+ *  the tracker cannot work past. Answers the field's id, read back from the
+ *  board rather than guessed: the probe pays real mutations and needs real ids. */
+async function ensureAgentField(
+  ctx: ProjectSetupContext,
+  client: GithubSetupClient,
+  board: SetupBoard,
+): Promise<string> {
+  if (board.agentFieldId) return board.agentFieldId;
   const yes = await ctx.prompts.confirm({
     message: `Create the “${AGENT_FIELD}” single-select field on board “${board.title}”, with the option “${client.delegate}”? Apps cannot be assignees on GitHub — this field is how aivi gets delegated.`,
   });
@@ -315,24 +524,110 @@ async function ensureAgentField(ctx: ProjectSetupContext, client: GithubSetupCli
       `board “${board.title}” has no “${AGENT_FIELD}” field and creating one was refused — the tracker cannot be delegated without it`,
     );
   await client.createAgentField(board, client.delegate);
+  Object.assign(board, await client.readBoard(board.number));
+  if (!board.agentFieldId)
+    throw new Error(
+      'the “Agent” field was created but the board still answers none — reload the board and run this again',
+    );
   await ctx.prompts.log.message(
-    `Created “${AGENT_FIELD}” on board “${board.title}”. Routing reads the field, not the view: show it on your views if you want to see it.`,
+    `Created “${AGENT_FIELD}” on board “${board.title}” with the option “${client.delegate}”.`,
+  );
+  return board.agentFieldId;
+}
+
+/** The board probe (ruled 2026-10-07): one test card pays every mutation the
+ *  tracker will ever make — open, board add, Status move, Agent set, comment —
+ *  and the diary must echo each delivery back, seal-verified. Then cleanup:
+ *  Agent cleared, card archived, issue closed not-planned, comment deleted,
+ *  and the truth said: GitHub has no API to delete an issue.
+ *
+ *  A missing signal is a verdict, not a throw — the mapping on disk is right;
+ *  what is missing is GitHub's reach, and the line names what to check. A bad
+ *  seal throws: a secret that does not match GitHub's breaks every delivery,
+ *  so the wizard stops and says the remedy. */
+async function probeBoard(
+  ctx: ProjectSetupContext,
+  client: GithubSetupClient,
+  board: SetupBoard,
+  repo: string,
+): Promise<void> {
+  const secret = process.env[GITHUB_WEBHOOK_SECRET_ENV];
+  if (!secret)
+    throw new Error(
+      `no ${GITHUB_WEBHOOK_SECRET_ENV} in the home’s .env — run \`aivi add @aivi/tracker-github\` before mapping a project onto the board`,
+    );
+  const spinner = ctx.prompts.spinner();
+  spinner.start(`Board probe in ${repo}: one test card, then GitHub’s answer`);
+  const probe = await client.openProbe(repo, board, openStatusOptions(board.statusOptions));
+  if (probe.statusSkipped)
+    await ctx.prompts.log.message(
+      'the board has a single open Status option — a move cannot be shown, so the Status signal is skipped, not failed',
+    );
+  spinner.message(`${probe.ref} is on the board — waiting for GitHub’s deliveries`);
+  const windowMs = probeWindowMs();
+  const { landed } = await ctx.withStore(store =>
+    waitForSignals(
+      store,
+      {
+        path: GITHUB_WEBHOOK_PATH,
+        secret,
+        windowMs,
+        asked: probe.asked,
+        about: aboutIssue(repo, probe.number, probe.nodeId),
+      },
+      0, // the about-filter is issue-scoped: a fresh issue cannot have history, so nothing old can false-land
+      line => spinner.message(line),
+    ),
+  );
+  const verdict = boardProbeVerdict(landed, probe.asked, windowMs);
+  try {
+    await client.closeProbe(probe);
+  } catch (error) {
+    await ctx.prompts.log.message(
+      `the test card could not be cleaned up: ${errorMessage(error)} — close it by hand: ${probe.ref}`,
+    );
+  }
+  if (verdict.pass) spinner.stop(`the board speaks — ${verdict.detail}`);
+  else spinner.cancel(`board probe — ${verdict.detail}`);
+  await ctx.prompts.log.message(
+    'GitHub has no API to delete an issue: the test card is closed (not planned), its card archived, its comment deleted.',
   );
 }
 
-/** The wizard, in its order: board, delegate surface, repositories, the
- *  project's name, one agent per open Status option, the queue over the
- *  finished lanes, then the human label in every mapped repository. Each step
- *  is its own question and its own honest failure; the whole is the ruling. */
+/** The wizard, in its order: the health gate as a choice, the board, the
+ *  delegate surface and its view visibility, the repositories, the project's
+ *  name, one agent per open Status option, the queue over the finished lanes,
+ *  the human label in every mapped repository — and, when a live aivi was
+ *  there to watch, the board probe last: it pays real mutations, so it comes
+ *  after everything it tests. Each step is its own question and its own
+ *  honest failure; the whole is the ruling. */
 function makeContributor(makeClient: MakeSetupClient = productionClient): ProjectContributor {
   return {
     role: 'tracker',
     async setup(ctx) {
       const config = githubSchema.parse(ctx.config);
+      // The gate asks the live aivi, and its URL lives in config.json's host
+      // block — not in the plugin's block the context carries.
+      const verify = await gateHost(ctx.prompts, async () => {
+        try {
+          const raw = JSON.parse(await readFile(ctx.configPath, 'utf8')) as {
+            host?: { bind?: string; port?: number };
+          };
+          return hostIsUp(ctx.fetch, raw.host);
+        } catch {
+          return false; // no readable config.json answers nothing: the gate says so as silence
+        }
+      });
       const client = await makeClient(log);
 
       const board = await askedBoard(ctx, client);
-      await ensureAgentField(ctx, client, board);
+      const agentFieldId = await ensureAgentField(ctx, client, board);
+      const shown = await client.showAgentOnViews(board, agentFieldId);
+      await ctx.prompts.log.message(
+        shown.length
+          ? `“${AGENT_FIELD}” now shows on: ${shown.join(', ')}.`
+          : `“${AGENT_FIELD}” already shows on the board’s views.`,
+      );
       const repos = await pickRepos(ctx, client);
 
       // The name: a tracker offers the board's title, folded, unless an earlier
@@ -372,6 +667,13 @@ function makeContributor(makeClient: MakeSetupClient = productionClient): Projec
         }
       }
       await ctx.prompts.log.message(`“${config.humanLabel}” is ready in ${repos.join(', ')}.`);
+
+      // The probe last: it pays real mutations and needs the whole mapping in
+      // place to mean anything. Without a live aivi there is no diary to
+      // watch, and the unverified fact is said in the same words the `aivi
+      // add` installer uses.
+      if (verify) await probeBoard(ctx, client, board, repos[0]!);
+      else await ctx.prompts.log.message(UNVERIFIED);
 
       return { id, section: { board: board.number, repos }, ...(lanes.length ? { lanes } : {}), cloned: false };
     },

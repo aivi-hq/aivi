@@ -1,8 +1,6 @@
 /**
  * The setup `aivi add @aivi/tracker-github` runs: everything the GitHub
- * tracker specifically lives on lives in this file. Like Linear's installer it
- * starts only when a live aivi answers its health endpoint — the test observes
- * what that host's request diary records, so no host, no install.
+ * tracker specifically lives on lives in this file.
  *
  *  The app's identity is the home's (D3): when `<home>/.env` already holds it —
  *  the forge was installed first, or this installer wrote it — nothing is asked,
@@ -14,18 +12,25 @@
  *  JWT: that the grant allows Issues and Organization projects (the desk and
  *  the board), that the webhook points at this machine and subscribes to
  *  `issue_comment`, `issues` and `projects_v2_item`, and what the last delivery
- *  was answered. Then the throwaway-issue test, in the two waits Linear's
- *  installer taught: an opened issue must arrive at the route with a seal that
- *  verifies against the pasted secret, and so must a comment — the conversation
- *  path. A passed wait is nobody's waiting room; the window is what a failure
- *  needs, because silence is a result too. The installer closes the probe issue
- *  when the test ends and says the truth: GitHub has no API for deleting an
- *  issue. Performing a restart never belongs to this flow — the CLI owns that.
+ *  was answered. Then the secret is pasted and one wait proves it: a delivery
+ *  must land at this aivi's route and verify against the pasted secret. The
+ *  trigger is the installation itself — the person is installing or approving
+ *  the app right now, and GitHub posts `installation` for that act; when the
+ *  delivery history already holds one, the installer re-asks GitHub for it and
+ *  watches the replay land.
+ *
+ *  The health gate is a choice, not a stop: no live aivi, the person picks
+ *  "I started the server. Retry" or "Continue anyway". Continuing writes
+ *  everything with UNVERIFIED said in the summary — the unverified fact is
+ *  precisely "GitHub can reach this machine". This installer **writes nothing
+ *  at GitHub**; the board probe belongs to `aivi projects add`, where the board
+ *  id is in hand. Performing a restart never belongs to this flow — the CLI
+ *  owns that, and reports it as it happens.
  */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { configSchema, errorMessage, getLogger, hostUrl } from '@aivi/core';
+import { configSchema, errorMessage, getLogger } from '@aivi/core';
 import {
   GITHUB_APP_ID_ENV,
   GITHUB_PRIVATE_KEY_ENV,
@@ -34,31 +39,12 @@ import {
   type GitHubCredentials,
   githubCredentials,
   pemForEnvFile,
-  verifyWebhookSignature,
 } from '@aivi/github';
-import {
-  type PluginSetup,
-  PluginSetupCancelled,
-  type PluginSetupContext,
-  type PluginSetupResult,
-  type Store,
-  settled,
-} from '@aivi/plugin';
+import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, settled } from '@aivi/plugin';
 import type { GithubConfig } from './config.ts';
 import { MODULE_ID } from './config.ts';
+import { gateHost, hostIsUp, INSTALLATION_EVENTS, latestId, probeWindowMs, waitDiary } from './probe.ts';
 import { GITHUB_WEBHOOK_PATH } from './tracker.ts';
-
-/** How long the diary is watched when a check cannot pass: silence is a
- *  result too, and only a waited-out silence proves it. Tests shorten the
- *  window (AIVI_PROBE_WINDOW_MS, shared with the Linear installer); people
- *  get the honest cap. */
-const DEFAULT_WINDOW_MS = 90_000;
-const probeWindowMs = () => Number(process.env.AIVI_PROBE_WINDOW_MS ?? DEFAULT_WINDOW_MS);
-
-/** The installer is a second process and file events do not report SQLite's WAL
- *  writes (macOS never mentions them, measured 2026-09-26), so the diary is
- *  re-read on this quiet interval — one query on an indexed column. */
-const POLL_MS = 2_000;
 
 /** The app's numeric id, which is what aivi authenticates with. Its *name* is
  *  for the links a person opens; the number is for everything else. */
@@ -84,26 +70,17 @@ const trimSlash = (url: string): string => url.replace(/\/+$/, '');
 
 const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupResult> => {
   const log = getLogger(['aivi', MODULE_ID]);
-  const windowMs = probeWindowMs();
   const config = configSchema.parse(ctx.config);
   const existingBlock = (ctx.config.plugins as Record<string, unknown> | undefined)?.[MODULE_ID] as
     | GithubConfig
     | undefined;
 
-  // The test observes what the running host records in its request diary:
-  // with no live aivi there is nothing to observe, and finding that out at
-  // the end wastes a whole install round. The installer does not own restarts,
-  // so a no is final.
-  const hostIsUp = await ctx
-    .fetch(`${hostUrl(config.host)}/health`, { signal: AbortSignal.timeout(2_000) })
-    .then(response => response.ok)
-    .catch(() => false);
-  if (!hostIsUp)
-    throw new Error(
-      'aivi must be running while the installer tests the webhook: start it (`aivi serve`, or `aivi service restart`) and run `aivi add @aivi/tracker-github` again.',
-    );
+  // 1. The live aivi, asked as a choice. The waits below watch what a running
+  //    aivi records; with none running the person retries or continues
+  //    unverified — the installer's own configuration still gets written.
+  const verify = await gateHost(ctx.prompts, () => hostIsUp(ctx.fetch, config.host));
 
-  // 1. The URL GitHub can reach this aivi at, asked once and saved.
+  // 2. The URL GitHub can reach this aivi at, asked once and saved.
   let base = config.host.public;
   if (!base) {
     ctx.prompts.note(
@@ -131,7 +108,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   }
   const webhookUrl = `${base}${GITHUB_WEBHOOK_PATH}`;
 
-  // 2. The app's identity — the home's, shared with the forge (D3). When the
+  // 3. The app's identity — the home's, shared with the forge (D3). When the
   //    env already holds it, nothing is asked: one app, one credential.
   let credentials: GitHubCredentials;
   try {
@@ -219,7 +196,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     `The key is app ${app.appSlug}’s, installed on ${app.accountLogin} as installation #${app.installationId}.`,
   );
 
-  // 3. What the grant says it allows, read with the app's own JWT. A tracker
+  // 4. What the grant says it allows, read with the app's own JWT. A tracker
   //    that went on past a missing permission would fail at the first lane
   //    move with someone else's error message.
   const grant = await app.grantFacts();
@@ -246,7 +223,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
         'Tick them under "Choose which events must notify the webhook" on the app’s settings page.',
     );
 
-  // 4. Where the hook points — also the app's own JWT. A URL that points at
+  // 5. Where the hook points — also the app's own JWT. A URL that points at
   //    another machine is said now, not waited out there.
   const hook = await app.webhookConfig();
   if (!hook.url)
@@ -261,8 +238,9 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     await ctx.prompts.log.message(
       'GitHub downgraded the webhook to SSL — deliveries skip full TLS verification. Check the certificate on the public URL.',
     );
-  const last = (await app.webhookDeliveries(1))[0];
-  if (!last) await ctx.prompts.log.message('The webhook has delivered nothing yet — the test below will be its first.');
+  const history = await app.webhookDeliveries(10);
+  const last = history[0];
+  if (!last) await ctx.prompts.log.message('The webhook has delivered nothing yet — the wait below is its first.');
   else if (last.statusCode >= 200 && last.statusCode < 300)
     await ctx.prompts.log.message(`The last delivery (${last.event}) was answered ${last.statusCode}.`);
   else
@@ -270,8 +248,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
       `The last delivery (${last.event}) was answered ${last.statusCode} — before a restart the route is not listening yet, so this is expected; after one it is the thing to chase.`,
     );
 
-  // 5. The secret, then the waits that prove it against live deliveries before
-  //    it is trusted into `.env`.
+  // 6. The secret, then the one wait that proves it against a live delivery.
   const webhookSecret = settled(
     ctx,
     await ctx.prompts.password({
@@ -280,340 +257,93 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     }),
   );
 
-  const granted = await app.repositories();
-  if (!granted.length)
-    throw new Error(
-      `installation #${app.installationId} reaches no repository: on the installation page, choose "Only select repositories" and add the ones aivi works`,
-    );
-
-  // 6. The test, before any write: one throwaway issue, proven in two waits
-  //    that run one after the other — that GitHub posts deliveries to this
-  //    URL, and that a comment arrives too, because the comment path is the
-  //    conversation. With the module not yet loaded, every delivery is
-  //    recorded untouched: pure observation of GitHub's behavior.
-  const checks: { name: string; pass: boolean; detail: string }[] = [];
-  ctx.prompts.note(
-    [
-      'The installer will now test the webhook. It does this by creating a',
-      'temporary issue, posting a comment on it, and watching the deliveries',
-      'GitHub posts back. It closes the issue when the test ends. When',
-      'GitHub can reach this aivi, the test takes seconds.',
-    ].join('\n'),
-    'Testing the configuration',
-  );
-  const repoId = await pickRepository(ctx, granted);
-  await ctx.withStore(async store => {
-    // Whatever the diary holds before the test issue exists is nobody's
-    // business; the cursor starts at its newest row.
-    const cursor = latestId(store);
-    const [owner = '', name = ''] = repoId.split('/');
-    const { data: probe } = await app.octokit.rest.issues.create({
-      owner,
-      repo: name,
-      title: 'aivi add test — safe to delete',
-      body: `Created by \`aivi add @aivi/tracker-github\` to test the webhook at ${webhookUrl}. The installer closes it when the test ends.`,
-    });
-    await ctx.prompts.log.message(`Created ${repoId}#${probe.number}.`);
-    const watch = { ctx, windowMs, webhookSecret, checks, repoId, number: probe.number };
-    const posted = await checkIssueDeliveries(watch, store, cursor);
-    await checkCommentDelivery(watch, store, app, posted);
-    // The installer made the issue, so the installer tidies it — GitHub has no
-    // API for deleting an issue, and the line says so rather than promising a
-    // delete. A close that fails is said, not swallowed, so an issue is never
-    // left without the operator knowing.
-    try {
-      await app.octokit.rest.issues.update({
-        owner,
-        repo: name,
-        issue_number: probe.number,
-        state: 'closed',
-        state_reason: 'not_planned',
-      });
-      await ctx.prompts.log.message(
-        `${repoId}#${probe.number} closed. GitHub has no API for deleting an issue — it is safe to delete by hand.`,
-      );
-    } catch (error) {
-      await ctx.prompts.log.message(
-        `Could not close ${repoId}#${probe.number} — close it by hand (${errorMessage(error)}).`,
-      );
-    }
-  });
+  let probe: { name: string; pass: boolean; detail: string } | undefined;
+  if (verify) probe = await probeInstallation(ctx, app, webhookUrl, webhookSecret, history);
 
   // 7. Only now is anything written: `host.public` if the installer asked for
   //    it, the webhook secret, and the `tracker-github` block — empty by
-  //   design, its fields all have defaults; the byte only marks the tracker
-  //   as configured.
+  //    design, its fields all have defaults; the byte only marks the tracker
+  //    as configured. Nothing was written at GitHub: the board probe lives in
+  //    `aivi projects add`, where the board id is in hand.
   if (!config.host.public) await ctx.writeConfigBlock(['host', 'public'], base);
   await ctx.writeSecret(GITHUB_WEBHOOK_SECRET_ENV, webhookSecret);
   await ctx.writeConfigBlock(['plugins', MODULE_ID], { ...existingBlock });
 
-  const failed = checks.filter(c => !c.pass);
-  const outcome = failed.length
-    ? `FAILED — ${failed.map(c => `${c.name}: ${c.detail}`).join('; ')}. Fix that and run the install again`
-    : 'deliveries arrived and verified';
-  // The installer started only because a live aivi answered its health
-  // endpoint, so what loads the module is its own line to say; when a service
-  // is installed the CLI restarts it anyway and reports that as it happens.
+  const outcome = !probe
+    ? 'UNVERIFIED — no live aivi watched, so “GitHub can reach this machine” was not proved. Restart aivi to load the tracker'
+    : probe.pass
+      ? `${probe.detail}. Restart aivi to load the tracker`
+      : `FAILED — ${probe.detail}. Fix that and run the install again`;
   return {
     module: MODULE_ID,
-    summary: failed.length
-      ? `The GitHub tracker is configured: ${outcome}.`
-      : `The GitHub tracker is configured: ${outcome}. Restart aivi to load the tracker.`,
+    summary: `The GitHub tracker is configured: ${outcome}.`,
   };
 };
 
-/** What the two waits share: the secret to verify with, the issue to name, and
- *  the checks list the verdicts land in. */
-interface Probe {
-  ctx: PluginSetupContext;
-  windowMs: number;
-  webhookSecret: string;
-  checks: { name: string; pass: boolean; detail: string }[];
-  repoId: string;
-  number: number;
-}
-
-/** One payload as the live line says it, in GitHub's own words, naming the
- *  ticket it is about — during a test several issues can be in play. The
- *  status our side answered with is left out on purpose: with the module not
- *  yet loaded nothing can answer 2xx, and the delivery arriving is the point. */
-const describeDelivery = (event: string, payload: any): string => {
-  const number = payload?.issue?.number ?? payload?.number;
-  const at =
-    payload?.repository?.full_name && number
-      ? `${payload.repository.full_name}#${number}`
-      : 'something the payload did not name';
-  const action = typeof payload?.action === 'string' ? ` ${payload.action}` : '';
-  return `${event}${action} on ${at}`;
-};
-
-/** Whether a delivery is about the probe issue. */
-const aboutProbe = (payload: any, probe: Probe): boolean =>
-  payload?.repository?.full_name === probe.repoId && payload?.issue?.number === probe.number;
-
-/** The repository the test issue is created in: the one grant is taken as it
- *  stands and said; several get the pick-list of the real grant. */
-async function pickRepository(ctx: PluginSetupContext, granted: { id: string }[]): Promise<string> {
-  if (granted.length === 1) {
-    await ctx.prompts.log.message(`The one repository the app holds, ${granted[0]!.id}, gets the test issue.`);
-    return granted[0]!.id;
-  }
-  const answer = await ctx.prompts.autocomplete({
-    message: 'Which repository gets the test issue?',
-    options: granted.map(repo => ({ value: repo.id, label: repo.id })),
-    maxItems: 12,
-  });
-  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('no repository chosen');
-  return String(answer);
-}
-
-/** The first wait: GitHub must post the issue's creation to this URL with a
- *  seal the module's own check accepts. A verdict is said on the live line and
- *  recorded for the summary, together, in every branch. */
-async function checkIssueDeliveries(probe: Probe, store: Store, cursor: number): Promise<Diaried> {
-  const { ctx, windowMs, checks, repoId, number } = probe;
-  const webhooks = ctx.prompts.spinner();
-  webhooks.start(`webhooks: waiting for GitHub to post about ${repoId}#${number}…`);
-  let posted: Diaried;
-  try {
-    posted = await waitDiary(
-      store,
-      probe,
-      cursor,
-      windowMs,
-      (event, payload) => event === 'issues' && payload?.action === 'opened',
-      line => webhooks.message(line),
-    );
-  } catch (error) {
-    webhooks.cancel('webhooks — a delivery arrived that did not verify');
-    throw error;
-  }
-  if (posted.mine) {
-    const detail = 'issue delivery arrived and verified';
-    webhooks.stop(`webhooks — ${detail}`);
-    checks.push({ name: 'webhooks', pass: true, detail });
-  } else if (posted.others) {
-    const detail = `deliveries arrived, but none about ${repoId}#${number} — the events ticked on the webhook decide what GitHub posts`;
-    webhooks.cancel(`webhooks — ${detail}`);
-    checks.push({ name: 'webhooks', pass: false, detail });
-  } else {
-    const detail = `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not this one, the events are off, or GitHub cannot reach this machine`;
-    webhooks.cancel(`webhooks — ${detail}`);
-    checks.push({ name: 'webhooks', pass: false, detail });
-  }
-  return posted;
-}
-
-/** The second wait needs a comment of its own: the comment path is the
- *  conversation — a person's reply answers a run through exactly this event —
- *  so its arrival is proved the same way. It is skipped only when the webhooks
- *  wait proved nothing arrives at all: the same silence waited out twice
- *  proves nothing new. */
-async function checkCommentDelivery(probe: Probe, store: Store, app: GitHubApp, posted: Diaried) {
-  const { ctx, windowMs, checks, repoId, number } = probe;
-  if (!posted.mine && !posted.others) {
-    await ctx.prompts.log.message(
-      'comments: skipped — it waits on the same webhook; with nothing arriving it could prove nothing.',
-    );
-    checks.push({
-      name: 'comments',
-      pass: false,
-      detail: 'not tested — no webhook arrived for the webhooks check either',
-    });
-    return;
-  }
-  const events = ctx.prompts.spinner();
-  events.start(`comments: posting a comment on ${repoId}#${number}…`);
-  const [owner = '', name = ''] = repoId.split('/');
-  try {
-    await app.octokit.rest.issues.createComment({
-      owner,
-      repo: name,
-      issue_number: number,
-      body: 'aivi add test comment.',
-    });
-    events.message('Posted — waiting for the comment delivery…');
-    const arrived = await waitDiary(
-      store,
-      probe,
-      posted.last,
-      windowMs,
-      (event, payload) =>
-        event === 'issue_comment' && payload?.action === 'created' && payload?.issue?.number === number,
-      line => events.message(line),
-    );
-    if (arrived.mine) {
-      const detail = 'comment delivery arrived and verified — the conversation path is open';
-      events.stop(`comments — ${detail}`);
-      checks.push({ name: 'comments', pass: true, detail });
-    } else {
-      const detail = `the comment delivery did not arrive in ${windowMs / 1000} s — tick Issue comments under "Choose which events must notify the webhook" on the app`;
-      events.cancel(`comments — ${detail}`);
-      checks.push({ name: 'comments', pass: false, detail });
-    }
-  } catch (error) {
-    events.cancel('comments — stopped before the comment delivery could be seen');
-    throw error;
-  }
-}
-
-/** The newest diary row id right now. Whatever exists before a test starts is
- *  nobody's business; anything the test draws lands with a larger id. */
-const latestId = (store: Store): number => {
-  let last = 0;
-  let rows = store.requests({ sinceId: last });
-  while (rows.length) {
-    last = rows[rows.length - 1]!.id;
-    rows = store.requests({ sinceId: last });
-  }
-  return last;
-};
-
-/** What one wait saw in the diary. */
-interface Diaried {
-  /** Verified deliveries this wait accepts and that name our issue — its proof. */
-  mine: number;
-  /** Verified deliveries about other issues: the URL works; the events ticked
-   *  on the webhook decide what arrives. */
-  others: number;
-  /** The diary cursor to hand to the next wait. */
-  last: number;
-}
-
-/**
- * Watch the diary from `cursor` until one verified delivery that `accepts`
- * names our issue, or `ms` has passed. Every delivery is verified with the
- * module's own seal check first — GitHub signs the raw bytes, so the diary's
- * stored body is what stands in for them (the host logs what arrived). A
- * delivery that fails verification ends the installer at once: the secret
- * would be wrong for every delivery, so waiting cannot help.
- */
-async function waitDiary(
-  store: Store,
-  probe: Probe,
-  cursor: number,
-  ms: number,
-  accepts: (event: string, payload: any) => boolean,
-  say: (line: string) => void,
-): Promise<Diaried> {
-  const { webhookSecret } = probe;
-  const webhookPath = GITHUB_WEBHOOK_PATH;
-  let mine = 0;
-  let others = 0;
-  let last = cursor;
-  await new Promise<void>((settledPromise, failed) => {
-    let done = false;
-    let poll: ReturnType<typeof setTimeout> | undefined;
-    let expiry: ReturnType<typeof setTimeout> | undefined;
-    const read = (): void => {
-      // `aivi host clear-logs` can empty the diary and restart its ids below
-      // our cursor; when that happens, follow the fresh diary, not the mark.
-      if (latestId(store) < last) last = 0;
-      for (const row of store.requests({ method: 'POST', path: webhookPath, sinceId: last })) {
-        last = row.id;
-        if (row.truncated)
-          throw new Error(
-            `a delivery arrived but the diary cut its body at 8 KiB (row ${row.id}) — verification needs the whole body.`,
-          );
-        const body = Buffer.from(row.body ?? '', 'utf8');
-        if (!verifyWebhookSignature(webhookSecret, body, row.headers['x-hub-signature-256'] ?? ''))
-          throw new Error(
-            `a delivery arrived but failed the module's own check: bad signature (HTTP ${row.status}).` +
-              ' The secret pasted here is not the one GitHub sends.',
-          );
-        const event = row.headers['x-github-event'] ?? '';
-        const payload = JSON.parse(row.body ?? '{}');
-        say(`Heard: ${describeDelivery(event, payload)}`); // every delivery, the moment it lands
-        if (!aboutProbe(payload, probe)) {
-          others++;
-          continue;
-        }
-        // The proof is in: a passed wait is nobody's waiting room, and the
-        // stop's own read finishes nothing this loop has left to say.
-        if (accepts(event, payload)) {
-          mine++;
-          stop();
-          return;
-        }
-      }
-    };
-    const stop = (error?: Error): void => {
-      if (done) return;
-      done = true;
-      if (poll !== undefined) clearTimeout(poll);
-      if (expiry !== undefined) clearTimeout(expiry);
-      if (error === undefined) {
-        try {
-          read(); // the deadline read: complete even if a tick was late
-        } catch (cause) {
-          failed(cause as Error);
-          return;
-        }
-        settledPromise();
-      } else failed(error);
-    };
-    const tick = (): void => {
+/** The one wait: a delivery must land at this aivi's route and verify against
+ *  the pasted secret. The trigger is the installation act the person is doing
+ *  right now — GitHub posts `installation` for it; when the history holds one
+ *  already, the installer re-asks GitHub for it (the replay carries the app's
+ *  current secret, so a replay that verifies proves the paste). A delivery
+ *  that arrives about anything else still proves the URL and the secret, and
+ *  is said as the verdict too — silence is the only failure. */
+async function probeInstallation(
+  ctx: PluginSetupContext,
+  app: GitHubApp,
+  webhookUrl: string,
+  webhookSecret: string,
+  history: { id: string; event: string }[],
+): Promise<{ name: string; pass: boolean; detail: string }> {
+  const windowMs = probeWindowMs();
+  const replay = history.find(delivery => INSTALLATION_EVENTS.has(delivery.event));
+  const spinner = ctx.prompts.spinner();
+  spinner.start('webhooks: waiting for a delivery to land…');
+  const posted = await ctx.withStore(async store => {
+    // The cursor is taken **before** the trigger: a replay that lands in the
+    // seconds before the store opens must still be ahead of the mark, and
+    // whatever the diary already held is nobody's business.
+    const cursor = latestId(store);
+    if (replay) {
       try {
-        read();
-      } catch (cause) {
-        stop(cause as Error);
-        return;
+        await app.redeliverWebhook(replay.id);
+        spinner.message('Re-asked GitHub for its own installation delivery — waiting for the replay to land…');
+      } catch (error) {
+        spinner.message(
+          `The replay was refused (${errorMessage(error)}) — install or re-approve the app; it posts as we wait.`,
+        );
       }
-      // Self-rescheduling: one pending timer, always, and a slow read
-      // cannot pile up behind itself. And a read that ended the wait is
-      // never re-armed: no timer outlives the verdict.
-      if (done) return;
-      poll = setTimeout(tick, POLL_MS);
-    };
-    poll = setTimeout(tick, POLL_MS); // the reliable arrival signal across processes: a re-read
-    expiry = setTimeout(() => stop(), ms); // the window's end: a known instant
-    try {
-      read(); // whatever already arrived before the watching began
-    } catch (cause) {
-      stop(cause as Error);
+    } else {
+      spinner.message(
+        'No installation delivery to replay — install the app (or approve its grant) now; it posts as we wait.',
+      );
     }
+    return waitDiary(
+      store,
+      {
+        path: GITHUB_WEBHOOK_PATH,
+        secret: webhookSecret,
+        windowMs,
+        accepts: (event, payload) => INSTALLATION_EVENTS.has(event) && payload?.action !== 'deleted',
+        about: () => true, // every delivery about this URL proves reach and secret; names are for the live line
+      },
+      cursor,
+      line => spinner.message(line),
+    );
   });
-  return { mine, others, last };
+  if (posted.mine) {
+    const detail = 'the installation delivery arrived and verified';
+    spinner.stop(`webhooks — ${detail}`);
+    return { name: 'webhooks', pass: true, detail };
+  }
+  if (posted.others) {
+    const detail =
+      'deliveries arrived and verified — the URL and the secret are proved, though no installation event among them';
+    spinner.stop(`webhooks — ${detail}`);
+    return { name: 'webhooks', pass: true, detail };
+  }
+  const detail = `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not ${webhookUrl}, the events are off, or GitHub cannot reach this machine`;
+  spinner.cancel(`webhooks — ${detail}`);
+  return { name: 'webhooks', pass: false, detail };
 }
 
 export default setup;
