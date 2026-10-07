@@ -103,7 +103,7 @@ orchestration around it, all started by one `aivi serve`.
 
 ## Where things are
 
-`packages/{core,host,knowledge,plugin,browser,github,channel-discord,channel-slack,tracker-linear,forge-github,opencode,cli}` with tests in
+`packages/{core,host,knowledge,plugin,browser,github,channel-discord,channel-slack,tracker-linear,tracker-github,forge-github,opencode,cli}` with tests in
 `packages/*/test/*.test.ts` (`node:test`; real SQLite and QMD, the real v2
 client against a mock server). `dist/` is built by `npm run build`
 (TypeScript 7, incremental); tests need no build — they run from sources
