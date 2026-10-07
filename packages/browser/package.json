@@ -1,6 +1,6 @@
 {
   "name": "@aivi/browser",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "exports": {
     ".": {
@@ -35,19 +35,19 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.1",
+    "@aivi/core": "^0.8.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "chrome-devtools-mcp": "1.9.0",
     "zod": "4.1.13",
-    "@aivi/plugin": "^0.1.0"
+    "@aivi/plugin": "^0.9.0"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.1",
-    "@aivi/plugin": "^0.1.0"
+    "@aivi/host": "^0.9.0",
+    "@aivi/plugin": "^0.9.0"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.1",
-    "@aivi/plugin": "^0.1.0",
+    "@aivi/host": "^0.9.0",
+    "@aivi/plugin": "^0.9.0",
     "@clack/prompts": "1.8.1"
   }
 }

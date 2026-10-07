@@ -1,6 +1,6 @@
 {
   "name": "@aivi/channel-discord",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "type": "module",
   "exports": {
     ".": {
@@ -39,17 +39,17 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.1",
-    "@aivi/plugin": "^0.1.0",
+    "@aivi/core": "^0.8.0",
+    "@aivi/plugin": "^0.9.0",
     "commander": "15.0.0",
     "discord.js": "14.27.0",
     "zod": "4.1.13"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^0.9.0"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.1",
+    "@aivi/host": "^0.9.0",
     "@clack/prompts": "1.8.1"
   }
 }
