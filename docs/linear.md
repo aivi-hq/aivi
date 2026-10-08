@@ -198,7 +198,10 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    (ruled 2026-10-02, P6): it cancels a waiting request for that ticket,
    wakes the walk, and the walk reads the board afresh — a person's move on
    a queued ticket is cancel-on-move, the mechanism that replaced the
-   fulfilment re-check. The issue is re-read from the API for every such
+   fulfilment re-check. The exception is the lane model (ruled by the human
+   2026-10-08): a ticket sitting in a **human lane that is not the queue**,
+   or in a state **named nowhere in the array**, is out of sight, out of
+   mind — its events cancel a waiting request and wake nothing. The issue is re-read from the API for every such
    change, so label and state names are current. A **create** is a state
    change too (ruled 2026-10-06): an issue is born in its state — Linear's
    Triage, a lane like any other — and a front door that never rang the bell
@@ -319,26 +322,30 @@ recording.
 3. `soul.md` in the home, and the assistant's agent file shipped in
    `packages/cli/templates/agents/` as the strong default — rename both if you choose another name.
 4. `aivi projects add` — it runs Linear's project-setup step (the plugin's
-   `./setupProject`), which asks which teams may work the project, then
-   offers the project's OpenCode agents as a pick-list for each lane (with
-   `-- None --` for a lane humans work, and "does work in this lane write
-   files?" — yes writes `worktree: true` — asked only of worked lanes and
-   only when a forge is configured). The lanes land in the **core** ordered
+   `./setupProject`), which asks which teams may work the project, then asks
+   **every board state** what kind of lane it is: Agent (aivi delegates
+   tickets there to an agent), Human (aivi ignores tickets there; it is only
+   ever used as a queue or a destination), or None (the state is not part of
+   aivi's workflow). One log entry says all three before the first question,
+   and the question starts on the answer Linear's `type` suggests — a
+   highlight, not a ruling. An Agent answer is followed by the agent
+   pick-list and the worktree question ("does work happen on the ticket's
+   branch?" — yes writes `worktree: true`), asked only of worked lanes and
+   only when a forge is configured. The lanes land in the **core** ordered
    array `projects.<id>.lanes`, in board order (type group, then position);
-   **closed states (Done, Canceled, Duplicate) are never written** — the
-   tracker recognizes them by type, and a run ending in the last configured
-   lane moves nowhere: a person closes the ticket. After **all** lanes are
-   configured comes the queue: **one** question (ruled 2026-10-02, never a
-   per-lane ask) — which lane waits with work while the working lanes are
-   full, `-- None --` included. Its options are only the lanes that could
-   legally hold the queue — a lane whose next works nobody is no option, and
-   the last lane feeds nothing — and **a lane that names an agent is never an
-   option** (ruled 2026-10-02, P4): the queue is where people wait for a
-   worker, never a working lane itself. No lanes means nothing is picked up
-   for the project and its tickets are silent; the assistant still answers
-   pings. A hand delegation always gets the fixed refusal, never the
-   assistant. With no forge installed the project is repo-less
-   (memory and knowledge, no checkout).
+   a state answered None is written nowhere — aivi never reads it and never
+   moves a ticket into it. After **all** lanes are configured comes the
+   queue: **one** question (ruled 2026-10-02, never a per-lane ask) — which
+   lane waits with work while the working lanes are full, `-- None --`
+   included. Its options are only the lanes that could legally hold the
+   queue — a lane whose next works nobody is no option, and the last lane
+   feeds nothing — and **a lane that names an agent is never an option**
+   (ruled 2026-10-02, P4): the queue is where people wait for a worker,
+   never a working lane itself. No lanes means nothing is picked up for the
+   project and its tickets are silent; the assistant still answers pings. A
+   hand delegation always gets the fixed refusal, never the assistant. With
+   no forge installed the project is repo-less (memory and knowledge, no
+   checkout).
 5. Later, only if a second face in Linear's UI is wanted: another app, its
    `LINEAR_<FACE>_*` secrets, `apps.<face>: {}`, and `primary` naming
    the data-carrying app (required once several apps are configured).

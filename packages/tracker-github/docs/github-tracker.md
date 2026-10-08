@@ -60,10 +60,16 @@ names are the board's own `Status` options:
 A lane naming an `agent` is worked; one naming none is worked by humans; a
 Status option named nowhere in the array is silence. `queue: true` marks the
 workflow's **one** queue lane, with the same load rules as Linear's wizard.
-**Closed Status options (GitHub's own `status: DONE`) are never written**: the
-tracker recognizes them by that flag, and a run ending in the last configured
-lane moves nowhere — a person closes the ticket. `aivi projects add` writes
-the array for you. `board` and `repos` are never defaulted.
+**GitHub says nothing about what a Status option means** — options carry no
+state flag, and a board workflow's rule is not in the API (probed live
+2026-10-08). So the wizard asks what every option is, in board order:
+**Agent** (aivi delegates tickets there to an agent), **Human** (aivi ignores
+tickets there; it is only ever used as a queue or a destination), or **None**
+(the option is not part of aivi's workflow: never read, never moved into).
+A ticket's open or closed state is the board's workflows' business; aivi
+never works a closed ticket and ignores everything else about it.
+`aivi projects add` writes the array for you. `board` and `repos` are never
+defaulted.
 
 The board's `Status` options are the lanes, and aivi **never creates or
 renames** them (D4): a lane whose option the board does not carry is said, not
@@ -98,7 +104,11 @@ never presumed: no health answer offers "I started the server. Retry" or
 "Continue anyway", and continuing writes the configuration with UNVERIFIED —
 the unproved fact is precisely "GitHub can reach this machine" — in the
 summary. The board itself is probed by `aivi projects add`, where the board
-id is in hand: a test card pays the tracker's every mutation and the diary
-must echo each delivery back seal-verified; then the card is cleared,
-archived, closed not-planned and its comment deleted — GitHub has no API to
+id is in hand: a test card pays the tracker's every mutation — Status moves
+to the next option in board order the card is not on — and the diary must
+echo each delivery back seal-verified. The eyes reaction is paid and read
+back, not waited for: GitHub posts reaction events only to subscribers, and
+aivi is not one. Then the card is cleared, archived, its reaction and comment
+deleted, and closed not-planned — unless a workflow on the board closed the
+card first, in which case aivi says how GitHub left it. GitHub has no API to
 delete an issue. Restart `aivi serve` to load the tracker.

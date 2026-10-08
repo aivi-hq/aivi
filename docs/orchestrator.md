@@ -79,10 +79,12 @@ By default, workflow movement follows that same order. A lane can override its n
 
 **Ruled 2026-10-02:** the config key for a lane's name stays **`name`** (the
 operator agreed `lane.lane` is weird; everything else in this document's
-vocabulary stands), and **closed states are never configured** — the tracker
-recognizes them by type, so Done, Canceled and Duplicate are not lanes in
-the array. A run ending in the last configured lane moves nowhere: a person
-closes the ticket.
+vocabulary stands). The same ruling's "closed states are never configured"
+was the assistant's own decision, not the operator's, and is **superseded
+2026-10-08**: every board option is asked, and the person answers Agent,
+Human or None. A state answered None is not in the array — aivi never reads
+it and never moves a ticket into it. A run ending in the last configured
+lane moves nowhere.
 
 | Type            | How it is recognized            | What happens                                                                           |
 | --------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
