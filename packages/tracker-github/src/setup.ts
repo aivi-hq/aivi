@@ -1,24 +1,23 @@
 /**
- * The setup `aivi add @aivi/tracker-github` runs: everything the GitHub
- * tracker specifically lives on lives in this file.
+ *  The setup `aivi add @aivi/tracker-github` runs: what the GitHub tracker
+ *  specifically lives on lives in this file.
  *
- *  The app's identity is the home's (D3): when `<home>/.env` already holds it —
- *  the forge was installed first, or this installer wrote it — nothing is asked,
- *  because the forge and the tracker are **one app**. When it does not, the
- *  creation guide prints here in full and the id and .pem land in `.env` beside
- *  the webhook secret.
+ *  The app's identity is the home's (D3), and the guide and its two questions
+ *  are `@aivi/github`'s (`appIdentity`), shared with the forge's installer:
+ *  when `<home>/.env` already holds the id and key — the forge was installed
+ *  first, or this installer wrote them — nothing is asked, because the forge
+ *  and the tracker are **one app**.
  *
  *  Before anything is written, the truth is read at GitHub with the app's own
- *  JWT: that the grant allows Issues and Organization projects (the desk and
- *  the board), that the webhook points at this machine and subscribes to
- *  `issue_comment`, `issues` and `projects_v2_item`, and what the last delivery
- *  was answered. Then the secret — the home's when it holds one, else pasted
- *  — is proved by one wait: a delivery must land at this aivi's route and
- *  verify against it. The
- *  trigger is the installation itself — the person is installing or approving
- *  the app right now, and GitHub posts `installation` for that act; when the
- *  delivery history already holds one, the installer re-asks GitHub for it and
- *  watches the replay land.
+ *  JWT: that the grant allows Issues and Projects (the desk and the board),
+ *  that the webhook points at this machine and subscribes to `issue_comment`,
+ *  `issues` and `projects_v2_item`, and what the last delivery was answered.
+ *  Then the webhook secret — the home's when it holds one, else pasted — is
+ *  proved by one wait: a delivery must land at this aivi's route and verify
+ *  against it. The trigger is the installation itself — the person is
+ *  installing or approving the app right now, and GitHub posts `installation`
+ *  for that act; when the delivery history already holds one, the installer
+ *  re-asks GitHub for it and watches the replay land.
  *
  *  The health gate is a choice, not a stop: no live aivi, the person picks
  *  "I started the server. Retry" or "Continue anyway". Continuing writes
@@ -28,27 +27,13 @@
  *  id is in hand. Performing a restart never belongs to this flow — the CLI
  *  owns that, and reports it as it happens.
  */
-import { readFile } from 'node:fs/promises';
 import { configSchema, errorMessage, getLogger } from '@aivi/core';
-import {
-  GITHUB_APP_ID_ENV,
-  GITHUB_PRIVATE_KEY_ENV,
-  GITHUB_WEBHOOK_SECRET_ENV,
-  GitHubApp,
-  type GitHubCredentials,
-  githubCredentials,
-  pemForEnvFile,
-  resolveKeyPath,
-} from '@aivi/github';
+import { appIdentity, GITHUB_WEBHOOK_SECRET_ENV, GitHubApp } from '@aivi/github';
 import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, settled } from '@aivi/plugin';
 import type { GithubConfig } from './config.ts';
 import { MODULE_ID } from './config.ts';
 import { gateHost, hostIsUp, INSTALLATION_EVENTS, latestId, probeWindowMs, waitDiary } from './probe.ts';
 import { GITHUB_WEBHOOK_PATH } from './tracker.ts';
-
-/** The app's numeric id, which is what aivi authenticates with. Its *name* is
- *  for the links a person opens; the number is for everything else. */
-const APP_ID = /^\d{1,20}$/;
 
 /** What the app's webhook must subscribe to, each with what the tracker would
  *  never hear again without it. */
@@ -102,87 +87,21 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   }
   const webhookUrl = `${base}${GITHUB_WEBHOOK_PATH}`;
 
-  // 3. The app's identity — the home's, shared with the forge (D3). When the
-  //    env already holds it, nothing is asked: one app, one credential.
-  let credentials: GitHubCredentials;
-  try {
-    credentials = githubCredentials();
-    await ctx.prompts.log.message(
-      'The home already holds a GitHub app identity — the tracker works as the same app as the forge.',
-    );
-  } catch {
-    ctx.prompts.note(
-      [
-        'aivi works on GitHub as its own app, never as you: it comments,',
-        'moves board items, and labels as the bot, so the work in front of',
-        'a reviewer is aivi’s and the credit is yours.',
-        '',
-        '1. Open https://github.com/settings/apps/new',
-        '2. GitHub App name is the bot’s name; homepage and contact do not',
-        '   matter.',
-        `3. Webhook URL: ${webhookUrl}`,
-        '   Under "Subscribe to events", tick: Issue comment, Issues,',
-        '   and Projects v2 item.',
-        '4. Under "Repository permissions", set:',
-        '   - Contents: Read and write',
-        '   - Issues: Read and write',
-        '   - Pull requests: Read and write',
-        '   Under "Organization permissions", set:',
-        '   - Projects: Read and write',
-        '5. Press Create. The App ID is the number at the top of the app’s',
-        '   settings page, next to "App ID".',
-        '6. On that page, under "Private keys", press "Generate a private',
-        '   key". GitHub downloads a .pem file (into your Downloads folder).',
-        '7. Press "Install App", pick the account that holds the',
-        '   repositories, choose "Only select repositories", and select the',
-        '   repositories you want to use aivi in. Without this the app',
-        '   reads nothing.',
-        '',
-        'If the app already exists and is installed, saving new permissions',
-        'is not enough. GitHub sends an email asking you to approve them.',
-        'You can also approve on GitHub: open the organization’s Settings,',
-        'choose "GitHub Apps" under "Third-party Access", and press',
-        'Configure.',
-      ].join('\n'),
-      'Creating the GitHub app',
-    );
-    const appId = Number(
-      String(
-        settled(
-          ctx,
-          await ctx.prompts.text({
-            message: 'The App ID — the number on the app page (step 5)',
-            placeholder: 'e.g. 12345',
-            validate: value =>
-              value !== undefined && APP_ID.test(value.trim()) ? undefined : 'the numeric App ID, as on the app page',
-          }),
-        ),
-      ).trim(),
-    );
-    // The key is asked for as a file because it is many lines: a paste prompt
-    // takes one. The path itself is read once — the key is what stays, in .env.
-    const keyPath = settled(
-      ctx,
-      await ctx.prompts.text({
-        message: 'The path to the .pem from step 6 — aivi reads it once and saves the key in the home’s .env',
-        placeholder: '~/.config/aivi/aivi-agent.pem',
-        validate: value => (value?.trim() ? undefined : 'the path to the .pem GitHub gave you'),
-      }),
-    );
-    let privateKey: string;
-    try {
-      privateKey = await readFile(resolveKeyPath(String(keyPath)), 'utf8');
-    } catch (error) {
-      throw new Error(`the private key could not be read: ${errorMessage(error)}`);
-    }
-    if (!privateKey.includes('PRIVATE KEY-----'))
-      throw new Error(
-        'that file is not a PEM private key (no "-----BEGIN … PRIVATE KEY-----" line) — GitHub gives it to you as a .pem when the app is created',
-      );
-    await ctx.writeSecret(GITHUB_APP_ID_ENV, String(appId));
-    await ctx.writeSecret(GITHUB_PRIVATE_KEY_ENV, pemForEnvFile(privateKey));
-    credentials = { appId, privateKey };
-  }
+  // 3. The app's identity — the home's, shared with the forge (D3). The guide
+  //    and its two questions are @aivi/github's, so one app is asked for once
+  //    however the two plugins were installed; when the home already holds the
+  //    identity, nothing is asked.
+  ctx.prompts.note(
+    [
+      'aivi works on GitHub as its own app, never as you: it comments,',
+      'moves board items, and labels as the bot, so the work in front of',
+      'a reviewer is aivi’s and the credit is yours.',
+    ].join('\n'),
+    'The GitHub app aivi works as',
+  );
+  const credentials = await appIdentity(ctx, {
+    webhook: { url: webhookUrl, events: 'Issue comment, Issues, and Projects v2 item' },
+  });
 
   // The proof below runs in this process, which read `.env` before any key was
   // in it: hand the credential to the connection directly, so what is tested

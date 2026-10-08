@@ -1,7 +1,7 @@
 {
   "name": "@aivi/github",
   "version": "0.0.0",
-  "description": "The GitHub app aivi works as: the credential, the one installation, the API client, the git transport, the webhook check, and the worker signature. A plain library — the forge and the tracker share it; it registers nothing and owns no config block.",
+  "description": "The GitHub app aivi works as: the credential, the identity questions both installers ask, the one installation, the API client, the git transport, the webhook check, and the worker signature. A plain library — the forge and the tracker share it; it registers nothing and owns no config block.",
   "type": "module",
   "exports": {
     ".": {

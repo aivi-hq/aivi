@@ -1,37 +1,27 @@
-/** The setup `aivi add @aivi/forge-github` runs: everything GitHub-specific
- *  lives in this file. It guides the whole of what a person has to do on
- *  GitHub — create the app, paste its public key, grant it the repositories —
- *  and then proves each fact at GitHub before writing a byte: that the id and
- *  the key belong to one app, that exactly one installation exists, and that
- *  the installation really reads a repository, by reading that repository's
- *  pull requests through it.
+/** The setup `aivi add @aivi/forge-github` runs. It guides what a person has
+ *  to do on GitHub — create the app, give aivi its key, select the
+ *  repositories — and then proves each fact at GitHub before writing a byte:
+ *  that the id and the key belong to one app, that exactly one installation
+ *  exists, and that the installation really reads a repository, by reading
+ *  that repository's pull requests through it.
  *
  *  The app's identity lands in `<home>/.env` — `GITHUB_APP_ID` beside
  *  `GITHUB_APP_PRIVATE_KEY` (ruled 2026-10-07): the forge and the tracker are
- *  one app, so the credential is a home fact, not a plugin block's. The block
- *  written to `config.json` is empty: it only marks the forge as configured,
- *  which is what makes core offer the forge role to a new project.
+ *  one app, so the credential is a home fact, not a plugin block's. The
+ *  guide and its two questions are therefore `@aivi/github`'s (`appIdentity`),
+ *  shared with the tracker's installer; when the home already holds the
+ *  identity, nothing is asked. The block written to `config.json` is empty:
+ *  it only marks the forge as configured, which is what makes core offer the
+ *  forge role to a new project.
  *
  *  The installation is a human's act and aivi cannot do it: no throwaway
  *  ticket, no write, is asked of a person to prove the grant — one read is
  *  enough. Writes are proven once, at the live gate.
  */
 
-import { readFile } from 'node:fs/promises';
 import { getLogger } from '@aivi/core';
-import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, GitHubApp, pemForEnvFile, resolveKeyPath } from '@aivi/github';
-import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
-
-/** The app's numeric id, which is what aivi authenticates with. Its *name* is
- *  for the links a person opens; the number is for everything else. */
-const APP_ID = /^\d{1,20}$/;
-
-/** A prompt the person cancelled is not an answer. */
-async function settled<T>(ctx: PluginSetupContext, answer: Promise<T | symbol>): Promise<T> {
-  const value = await answer;
-  if (ctx.prompts.isCancel(value)) throw new PluginSetupCancelled('a prompt was cancelled');
-  return value as T;
-}
+import { appIdentity, GitHubApp } from '@aivi/github';
+import type { PluginSetup, PluginSetupContext, PluginSetupResult } from '@aivi/plugin';
 
 const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupResult> => {
   const log = getLogger(['aivi', 'forge-github']);
@@ -50,74 +40,9 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     'The GitHub app aivi works as',
   );
 
-  ctx.prompts.note(
-    [
-      '1. Open https://github.com/settings/apps/new',
-      '2. GitHub App name is the bot’s name; homepage and contact do not',
-      '   matter. Webhooks: point them at',
-      '   https://<your aivi host>/github/webhooks, where the tracker',
-      '   listens (harmless to leave unset if you only want the forge).',
-      '3. Under "Repository permissions", set:',
-      '   - Contents: Read & write       (aivi reads and pushes branches)',
-      '   - Pull requests: Read & write  (pull requests, reviews, replies)',
-      '   - Issues: Read & write         (tracker-github; harmless to grant)',
-      '4. Press Create. The App ID is the number at the top of the app’s',
-      '   settings page, next to "App ID".',
-      '5. On that page, under "Private keys", press "Generate a private',
-      '   key". GitHub downloads a .pem file (into your Downloads folder).',
-      '6. Press "Install App", pick the account that holds the repositories,',
-      '   choose "Only select repositories", and select the repositories',
-      '   you want to use aivi in. Without this the app reads nothing and',
-      '   the check below fails.',
-      '',
-      'If the app already exists and is installed, saving new permissions',
-      'is not enough. GitHub sends an email asking you to approve them.',
-      'You can also approve on GitHub: open the organization’s Settings,',
-      'choose "GitHub Apps" under "Third-party Access", and press',
-      'Configure.',
-    ].join('\n'),
-    'Creating the GitHub app',
-  );
-
-  const appId = Number(
-    String(
-      await settled(
-        ctx,
-        ctx.prompts.text({
-          message: 'The App ID — the number on the app page (step 4)',
-          placeholder: 'e.g. 12345',
-          validate: value =>
-            value !== undefined && APP_ID.test(value.trim()) ? undefined : 'the numeric App ID, as on the app page',
-        }),
-      ),
-    ).trim(),
-  );
-
-  // The key is asked for as a file because it is many lines: a paste prompt
-  // takes one. GitHub hands this file out when the app is created. The path
-  // itself is read once — the key is what stays, in .env — and the person
-  // is told that, because a path a tool never remembers is not a path to
-  // curate.
-  const keyPath = await settled(
-    ctx,
-    ctx.prompts.text({
-      message: 'The path to the .pem from step 5 — aivi reads it once and saves the key in the home’s .env',
-      placeholder: '~/.config/aivi/aivi-agent.pem',
-      validate: value => (value?.trim() ? undefined : 'the path to the .pem GitHub gave you'),
-    }),
-  );
-  let privateKey: string;
-  try {
-    privateKey = await readFile(resolveKeyPath(String(keyPath)), 'utf8');
-  } catch (error) {
-    throw new Error(`the private key could not be read: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!privateKey.includes('PRIVATE KEY-----'))
-    throw new Error(
-      'that file is not a PEM private key (no "-----BEGIN … PRIVATE KEY-----" line) — GitHub gives it to you as a .pem when the app is created',
-    );
-  await ctx.writeSecret(GITHUB_APP_ID_ENV, String(appId));
-  await ctx.writeSecret(GITHUB_PRIVATE_KEY_ENV, pemForEnvFile(privateKey));
+  // The guide, the App ID and the .pem are the library's (one app, one set of
+  // questions): when the home already holds the identity, nothing is asked.
+  const { appId, privateKey } = await appIdentity(ctx);
 
   // The proof below runs in this process, which read `.env` before the key was
   // in it: hand the credential to the connection directly, so what is tested
@@ -134,7 +59,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   const { data: grant } = await app.octokit.rest.apps.listReposAccessibleToInstallation({ per_page: 100 });
   if (!grant.repositories.length)
     throw new Error(
-      `installation #${app.installationId} reaches no repository: on the installation page, choose "Only select repositories" and add the ones aivi works`,
+      `installation #${app.installationId} reaches no repository: on the installation page, choose "Only select repositories" and select the repositories you want to use aivi in`,
     );
   const first = grant.repositories.find(r => !r.archived) ?? grant.repositories[0]!;
   const [owner = '', name = ''] = first.full_name.split('/');

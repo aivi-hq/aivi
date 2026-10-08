@@ -29,6 +29,7 @@ export {
   resolveKeyPath,
   runGit,
 } from './github.ts';
+export { appIdentity, type GitHubIdentityGuide } from './identity.ts';
 export { parseWorker, signComment } from './signature.ts';
 export {
   GITHUB_WEBHOOK_SECRET_ENV,
