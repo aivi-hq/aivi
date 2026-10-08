@@ -1,10 +1,13 @@
 /** `aivi remove` — take a plugin out of the server home: its entry leaves the
- *  `aivi-plugins` list in app/package.json, the config block its `./setup`
- *  wrote is dropped, npm uninstalls the package, and the editor schema is
- *  rebuilt before aivi comes back without the module. The module id is asked
- *  from the package's own `./config` declaration while the package is still
- *  installed; the CLI itself edits only the plain-JSON list. This removes
- *  a plugin — `aivi uninstall` is the one that takes aivi off the machine. */
+ *  `aivi-plugins` list in app/package.json, the config it wrote is dropped —
+ *  the `plugins` block, the `projectDefaults` section, and its section under
+ *  every project, because a leftover section of an unlisted plugin makes
+ *  config.json un-loadable — npm uninstalls the package, and the editor
+ *  schema is rebuilt before aivi comes back without the module. The module id
+ *  is asked from the package's own `./config` declaration while the package is
+ *  still installed; the CLI itself edits only the plain-JSON list. This
+ *  removes a plugin — `aivi uninstall` is the one that takes aivi off the
+ *  machine. */
 import { spawnSync } from 'node:child_process';
 import { PLUGIN_ALIASES } from './add.ts';
 import { pluginNames, removePluginName } from './manifest.ts';
@@ -19,8 +22,14 @@ export interface RemoveOptions {
 }
 
 export interface RemoveIo {
-  /** Ask the installed package its module id and drop its config block. */
-  removeBlock(name: string, options: RemoveOptions): Promise<{ moduleId: string; blockRemoved: boolean }>;
+  /** Ask the installed package its module id and drop its whole config: the
+   *  `plugins` block, the `projectDefaults` section, and its section under
+   *  every project — a leftover section of an unlisted plugin makes
+   *  config.json un-loadable. */
+  removeBlock(
+    name: string,
+    options: RemoveOptions,
+  ): Promise<{ moduleId: string; blockRemoved: boolean; sectionsRemoved: number }>;
   uninstall(name: string, appDir: string): void;
   rebuildSchema(home: string, appDir: string): Promise<void>;
   healthUrl(home: string): Promise<string>;
@@ -36,7 +45,7 @@ const defaultIo: RemoveIo = {
       pluginRemove: (
         name: string,
         options: { configPath: string },
-      ) => Promise<{ moduleId: string; blockRemoved: boolean }>;
+      ) => Promise<{ moduleId: string; blockRemoved: boolean; sectionsRemoved: number }>;
     }>(options.appDir, options.home, 'dist/cli/plugin-remove.js');
     return pluginRemove(name, { configPath: `${options.home}/config.json` });
   },
@@ -88,13 +97,19 @@ export async function remove(args: string[], options: RemoveOptions, io: RemoveI
       `${name} is not in the plugin list (aivi-plugins in app/package.json); nothing to remove. \`aivi remove\` takes browser, discord, slack, linear or a listed package name.`,
     );
 
-  // The block first, while the package can still say its module id; then the
+  // The config first, while the package can still say its module id; then the
   // entry, so no moment has a block listed to a plugin nobody imports; then
   // npm. A failing npm leaves the package installed but inert — out of the
-  // list, its block gone — and says so.
-  const { moduleId, blockRemoved } = await io.removeBlock(pkg, options);
+  // list, its config gone — and says so.
+  const { moduleId, blockRemoved, sectionsRemoved } = await io.removeBlock(pkg, options);
   removePluginName(options.appDir, pkg);
-  io.log(`${pkg} is out of the plugin list${blockRemoved ? ` and its plugins.${moduleId} block is gone` : ''}.`);
+  const said = [];
+  if (blockRemoved) said.push(`its plugins.${moduleId} block is gone`);
+  if (sectionsRemoved)
+    said.push(
+      `its ${sectionsRemoved} section${sectionsRemoved === 1 ? '' : 's'} under projects and projectDefaults ${sectionsRemoved === 1 ? 'is' : 'are'} gone`,
+    );
+  io.log(`${pkg} is out of the plugin list${said.length ? ` — ${said.join('; ')}` : ''}.`);
   try {
     io.uninstall(pkg, options.appDir);
   } catch (error) {
@@ -104,12 +119,14 @@ export async function remove(args: string[], options: RemoveOptions, io: RemoveI
   }
 
   // The editor schema drops the block's shape with the plugin; the truth of
-  // the home is the list, so a cache that cannot rebuild is a warning.
+  // the home is the list, so a cache that cannot rebuild is a warning. A
+  // rebuild that fails says plainly that config.json does not load and names
+  // the one repair: a section of a plugin no longer listed.
   try {
     await io.rebuildSchema(options.home, options.appDir);
   } catch (error) {
     io.warn(
-      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}); \`aivi add\` or \`aivi update\` rebuilds it once config.json loads again.`,
+      `the editor schema was not rebuilt (${error instanceof Error ? error.message : String(error)}): config.json does not load. A section of a plugin that is no longer listed is the usual cause — remove it, then \`aivi add\` or \`aivi update\` rebuilds the schema.`,
     );
   }
 
