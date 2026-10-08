@@ -36,8 +36,13 @@ line (drive-by comments are a public repository's weather). The other two
 events need no gate: a lane or label move needs write access GitHub itself
 enforces.
 
-The project entry routes by **board and repository**. One board is one
-project's whole board; a repository feeds at most one project. The workflow
+The project entry names its **board** and the **repositories** that hold
+its issues. The board's own deliveries name the board and route by its id;
+the ticket's own deliveries — comments and labels — name only the
+repository, so `repos` is what claims them for the project. The ticket's
+words live in the repository too: its title, body, comments, reactions, and
+the `needs-human` label. One board is one project's whole board; a
+repository feeds at most one project. The workflow
 is not a GitHub field: it is **core's** lane array on the project,
 `projects.<id>.lanes` — left to right, the order **is** the priority, and the
 names are the board's own `Status` options:

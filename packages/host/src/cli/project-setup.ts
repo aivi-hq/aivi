@@ -178,13 +178,14 @@ function sayStopped(error: unknown): void {
 }
 
 /** What the contributors have answered so far: the project the first one
- *  named, each one's section whole, the one lane array, and whether any of
- *  them brought a checkout. */
+ *  named, each one's section whole, the one lane array, whether any of
+ *  them brought a checkout, and the repository a forge settled. */
 interface SetupAnswers {
   projectId?: string | undefined;
   sections: Record<string, Record<string, unknown>>;
   lanes?: ProjectLaneInput[];
   cloned: boolean;
+  repository?: string;
 }
 
 /** Run one contributor with its configured context, folding its answer into
@@ -215,8 +216,10 @@ async function runContributor(
   const defaults = (loaded.config.projectDefaults as Record<string, unknown>)[chosen.moduleId];
   if (defaults !== undefined) ctx.projectDefaults = defaults as Record<string, unknown>;
   if (answers.projectId !== undefined) ctx.projectId = answers.projectId;
+  if (answers.repository !== undefined) ctx.forgeRepository = answers.repository;
   const result = await chosen.contributor.setup(ctx);
   answers.projectId ??= result.id;
+  if (result.repository !== undefined) answers.repository ??= result.repository;
   if (result.section) answers.sections[chosen.moduleId] = result.section;
   if (result.lanes) {
     if (answers.lanes) throw new Error(`${chosen.moduleId} also named a lane array; a project has one workflow`);

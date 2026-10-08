@@ -89,6 +89,8 @@ const wizard = (
   answers: unknown[],
   opts: {
     forgeConfigured?: boolean;
+    /** The repository a forge settled, threaded into the context. */
+    forgeRepository?: string;
     agents?: string[];
     options?: SetupBoardOption[];
     /** undefined: the board has the Agent field; 'none': it lacks it. */
@@ -111,6 +113,9 @@ const wizard = (
   const live: string[] = [];
   const tape: string[] = [];
   const asks: { message: string; opts: Record<string, unknown> }[] = [];
+  /** Every grant listing the fake client served: one entry per call, so a
+   *  test can say the same-as-forge answer asked the app nothing. */
+  const listed: string[] = [];
   let next = 0;
   const prompt = async (message: string) => {
     asked.push(message);
@@ -148,6 +153,7 @@ const wizard = (
       return shown;
     },
     async repositories() {
+      listed.push('listed');
       return (opts.repos ?? ['acme/shop']).map(id => ({ id }));
     },
     async ensureLabel(repo, label) {
@@ -180,6 +186,7 @@ const wizard = (
     config: {},
     configPath,
     forgeConfigured: opts.forgeConfigured ?? false,
+    ...(opts.forgeRepository === undefined ? {} : { forgeRepository: opts.forgeRepository }),
     print: () => {},
     prompts: {
       text: async (options: { message: string }) => {
@@ -230,6 +237,7 @@ const wizard = (
     live,
     tape,
     asks,
+    listed,
     root,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
@@ -273,7 +281,7 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
     [
       GATE,
       'The board number — the number at the end of the board URL (github.com/orgs/<org>/projects/1 is board 1)',
-      'Which repositories feed this project?',
+      'Which repositories hold the issues?',
       "Project id — aivi's name for it; GitHub never sees it.",
       'What kind of lane is the "Backlog" option?',
       'Which OpenCode agent works the "Backlog" lane?',
@@ -339,6 +347,38 @@ test('the kind question offers the three answers in the ruled words', async t =>
   const kind = asks.find(a => a.message === 'What kind of lane is the "Backlog" option?');
   assert.ok(kind, 'the kind question was asked');
   assert.deepEqual((kind.opts as { options: unknown[] }).options, [LANE_KIND.agent, LANE_KIND.human, LANE_KIND.none]);
+});
+
+test('a forge that settled a repository is the first answer, and taking it asks the app nothing', async t => {
+  const { contributor, ctx, asked, asks, listed, done, cleanup } = wizard(['skip', '1', 'same', '', ...KINDS, 'Todo'], {
+    forgeRepository: 'acme/shop',
+  });
+  t.after(cleanup);
+  const result = await contributor.setup(ctx);
+  assert.deepEqual(result.section, { board: 1, repos: ['acme/shop'] }, 'the forge answer is the section answer');
+  assert.ok(asked.includes('Which repository holds the issues?'), 'the two-option question was asked');
+  assert.ok(!asked.includes('Which repositories hold the issues?'), 'the pick-list was not');
+  assert.equal(listed.length, 0, 'the app was asked nothing: the forge proved it reads this repository');
+  const question = asks.find(a => a.message === 'Which repository holds the issues?');
+  assert.deepEqual((question!.opts as { options: { value: string; label: string }[] }).options, [
+    { value: 'same', label: 'Same as forge: acme/shop' },
+    { value: 'other', label: 'choose a different repository' },
+  ]);
+  assert.deepEqual(done, ['views:Main', 'label:acme/shop:needs-human'], 'the label is still created there');
+});
+
+test('“choose a different repository” opens the grant pick-list, listed once', async t => {
+  const { contributor, ctx, asked, listed, cleanup } = wizard(
+    ['skip', '1', 'other', ['other/repo'], '', ...KINDS, 'Todo'],
+    { forgeRepository: 'acme/shop' },
+  );
+  t.after(cleanup);
+  const result = await contributor.setup(ctx);
+  assert.deepEqual(result.section, { board: 1, repos: ['other/repo'] }, 'the pick-list answer is written');
+  const at = asked.indexOf('Which repository holds the issues?');
+  assert.ok(at >= 0, 'the two-option question was asked first');
+  assert.equal(asked[at + 1], 'Which repositories hold the issues?', 'the pick-list follows the refusal');
+  assert.equal(listed.length, 1, 'the grant is listed once, only when a pick-list is needed');
 });
 
 test('with a forge configured a worked lane is asked whether it works on the ticket branch; a human lane never is', async t => {

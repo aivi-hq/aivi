@@ -549,9 +549,24 @@ async function askedBoard(ctx: ProjectSetupContext, client: GithubSetupClient): 
   }
 }
 
-/** The repositories whose issues feed this project: a pick-list of the real
- *  grant, never typing. */
+/** The repository whose issues this project works. The board's deliveries
+ *  name the board themselves; comments and labels — the ticket's own
+ *  deliveries — name only the repository, so this list is what claims
+ *  them for the project. When a forge settled one, that answer is offered
+ *  first and picking it asks the app nothing; otherwise the choices are
+ *  the real grant, never typing. */
 async function pickRepos(ctx: ProjectSetupContext, client: GithubSetupClient): Promise<string[]> {
+  if (ctx.forgeRepository) {
+    const answer = await ctx.prompts.select({
+      message: 'Which repository holds the issues?',
+      options: [
+        { value: 'same', label: `Same as forge: ${ctx.forgeRepository}` },
+        { value: 'other', label: 'choose a different repository' },
+      ],
+    });
+    if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('no answer about the repository');
+    if (answer === 'same') return [ctx.forgeRepository];
+  }
   const spinner = ctx.prompts.spinner();
   spinner.start('Asking the app which repositories it can see');
   let granted: { id: string }[];
@@ -567,7 +582,7 @@ async function pickRepos(ctx: ProjectSetupContext, client: GithubSetupClient): P
       'that installation holds no repositories: select the repositories you want to use aivi in on the installation page',
     );
   const picked = await ctx.prompts.multiselect({
-    message: 'Which repositories feed this project?',
+    message: 'Which repositories hold the issues?',
     options: granted.map(repo => ({ value: repo.id, label: repo.id })),
     required: true,
   });

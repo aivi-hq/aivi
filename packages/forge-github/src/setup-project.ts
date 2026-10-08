@@ -131,7 +131,7 @@ export const contributor: ProjectContributor = {
       const found = origin.ok ? parseRemote(origin.stdout) : undefined;
       if (found && `${found.owner}/${found.repo}` === id) {
         await ctx.prompts.log.message(`projects/${projectId}/source is already a checkout of ${id}; left as it is.`);
-        return { id: projectId, cloned: true };
+        return { id: projectId, cloned: true, repository: id };
       }
       throw new Error(
         `projects/${projectId}/source is a checkout of ${found ? `${found.owner}/${found.repo}` : 'something that is not a GitHub repository'}. Move it aside, or choose a project name that has no checkout yet.`,
@@ -153,6 +153,6 @@ export const contributor: ProjectContributor = {
       throw new Error(`clone of ${id} failed: ${cloned.message}`);
     }
     spinner.stop(`Cloned ${id} into projects/${projectId}/source.`);
-    return { id: projectId, cloned: true };
+    return { id: projectId, cloned: true, repository: id };
   },
 };

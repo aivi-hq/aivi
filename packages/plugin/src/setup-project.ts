@@ -41,6 +41,11 @@ export interface ProjectSetupContext {
    *  computes it from the configured plugins; contributors that could work
    *  a lane with git ask their own worktree questions with it. */
   forgeConfigured: boolean;
+  /** The repository an earlier role (a forge) settled, as `owner/repo` —
+   *  undefined when no forge named one. A tracker offers it as the answer
+   *  that is right most of the time instead of asking a person to repeat
+   *  what they just told the wizard. */
+  forgeRepository?: string;
   /** Raw JSON on stdout when the value is for copying (core's `print`). */
   print(value: unknown, output?: OutputBlock[] | string): void;
   /** The very `@clack/prompts` the runner renders with; a cancelled prompt
@@ -78,6 +83,10 @@ export interface ProjectSetupResult {
    *  person named. A forge owns the clone because cloning reaches `origin`.
    *  With no clone the setup leaves an untracked directory. */
   cloned?: boolean;
+  /** The repository this contributor settled, as `owner/repo`: a forge names
+   *  the one it cloned so a later role can offer it instead of asking again.
+   *  Absent means no repository was settled. */
+  repository?: string;
 }
 
 /** The declaration a plugin package makes at its `./setupProject` subpath:
