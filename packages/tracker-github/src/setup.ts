@@ -12,8 +12,9 @@
  *  JWT: that the grant allows Issues and Organization projects (the desk and
  *  the board), that the webhook points at this machine and subscribes to
  *  `issue_comment`, `issues` and `projects_v2_item`, and what the last delivery
- *  was answered. Then the secret is pasted and one wait proves it: a delivery
- *  must land at this aivi's route and verify against the pasted secret. The
+ *  was answered. Then the secret — the home's when it holds one, else pasted
+ *  — is proved by one wait: a delivery must land at this aivi's route and
+ *  verify against it. The
  *  trigger is the installation itself — the person is installing or approving
  *  the app right now, and GitHub posts `installation` for that act; when the
  *  delivery history already holds one, the installer re-asks GitHub for it and
@@ -248,25 +249,38 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
       `The last delivery (${last.event}) was answered ${last.statusCode} — before a restart the route is not listening yet, so this is expected; after one it is the thing to chase.`,
     );
 
-  // 6. The secret, then the one wait that proves it against a live delivery.
-  const webhookSecret = settled(
-    ctx,
-    await ctx.prompts.password({
-      message: 'The webhook’s Secret, from the app’s settings page',
-      validate: value => (value ? undefined : 'Paste the Secret from the webhook section'),
-    }),
-  );
+  // 6. The secret — the home's when it holds one (D3's rule again: the module
+  //    reads this variable from the environment anyway, so asking again would
+  //    only invite a paste that disagrees with the bytes the server verifies
+  //    with). The wait below proves it either way, pasted or held.
+  const heldSecret = process.env[GITHUB_WEBHOOK_SECRET_ENV];
+  let webhookSecret: string;
+  if (heldSecret) {
+    webhookSecret = heldSecret;
+    await ctx.prompts.log.message(
+      'The home already holds the webhook’s secret — nothing is asked, and the wait below proves it.',
+    );
+  } else {
+    webhookSecret = settled(
+      ctx,
+      await ctx.prompts.password({
+        message: 'The webhook’s Secret, from the app’s settings page',
+        validate: value => (value ? undefined : 'Paste the Secret from the webhook section'),
+      }),
+    );
+  }
 
   let probe: { name: string; pass: boolean; detail: string } | undefined;
   if (verify) probe = await probeInstallation(ctx, app, webhookUrl, webhookSecret, history);
 
   // 7. Only now is anything written: `host.public` if the installer asked for
-  //    it, the webhook secret, and the `tracker-github` block — empty by
-  //    design, its fields all have defaults; the byte only marks the tracker
-  //    as configured. Nothing was written at GitHub: the board probe lives in
-  //    `aivi projects add`, where the board id is in hand.
+  //    it, the webhook secret when the home did not hold one, and the
+  //    `tracker-github` block — empty by design, its fields all have defaults;
+  //    the byte only marks the tracker as configured. Nothing was written at
+  //    GitHub: the board probe lives in `aivi projects add`, where the board
+  //    id is in hand.
   if (!config.host.public) await ctx.writeConfigBlock(['host', 'public'], base);
-  await ctx.writeSecret(GITHUB_WEBHOOK_SECRET_ENV, webhookSecret);
+  if (!heldSecret) await ctx.writeSecret(GITHUB_WEBHOOK_SECRET_ENV, webhookSecret);
   await ctx.writeConfigBlock(['plugins', MODULE_ID], { ...existingBlock });
 
   const outcome = !probe
@@ -281,10 +295,11 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
 };
 
 /** The one wait: a delivery must land at this aivi's route and verify against
- *  the pasted secret. The trigger is the installation act the person is doing
+ *  the secret aivi holds. The trigger is the installation act the person is
+ *  doing
  *  right now — GitHub posts `installation` for it; when the history holds one
  *  already, the installer re-asks GitHub for it (the replay carries the app's
- *  current secret, so a replay that verifies proves the paste). A delivery
+ *  current secret, so a replay that verifies proves the held secret). A delivery
  *  that arrives about anything else still proves the URL and the secret, and
  *  is said as the verdict too — silence is the only failure. */
 async function probeInstallation(

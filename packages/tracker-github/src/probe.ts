@@ -112,12 +112,12 @@ export interface Diaried {
 }
 
 /** The seal failure line — same words wherever the seal fails: the secret
- *  pasted is not the secret GitHub sends, and waiting on that changes
+ *  aivi holds is not the secret GitHub sends, and waiting on that changes
  *  nothing, so every wait ends at once. */
 const badSeal = (row: { status: number }): Error =>
   new Error(
     `a delivery arrived but failed the module's own check: bad signature (HTTP ${row.status}).` +
-      ' The secret pasted here is not the one GitHub sends.',
+      ' The secret this aivi holds is not the one GitHub sends — compare <home>/.env with the Secret on the app’s settings page.',
   );
 
 const verifyRow = (secret: string, row: { body: string | null; headers: Record<string, string> }): boolean =>

@@ -80,7 +80,9 @@ Credentials are never in JSON, and the app is never the tracker's own. The
 forge and the tracker are **one app** (D3): its identity is the bare
 `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` in `<home>/.env`, shared with
 `@aivi/forge-github` through `@aivi/github` — installing either asks once. The
-webhook's HMAC secret is `GITHUB_WEBHOOK_SECRET`, beside them. The app's
+webhook's HMAC secret is `GITHUB_WEBHOOK_SECRET`, beside them — the installer
+asks for it only when the home does not already hold one, and the wait proves
+whichever it has. The app's
 webhook must deliver `issue_comment`, `issues` and `projects_v2_item` to
 `<host.public>/github/webhooks`.
 
