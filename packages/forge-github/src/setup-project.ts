@@ -100,22 +100,27 @@ export const contributor: ProjectContributor = {
     await ctx.prompts.log.message(`The app reads ${id} (default branch ${seen.defaultBranch}).`);
 
     const suggestion = suggestedProjectId(remote.repo);
-    const projectId = ctx.projectId
-      ? String(ctx.projectId)
-      : String(
-          await settled(
-            ctx,
-            ctx.prompts.text({
-              message: 'Project name',
-              placeholder: suggestion,
-              defaultValue: suggestion,
-              validate: value =>
-                value !== undefined && PROJECT_ID.test(value)
-                  ? undefined
-                  : 'lowercase letters, digits, dashes and underscores, starting with a letter',
-            }),
-          ),
-        );
+    // Enter takes the suggested name. clack 1.x runs `validate` on the raw
+    // input **before** `finalize` applies `defaultValue` — proven live
+    // 2026-10-08 on the GitHub tracker's board question, where the default
+    // was dead code. So '' passes validation here, and the default is
+    // folded in below, where it takes effect.
+    let projectId = ctx.projectId ? String(ctx.projectId) : '';
+    if (!projectId) {
+      const answer = await settled(
+        ctx,
+        ctx.prompts.text({
+          message: 'Project name',
+          placeholder: suggestion,
+          defaultValue: suggestion,
+          validate: value =>
+            value === undefined || !value.trim() || PROJECT_ID.test(value.trim())
+              ? undefined
+              : 'lowercase letters, digits, dashes and underscores, starting with a letter',
+        }),
+      );
+      projectId = String(answer).trim() || suggestion;
+    }
     const source = join(ctx.home, 'projects', projectId, 'source');
 
     // A checkout already there belongs to its owner. The same repository means
