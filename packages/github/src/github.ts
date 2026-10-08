@@ -21,6 +21,8 @@
  *  and tickets are the tracker's; remotes and pull requests are the forge's.
  */
 import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { getLogger, type Logger } from '@aivi/core';
 import { ConfigurationError } from '@aivi/plugin';
@@ -98,6 +100,21 @@ export function githubCredentials(env: NodeJS.ProcessEnv = process.env): GitHubC
       `github: ${GITHUB_APP_ID_ENV} is "${written.trim()}", not a number. Put the app's numeric id, as on the app settings page, in <home>/.env.`,
     );
   return { appId, privateKey: githubPrivateKey(env) };
+}
+
+/** The directory the person ran the command from. `npm run` moves the
+ *  process into the package root and leaves the real directory in
+ *  `INIT_CWD`; a relative path the person typed means their directory,
+ *  not npm's (live, 2026-10-08: a `./.config/…pem` typed in the dev home
+ *  resolved against the package root and failed with ENOENT). */
+export const shellCwd = (): string => process.env.INIT_CWD ?? process.cwd();
+
+/** A path as the person typed it: `~` is their home, and a relative path
+ *  starts at the directory they ran the command from. */
+export function resolveKeyPath(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed === '~' || trimmed.startsWith('~/')) return resolve(homedir(), trimmed.slice(2));
+  return resolve(shellCwd(), trimmed);
 }
 
 /**
@@ -230,7 +247,7 @@ export class GitHubApp {
     const { data: granted } = await app.rest.apps.listInstallations({ per_page: 10 });
     if (granted.length === 0)
       throw new ConfigurationError(
-        `github: the app ${slug} is installed on no account. Open https://github.com/apps/${slug}/installations/new, grant it the repositories aivi works, and run this again.`,
+        `github: the app ${slug} is installed on no account. Open https://github.com/apps/${slug}/installations/new, select the repositories you want to use aivi in, and run this again.`,
       );
     if (granted.length > 1)
       throw new ConfigurationError(

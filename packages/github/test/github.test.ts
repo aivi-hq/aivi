@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { ConfigurationError } from '@aivi/plugin';
 import {
@@ -9,6 +11,7 @@ import {
   GitHubApp,
   gitCredential,
   githubApp,
+  resolveKeyPath,
 } from '../src/github.ts';
 import { installationToken, jwtClaims, privateKey, scripted } from './github-api.ts';
 
@@ -304,4 +307,22 @@ test('a replayed delivery keeps its id byte-exact and carries the app’s JWT', 
     'the id survives: not coerced through a number',
   );
   assert.equal(jwtClaims(attempt.authorization).iss, '7', 'the replay is the app asking, not an installation');
+});
+
+test('a typed key path belongs to the directory the person ran the command from', t => {
+  const had = process.env.INIT_CWD;
+  t.after(() => {
+    if (had === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = had;
+  });
+  process.env.INIT_CWD = '/home/dev/projects/team/aivi/dev';
+  assert.equal(
+    resolveKeyPath('./.config/aivi-agent.pem'),
+    '/home/dev/projects/team/aivi/dev/.config/aivi-agent.pem',
+    'npm moved the process to the package root; the typed path stays where the person typed it',
+  );
+  delete process.env.INIT_CWD;
+  assert.equal(resolveKeyPath('a.pem'), join(process.cwd(), 'a.pem'), 'without npm, the process cwd is the person’s');
+  assert.equal(resolveKeyPath('  /abs/b.pem  '), '/abs/b.pem', 'an absolute path is already a place; spaces are noise');
+  assert.equal(resolveKeyPath('~/c.pem'), join(homedir(), 'c.pem'), '~ is the operator’s home');
 });

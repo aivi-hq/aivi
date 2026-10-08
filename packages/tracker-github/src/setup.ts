@@ -29,8 +29,6 @@
  *  owns that, and reports it as it happens.
  */
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { resolve } from 'node:path';
 import { configSchema, errorMessage, getLogger } from '@aivi/core';
 import {
   GITHUB_APP_ID_ENV,
@@ -40,6 +38,7 @@ import {
   type GitHubCredentials,
   githubCredentials,
   pemForEnvFile,
+  resolveKeyPath,
 } from '@aivi/github';
 import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, settled } from '@aivi/plugin';
 import type { GithubConfig } from './config.ts';
@@ -54,16 +53,10 @@ const APP_ID = /^\d{1,20}$/;
 /** What the app's webhook must subscribe to, each with what the tracker would
  *  never hear again without it. */
 const REQUIRED_EVENTS: Record<string, string> = {
-  issue_comment: 'the conversation — a person’s comment answers a run',
-  issues: 'the walk and the desk — the ticket’s own state',
-  projects_v2_item: 'the board — lane moves and the Agent delegation',
+  issue_comment: 'so a person’s comment can reach aivi',
+  issues: 'so aivi can hear about ticket changes',
+  projects_v2_item: 'so aivi can hear about board moves',
 };
-
-/** `~` is the operator's home, the path they mean when they type it; anything
- *  else is relative to where they are standing. */
-function expandPath(path: string): string {
-  return path.startsWith('~/') ? resolve(homedir(), path.slice(2)) : resolve(path);
-}
 
 /** Two webhook URLs compared as what they point at: GitHub stores the string
  *  a person typed, and a trailing slash is nobody's intent. */
@@ -128,26 +121,28 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
         '2. GitHub App name is the bot’s name; homepage and contact do not',
         '   matter.',
         `3. Webhook URL: ${webhookUrl}`,
-        '   Under "Choose which events must notify the webhook", tick',
-        '   Issue comments, Issues, and Project card.',
-        '4. Under "Repository permissions", set Issues: Read & write —',
-        '   comments, labels, and the whole desk work there. Under',
-        '   "Organization permissions", set Organization projects:',
-        '   Read & write — lanes are Status options on the board and the',
-        '   delegation is its Agent field.',
-        '   (Contents and Pull requests belong to the forge; grant them',
-        '   there: `aivi add @aivi/forge-github`.)',
+        '   Under "Subscribe to events", tick: Issue comment, Issues,',
+        '   and Projects v2 item.',
+        '4. Under "Repository permissions", set:',
+        '   - Contents: Read and write',
+        '   - Issues: Read and write',
+        '   - Pull requests: Read and write',
+        '   Under "Organization permissions", set:',
+        '   - Projects: Read and write',
         '5. Press Create. The App ID is the number at the top of the app’s',
         '   settings page, next to "App ID".',
         '6. On that page, under "Private keys", press "Generate a private',
         '   key". GitHub downloads a .pem file (into your Downloads folder).',
         '7. Press "Install App", pick the account that holds the',
-        '   repositories, choose "Only select repositories", and add the',
-        '   repositories aivi works. Without this the app reads nothing.',
+        '   repositories, choose "Only select repositories", and select the',
+        '   repositories you want to use aivi in. Without this the app',
+        '   reads nothing.',
         '',
         'If the app already exists and is installed, saving new permissions',
-        'is not enough: open the installation (Integrations → Configure) and',
-        'approve the pending access, or aivi keeps the old grant.',
+        'is not enough. GitHub sends an email asking you to approve them.',
+        'You can also approve on GitHub: open the organization’s Settings,',
+        'choose "GitHub Apps" under "Third-party Access", and press',
+        'Configure.',
       ].join('\n'),
       'Creating the GitHub app',
     );
@@ -176,7 +171,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     );
     let privateKey: string;
     try {
-      privateKey = await readFile(expandPath(String(keyPath).trim()), 'utf8');
+      privateKey = await readFile(resolveKeyPath(String(keyPath)), 'utf8');
     } catch (error) {
       throw new Error(`the private key could not be read: ${errorMessage(error)}`);
     }
@@ -203,17 +198,13 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   const grant = await app.grantFacts();
   const lacking: string[] = [];
   if (grant.permissions.issues !== 'write')
-    lacking.push(
-      `Issues: ${grant.permissions.issues ?? 'no access'} — comments, labels, and the whole desk work there`,
-    );
+    lacking.push(`Issues: ${grant.permissions.issues ?? 'no access'} (aivi needs Read and write)`);
   if (grant.permissions.organization_projects !== 'write')
-    lacking.push(
-      `Organization projects: ${grant.permissions.organization_projects ?? 'no access'} — lanes are Status options on the board, and the delegation is its Agent field`,
-    );
+    lacking.push(`Projects: ${grant.permissions.organization_projects ?? 'no access'} (aivi needs Read and write)`);
   if (lacking.length)
     throw new Error(
-      `installation #${app.installationId} cannot work the tracker: ${lacking.join('; ')}. ` +
-        'Tick them on the installation page (Integrations → Configure) and approve the pending access — saving new permissions on the app page alone keeps the old grant.',
+      `installation #${app.installationId} cannot run the tracker: ${lacking.join('; ')}. ` +
+        'GitHub sends an email asking you to approve new permissions; you can also open the organization’s Settings, choose "GitHub Apps" under "Third-party Access", press Configure, and approve there. Saving new permissions on the app page alone keeps the old grant.',
     );
   const unheard = Object.keys(REQUIRED_EVENTS).filter(
     event => !grant.events.includes(event) && !grant.events.includes('*'),
@@ -221,7 +212,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   if (unheard.length)
     throw new Error(
       `the app’s webhook does not subscribe ${unheard.map(event => `${event} (${REQUIRED_EVENTS[event]})`).join('; ')}. ` +
-        'Tick them under "Choose which events must notify the webhook" on the app’s settings page.',
+        'Tick them under "Subscribe to events" on the app’s settings page.',
     );
 
   // 5. Where the hook points — also the app's own JWT. A URL that points at

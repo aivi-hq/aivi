@@ -26,6 +26,7 @@ export {
   githubPrivateKey,
   type Octokit,
   pemForEnvFile,
+  resolveKeyPath,
   runGit,
 } from './github.ts';
 export { parseWorker, signComment } from './signature.ts';

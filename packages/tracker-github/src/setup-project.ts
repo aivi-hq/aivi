@@ -494,7 +494,7 @@ async function pickRepos(ctx: ProjectSetupContext, client: GithubSetupClient): P
   }
   if (!granted.length)
     throw new Error(
-      'that installation holds no repositories: add the repositories aivi works on the installation page',
+      'that installation holds no repositories: select the repositories you want to use aivi in on the installation page',
     );
   const picked = await ctx.prompts.multiselect({
     message: 'Which repositories feed this project?',

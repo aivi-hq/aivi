@@ -18,21 +18,13 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { resolve } from 'node:path';
 import { getLogger } from '@aivi/core';
-import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, GitHubApp, pemForEnvFile } from '@aivi/github';
+import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, GitHubApp, pemForEnvFile, resolveKeyPath } from '@aivi/github';
 import { type PluginSetup, PluginSetupCancelled, type PluginSetupContext, type PluginSetupResult } from '@aivi/plugin';
 
 /** The app's numeric id, which is what aivi authenticates with. Its *name* is
  *  for the links a person opens; the number is for everything else. */
 const APP_ID = /^\d{1,20}$/;
-
-/** `~` is the operator's home, the path they mean when they type it; anything
- *  else is relative to where they are standing. */
-function expandPath(path: string): string {
-  return path.startsWith('~/') ? resolve(homedir(), path.slice(2)) : resolve(path);
-}
 
 /** A prompt the person cancelled is not an answer. */
 async function settled<T>(ctx: PluginSetupContext, answer: Promise<T | symbol>): Promise<T> {
@@ -74,12 +66,15 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
       '5. On that page, under "Private keys", press "Generate a private',
       '   key". GitHub downloads a .pem file (into your Downloads folder).',
       '6. Press "Install App", pick the account that holds the repositories,',
-      '   choose "Only select repositories", and add the repositories aivi',
-      '   works. Without this the app reads nothing and the check below fails.',
+      '   choose "Only select repositories", and select the repositories',
+      '   you want to use aivi in. Without this the app reads nothing and',
+      '   the check below fails.',
       '',
-      'If the app already exists and is installed, saving new permissions is',
-      'not enough: open the installation (Integrations → Configure) and',
-      'approve the pending access, or aivi keeps the old grant.',
+      'If the app already exists and is installed, saving new permissions',
+      'is not enough. GitHub sends an email asking you to approve them.',
+      'You can also approve on GitHub: open the organization’s Settings,',
+      'choose "GitHub Apps" under "Third-party Access", and press',
+      'Configure.',
     ].join('\n'),
     'Creating the GitHub app',
   );
@@ -113,7 +108,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   );
   let privateKey: string;
   try {
-    privateKey = await readFile(expandPath(String(keyPath).trim()), 'utf8');
+    privateKey = await readFile(resolveKeyPath(String(keyPath)), 'utf8');
   } catch (error) {
     throw new Error(`the private key could not be read: ${error instanceof Error ? error.message : String(error)}`);
   }
