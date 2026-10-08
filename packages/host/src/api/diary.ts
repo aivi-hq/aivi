@@ -3,9 +3,12 @@ import type { Logger } from '@aivi/core';
 import type { Store } from '../store.ts';
 import type { AppMiddleware } from './env.ts';
 
-/** The diary's body cap: a delivery worth reading is small; a flood is kept
- *  as its first bytes plus the fact that it was a flood. */
-export const MAX_DIARY_BODY = 8 * 1024;
+/** The diary's body cap: the seal the probes verify is GitHub's HMAC over
+ *  the whole signed body, so a cut body can never verify — the cap must
+ *  hold a real delivery whole. 32 KiB is the human's temporary ruling:
+ *  GitHub's `issues` deliveries exceed 8 KiB (the live ledger says so), and
+ *  the real length is what the next runs will show before this settles. */
+export const MAX_DIARY_BODY = 32 * 1024;
 
 /** Header names whose value is a credential. The diary records that they
  *  arrived, never what they said — an operator sees a token was sent. */
