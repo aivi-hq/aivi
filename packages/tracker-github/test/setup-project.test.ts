@@ -314,12 +314,24 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
   );
 });
 
-test('the board number question really defaults to 1: Enter takes it', async t => {
-  const { contributor, ctx, asks, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo']);
+test('the board number question really defaults to 1: Enter — an empty answer — takes it', async t => {
+  // The live bug (found by the human 2026-10-08): clack 1.x validates the
+  // raw input before finalize applies defaultValue, so a validate that
+  // refused '' made the default unreachable — Enter showed the error.
+  // The pin is the behavior, not the passed option: the person presses
+  // Enter, an empty string comes back, and board 1 is what gets read and
+  // written.
+  const { contributor, ctx, asks, live, cleanup } = wizard(['skip', '', ['acme/shop'], '', ...KINDS, 'Todo']);
   t.after(cleanup);
-  await contributor.setup(ctx);
+  const result = await contributor.setup(ctx);
+  assert.equal(result.section?.board, 1, 'the empty answer took board 1');
+  assert.ok(
+    live.some(line => line.startsWith('Reading board 1')),
+    `the read that ran was board 1: ${live.join(' | ')}`,
+  );
   const board = asks.find(a => a.message.startsWith('The board number'));
-  assert.equal(board?.opts.defaultValue, '1', 'a real defaultValue, not a placeholder');
+  assert.equal(board?.opts.defaultValue, '1', 'the option is there for when clack applies defaults itself');
+  assert.equal(board?.opts.placeholder, '1', 'and what Enter takes is visible while typing');
 });
 
 test('the kind question offers the three answers in the ruled words', async t => {

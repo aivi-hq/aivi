@@ -522,14 +522,22 @@ async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Pr
 async function askedBoard(ctx: ProjectSetupContext, client: GithubSetupClient): Promise<SetupBoard> {
   const answer = await ctx.prompts.text({
     message: 'The board number — the number at the end of the board URL (github.com/orgs/<org>/projects/1 is board 1)',
-    // A real default: Enter takes board 1 (ruled by the human 2026-10-08 —
-    // a placeholder was only a hint, Enter did not take it).
+    // Enter takes board 1 (ruled by the human 2026-10-08). clack 1.x runs
+    // `validate` on the raw input **before** `finalize` applies
+    // `defaultValue` — so with a validate that refuses '', the default is
+    // dead code (proven live: Enter showed the error, not board 1). The
+    // empty answer must pass validation here, the default is folded in
+    // below where it takes effect, and the placeholder shows what Enter
+    // will take.
+    placeholder: '1',
     defaultValue: '1',
     validate: value =>
-      value !== undefined && /^[1-9]\d*$/.test(value.trim()) ? undefined : 'the number at the end of the board URL',
+      value === undefined || !value.trim() || /^[1-9]\d*$/.test(value.trim())
+        ? undefined
+        : 'the number at the end of the board URL',
   });
   if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('no board given');
-  const boardNumber = Number(String(answer).trim());
+  const boardNumber = Number(String(answer).trim() || '1');
   const spinner = ctx.prompts.spinner();
   spinner.start(`Reading board ${boardNumber}`);
   try {
