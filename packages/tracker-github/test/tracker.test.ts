@@ -265,7 +265,7 @@ test('a redelivery by the same id is acknowledged as a duplicate and dispatches 
   const { events, off } = collect(platform);
   const request = delivery('issues', {
     action: 'labeled',
-    number: 47,
+    issue: { number: 47 },
     label: { name: 'bug' },
     repository: { full_name: 'acme/shop' },
   });
@@ -275,6 +275,26 @@ test('a redelivery by the same id is acknowledged as a duplicate and dispatches 
   off();
   assert.deepEqual(events, [
     { kind: 'updated', conversation: GITHUB_FEED, issueId: 'acme/shop#47', changed: ['labels'] },
+  ]);
+});
+
+test('an `issues` delivery takes its number from inside `issue` — GitHub answers no top-level one', async t => {
+  // The live ledger caught the opposite assumption: a closed-issue delivery
+  // reached the module as "aivi-hq/aivi#undefined" and failed. The number is
+  // `issue.number`; a delivery that names none is silence, not a bad id.
+  const { platform, root } = await harness();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { events, off } = collect(platform);
+  await platform.deliver(
+    delivery('issues', { action: 'closed', issue: { number: 50 }, repository: { full_name: 'aivi-hq/aivi' } }),
+  );
+  await platform.deliver(
+    delivery('issues', { action: 'closed', number: 51, repository: { full_name: 'aivi-hq/aivi' } }),
+  );
+  await settled();
+  off();
+  assert.deepEqual(events, [
+    { kind: 'updated', conversation: GITHUB_FEED, issueId: 'aivi-hq/aivi#50', changed: ['state'] },
   ]);
 });
 

@@ -41,7 +41,7 @@ export const INSTALLATION_EVENTS = new Set(['installation', 'installation_reposi
  *  status our side answered with is left out on purpose: with the module not
  *  yet loaded nothing can answer 2xx, and the delivery arriving is the point. */
 export const describeDelivery = (event: string, payload: any): string => {
-  const number = payload?.issue?.number ?? payload?.number;
+  const number = payload?.issue?.number;
   const at =
     payload?.repository?.full_name && number !== undefined
       ? `${payload.repository.full_name}#${number}`
@@ -326,8 +326,9 @@ export async function waitForSignals(
 }
 
 /** Whether a delivery is about the probe issue. `issue_comment` names it by
- *  `issue.number`; an `issues` delivery *is* the issue — its number sits at
- *  the payload's top; a `projects_v2_item` delivery names no number at all —
+ *  `issue.number`; an `issues` delivery carries its number inside `issue`
+ *  too — GitHub answers no top-level one (the live ledger says so); a
+ *  `projects_v2_item` delivery names no number at all —
  *  only the content's node id — so the issue's own node id referees those. */
 export const aboutIssue =
   (repoId: string, number: number, issueNodeId: string) =>
@@ -335,7 +336,7 @@ export const aboutIssue =
     payload?.repository?.full_name === repoId &&
     (event === 'projects_v2_item'
       ? payload?.projects_v2_item?.content?.node_id === issueNodeId
-      : (payload?.issue?.number ?? payload?.number) === number);
+      : payload?.issue?.number === number);
 
 /** The board probe's verdict, pure: which signals landed, which did not, and
  *  what the missing one means. A signal never paid for (a board with one open

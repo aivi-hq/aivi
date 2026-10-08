@@ -57,10 +57,11 @@ export interface IssueCommentPayload {
   repository: { full_name: string };
 }
 
-/** An `issues` delivery: the ticket itself changed. */
+/** An `issues` delivery: the ticket itself changed. The number lives inside
+ *  `issue` — GitHub answers no top-level one (the live ledger says so). */
 export interface IssuesPayload {
   action: string;
-  number: number;
+  issue?: { number: number };
   label?: { name: string };
   repository: { full_name: string };
 }

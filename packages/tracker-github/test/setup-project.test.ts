@@ -105,6 +105,8 @@ const wizard = (
     views?: string[];
     /** What the fake openProbe pays: signals asked, and whether Status was. */
     probe?: { asked: string[]; statusSkipped?: boolean };
+    /** A message the fake openProbe dies with — the probe never starts. */
+    probeError?: string;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -161,6 +163,7 @@ const wizard = (
       done.push(`label:${repo}:${label}`);
     },
     async openProbe(repo): Promise<ProbeHandles> {
+      if (opts.probeError) throw new Error(opts.probeError);
       done.push('probe-open');
       const askedSignals = opts.probe?.asked ?? ['issue opened', 'card added', 'Agent set', 'comment posted'];
       return {
@@ -512,7 +515,7 @@ const row = (id: number, event: string, payload: unknown) => {
   };
 };
 const FIVE = [
-  row(1, 'issues', { action: 'opened', number: 9, repository: { full_name: 'acme/shop' } }),
+  row(1, 'issues', { action: 'opened', issue: { number: 9 }, repository: { full_name: 'acme/shop' } }),
   row(2, 'projects_v2_item', {
     action: 'created',
     project_node_id: 'PN_1',
@@ -638,6 +641,30 @@ test('no webhook secret in the home stops the probe with its remedy', async t =>
   await assert.rejects(contributor.setup(ctx), /aivi add @aivi\/tracker-github/);
 });
 
+test('a probe that dies mid-flight stops the spinner with its error — never left turning', async t => {
+  // The live failure this pins: GitHub refused the walk's read while the
+  // probe spinner was turning; the run printed "Setup stopped" under a
+  // spinner that kept moving. The error must land on the spinner, and the
+  // card's fate must be said — a partial test card may stand on the board.
+  secrets(t, { [GITHUB_WEBHOOK_SECRET_ENV]: PROBE_SECRET });
+  const { contributor, ctx, live, done, cleanup } = wizard(QUESTIONS, {
+    health: 'up',
+    rows: FIVE,
+    probeError: "Field 'projectItems' doesn't accept argument 'archived'",
+  });
+  t.after(cleanup);
+  await assert.rejects(contributor.setup(ctx), /doesn't accept argument/);
+  assert.ok(
+    live.some(line => line.startsWith('the probe could not start:') && line.includes("doesn't accept argument")),
+    `the spinner was stopped with the error, not left turning: ${live.join(' | ')}`,
+  );
+  assert.ok(
+    live.some(line => line.includes('close it by hand')),
+    'a card the probe may have left on the board is said, not left silent',
+  );
+  assert.ok(!done.includes('probe-close'), 'cleanup is not paid when the probe never started');
+});
+
 test('a board with one Status option skips the Status signal — skipped is said, never failed', async t => {
   secrets(t, { [GITHUB_WEBHOOK_SECRET_ENV]: PROBE_SECRET });
   const four = ALL_ASKED.filter(name => name !== 'Status moved');
@@ -714,8 +741,8 @@ function probeRoutes(
       IssueFacts: () => ({ repository: { issue: issueNode({ number: 9, lane: 'Backlog' }) } }),
       ProbeAddItem: () => ({ addProjectV2ItemById: { item: { id: 'PVTI_9' } } }),
       ProbeSetSelect: () => ({ updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_9' } } }),
-      ProbeClearSelect: () => ({ deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_9' } } }),
-      ProbeArchiveItem: () => ({ archiveProjectV2Item: { archivedItem: { id: 'PVTI_9' } } }),
+      ProbeClearSelect: () => ({ clearProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_9' } } }),
+      ProbeArchiveItem: () => ({ archiveProjectV2Item: { item: { id: 'PVTI_9' } } }),
     }),
     ...extra,
   });

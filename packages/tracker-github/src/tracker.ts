@@ -467,12 +467,15 @@ export class GithubPlatform implements Platform {
     }
     if (event === 'issues') {
       const p = payload as IssuesPayload;
+      // The number is inside `issue` — a top-level one is undefined, and an
+      // id built from undefined is the failure the live ledger caught.
+      if (p.issue?.number === undefined) return;
       const changed = issueChanges(p.action);
       if (!changed.length) return;
       await this.emit({
         kind: 'updated',
         conversation: GITHUB_FEED,
-        issueId: `${p.repository.full_name}#${p.number}`,
+        issueId: `${p.repository.full_name}#${p.issue.number}`,
         changed,
       });
       return;

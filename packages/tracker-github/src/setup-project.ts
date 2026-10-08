@@ -196,7 +196,7 @@ const PROBE_SET_SELECT = /* GraphQL */ `
 
 const PROBE_CLEAR_SELECT = /* GraphQL */ `
   mutation ProbeClearSelect($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
-    deleteProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId }) {
+    clearProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId }) {
       projectV2Item { id }
     }
   }
@@ -204,7 +204,7 @@ const PROBE_CLEAR_SELECT = /* GraphQL */ `
 
 const PROBE_ARCHIVE_ITEM = /* GraphQL */ `
   mutation ProbeArchiveItem($projectId: ID!, $itemId: ID!) {
-    archiveProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) { archivedItem { id } }
+    archiveProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) { item { id } }
   }
 `;
 
@@ -646,40 +646,55 @@ async function probeBoard(
     );
   const spinner = ctx.prompts.spinner();
   spinner.start(`Board probe in ${repo}: one test card, then GitHub’s answer`);
-  const probe = await client.openProbe(repo, board);
-  if (probe.statusSkipped)
-    await ctx.prompts.log.message(
-      'the board has a single Status option — a move cannot be shown, so the Status signal is skipped, not failed',
-    );
-  await ctx.prompts.log.message(
-    'the reaction surface answered too: aivi’s eyes landed on the card and cleanup will clear it — reaction events are not subscribed, so there is no delivery to wait for',
-  );
-  spinner.message(`${probe.ref} is on the board — waiting for GitHub’s deliveries`);
-  const windowMs = probeWindowMs();
-  const { landed } = await ctx.withStore(store =>
-    waitForSignals(
-      store,
-      {
-        path: GITHUB_WEBHOOK_PATH,
-        secret,
-        windowMs,
-        asked: probe.asked,
-        about: aboutIssue(repo, probe.number, probe.nodeId),
-      },
-      0, // the about-filter is issue-scoped: a fresh issue cannot have history, so nothing old can false-land
-      line => spinner.message(line),
-    ),
-  );
-  const verdict = boardProbeVerdict(landed, probe.asked, windowMs);
-  let rest = '';
+  // Past this line every throw must stop the spinner first: a spinner left
+  // turning when the runner prints its "Setup stopped" line looks like the
+  // run is still working. The card may exist before the failure (the probe
+  // pays its mutations one by one), so the failure names what to clean by
+  // hand when a handle exists, and says a card may stand when one does not.
+  let probe: ProbeHandles | undefined;
   try {
-    rest = await client.closeProbe(probe);
+    probe = await client.openProbe(repo, board);
+    if (probe.statusSkipped)
+      await ctx.prompts.log.message(
+        'the board has a single Status option — a move cannot be shown, so the Status signal is skipped, not failed',
+      );
+    await ctx.prompts.log.message(
+      'the reaction surface answered too: aivi’s eyes landed on the card and cleanup will clear it — reaction events are not subscribed, so there is no delivery to wait for',
+    );
+    spinner.message(`${probe.ref} is on the board — waiting for GitHub’s deliveries`);
+    const windowMs = probeWindowMs();
+    const { landed } = await ctx.withStore(store =>
+      waitForSignals(
+        store,
+        {
+          path: GITHUB_WEBHOOK_PATH,
+          secret,
+          windowMs,
+          asked: probe!.asked,
+          about: aboutIssue(repo, probe!.number, probe!.nodeId),
+        },
+        0, // the about-filter is issue-scoped: a fresh issue cannot have history, so nothing old can false-land
+        line => spinner.message(line),
+      ),
+    );
+    const verdict = boardProbeVerdict(landed, probe.asked, windowMs);
+    let rest = '';
+    try {
+      rest = await client.closeProbe(probe);
+    } catch (error) {
+      rest = `the test card could not be cleaned up: ${errorMessage(error)} — close it by hand: ${probe.ref}`;
+    }
+    if (verdict.pass) spinner.stop(`the board speaks — ${verdict.detail}`);
+    else spinner.cancel(`board probe — ${verdict.detail}`);
+    await ctx.prompts.log.message(rest);
   } catch (error) {
-    rest = `the test card could not be cleaned up: ${errorMessage(error)} — close it by hand: ${probe.ref}`;
+    spinner.error(
+      probe
+        ? `the probe could not finish: ${errorMessage(error)} — the test card ${probe.ref} stands on the board; close it by hand`
+        : `the probe could not start: ${errorMessage(error)} — if a test card was already created it stands on the board; close it by hand`,
+    );
+    throw error;
   }
-  if (verdict.pass) spinner.stop(`the board speaks — ${verdict.detail}`);
-  else spinner.cancel(`board probe — ${verdict.detail}`);
-  await ctx.prompts.log.message(rest);
 }
 
 /** The wizard, in its order: the health gate as a choice, the board, the

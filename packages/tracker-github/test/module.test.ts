@@ -283,7 +283,7 @@ test('the closing is spoken in our order: final comment, frozen line, cleared Ag
       IssueFacts: () => ({ repository: { issue: issueNode({ agent: 'aivi-agent' }) } }),
       ClearSelect: () => {
         mutations.push('clear');
-        return { deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
+        return { clearProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
       },
     }),
   });
@@ -318,7 +318,7 @@ test('a closing that GitHub refuses stays owed, cries once, and lands on the nex
     'POST /graphql': graphql({
       BoardFields: v => boardFieldsAnswer('aivi-hq', v),
       IssueFacts: () => ({ repository: { issue: issueNode({ agent: 'aivi-agent' }) } }),
-      ClearSelect: () => ({ deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } }),
+      ClearSelect: () => ({ clearProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } }),
     }),
   });
   t.after(() => rm(h.root, { recursive: true, force: true }));
@@ -371,7 +371,7 @@ test('the boot pass catches up closings that died in an outage, without saying a
       'POST /graphql': graphql({
         BoardFields: v => boardFieldsAnswer('aivi-hq', v),
         IssueFacts: () => ({ repository: { issue: issueNode({ agent: 'aivi-agent' }) } }),
-        ClearSelect: () => ({ deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } }),
+        ClearSelect: () => ({ clearProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } }),
       }),
     },
     {
@@ -450,7 +450,7 @@ test('a hand-set Agent value with no run working the ticket gets the fixed refus
       IssueFacts: () => ({ repository: { issue: issueNode({ agent: 'aivi-agent' }) } }),
       ClearSelect: () => {
         agentCleared++;
-        return { deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
+        return { clearProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
       },
     }),
     'POST /repos/acme/shop/issues/47/comments': () => ({ status: 201, body: { id: 5, html_url: 'u' } }),

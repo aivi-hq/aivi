@@ -129,7 +129,7 @@ const ISSUE_FACTS = /* GraphQL */ `
         id databaseId title body url state stateReason
         labels(first: 50) { nodes { id name } }
         assignees(first: 10) { nodes { id login } }
-        projectItems(first: 50, archived: false) { nodes {
+        projectItems(first: 50, includeArchived: false) { nodes {
           id
           project { databaseId }
           fieldValues(first: 30) { nodes {
@@ -151,12 +151,12 @@ const ISSUE_FACTS = /* GraphQL */ `
 const OPEN_ISSUES = /* GraphQL */ `
   query OpenIssues($owner: String!, $repo: String!, $first: Int!) {
     repository(owner: $owner, name: $repo) {
-      issues(states: [OPEN], first: $first, orderBy: { field: CREATED, direction: DESC }) {
+      issues(states: [OPEN], first: $first, orderBy: { field: CREATED_AT, direction: DESC }) {
         nodes {
           id databaseId title body url state stateReason
           labels(first: 20) { nodes { id name } }
           assignees(first: 10) { nodes { id login } }
-          projectItems(first: 20, archived: false) { nodes {
+          projectItems(first: 20, includeArchived: false) { nodes {
             id
             project { databaseId }
             fieldValues(first: 30) { nodes {
@@ -217,7 +217,7 @@ const SET_SELECT = /* GraphQL */ `
 
 const CLEAR_SELECT = /* GraphQL */ `
   mutation ClearSelect($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
-    deleteProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId }) {
+    clearProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId }) {
       projectV2Item { id }
     }
   }

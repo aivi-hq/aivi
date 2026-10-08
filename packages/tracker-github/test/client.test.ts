@@ -170,7 +170,7 @@ test('setAgent speaks the delegate in board words and clears it honestly', async
       },
       ClearSelect: () => {
         moves.push('clear');
-        return { deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
+        return { clearProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
       },
     }),
   });
@@ -186,7 +186,7 @@ test('setAgent speaks the delegate in board words and clears it honestly', async
       IssueFacts: () => ({ repository: { issue: issueNode({ agent: 'aivi-agent' }) } }),
       ClearSelect: () => {
         clears.push('clear');
-        return { deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
+        return { clearProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
       },
     }),
   });
