@@ -1,10 +1,12 @@
-/** The wizard's lane list: what it asks, in what order, and what it never
- *  asks. GitHub's own `status` on a Status option is the closed-state signal —
- *  `DONE` ends work and is not a lane, the mirror of the Linear ruling of
- *  2026-10-02; the queue rules are that ruling's own words. The board read,
- *  the field creation, and the label are faked at the client crossing, because
- *  the wizard's questions, order and written config are the unit — the GraphQL
- *  round trips are the live gate's. */
+/** The wizard's lane list: what it asks, in what order, and what each answer
+ *  writes. **Every Status option is asked** — the lane model ruled by the
+ *  human 2026-10-08: per option the person answers Agent, Human or None, and
+ *  nothing is hidden because of its name or position (GitHub gives no state
+ *  flag to hide behind). The queue rules are the same ruling's own words. The
+ *  board read, the field creation, and the label are faked at the client
+ *  crossing, because the wizard's questions, order and written config are the
+ *  unit — the GraphQL round trips are the live gate's, and the probe's own
+ *  choices are proven below against the scripted GitHub. */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,48 +14,31 @@ import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 import type { ProjectLaneInput } from '@aivi/core';
 import { GITHUB_WEBHOOK_SECRET_ENV, webhookSignature } from '@aivi/github';
-import { PluginSetupCancelled } from '@aivi/plugin';
+import { LANE_KIND, PluginSetupCancelled } from '@aivi/plugin';
 import {
+  BoardSetupClient,
   boardSuggestion,
   type GithubSetupClient,
   makeContributor,
   markQueue,
-  openStatusOptions,
   type ProbeHandles,
   queueCandidates,
   type SetupBoard,
   type SetupBoardOption,
 } from '../src/setup-project.ts';
 import { GITHUB_WEBHOOK_PATH } from '../src/tracker.ts';
+import { type Answer, connectApp, connectRoutes, graphql, issueNode, type Seen, scripted } from './github-api.ts';
 
 const statusOptions: SetupBoardOption[] = [
-  // A board's Status options as GitHub returns them: board order already.
-  { id: 'o-0', name: 'Backlog', status: 'TODO' },
-  { id: 'o-1', name: 'Todo', status: 'TODO' },
-  { id: 'o-2', name: 'In Progress', status: 'STARTED' },
-  { id: 'o-3', name: 'In Review', status: 'STARTED' },
-  { id: 'o-4', name: 'Done', status: 'DONE' },
-  { id: 'o-5', name: 'Duplicate', status: 'DONE' },
+  // A board's Status options as GitHub answers them: board order already,
+  // an id and a name and nothing else (probed live 2026-10-08).
+  { id: 'o-0', name: 'Backlog' },
+  { id: 'o-1', name: 'Todo' },
+  { id: 'o-2', name: 'In Progress' },
+  { id: 'o-3', name: 'In Review' },
+  { id: 'o-4', name: 'Done' },
+  { id: 'o-5', name: 'Duplicate' },
 ];
-
-test('openStatusOptions keeps the open lanes in board order and drops every closed state', () => {
-  assert.deepEqual(
-    openStatusOptions(statusOptions).map(o => o.name),
-    ['Backlog', 'Todo', 'In Progress', 'In Review'],
-  );
-});
-
-test('openStatusOptions dedupes a shared option name, keeping the first', () => {
-  const twice = [
-    ...statusOptions,
-    { id: 'x', name: 'In Progress', status: 'STARTED' },
-    { id: 'y', name: 'Triage', status: 'TODO' },
-  ];
-  assert.deepEqual(
-    openStatusOptions(twice).map(o => o.name),
-    ['Backlog', 'Todo', 'In Progress', 'In Review', 'Triage'],
-  );
-});
 
 test('the queue question is one question over the lanes that could legally wait work', () => {
   const lanes: ProjectLaneInput[] = [
@@ -64,7 +49,8 @@ test('the queue question is one question over the lanes that could legally wait 
   ];
   // Backlog's next works nobody; the last lane feeds nothing; and a lane
   // with an agent is never a queue option (ruled 2026-10-02) — the queue is
-  // where people wait for a worker, never a working lane itself.
+  // where people wait for a worker, never a working lane itself. A **human**
+  // lane is a legal queue: that is what "used as a queue" means.
   assert.deepEqual(
     queueCandidates(lanes).map(l => l.name),
     ['Todo'],
@@ -89,11 +75,14 @@ test('a board title folds to a project id the way a repository name does', () =>
 
 /** The wizard as a unit: every prompt is on record — asked in order, answered
  *  from the script — and GitHub is faked at its one crossing (the setup
- *  client). A question nobody scripted fails loudly. The health gate is asked
- *  of the config.json the context points at: `health: 'down'` (the default)
- *  has no readable file, so the gate question lands first and the script
- *  answers it like any other; `'up'` writes one and the probe runs, its diary
- *  rows signed with `secret` like GitHub signs them. */
+ *  client). A question nobody scripted fails loudly. `tape` interleaves the
+ *  questions (`q:`) and the log lines (`s:`) so the order between them is
+ *  testable: the explanation must land once, before the first kind question.
+ *  The health gate is asked of the config.json the context points at:
+ *  `health: 'down'` (the default) has no readable file, so the gate question
+ *  lands first and the script answers it like any other; `'up'` writes one and
+ *  the probe runs, its diary rows signed with `secret` like GitHub signs
+ *  them. */
 const cancel = Symbol('cancel');
 const GATE = 'No live aivi answers its health endpoint — the probe watches what a running aivi records';
 const wizard = (
@@ -120,9 +109,12 @@ const wizard = (
   const said: string[] = [];
   const done: string[] = [];
   const live: string[] = [];
+  const tape: string[] = [];
+  const asks: { message: string; opts: Record<string, unknown> }[] = [];
   let next = 0;
   const prompt = async (message: string) => {
     asked.push(message);
+    tape.push(`q:${message}`);
     if (next >= answers.length) throw new Error(`the wizard asked "${message}"; the test scripted no answer`);
     return answers[next++];
   };
@@ -179,6 +171,9 @@ const wizard = (
     },
     async closeProbe() {
       done.push('probe-close');
+      // The production client answers how the card rests, in GitHub's real
+      // terms; the wizard logs what it is handed. This is those terms.
+      return 'acme/shop#9 is closed (not planned), its card archived, its comment deleted — GitHub has no API to delete an issue';
     },
   };
   const ctx = {
@@ -187,8 +182,14 @@ const wizard = (
     forgeConfigured: opts.forgeConfigured ?? false,
     print: () => {},
     prompts: {
-      text: async ({ message }: { message: string }) => prompt(message),
-      select: async ({ message }: { message: string }) => prompt(message),
+      text: async (options: { message: string }) => {
+        asks.push({ message: options.message, opts: options });
+        return prompt(options.message);
+      },
+      select: async (options: { message: string }) => {
+        asks.push({ message: options.message, opts: options });
+        return prompt(options.message);
+      },
       multiselect: async ({ message }: { message: string }) => prompt(message),
       confirm: async ({ message }: { message: string }) => prompt(message),
       autocomplete: async ({ message }: { message: string }) => prompt(message),
@@ -199,7 +200,12 @@ const wizard = (
         cancel: (line: string) => live.push(line),
         error: (line: string) => live.push(line),
       }),
-      log: { message: async (line: string) => void said.push(line) },
+      log: {
+        message: async (line: string) => {
+          said.push(line);
+          tape.push(`s:${line}`);
+        },
+      },
       isCancel: (value: unknown) => value === cancel,
     },
     agents: async () => opts.agents ?? ['developer', 'reviewer'],
@@ -222,22 +228,26 @@ const wizard = (
     said,
     done,
     live,
+    tape,
+    asks,
     root,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 };
 
-test('the wizard walks the board in order: gate, board, repositories, name, one agent per open option, then the one queue question', async t => {
-  const { contributor, ctx, asked, said, done, cleanup } = wizard([
-    'skip', // the health gate: continue anyway — this aivi has no live server under it
-    '1', // the board number
-    ['acme/shop'], // multiselect: which repositories feed this project
-    '', // project id: blank takes the offered suggestion
-    'developer', // Backlog
-    '', // Todo: a human lane, the orchestrator's silence
-    'developer', // In Progress
-    '', // In Review: a human lane
-    'Todo', // the queue question
+/** The six-option board answered by the kind question: Backlog and
+ *  In Progress work, Todo and In Review are human lanes, Done and Duplicate
+ *  are None — then Todo takes the queue mark. */
+const KINDS = ['agent', 'developer', 'human', 'agent', 'developer', 'human', 'none', 'none'];
+
+test('the wizard walks the board in order: gate, board, repositories, name, one kind question per option — closed ones included — then the one queue question', async t => {
+  const { contributor, ctx, asked, said, done, tape, cleanup } = wizard([
+    'skip',
+    '1',
+    ['acme/shop'],
+    '',
+    ...KINDS,
+    'Todo',
   ]);
   t.after(cleanup);
   const result = await contributor.setup(ctx);
@@ -256,7 +266,7 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
       { name: 'In Progress', agent: 'developer' },
       { name: 'In Review' },
     ],
-    'board order, human lanes bare, the queue marked where the person chose',
+    'board order, human lanes bare, the queue marked where the person chose, the None answers written nowhere',
   );
   assert.deepEqual(
     asked,
@@ -265,14 +275,33 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
       'The board number — the number at the end of the board URL (github.com/orgs/<org>/projects/1 is board 1)',
       'Which repositories feed this project?',
       "Project id — aivi's name for it; GitHub never sees it.",
+      'What kind of lane is the "Backlog" option?',
       'Which OpenCode agent works the "Backlog" lane?',
-      'Which OpenCode agent works the "Todo" lane?',
+      'What kind of lane is the "Todo" option?',
+      'What kind of lane is the "In Progress" option?',
       'Which OpenCode agent works the "In Progress" lane?',
-      'Which OpenCode agent works the "In Review" lane?',
+      'What kind of lane is the "In Review" option?',
+      'What kind of lane is the "Done" option?',
+      'What kind of lane is the "Duplicate" option?',
       'Which lane waits with work while the working lanes are full (the queue)?',
     ],
-    'the questions, in the ruled order — and Done and Duplicate were never asked: closed states are not lanes',
+    'the questions, in the ruled order — every option asked, Done and Duplicate included',
   );
+  // The explanation: one entry, before the first kind question, carrying all
+  // three answers' words and the queue sentence (ruled by the human
+  // 2026-10-08).
+  const explained = tape.filter(line => line.includes('What each answer means'));
+  assert.equal(explained.length, 1, `the explanation is one entry, never repeated: ${tape.join(' | ')}`);
+  const entry = explained[0]!;
+  for (const words of [
+    LANE_KIND.agent.label,
+    LANE_KIND.human.label,
+    LANE_KIND.none.label,
+    'A queue is where tickets wait while the working lanes are full',
+  ])
+    assert.ok(entry.includes(words), `the explanation says: ${words}`);
+  const first = tape.findIndex(line => line.startsWith('q:What kind of lane'));
+  assert.ok(tape.indexOf(explained[0]!) < first, 'the explanation comes before the first kind question');
   assert.deepEqual(
     done,
     ['views:Main', 'label:acme/shop:needs-human'],
@@ -285,10 +314,44 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
   );
 });
 
-test('with a forge configured a working lane is asked whether it works on the ticket branch; without one it never is', async t => {
-  const withForge = wizard(['skip', '1', ['acme/shop'], '', 'developer', 'yes', '', 'developer', 'no', '', 'Todo'], {
-    forgeConfigured: true,
-  });
+test('the board number question really defaults to 1: Enter takes it', async t => {
+  const { contributor, ctx, asks, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo']);
+  t.after(cleanup);
+  await contributor.setup(ctx);
+  const board = asks.find(a => a.message.startsWith('The board number'));
+  assert.equal(board?.opts.defaultValue, '1', 'a real defaultValue, not a placeholder');
+});
+
+test('the kind question offers the three answers in the ruled words', async t => {
+  const { contributor, ctx, asks, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo']);
+  t.after(cleanup);
+  await contributor.setup(ctx);
+  const kind = asks.find(a => a.message === 'What kind of lane is the "Backlog" option?');
+  assert.ok(kind, 'the kind question was asked');
+  assert.deepEqual((kind.opts as { options: unknown[] }).options, [LANE_KIND.agent, LANE_KIND.human, LANE_KIND.none]);
+});
+
+test('with a forge configured a worked lane is asked whether it works on the ticket branch; a human lane never is', async t => {
+  const withForge = wizard(
+    [
+      'skip',
+      '1',
+      ['acme/shop'],
+      '',
+      'agent',
+      'developer',
+      'yes',
+      'human',
+      'agent',
+      'developer',
+      'no',
+      'human',
+      'none',
+      'none',
+      'Todo',
+    ],
+    { forgeConfigured: true },
+  );
   t.after(withForge.cleanup);
   const result = await withForge.contributor.setup(withForge.ctx);
   assert.deepEqual(result.lanes, [
@@ -297,11 +360,13 @@ test('with a forge configured a working lane is asked whether it works on the ti
     { name: 'In Progress', agent: 'developer' },
     { name: 'In Review' },
   ]);
-  assert.ok(
-    withForge.asked.some(m => /on the ticket's branch \(git worktree\)/.test(m)),
-    'the worktree question was asked for the worked lane',
+  const branchQuestions = withForge.asked.filter(m => /on the ticket's branch \(git worktree\)/.test(m));
+  assert.deepEqual(
+    branchQuestions.map(m => /"([^"]+)"/.exec(m)?.[1]),
+    ['Backlog', 'In Progress'],
+    'the worktree question comes only after an agent answer',
   );
-  const withoutForge = wizard(['skip', '1', ['acme/shop'], '', 'developer', '', 'developer', '', 'Todo']);
+  const withoutForge = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo']);
   t.after(withoutForge.cleanup);
   await withoutForge.contributor.setup(withoutForge.ctx);
   assert.ok(!withoutForge.asked.some(m => /worktree/.test(m)), 'no forge, no worktrees to promise');
@@ -309,10 +374,8 @@ test('with a forge configured a working lane is asked whether it works on the ti
 
 test('a board without the Agent field is asked before it is touched, and the yes creates it with the app’s own name', async t => {
   const { contributor, ctx, asked, done, said, cleanup } = wizard(
-    ['skip', '1', true, ['acme/shop'], '', '', '', '', ''],
-    {
-      agentField: 'none',
-    },
+    ['skip', '1', true, ['acme/shop'], '', ...KINDS, 'Todo'],
+    { agentField: 'none' },
   );
   t.after(cleanup);
   const result = await contributor.setup(ctx);
@@ -333,7 +396,7 @@ test('a board without the Agent field is asked before it is touched, and the yes
 });
 
 test('a board that already shows the Agent field is written to no more', async t => {
-  const { contributor, ctx, said, done, cleanup } = wizard(['skip', '1', ['acme/shop'], '', '', '', '', '', ''], {
+  const { contributor, ctx, said, done, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo'], {
     views: [],
   });
   t.after(cleanup);
@@ -362,7 +425,7 @@ test('a board the app cannot read ends the wizard with the permission that unloc
 });
 
 test('a human label that cannot be created is said with its repository and its remedy', async t => {
-  const { contributor, ctx, done, cleanup } = wizard(['skip', '1', ['acme/shop'], '', '', '', '', '', ''], {
+  const { contributor, ctx, done, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo'], {
     labelError: 'gh: Not Found',
   });
   t.after(cleanup);
@@ -435,7 +498,7 @@ const ALL_ASKED = ['issue opened', 'card added', 'Agent set', 'comment posted', 
 
 /** The wizard's answers up to the end of the questions (no gate: health is
  *  up in these tests); the probe then runs unasked. */
-const QUESTIONS = ['1', ['acme/shop'], '', 'developer', '', 'developer', '', 'Todo'];
+const QUESTIONS = ['1', ['acme/shop'], '', ...KINDS, 'Todo'];
 
 const secrets = (t: TestContext, values: Record<string, string | undefined>) => {
   const had = Object.fromEntries(Object.entries(values).map(([name, value]) => [name, process.env[name]]));
@@ -478,8 +541,12 @@ test('with a live aivi the wizard ends with the board probe: every sealed delive
     `the verdict names what arrived: ${live.join(' | ')}`,
   );
   assert.ok(
-    said.some(line => line.startsWith('GitHub has no API to delete an issue')),
-    'the no-delete truth is said with the cleanup',
+    said.some(line => line.includes('GitHub has no API to delete an issue')),
+    'the card’s resting line is what closeProbe answered, said with the cleanup',
+  );
+  assert.ok(
+    said.some(line => line.startsWith('the reaction surface answered too')),
+    'the reaction is said as paid and read back, never as a delivery',
   );
   assert.equal(result.section?.board, 1, 'the mapping stands');
 });
@@ -498,7 +565,7 @@ test('a probe nobody answered is a verdict, not a rewrite: the mapping stands an
     `the missing signals are the verdict: ${live.join(' | ')}`,
   );
   assert.ok(done.includes('probe-close'), 'cleanup runs whatever the verdict');
-  assert.ok(said.some(line => line.startsWith('GitHub has no API to delete an issue')));
+  assert.ok(said.some(line => line.includes('GitHub has no API to delete an issue')));
   assert.equal(result.section?.board, 1, 'the mapping on disk is right; what is missing is reach');
 });
 
@@ -521,14 +588,14 @@ test('no webhook secret in the home stops the probe with its remedy', async t =>
   await assert.rejects(contributor.setup(ctx), /aivi add @aivi\/tracker-github/);
 });
 
-test('a board with one open Status option skips the Status signal — skipped is said, never failed', async t => {
+test('a board with one Status option skips the Status signal — skipped is said, never failed', async t => {
   secrets(t, { [GITHUB_WEBHOOK_SECRET_ENV]: PROBE_SECRET });
   const four = ALL_ASKED.filter(name => name !== 'Status moved');
-  const { contributor, ctx, said, live, cleanup } = wizard(['1', ['acme/shop'], '', 'developer'], {
+  const { contributor, ctx, said, live, cleanup } = wizard(['1', ['acme/shop'], '', 'agent', 'developer', 'human'], {
     health: 'up',
     options: [
-      { id: 'o-0', name: 'Todo', status: 'TODO' },
-      { id: 'o-4', name: 'Done', status: 'DONE' },
+      { id: 'o-0', name: 'Todo' },
+      { id: 'o-4', name: 'Done' },
     ],
     rows: FIVE.filter(
       r => r.headers['x-github-event'] !== 'projects_v2_item' || JSON.parse(r.body).changes?.field_name !== 'Status',
@@ -545,4 +612,130 @@ test('a board with one open Status option skips the Status signal — skipped is
     live.some(line => line.startsWith('the board speaks')),
     `the four paid signals still prove the board: ${live.join(' | ')}`,
   );
+});
+
+// ——— the production probe client, against the scripted GitHub ———
+
+/** The board BoardSetupClient reads: Status options in board order (the
+ *  human's own board shape, Done mid-array), the Agent field named for the
+ *  app, and the ids the probe mutations are addressed with. */
+function probeRoutes(
+  extra: Record<string, (call: Seen) => Answer> = {},
+  issue: Record<string, unknown> = {},
+): Record<string, (call: Seen) => Answer> {
+  return connectRoutes({
+    'POST /repos/acme/shop/issues': () => ({ status: 201, body: { number: 9 } }),
+    'POST /repos/acme/shop/issues/9/comments': () => ({ status: 201, body: { id: 701 } }),
+    'POST /repos/acme/shop/issues/9/reactions': () => ({ status: 201, body: { id: 501 } }),
+    'GET /repos/acme/shop/issues/9/reactions': () => ({
+      status: 200,
+      body: [{ id: 501, user: { login: 'aivi-agent[bot]', type: 'Bot' } }],
+    }),
+    'DELETE /repos/acme/shop/issues/9/reactions/501': () => ({ status: 204, body: null }),
+    'DELETE /repos/acme/shop/issues/comments/701': () => ({ status: 204, body: null }),
+    'GET /repos/acme/shop/issues/9': () => ({ status: 200, body: { state: 'open', state_reason: null, ...issue } }),
+    'PATCH /repos/acme/shop/issues/9': () => ({ status: 200, body: { state: 'closed' } }),
+    'POST /graphql': graphql({
+      BoardSetup: () => ({
+        organization: {
+          id: 'O_1',
+          projectV2: {
+            id: 'PVT_1',
+            title: 'aivi HQ board',
+            fields: {
+              nodes: [
+                {
+                  id: 'F_status',
+                  name: 'Status',
+                  options: [
+                    { id: 'opt_backlog', name: 'Backlog' },
+                    { id: 'opt_todo', name: 'Todo' },
+                    { id: 'opt_prog', name: 'In Progress' },
+                    { id: 'opt_done', name: 'Done' },
+                  ],
+                },
+                { id: 'F_agent', name: 'Agent', options: [{ id: 'opt_aivi', name: 'aivi-agent' }] },
+              ],
+            },
+          },
+        },
+      }),
+      // The card lands on Backlog: GitHub's own default column answers it.
+      IssueFacts: () => ({ repository: { issue: issueNode({ number: 9, lane: 'Backlog' }) } }),
+      ProbeAddItem: () => ({ addProjectV2ItemById: { item: { id: 'PVTI_9' } } }),
+      ProbeSetSelect: () => ({ updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_9' } } }),
+      ProbeClearSelect: () => ({ deleteProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_9' } } }),
+      ProbeArchiveItem: () => ({ archiveProjectV2Item: { archivedItem: { id: 'PVTI_9' } } }),
+    }),
+    ...extra,
+  });
+}
+
+const setupClient = async (routes: Record<string, (call: Seen) => Answer>) => {
+  const harness = scripted(routes);
+  const app = await connectApp(harness.fetch);
+  return { client: new BoardSetupClient(app), ...harness };
+};
+
+test('the probe pays the next Status option in board order the card is not on', async () => {
+  const { client, bodies } = await setupClient(probeRoutes());
+  const board = await client.readBoard(1);
+  const probe = await client.openProbe('acme/shop', board);
+  assert.deepEqual(probe.asked, ['issue opened', 'card added', 'Agent set', 'comment posted', 'Status moved']);
+  assert.equal(probe.statusSkipped, false, 'a board with two options can always show a move');
+  const sets = bodies('/graphql')
+    .map(v => v.variables)
+    .filter(v => v?.optionId);
+  // The card landed on Backlog; the paid move is the **next** option in
+  // board order — Todo. Not "the first open one": GitHub has no open set.
+  assert.deepEqual(
+    sets.map(v => [v.fieldId, v.optionId]),
+    [
+      ['F_status', 'opt_todo'],
+      ['F_agent', 'opt_aivi'],
+    ],
+    'Status moves to the next option in board order, then the Agent field speaks',
+  );
+});
+
+test('the probe pays its reaction and reads it back — the permission the status surface needs', async () => {
+  const { client, calls } = await setupClient(probeRoutes());
+  const board = await client.readBoard(1);
+  const probe = await client.openProbe('acme/shop', board);
+  assert.ok(calls().includes('POST /repos/acme/shop/issues/9/reactions'), 'the eyes is paid');
+  assert.ok(calls().includes('GET /repos/acme/shop/issues/9/reactions'), 'and read back');
+  assert.ok(probe, 'the reaction is not a signal: no delivery is waited for');
+});
+
+test('a reaction that does not land stops the probe with the permission named', async () => {
+  const { client } = await setupClient(
+    probeRoutes({
+      'GET /repos/acme/shop/issues/9/reactions': () => ({ status: 200, body: [] }), // the eyes vanished
+    }),
+  );
+  const board = await client.readBoard(1);
+  await assert.rejects(client.openProbe('acme/shop', board), /the eyes reaction did not land/);
+});
+
+test('cleanup reports GitHub’s own close when a workflow closed the test card', async () => {
+  const { client, calls } = await setupClient(
+    probeRoutes({}, { state: 'closed', state_reason: 'completed' }), // GitHub answers the card already closed
+  );
+  const board = await client.readBoard(1);
+  const probe = await client.openProbe('acme/shop', board);
+  const rest = await client.closeProbe(probe);
+  assert.match(rest, /rests closed by GitHub itself \(completed\)/, "GitHub's answer is said, not aivi's intent");
+  assert.ok(!calls().includes('PATCH /repos/acme/shop/issues/9'), 'aivi closes nothing GitHub already closed');
+  assert.ok(calls().includes('DELETE /repos/acme/shop/issues/9/reactions/501'), 'the eyes is taken off');
+});
+
+test('cleanup closes the card itself when GitHub left it open', async () => {
+  const { client, calls, bodies } = await setupClient(probeRoutes());
+  const board = await client.readBoard(1);
+  const probe = await client.openProbe('acme/shop', board);
+  const rest = await client.closeProbe(probe);
+  assert.match(rest, /is closed \(not planned\), its card archived, its comment deleted/);
+  assert.ok(calls().includes('PATCH /repos/acme/shop/issues/9'), 'aivi paid the close itself');
+  const patch = bodies('/repos/acme/shop/issues/9').find(b => b.state === 'closed');
+  assert.equal(patch?.state_reason, 'not_planned', 'closed as not planned, the honest reason for a test card');
 });

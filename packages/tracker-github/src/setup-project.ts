@@ -1,7 +1,9 @@
 /** The GitHub tracker's project-setup contributor, at its `./setupProject`
  *  subpath: it maps a new project to one projectsV2 board and the repositories
  *  whose issues feed it, and offers the project's lane array — the board's
- *  `Status` options in board order, each asked who works it. It clones nothing
+ *  `Status` options in board order, each asked what kind of lane it is:
+ *  Agent, Human or None (ruled by the human 2026-10-08; GitHub gives no
+ *  state flag to guess from). It clones nothing
  *  (a tracker has no checkout to give): it hands back the `tracker-github`
  *  section core writes under the project, and the **core** `lanes` array core
  *  writes on the project. Everything GitHub-specific — the board, its fields,
@@ -21,12 +23,21 @@
  *  the server. Retry" or "Continue anyway", and continuing writes the mapping
  *  with the webhook's unproven state said. When one was there to watch, the
  *  wizard ends with the board probe: a test card pays the tracker's every
- *  mutation — issue, board add, Status move, Agent set, comment — the diary
- *  must echo each back seal-verified, then cleanup. */
+ *  mutation — issue, board add, Status move, Agent set, comment, reaction —
+ *  the diary must echo each delivery back seal-verified (the reaction aside:
+ *  paid and read back, no delivery subscribes), then cleanup says how the
+ *  card rests in GitHub's real terms. */
 import { readFile } from 'node:fs/promises';
 import { errorMessage, getLogger, type Logger, type ProjectLaneInput } from '@aivi/core';
 import { GITHUB_WEBHOOK_SECRET_ENV, type GitHubApp, githubApp } from '@aivi/github';
-import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
+import {
+  LANE_KIND,
+  type LaneKind,
+  laneKindLines,
+  PluginSetupCancelled,
+  type ProjectContributor,
+  type ProjectSetupContext,
+} from '@aivi/plugin';
 import { GithubClient } from './client.ts';
 import { AGENT_FIELD, githubSchema, STATUS_FIELD } from './config.ts';
 import {
@@ -42,13 +53,19 @@ import { GITHUB_WEBHOOK_PATH } from './tracker.ts';
 
 const log = getLogger(['aivi', 'projects']);
 
-/** The board as the wizard reads it: GitHub's own `status` on each option is
- *  what tells a closed state from a lane, and the org node id is what a field
- *  creation is addressed to. */
+/** One Status option, as GitHub answers it: an id, a name, and nothing else.
+ *  **GitHub says nothing about what an option means** (probed live,
+ *  2026-10-08): `ProjectV2SingleSelectFieldOption` carries
+ *  `color, description, descriptionHTML, id, name, nameHTML` and no state
+ *  flag — asking for `status` fails the whole read, because GraphQL rejects a
+ *  query naming a field that does not exist. What a Status change does to an
+ *  issue is the board's workflows, and a workflow's rule is not in the API
+ *  either (`ProjectV2Workflow` answers id, name, number, enabled and dates).
+ *  So the person decides what each option is: see `askLanes`. The org node id
+ *  (on the board) is what a field creation is addressed to. */
 export interface SetupBoardOption {
   id: string;
   name: string;
-  status: string;
 }
 
 export interface SetupBoard {
@@ -67,8 +84,8 @@ export interface SetupBoard {
 
 /** The board probe's test card: what the wait must hear back (`asked` names
  *  the signals — probe.ts's `BOARD_SIGNALS` words), and everything cleanup
- *  needs. `statusSkipped` is a board whose single open option cannot show a
- *  move: said as skipped, never as a failure. */
+ *  needs. `statusSkipped` is a board with a single Status option, where no
+ *  move can be shown: said as skipped, never as a failure. */
 export interface ProbeHandles {
   ref: string;
   number: number;
@@ -97,12 +114,15 @@ export interface GithubSetupClient {
   repositories(): Promise<{ id: string }[]>;
   ensureLabel(repo: string, label: string): Promise<void>;
   /** Pay the tracker's mutations on one throwaway issue: open, add to board,
-   *  move Status, set Agent, comment — everything the tracker will ever do,
-   *  and everything the diary must echo back. */
-  openProbe(repo: string, board: SetupBoard, open: SetupBoardOption[]): Promise<ProbeHandles>;
-  /** Lay the test card to rest: Agent cleared, item archived, issue closed
-   *  not-planned, comment deleted. GitHub has no API to delete an issue. */
-  closeProbe(handles: ProbeHandles): Promise<void>;
+   *  move Status, set Agent, comment, react — everything the tracker will
+   *  ever do, and everything the diary must echo back (the reaction aside:
+   *  paid and read back, no delivery subscribes). */
+  openProbe(repo: string, board: SetupBoard): Promise<ProbeHandles>;
+  /** Lay the test card to rest: Agent cleared, item archived, own reaction
+   *  removed, comment deleted — then close, **unless GitHub's own workflow
+   *  already closed it**: answers one line saying how the card rests, in
+   *  GitHub's real terms. GitHub has no API to delete an issue. */
+  closeProbe(handles: ProbeHandles): Promise<string>;
 }
 export type MakeSetupClient = (log: Logger) => Promise<GithubSetupClient>;
 
@@ -114,7 +134,7 @@ const BOARD_SETUP = /* GraphQL */ `
         id
         title
         fields(first: 60) { nodes {
-          ... on ProjectV2SingleSelectField { id name options { id name status } }
+          ... on ProjectV2SingleSelectField { id name options { id name } }
         } }
       }
     }
@@ -189,8 +209,11 @@ const PROBE_ARCHIVE_ITEM = /* GraphQL */ `
 `;
 
 /** The production crossing: the home's app (D3 — the wizard and the module
- *  speak through one credential), read through the tracker's own client. */
-class BoardSetupClient implements GithubSetupClient {
+ *  speak through one credential), read through the tracker's own client.
+ *  Exported for the test that scripts GitHub's answers and proves the probe's
+ *  own choices — which Status option it pays, the reaction it reads back, and
+ *  whose close it reports. */
+export class BoardSetupClient implements GithubSetupClient {
   private readonly app: GitHubApp;
   private readonly tracker: GithubClient;
 
@@ -231,11 +254,7 @@ class BoardSetupClient implements GithubSetupClient {
       number: boardNumber,
       orgId: organization.id,
       title: project.title,
-      statusOptions: (status.options ?? []).map((o: any) => ({
-        id: o.id,
-        name: o.name,
-        status: String(o.status ?? 'TODO'),
-      })),
+      statusOptions: (status.options ?? []).map((o: any) => ({ id: o.id, name: o.name })),
       statusFieldId: status.id,
       ...(agent ? { agentFieldId: agent.id } : {}),
       agentOptions: ((agent?.options ?? []) as any[]).map((o: any) => ({ id: o.id, name: o.name })),
@@ -271,7 +290,7 @@ class BoardSetupClient implements GithubSetupClient {
     return this.tracker.ensureLabel(repo, label);
   }
 
-  async openProbe(repo: string, board: SetupBoard, open: SetupBoardOption[]): Promise<ProbeHandles> {
+  async openProbe(repo: string, board: SetupBoard): Promise<ProbeHandles> {
     if (!board.agentFieldId)
       throw new Error('the board has no Agent field: the wizard creates one before the probe, never the probe');
     const issue = await this.tracker.createIssue(repo, {
@@ -284,12 +303,15 @@ class BoardSetupClient implements GithubSetupClient {
     });
     const itemId: string = addProjectV2ItemById.item.id;
     const asked = ['issue opened', 'card added', 'Agent set', 'comment posted'];
-    // Status: move the card to an option it does not already stand on — a
-    // mutation that changes nothing posts nothing, and a signal nobody paid
-    // for cannot land. A board with one open option and no other footing
-    // skips the signal; skipping is not failing.
+    // Status: the next option in board order the card is not already on
+    // (ruled by the human 2026-10-08 — no open/closed notion, GitHub has
+    // none). A mutation that changes nothing posts nothing, and a signal
+    // nobody paid for cannot land. A board's workflow may be wired to the
+    // picked option and close the test card — accepted: the probe reports
+    // what GitHub answers, not what aivi meant. A board with a single
+    // Status option cannot show a move; skipping is not failing.
     const landing = await this.tracker.laneOn(issue.ref, board.number);
-    const target = open.find(option => option.name !== landing?.name);
+    const target = board.statusOptions.find(option => option.name !== landing?.name);
     let statusSkipped = true;
     if (target) {
       await this.app.octokit.graphql(PROBE_SET_SELECT, {
@@ -313,6 +335,26 @@ class BoardSetupClient implements GithubSetupClient {
       optionId: agentOption.id,
     });
     const comment = await this.tracker.createComment(issue.ref, 'aivi projects add test — safe to ignore.');
+    // The reaction surface, paid and read back (ruled by the human
+    // 2026-10-08). It is **not a signal**: GitHub posts `reaction` events
+    // only to subscribers, and aivi subscribes to issue comment, issues and
+    // projects v2 item — there is no delivery to wait for. Paying and
+    // reading back proves the permission the tracker's status surface
+    // (eyes, rocket) needs; cleanup takes the reaction off.
+    await this.tracker.addReaction(issue.ref, 'eyes');
+    const slash = issue.ref.indexOf('/');
+    const hash = issue.ref.indexOf('#');
+    const { data: reactions } = await this.app.octokit.rest.reactions.listForIssue({
+      owner: issue.ref.slice(0, slash),
+      repo: issue.ref.slice(slash + 1, hash),
+      issue_number: issue.number,
+      content: 'eyes',
+      per_page: 100,
+    });
+    if (!reactions.some(reaction => reaction.user?.login === this.tracker.botLogin))
+      throw new Error(
+        `the eyes reaction did not land on ${issue.ref}: the app cannot react — check its repository permissions, then run this again`,
+      );
     return {
       ref: issue.ref,
       number: issue.number,
@@ -326,49 +368,43 @@ class BoardSetupClient implements GithubSetupClient {
     };
   }
 
-  async closeProbe(handles: ProbeHandles): Promise<void> {
+  async closeProbe(handles: ProbeHandles): Promise<string> {
     await this.app.octokit.graphql(PROBE_CLEAR_SELECT, {
       projectId: handles.projectId,
       itemId: handles.itemId,
       fieldId: handles.agentFieldId,
     });
     await this.app.octokit.graphql(PROBE_ARCHIVE_ITEM, { projectId: handles.projectId, itemId: handles.itemId });
-    const [owner = '', name = ''] = handles.ref.split('/');
+    await this.tracker.removeOwnReaction(handles.ref, 'eyes');
+    const [owner = '', rest = ''] = handles.ref.split('/');
+    const repo = rest.split('#')[0] ?? '';
+    await this.tracker.deleteComment(handles.ref, handles.commentId);
+    // Report GitHub's answer, not aivi's intent (ruled by the human
+    // 2026-10-08): a workflow wired to the Status option the probe picked
+    // may have closed the card already — that is the operator's board
+    // speaking, and the probe says so instead of claiming its own close.
+    const { data: issue } = await this.app.octokit.rest.issues.get({ owner, repo, issue_number: handles.number });
+    if (issue.state === 'closed')
+      return `${handles.ref} rests closed by GitHub itself (${issue.state_reason ?? 'closed'}) — a workflow on the board closed the test card; aivi leaves it as GitHub left it`;
     await this.app.octokit.rest.issues.update({
       owner,
-      repo: name.split('#')[0] ?? '',
+      repo,
       issue_number: handles.number,
       state: 'closed',
       state_reason: 'not_planned',
     });
-    await this.tracker.deleteComment(handles.ref, handles.commentId);
+    return `${handles.ref} is closed (not planned), its card archived, its comment deleted — GitHub has no API to delete an issue`;
   }
 }
 
 const productionClient: MakeSetupClient = async setupLog => new BoardSetupClient(await githubApp({ log: setupLog }));
 
-/** Closed Status options are not lanes — GitHub's spelling of the ruling that
- *  removed Linear's Done, Canceled and Duplicate (2026-10-02): GitHub's own
- *  `status` says `DONE` for the options that end work. A run that ends in the
- *  last configured lane moves nowhere: a person closes the ticket. Deduped by
- *  name keeping the first, like the Linear rule. Exported pure for the test
- *  that pins the ruling. */
-export function openStatusOptions(options: SetupBoardOption[]): SetupBoardOption[] {
-  const seen = new Set<string>();
-  const open: SetupBoardOption[] = [];
-  for (const option of options) {
-    if (option.status === 'DONE' || seen.has(option.name)) continue;
-    seen.add(option.name);
-    open.push(option);
-  }
-  return open;
-}
-
 /** The lanes the queue question may offer (ruled 2026-10-02, mirrored from
  *  Linear's wizard): a queue lane must feed a worker lane, so a lane whose next
  *  works nobody is no candidate, the last lane feeds nothing at all, and a lane
  *  that has an agent is never an option — a queue is where people wait for a
- *  worker, not a worker lane itself. */
+ *  worker, not a worker lane itself. A **human** lane is a legal queue: that is
+ *  what "used as a queue" means in the answer's own words. */
 export function queueCandidates(lanes: ProjectLaneInput[]): ProjectLaneInput[] {
   return lanes.filter(lane => lane.agent === undefined && lanes[lanes.indexOf(lane) + 1]?.agent !== undefined);
 }
@@ -407,25 +443,51 @@ async function askLanes(
   agentNames: string[],
 ): Promise<ProjectLaneInput[]> {
   const lanes: ProjectLaneInput[] = [];
+  let explained = false;
   for (const option of options) {
-    const answer = await ctx.prompts.select({
-      message: `Which OpenCode agent works the "${option.name}" lane?`,
-      options: [...agentNames.map(name => ({ value: name, label: name })), { value: '', label: '-- None --' }],
-    });
-    if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
-    const agent = String(answer).trim();
-    let worktree = false;
-    if (agent && ctx.forgeConfigured) {
-      const onBranch = await ctx.prompts.select({
-        message: `Does work in the "${option.name}" lane happen on the ticket's branch (git worktree)?`,
-        options: [
-          { value: 'yes', label: "yes — on the ticket's branch, in its own worktree" },
-          { value: 'no', label: 'no — in the project checkout itself' },
-        ],
-      });
-      if (ctx.prompts.isCancel(onBranch)) throw new PluginSetupCancelled('lane setup incomplete');
-      worktree = onBranch === 'yes';
+    // One log entry before the first question, never repeated per option
+    // (ruled by the human 2026-10-08). GitHub gives no state flag and no
+    // workflow rule, so the person decides — the note says why.
+    if (!explained) {
+      explained = true;
+      await ctx.prompts.log.message(
+        laneKindLines(
+          'Aivi cannot tell what a board option means: GitHub keeps that in the board’s workflows, and their rules are not readable. You decide what each option is.',
+        ).join('\n'),
+      );
     }
+    const picked = await ctx.prompts.select({
+      message: `What kind of lane is the "${option.name}" option?`,
+      options: [LANE_KIND.agent, LANE_KIND.human, LANE_KIND.none],
+    });
+    if (ctx.prompts.isCancel(picked)) throw new PluginSetupCancelled('lane setup incomplete');
+    const kind = String(picked) as LaneKind;
+    // "None": the option stays out of the array — aivi never reads it and
+    // never moves a ticket into it.
+    if (kind === LANE_KIND.none.value) continue;
+    let agent = '';
+    let worktree = false;
+    if (kind === LANE_KIND.agent.value) {
+      const answer = await ctx.prompts.select({
+        message: `Which OpenCode agent works the "${option.name}" lane?`,
+        options: agentNames.map(name => ({ value: name, label: name })),
+      });
+      if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
+      agent = String(answer).trim();
+      if (agent && ctx.forgeConfigured) {
+        const onBranch = await ctx.prompts.select({
+          message: `Does work in the "${option.name}" lane happen on the ticket's branch (git worktree)?`,
+          options: [
+            { value: 'yes', label: "yes — on the ticket's branch, in its own worktree" },
+            { value: 'no', label: 'no — in the project checkout itself' },
+          ],
+        });
+        if (ctx.prompts.isCancel(onBranch)) throw new PluginSetupCancelled('lane setup incomplete');
+        worktree = onBranch === 'yes';
+      }
+    }
+    // "Human": a bare lane. The orchestrator works nobody here; a finished
+    // run may still move a ticket in, and after that aivi never touches it.
     lanes.push({ name: option.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
   }
   return lanes;
@@ -460,7 +522,9 @@ async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Pr
 async function askedBoard(ctx: ProjectSetupContext, client: GithubSetupClient): Promise<SetupBoard> {
   const answer = await ctx.prompts.text({
     message: 'The board number — the number at the end of the board URL (github.com/orgs/<org>/projects/1 is board 1)',
-    placeholder: 'e.g. 1',
+    // A real default: Enter takes board 1 (ruled by the human 2026-10-08 —
+    // a placeholder was only a hint, Enter did not take it).
+    defaultValue: '1',
     validate: value =>
       value !== undefined && /^[1-9]\d*$/.test(value.trim()) ? undefined : 'the number at the end of the board URL',
   });
@@ -536,10 +600,13 @@ async function ensureAgentField(
 }
 
 /** The board probe (ruled 2026-10-07): one test card pays every mutation the
- *  tracker will ever make — open, board add, Status move, Agent set, comment —
- *  and the diary must echo each delivery back, seal-verified. Then cleanup:
- *  Agent cleared, card archived, issue closed not-planned, comment deleted,
- *  and the truth said: GitHub has no API to delete an issue.
+ *  tracker will ever make — open, board add, Status move to the next option
+ *  in board order, Agent set, comment, reaction (paid and read back: no
+ *  delivery subscribes) — and the diary must echo each delivery back,
+ *  seal-verified. Then cleanup answers one line: how the card rests, in
+ *  GitHub's real terms — a workflow's close is said as GitHub's, aivi's own
+ *  close as aivi's, and the truth stands: GitHub has no API to delete an
+ *  issue.
  *
  *  A missing signal is a verdict, not a throw — the mapping on disk is right;
  *  what is missing is GitHub's reach, and the line names what to check. A bad
@@ -558,11 +625,14 @@ async function probeBoard(
     );
   const spinner = ctx.prompts.spinner();
   spinner.start(`Board probe in ${repo}: one test card, then GitHub’s answer`);
-  const probe = await client.openProbe(repo, board, openStatusOptions(board.statusOptions));
+  const probe = await client.openProbe(repo, board);
   if (probe.statusSkipped)
     await ctx.prompts.log.message(
-      'the board has a single open Status option — a move cannot be shown, so the Status signal is skipped, not failed',
+      'the board has a single Status option — a move cannot be shown, so the Status signal is skipped, not failed',
     );
+  await ctx.prompts.log.message(
+    'the reaction surface answered too: aivi’s eyes landed on the card and cleanup will clear it — reaction events are not subscribed, so there is no delivery to wait for',
+  );
   spinner.message(`${probe.ref} is on the board — waiting for GitHub’s deliveries`);
   const windowMs = probeWindowMs();
   const { landed } = await ctx.withStore(store =>
@@ -580,23 +650,21 @@ async function probeBoard(
     ),
   );
   const verdict = boardProbeVerdict(landed, probe.asked, windowMs);
+  let rest = '';
   try {
-    await client.closeProbe(probe);
+    rest = await client.closeProbe(probe);
   } catch (error) {
-    await ctx.prompts.log.message(
-      `the test card could not be cleaned up: ${errorMessage(error)} — close it by hand: ${probe.ref}`,
-    );
+    rest = `the test card could not be cleaned up: ${errorMessage(error)} — close it by hand: ${probe.ref}`;
   }
   if (verdict.pass) spinner.stop(`the board speaks — ${verdict.detail}`);
   else spinner.cancel(`board probe — ${verdict.detail}`);
-  await ctx.prompts.log.message(
-    'GitHub has no API to delete an issue: the test card is closed (not planned), its card archived, its comment deleted.',
-  );
+  await ctx.prompts.log.message(rest);
 }
 
 /** The wizard, in its order: the health gate as a choice, the board, the
  *  delegate surface and its view visibility, the repositories, the project's
- *  name, one agent per open Status option, the queue over the finished lanes,
+ *  name, what kind of lane each Status option is (agent, human, or none —
+ *  ruled by the human 2026-10-08), the queue over the no-agent lanes,
  *  the human label in every mapped repository — and, when a live aivi was
  *  there to watch, the board probe last: it pays real mutations, so it comes
  *  after everything it tests. Each step is its own question and its own
@@ -646,12 +714,12 @@ function makeContributor(makeClient: MakeSetupClient = productionClient): Projec
       // is the order — Status options arrive in board order already.
       const agentNames = await ctx.agents(id);
       if (!agentNames.length) throw new Error('Unable to configure lanes: there appear to be no agents available.');
-      const lanes = await askLanes(ctx, openStatusOptions(board.statusOptions), agentNames);
+      const lanes = await askLanes(ctx, board.statusOptions, agentNames);
       await askQueue(ctx, lanes);
 
       if (!lanes.length)
         await ctx.prompts.log.message(
-          'this board has no open Status options yet — lanes get written once the board has some',
+          'no lanes were written — the board had no Status options, or every option was answered “None” — so aivi works no tickets until lanes exist',
         );
 
       // The human label: unlike Linear, where it must pre-exist, GitHub

@@ -92,3 +92,39 @@ export interface ProjectContributor {
   role?: ProjectRole;
   setup(ctx: ProjectSetupContext): Promise<ProjectSetupResult>;
 }
+
+/** The three answers to the lane question — "What kind of lane is this?" —
+ *  in the person's own words (ruled by the human 2026-10-08). Every tracker
+ *  wizard asks in these words: the explanation prints the labels, the
+ *  question offers them, so they live in the kit once. `agent` asks who
+ *  works the lane; `human` writes a bare lane — aivi ignores its tickets,
+ *  and a finished run may move one in; `none` leaves the option out of the
+ *  array: aivi never reads it and never moves a ticket into it. */
+export const LANE_KIND = {
+  agent: { value: 'agent', label: 'Agent: aivi delegates tickets in this lane to an agent' },
+  human: {
+    value: 'human',
+    label: 'Human: aivi ignores tickets in this lane; it is only ever used as a queue or a destination',
+  },
+  none: { value: 'none', label: 'None: this lane is not part of aivi’s workflow' },
+} as const;
+
+/** The three answers as a type: whatever the person picked is one of them. */
+export type LaneKind = (typeof LANE_KIND)[keyof typeof LANE_KIND]['value'];
+
+/** The explanation — **one log entry before the first lane question**, never
+ *  repeated per option (ruled by the human 2026-10-08). The queue sentence
+ *  belongs in the same entry: a queue is the other thing a no-agent lane can
+ *  be, and the difference between the two no-agent answers is the whole
+ *  point of asking. `note` is the wizard's own first line — a tracker that
+ *  cannot tell what an option means (GitHub) says so here. */
+export function laneKindLines(note?: string): string[] {
+  return [
+    ...(note ? [note] : []),
+    'Every option is asked, in board order. What each answer means:',
+    `  ${LANE_KIND.agent.label}`,
+    `  ${LANE_KIND.human.label}`,
+    `  ${LANE_KIND.none.label}`,
+    'A queue is where tickets wait while the working lanes are full: aivi moves the next ticket out of it as soon as a slot is free.',
+  ];
+}
