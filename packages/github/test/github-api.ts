@@ -36,6 +36,9 @@ export interface Seen {
 export interface Answer {
   status: number;
   body: unknown;
+  /** Response headers beyond content-type: the deprecation and sunset pair
+   *  GitHub sends with a deprecated endpoint's answer. */
+  headers?: Record<string, string>;
 }
 
 export interface Scripted {
@@ -80,9 +83,12 @@ export function scripted(routes: Record<string, (call: Seen) => Answer>): Script
     seen.push(call);
     const answer = routes[`${call.method} ${call.path}`];
     if (!answer) throw new Error(`unasked-for call: ${call.method} ${call.path}${call.search}`);
-    const { status, body: payload } = answer(call);
+    const { status, body: payload, headers } = answer(call);
     if (status === 204) return new Response(null, { status });
-    return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify(payload), {
+      status,
+      headers: { 'content-type': 'application/json', ...(headers ?? {}) },
+    });
   };
   return { fetch, seen, calls: () => seen.map(other => `${other.method} ${other.path}`) };
 }

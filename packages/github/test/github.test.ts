@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import type { Logger } from '@aivi/core';
 import { ConfigurationError } from '@aivi/plugin';
 import {
   githubCredentials as credentials,
@@ -83,6 +84,43 @@ test('the app proves itself, and the one installation it is granted is the one i
     ['GET /app', 'GET /app/installations'],
   );
   assert.equal(jwtClaims(seen[0]?.authorization).iss, '7');
+});
+
+test('a deprecation header GitHub answers with is a log line, not console noise', async () => {
+  // Live: octokit's warning about the deprecated issue-creation endpoint
+  // printed straight over the wizard's spinner. The fact goes to the
+  // Logger the caller handed over — the same line, one place, heard or not
+  // by the startup's one logging decision.
+  const { fetch } = scripted({
+    'GET /app': () => ({ status: 200, body: { id: 7, slug: 'aivi-agent' } }),
+    'GET /app/installations': () => ({ status: 200, body: [{ id: 99, account: { login: 'aivi-hq' } }] }),
+    'POST /app/installations/99/access_tokens': () => installationToken(),
+    'POST /repos/acme/shop/issues': () => ({
+      status: 201,
+      body: { number: 9 },
+      headers: {
+        deprecation: 'true',
+        sunset: 'Fri, 10 Mar 2028 00:00:00 GMT',
+        link: '<https://docs.github.com/en/rest/about-the-rest-api/api-versions>; rel="deprecation"',
+      },
+    }),
+  });
+  const warnings: string[] = [];
+  const log = {
+    debug: () => {},
+    info: () => {},
+    warn: (message: string) => void warnings.push(message),
+    error: () => {},
+  } as unknown as Logger;
+  const app = await GitHubApp.connect({ fetch, log });
+  const created = await app.octokit.request('POST /repos/{owner}/{repo}/issues', {
+    owner: 'acme',
+    repo: 'shop',
+    title: 'test',
+  });
+  assert.equal(created.status, 201, 'the deprecated endpoint still answers');
+  assert.equal(warnings.length, 1, `the warning reached the Logger once: ${warnings.join(' | ')}`);
+  assert.match(warnings[0]!, /POST https:\/\/api\.github\.com\/repos\/acme\/shop\/issues.*is deprecated/);
 });
 
 test('the installation token is minted once and held: nothing mints per command', async () => {

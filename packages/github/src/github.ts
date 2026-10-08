@@ -152,14 +152,41 @@ export interface GitHubOptions {
 /** The app authenticated as **itself**: it can name itself and list its
  *  installations, and no repository at all — the installation is what grants
  *  those. Used to find the one grant and to prove the key matches the id. */
-function appClient(creds: GitHubCredentials, fetch?: typeof globalThis.fetch, retry?: { enabled?: boolean }): Octokit {
+function appClient(
+  creds: GitHubCredentials,
+  fetch?: typeof globalThis.fetch,
+  retry?: { enabled?: boolean },
+  log?: Logger,
+): Octokit {
+  const request = requestOptions(fetch, log);
   return new Octokit({
     authStrategy: createAppAuth,
     auth: { appId: creds.appId, privateKey: creds.privateKey },
-    ...(fetch ? { request: { fetch } } : {}),
+    ...(request ? { request } : {}),
     ...(retry ? { retry } : {}),
   });
 }
+
+/** Octokit's transport warns of GitHub's deprecation headers straight to
+ *  `console.warn` — which writes over a wizard's TUI mid-spinner. The
+ *  warning is true and the endpoint works until its sunset date; the fact
+ *  belongs in aivi's log, where startup decides once whether it is heard
+ *  (silent in a plain CLI run, a line in the host's log). The transport
+ *  reads it at `request.log` and nowhere else. */
+const requestOptions = (fetch?: typeof globalThis.fetch, log?: Logger) => {
+  const options = {
+    ...(fetch ? { fetch } : {}),
+    ...(log ? { log: octokitLog(log) } : {}),
+  };
+  return Object.keys(options).length ? options : undefined;
+};
+
+const octokitLog = (log: Logger) => ({
+  debug: (message: string, ...args: unknown[]) => log.debug(message, args.length ? { args } : undefined),
+  info: (message: string, ...args: unknown[]) => log.info(message, args.length ? { args } : undefined),
+  warn: (message: string, ...args: unknown[]) => log.warn(message, args.length ? { args } : undefined),
+  error: (message: string, ...args: unknown[]) => log.error(message, args.length ? { args } : undefined),
+});
 
 /** What the grant itself says it allows, read with the app's JWT. */
 export interface GitHubGrant {
@@ -231,7 +258,7 @@ export class GitHubApp {
   static async connect(options: GitHubOptions = {}): Promise<GitHubApp> {
     const log = options.log ?? getLogger(['aivi', 'github']);
     const creds = options.credentials ?? githubCredentials();
-    const app = appClient(creds, options.fetch, options.retry);
+    const app = appClient(creds, options.fetch, options.retry, log);
     let slug: string;
     try {
       const { data: itself } = await app.rest.apps.getAuthenticated();
@@ -256,10 +283,11 @@ export class GitHubApp {
           .join(', ')}). aivi speaks through one installation: revoke the ones aivi does not need.`,
       );
     const installation = granted[0]!;
+    const installationRequest = requestOptions(options.fetch, log);
     const octokit = new Octokit({
       authStrategy: createAppAuth,
       auth: { appId: creds.appId, privateKey: creds.privateKey, installationId: installation.id },
-      ...(options.fetch ? { request: { fetch: options.fetch } } : {}),
+      ...(installationRequest ? { request: installationRequest } : {}),
       ...(options.retry ? { retry: options.retry } : {}),
     });
     const account = installation.account?.login ?? String(installation.id);
