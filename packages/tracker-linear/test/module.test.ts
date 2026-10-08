@@ -1039,6 +1039,90 @@ test('a lane move is a wake: the walk starts the ticket it finds, a stop ends th
   assert.equal(orchestrator.activeRun('tracker-linear', 'api-7'), undefined);
 });
 
+/** The three wake answers of the lane model (ruled by the human 2026-10-08):
+ *  a working lane or the queue wakes, a human lane that is not the queue and
+ *  a state missing from the array are out of sight, out of mind. A walk is
+ *  observable here as a board read: `tickets` answers lane by lane, so a wake
+ *  that never fired leaves the counter where it stood. */
+test('a ticket moved into a human lane or a missing state is out of sight; the queue is watched', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-ignoresight-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await checkout(root, 'api');
+  const opencode = await fakeOpenCode(t, 'Shipped.');
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: opencode.url },
+    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false } },
+    projects: {
+      api: {
+        'tracker-linear': { teams: ['t'] },
+        lanes: [{ name: 'Backlog', queue: true }, { name: 'Todo', agent: 'developer' }, { name: 'Done' }],
+      },
+    },
+  });
+  const loaded: LoadedConfig = {
+    config,
+    path: join(root, 'home/config.json'),
+    projects: [{ id: 'api', directory: source, lanes: config.projects.api!.lanes! }],
+    sources: [],
+  };
+  const tracker = new FakeTracker(linearBlock(config));
+  const api = issue('api-7', {
+    identifier: 'API-7',
+    title: 'Add rate limits',
+    description: null,
+    branchName: 'me/api-7-rate-limits',
+    state: { id: 'todo', name: 'Todo', type: 'unstarted' },
+    delegateId: null,
+  });
+  tracker.issues.set('api-7', api);
+  const store = new Store(':memory:');
+  const abort = new AbortController();
+  const services = makeServices(loaded, store, abort);
+  const board = fakeBoard(tracker, 'api');
+  let reads = 0;
+  const watched = {
+    ...board,
+    tickets: async (p: string, lane: string) => {
+      reads++;
+      return board.tickets(p, lane);
+    },
+  };
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => watched,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  const updated = async (changed: TrackerChange[]) => {
+    await tracker.drive({ kind: 'updated', conversation: 'dev', issueId: 'api-7', changed });
+  };
+
+  // The person moves the ticket to Done — a human lane: the event is ignored.
+  api.state = { id: 'done', name: 'Done', type: 'completed' };
+  let before = reads;
+  await updated(['state']);
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(reads, before, 'no walk for a ticket in a human lane: aivi does not look there');
+
+  // A state named nowhere in the array: the same silence.
+  api.state = { id: 'gone', name: 'Shipped', type: 'completed' };
+  before = reads;
+  await updated(['state']);
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(reads, before, 'the missing state is not aivi’s workflow: the event is ignored');
+
+  // Backlog is the queue: a move into it wakes — waiting is how the queue
+  // feeds, and the walk is what finds the waiting ticket.
+  api.state = { id: 'backlog', name: 'Backlog', type: 'backlog' };
+  before = reads;
+  await updated(['state']);
+  await until(() => reads > before, 'the queue is watched: the wake walked');
+});
+
 test('a run that dies before its session exists leaves a plain word on the ticket, and the walk does not knock twice', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-linear-earlydeath-'));
   t.after(() => rm(root, { recursive: true, force: true }));

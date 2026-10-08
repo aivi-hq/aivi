@@ -153,8 +153,13 @@ async function home(): Promise<Harness> {
       projects: {
         site: {
           lanes: [
+            // A full workflow shape for the wake tests: the queue feeds a
+            // working lane, Done is a human lane (the person's answer to the
+            // kind question), and options named nowhere here are missing.
+            { name: 'Backlog', queue: true },
             { name: 'Todo', agent: 'dev', worktree: false },
             { name: 'In Progress', agent: 'dev', worktree: false },
+            { name: 'Done' },
           ],
           'tracker-github': { board: 1, repos: ['acme/shop'] },
         },
@@ -489,6 +494,63 @@ test('a lane move a person made wakes the walk, and the run works on while its l
     await settled();
     assert.deepEqual(h.stops, [], 'the lane still speaks the run’s agent: the run works on');
     assert.ok(h.wakes.includes('site'), 'and the walk woke to look');
+  } finally {
+    await stopping.stop();
+  }
+});
+
+/** The three wake answers of the lane model (ruled by the human 2026-10-08):
+ *  a working lane or the queue wakes, a human lane that is not the queue and
+ *  a lane missing from the array are out of sight, out of mind. */
+const statusMove = (from: string, to: string) => ({
+  action: 'edited',
+  project_node_id: 'PVT_board_1',
+  changes: { field_name: 'Status', field_value: { from, to } },
+  projects_v2_item: { content: { node_id: 'I_47' } },
+});
+const answersLane = (lane: string) => ({
+  'POST /graphql': graphql({
+    BoardFields: v => boardFieldsAnswer('aivi-hq', v),
+    NodeRef: () => ({ node: { databaseId: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
+    IssueFacts: () => ({ repository: { issue: issueNode({ lane }) } }),
+  }),
+});
+
+test('a ticket moved into a human lane is out of sight: the event wakes nothing', async t => {
+  const { h, stopping } = await started(answersLane('Done'));
+  t.after(() => rm(h.root, { recursive: true, force: true }));
+  try {
+    const before = h.wakes.length;
+    await deliver(h, 'projects_v2_item', statusMove('Todo', 'Done'));
+    await settled();
+    assert.deepEqual(h.wakes.slice(before), [], 'aivi does not look at tickets in a human lane');
+    assert.deepEqual(h.stops, [], 'no run was working the ticket: nothing to stop');
+  } finally {
+    await stopping.stop();
+  }
+});
+
+test('a ticket moved to an option named nowhere in the array is out of sight too', async t => {
+  const { h, stopping } = await started(answersLane('Release'));
+  t.after(() => rm(h.root, { recursive: true, force: true }));
+  try {
+    const before = h.wakes.length;
+    await deliver(h, 'projects_v2_item', statusMove('Todo', 'Release'));
+    await settled();
+    assert.deepEqual(h.wakes.slice(before), [], 'the missing option is not aivi’s workflow: the event is ignored');
+  } finally {
+    await stopping.stop();
+  }
+});
+
+test('a ticket moved into the queue lane still wakes: waiting is how the queue feeds', async t => {
+  const { h, stopping } = await started(answersLane('Backlog'));
+  t.after(() => rm(h.root, { recursive: true, force: true }));
+  try {
+    const before = h.wakes.length;
+    await deliver(h, 'projects_v2_item', statusMove('In Progress', 'Backlog'));
+    await settled();
+    assert.ok(h.wakes.slice(before).includes('site'), 'the queue is watched: the walk may hand the next ticket over');
   } finally {
     await stopping.stop();
   }
