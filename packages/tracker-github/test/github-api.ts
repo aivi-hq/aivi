@@ -149,6 +149,12 @@ export function jwtClaims(authorization: string | undefined): { iss: string } {
 
 // ——— builders for the canned answers ———
 
+/** A GitHub `databaseId` is a global row id, not the repository-local number
+ *  (the live ledger says so: a repo's 52nd issue carries a row id in the
+ *  billions). Fakes keep the two apart so a read built from the wrong one
+ *  fails here the way it fails live. */
+const GLOBAL_ID_BASE = 5_745_231_600;
+
 /** A board: Status options in board order and the `Agent` field named for
  *  the app (D5). Numbers are the org-level board numbers GitHub answers. */
 export const BOARD = {
@@ -218,7 +224,11 @@ export function issueNode(options: IssueNodeOptions = {}, owner = 'acme', repo =
   if (options.agent) values.push({ name: options.agent, optionId: 'opt_aivi', field: { name: 'Agent' } });
   return {
     id: `I_${number}`,
-    databaseId: number,
+    // The fake carries GitHub's real distinction: databaseId is a global row
+    // id, nothing like the repository-local number. A read built from the
+    // wrong one fails here, as it fails live.
+    databaseId: GLOBAL_ID_BASE + number,
+    number,
     title: options.title ?? 'Fix it',
     body: options.body === undefined ? 'please' : options.body,
     url: `https://github.com/${owner}/${repo}/issues/${number}`,
@@ -233,14 +243,14 @@ export function issueNode(options: IssueNodeOptions = {}, owner = 'acme', repo =
           : [
               {
                 id: `PVTI_${number}`,
-                project: { databaseId: options.boardNumber ?? BOARD.number },
+                project: { number: options.boardNumber ?? BOARD.number },
                 fieldValues: { nodes: values },
               },
             ],
     },
     blockedBy: {
       nodes: (options.blockedBy ?? []).map(d => ({
-        databaseId: d.number,
+        number: d.number,
         state: d.closed ? 'CLOSED' : 'OPEN',
         stateReason: d.closed ? 'COMPLETED' : null,
         repository: { owner: { login: d.owner ?? owner }, name: d.repo ?? repo },

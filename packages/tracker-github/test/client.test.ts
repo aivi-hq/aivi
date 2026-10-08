@@ -313,7 +313,7 @@ test('a board node id resolves to the ticket it names, and non-issues say nothin
         NodeRef: v =>
           v.id === 'PR_1'
             ? { node: null }
-            : { node: { databaseId: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } },
+            : { node: { number: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } },
       }),
     }),
   );

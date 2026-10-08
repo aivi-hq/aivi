@@ -396,7 +396,7 @@ test('the board speaks through warm, and only boards aivi speaks dispatch', asyn
   const { platform, root } = await harness({
     'POST /graphql': graphql({
       BoardFields: v => boardFieldsAnswer('aivi-hq', v),
-      NodeRef: () => ({ node: { databaseId: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
+      NodeRef: () => ({ node: { number: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
     }),
   });
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -435,7 +435,7 @@ test('the Agent field is the delegate, and everything else on the item is noise'
   const { platform, root } = await harness({
     'POST /graphql': graphql({
       BoardFields: v => boardFieldsAnswer('aivi-hq', v),
-      NodeRef: () => ({ node: { databaseId: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
+      NodeRef: () => ({ node: { number: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
     }),
   });
   t.after(() => rm(root, { recursive: true, force: true }));

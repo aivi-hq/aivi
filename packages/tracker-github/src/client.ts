@@ -126,12 +126,12 @@ const ISSUE_FACTS = /* GraphQL */ `
   query IssueFacts($owner: String!, $repo: String!, $number: Int!) {
     repository(owner: $owner, name: $repo) {
       issue(number: $number) {
-        id databaseId title body url state stateReason
+        id databaseId number title body url state stateReason
         labels(first: 50) { nodes { id name } }
         assignees(first: 10) { nodes { id login } }
         projectItems(first: 50, includeArchived: false) { nodes {
           id
-          project { databaseId }
+          project { number }
           fieldValues(first: 30) { nodes {
             ... on ProjectV2ItemFieldSingleSelectValue {
               name optionId
@@ -140,7 +140,7 @@ const ISSUE_FACTS = /* GraphQL */ `
           } }
         } }
         blockedBy(first: 20) { nodes {
-          databaseId state stateReason
+          number state stateReason
           repository { owner { login } name }
         } }
       }
@@ -153,12 +153,12 @@ const OPEN_ISSUES = /* GraphQL */ `
     repository(owner: $owner, name: $repo) {
       issues(states: [OPEN], first: $first, orderBy: { field: CREATED_AT, direction: DESC }) {
         nodes {
-          id databaseId title body url state stateReason
+          id databaseId number title body url state stateReason
           labels(first: 20) { nodes { id name } }
           assignees(first: 10) { nodes { id login } }
           projectItems(first: 20, includeArchived: false) { nodes {
             id
-            project { databaseId }
+            project { number }
             fieldValues(first: 30) { nodes {
               ... on ProjectV2ItemFieldSingleSelectValue {
                 name optionId
@@ -167,7 +167,7 @@ const OPEN_ISSUES = /* GraphQL */ `
             } }
           } }
           blockedBy(first: 10) { nodes {
-            databaseId state stateReason
+            number state stateReason
             repository { owner { login } name }
           } }
         }
@@ -200,7 +200,7 @@ const NODE_REF = /* GraphQL */ `
   query NodeRef($id: ID!) {
     node(id: $id) {
       ... on Issue {
-        databaseId
+        number
         repository { owner { login } name }
       }
     }
@@ -225,15 +225,17 @@ const CLEAR_SELECT = /* GraphQL */ `
 
 /** Map one GraphQL issue node into the client's shape. The board values ride
  *  as `projectItems`; everything GitHub-flavored is translated to aivi words
- *  here and stops existing above this file. */
+ *  here and stops existing above this file. The `number` is the
+ *  repository-local one — `databaseId` is a global row id (billions for a
+ *  repo's 52nd issue) and appears in no id aivi builds. */
 function mapIssue(owner: string, name: string, node: Record<string, any>): GithubIssue {
   const repo = `${owner}/${name}`;
-  const ref = repoIssueId(owner, name, node.databaseId);
+  const ref = repoIssueId(owner, name, node.number);
   return {
     id: node.id,
     ref,
     repo,
-    number: node.databaseId,
+    number: node.number,
     title: node.title,
     body: node.body ?? null,
     url: node.url,
@@ -243,13 +245,13 @@ function mapIssue(owner: string, name: string, node: Record<string, any>): Githu
     assignees: (node.assignees?.nodes ?? []).map((a: any) => ({ id: a.id, name: a.login })),
     projectItems: (node.projectItems?.nodes ?? []).map((item: any) => ({
       itemId: item.id,
-      boardNumber: Number(item.project?.databaseId),
+      boardNumber: Number(item.project?.number),
       values: (item.fieldValues?.nodes ?? [])
         .filter((v: any) => v?.field?.name)
         .map((v: any) => ({ field: v.field.name, name: v.name, optionId: v.optionId })),
     })),
     blockedBy: (node.blockedBy?.nodes ?? []).map((d: any) => ({
-      id: repoIssueId(d.repository.owner.login, d.repository.name, d.databaseId),
+      id: repoIssueId(d.repository.owner.login, d.repository.name, d.number),
       completed: dependencyCompleted(d.state === 'CLOSED' ? 'closed' : 'open'),
     })),
   };
@@ -535,11 +537,13 @@ export class GithubClient {
 
   /** The `owner/repo#n` behind a GraphQL node id — the `projects_v2_item`
    *  payload names its issue only by node, and the board's events are worth
-   *  nothing until that resolves. Non-issue nodes answer undefined. */
+   *  nothing until that resolves. The number is the repository-local one;
+   *  the node's `databaseId` is a global row id and resolves to no issue.
+   *  Non-issue nodes answer undefined. */
   async nodeRef(nodeId: string): Promise<string | undefined> {
     const { node } = await this.app.octokit.graphql<{ node: any }>(NODE_REF, { id: nodeId });
     if (!node?.repository) return undefined;
-    return repoIssueId(node.repository.owner.login, node.repository.name, node.databaseId);
+    return repoIssueId(node.repository.owner.login, node.repository.name, node.number);
   }
 
   /** The repository's label catalogue — every name it knows. */

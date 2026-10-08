@@ -446,7 +446,7 @@ test('a hand-set Agent value with no run working the ticket gets the fixed refus
   const { h, script, stopping } = await started({
     'POST /graphql': graphql({
       BoardFields: v => boardFieldsAnswer('aivi-hq', v),
-      NodeRef: () => ({ node: { databaseId: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
+      NodeRef: () => ({ node: { number: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
       IssueFacts: () => ({ repository: { issue: issueNode({ agent: 'aivi-agent' }) } }),
       ClearSelect: () => {
         agentCleared++;
@@ -478,7 +478,7 @@ test('a lane move a person made wakes the walk, and the run works on while its l
   const { h, stopping } = await started({
     'POST /graphql': graphql({
       BoardFields: v => boardFieldsAnswer('aivi-hq', v),
-      NodeRef: () => ({ node: { databaseId: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
+      NodeRef: () => ({ node: { number: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
       IssueFacts: () => ({ repository: { issue: issueNode({ lane: 'In Progress', agent: 'aivi-agent' }) } }),
     }),
   });
@@ -511,7 +511,7 @@ const statusMove = (from: string, to: string) => ({
 const answersLane = (lane: string) => ({
   'POST /graphql': graphql({
     BoardFields: v => boardFieldsAnswer('aivi-hq', v),
-    NodeRef: () => ({ node: { databaseId: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
+    NodeRef: () => ({ node: { number: 47, repository: { owner: { login: 'acme' }, name: 'shop' } } }),
     IssueFacts: () => ({ repository: { issue: issueNode({ lane }) } }),
   }),
 });
