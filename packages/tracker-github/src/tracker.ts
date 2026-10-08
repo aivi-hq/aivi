@@ -482,7 +482,9 @@ export class GithubPlatform implements Platform {
     }
     if (event === 'projects_v2_item') {
       const p = payload as ProjectsV2ItemPayload;
-      const boardNumber = this.boardNodes.get(p.project_node_id);
+      const item = p.projects_v2_item;
+      if (!item) return;
+      const boardNumber = this.boardNodes.get(item.project_node_id);
       if (boardNumber === undefined) return; // a board aivi does not speak
       let changed: TrackerChange[];
       if (p.action === 'created')
@@ -493,7 +495,7 @@ export class GithubPlatform implements Platform {
         changed = field === 'Status' ? ['state'] : field === 'Agent' ? ['delegate'] : [];
       } else return; // reordered, archived, moved: noise or nothing routing keys on
       if (!changed.length) return;
-      const nodeId = p.projects_v2_item?.content?.node_id;
+      const nodeId = item.content_node_id;
       if (!nodeId) return;
       const ref = await this.client.nodeRef(nodeId);
       if (!ref) return; // a draft or a pull request: not a ticket

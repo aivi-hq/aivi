@@ -459,9 +459,8 @@ test('a hand-set Agent value with no run working the ticket gets the fixed refus
   try {
     await deliver(h, 'projects_v2_item', {
       action: 'edited',
-      project_node_id: 'PVT_board_1',
       changes: { field_name: 'Agent', field_value: { from: '', to: 'aivi-agent' } },
-      projects_v2_item: { content: { node_id: 'I_47' } },
+      projects_v2_item: { project_node_id: 'PVT_board_1', content_node_id: 'I_47' },
     });
     await settled();
     assert.equal(agentCleared, 1, 'the value was cleared: the app must not sit on the ticket');
@@ -487,9 +486,8 @@ test('a lane move a person made wakes the walk, and the run works on while its l
     h.state.active = runView({ sessionId: 'ses_worker' }); // the run works under the same Agent value
     await deliver(h, 'projects_v2_item', {
       action: 'edited',
-      project_node_id: 'PVT_board_1',
       changes: { field_name: 'Status', field_value: { from: 'Todo', to: 'In Progress' } },
-      projects_v2_item: { content: { node_id: 'I_47' } },
+      projects_v2_item: { project_node_id: 'PVT_board_1', content_node_id: 'I_47' },
     });
     await settled();
     assert.deepEqual(h.stops, [], 'the lane still speaks the run’s agent: the run works on');
@@ -504,9 +502,8 @@ test('a lane move a person made wakes the walk, and the run works on while its l
  *  array are out of sight, out of mind. */
 const statusMove = (from: string, to: string) => ({
   action: 'edited',
-  project_node_id: 'PVT_board_1',
   changes: { field_name: 'Status', field_value: { from, to } },
-  projects_v2_item: { content: { node_id: 'I_47' } },
+  projects_v2_item: { project_node_id: 'PVT_board_1', content_node_id: 'I_47' },
 });
 const answersLane = (lane: string) => ({
   'POST /graphql': graphql({

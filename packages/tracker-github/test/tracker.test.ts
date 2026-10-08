@@ -408,9 +408,8 @@ test('the board speaks through warm, and only boards aivi speaks dispatch', asyn
         'projects_v2_item',
         {
           action: 'edited',
-          project_node_id: projectNodeId,
           changes,
-          projects_v2_item: { content: { node_id: 'I_1' } },
+          projects_v2_item: { project_node_id: projectNodeId, content_node_id: 'I_1' },
         },
         id,
       ),
@@ -444,15 +443,14 @@ test('the Agent field is the delegate, and everything else on the item is noise'
   await platform.deliver(
     delivery('projects_v2_item', {
       action: 'edited',
-      project_node_id: 'PVT_board_1',
       changes: { field_name: 'Agent', field_value: { from: '', to: 'aivi-agent' } },
-      projects_v2_item: { content: { node_id: 'I_1' } },
+      projects_v2_item: { project_node_id: 'PVT_board_1', content_node_id: 'I_1' },
     }),
   );
   await platform.deliver(
     delivery(
       'projects_v2_item',
-      { action: 'reordered', project_node_id: 'PVT_board_1', projects_v2_item: { content: { node_id: 'I_1' } } },
+      { action: 'reordered', projects_v2_item: { project_node_id: 'PVT_board_1', content_node_id: 'I_1' } },
       'dlv-2',
     ),
   );

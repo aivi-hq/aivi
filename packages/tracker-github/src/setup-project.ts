@@ -45,6 +45,7 @@ import {
   boardProbeVerdict,
   gateHost,
   hostIsUp,
+  latestId,
   probeWindowMs,
   UNVERIFIED,
   waitForSignals,
@@ -654,6 +655,10 @@ async function probeBoard(
   // hand when a handle exists, and says a card may stand when one does not.
   let probe: ProbeHandles | undefined;
   try {
+    // The diary mark is taken before the card exists: every delivery about
+    // it lands above the mark, and everything below is other people's
+    // history — never read, never parsed.
+    const mark = await ctx.withStore(store => latestId(store));
     probe = await client.openProbe(repo, board);
     if (probe.statusSkipped)
       await ctx.prompts.log.message(
@@ -674,7 +679,7 @@ async function probeBoard(
           asked: probe!.asked,
           about: aboutIssue(repo, probe!.number, probe!.nodeId),
         },
-        0, // the about-filter is issue-scoped: a fresh issue cannot have history, so nothing old can false-land
+        mark,
         line => spinner.message(line),
       ),
     );

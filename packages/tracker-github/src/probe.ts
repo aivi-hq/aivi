@@ -168,7 +168,7 @@ export async function waitDiary(
         last = row.id;
         if (row.truncated)
           throw new Error(
-            `a delivery arrived but the diary cut its body at 8 KiB (row ${row.id}) — verification needs the whole body.`,
+            `a delivery arrived but its body is not readable JSON — the diary cut it off (row ${row.id}) — verification needs the whole body.`,
           );
         const payload = verifiedRow(secret, row);
         const event = row.headers['x-github-event'] ?? '';
@@ -267,15 +267,16 @@ export async function waitForSignals(
     let expiry: ReturnType<typeof setTimeout> | undefined;
     const read = (): void => {
       if (latestId(store) < last) last = 0;
-      for (const row of store.requests({ method: 'POST', path, sinceId: last })) {
-        last = row.id;
+      const rows = store.requests({ method: 'POST', path, sinceId: last });
+      if (rows.length) last = rows[rows.length - 1]!.id;
+      // Newest first: the probe's own deliveries are the freshest rows
+      // above the cursor. A truncated row is skipped before parsing — a
+      // cut body cannot be parsed, and its seal could never verify.
+      for (const row of rows.reverse()) {
+        if (row.truncated) continue;
         const payload = JSON.parse(row.body ?? '{}');
         const event = row.headers['x-github-event'] ?? '';
         if (!about(event, payload)) continue; // about another issue: this test is not about it
-        if (row.truncated)
-          throw new Error(
-            `a delivery about the probe arrived but the diary cut its body at 8 KiB (row ${row.id}) — verification needs the whole body.`,
-          );
         if (!verifyRow(secret, row)) throw badSeal(row);
         say(`Heard: ${describeDelivery(event, payload)}`);
         for (const name of asked) {
@@ -335,7 +336,7 @@ export const aboutIssue =
   (event: string, payload: any): boolean =>
     payload?.repository?.full_name === repoId &&
     (event === 'projects_v2_item'
-      ? payload?.projects_v2_item?.content?.node_id === issueNodeId
+      ? payload?.projects_v2_item?.content_node_id === issueNodeId
       : payload?.issue?.number === number);
 
 /** The board probe's verdict, pure: which signals landed, which did not, and

@@ -85,6 +85,16 @@ test('a board title folds to a project id the way a repository name does', () =>
  *  them. */
 const cancel = Symbol('cancel');
 const GATE = 'No live aivi answers its health endpoint — the probe watches what a running aivi records';
+/** One diary row as the fake store holds it; `truncated` is the diary's own
+ *  cut flag, the one the live ledger carries for oversized bodies. */
+type ProbeRow = {
+  id: number;
+  method: string;
+  path: string;
+  body: string;
+  headers: Record<string, string>;
+  truncated?: boolean;
+};
 const wizard = (
   answers: unknown[],
   opts: {
@@ -99,8 +109,13 @@ const wizard = (
     boardError?: string;
     labelError?: string;
     health?: 'up' | 'down';
-    /** Diary rows the fake store answers with — signed deliveries. */
-    rows?: { id: number; method: string; path: string; body: string; headers: Record<string, string> }[];
+    /** Signed deliveries the probe draws out: the fake openProbe lands them
+     *  in the diary as it pays its mutations, the way GitHub delivers after
+     *  the card exists — never before the probe's diary mark. */
+    rows?: ProbeRow[];
+    /** Diary rows that predate the probe — other people's history, which the
+     *  mark must keep below the wait entirely. */
+    history?: ProbeRow[];
     /** View names the fake client says it changed; [] says all already show. */
     views?: string[];
     /** What the fake openProbe pays: signals asked, and whether Status was. */
@@ -129,7 +144,9 @@ const wizard = (
   const root = mkdtempSync(join(tmpdir(), 'aivi-setup-project-'));
   const configPath = join(root, 'config.json');
   if (opts.health === 'up') writeFileSync(configPath, JSON.stringify({ host: { public: 'http://127.0.0.1:4100' } }));
-  const rows = opts.rows ?? [];
+  // The live diary: history stands from the start, the probe's deliveries
+  // land only as openProbe pays its mutations — never below the mark.
+  const rows = [...(opts.history ?? [])];
   const client: GithubSetupClient = {
     delegate: 'aivi-agent',
     async readBoard(number): Promise<SetupBoard> {
@@ -165,6 +182,7 @@ const wizard = (
     async openProbe(repo): Promise<ProbeHandles> {
       if (opts.probeError) throw new Error(opts.probeError);
       done.push('probe-open');
+      rows.push(...(opts.rows ?? [])); // the mutations pay, GitHub delivers
       const askedSignals = opts.probe?.asked ?? ['issue opened', 'card added', 'Agent set', 'comment posted'];
       return {
         ref: `${repo}#9`,
@@ -534,22 +552,19 @@ const FIVE = [
   row(1, 'issues', { action: 'opened', issue: { number: 9 }, repository: { full_name: 'acme/shop' } }),
   row(2, 'projects_v2_item', {
     action: 'created',
-    project_node_id: 'PN_1',
-    projects_v2_item: { content: { node_id: 'I_9' } },
+    projects_v2_item: { project_node_id: 'PN_1', content_node_id: 'I_9' },
     repository: { full_name: 'acme/shop' },
   }),
   row(3, 'projects_v2_item', {
     action: 'edited',
     changes: { field_name: 'Status' },
-    project_node_id: 'PN_1',
-    projects_v2_item: { content: { node_id: 'I_9' } },
+    projects_v2_item: { project_node_id: 'PN_1', content_node_id: 'I_9' },
     repository: { full_name: 'acme/shop' },
   }),
   row(4, 'projects_v2_item', {
     action: 'edited',
     changes: { field_value: { field_name: 'Agent' } }, // the spelling the live probe saw too
-    project_node_id: 'PN_1',
-    projects_v2_item: { content: { node_id: 'I_9' } },
+    projects_v2_item: { project_node_id: 'PN_1', content_node_id: 'I_9' },
     repository: { full_name: 'acme/shop' },
   }),
   row(5, 'issue_comment', {
@@ -618,6 +633,33 @@ test('with a live aivi the wizard ends with the board probe: every sealed delive
     'the reaction is said as paid and read back, never as a delivery',
   );
   assert.equal(result.section?.board, 1, 'the mapping stands');
+});
+
+test('history below the mark is never read: an old truncated row cannot kill the wait', async t => {
+  secrets(t, { [GITHUB_WEBHOOK_SECRET_ENV]: PROBE_SECRET });
+  // What the diary holds from older runs: a body cut mid-string, signed over
+  // the whole body it no longer carries. Parsing it was what used to die;
+  // the mark sits above it, so the probe never lays eyes on it.
+  const cut = {
+    id: 1,
+    method: 'POST',
+    path: GITHUB_WEBHOOK_PATH,
+    body: '{"issue": {"number": 3, "title": "an old deliver',
+    headers: { 'x-github-event': 'issues', 'x-hub-signature-256': 'sha256=old' },
+    truncated: true,
+  };
+  const { contributor, ctx, live, cleanup } = wizard(QUESTIONS, {
+    health: 'up',
+    history: [cut],
+    rows: FIVE.map((r, i) => ({ ...r, id: 10 + i })), // the probe's deliveries sit above the history
+    probe: { asked: ALL_ASKED },
+  });
+  t.after(cleanup);
+  await contributor.setup(ctx);
+  assert.ok(
+    live.some(line => line === 'the board speaks — all 5 deliveries arrived and verified — every seal matched'),
+    `the old cut row must not touch the wait: ${live.join(' | ')}`,
+  );
 });
 
 test('a probe nobody answered is a verdict, not a rewrite: the mapping stands and the silence is said', async t => {

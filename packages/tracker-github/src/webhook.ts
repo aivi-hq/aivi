@@ -67,16 +67,18 @@ export interface IssuesPayload {
 }
 
 /** A `projects_v2_item` delivery: the board moved the ticket or changed a
- *  field on it. The content arrives as a GraphQL node id — the ref behind it
- *  is one lookup away (`client.nodeRef`). */
+ *  field on it. Both ids ride inside `projects_v2_item`: the board names
+ *  itself by `project_node_id`, the ticket by flat `content_node_id` —
+ *  GitHub posts no top-level board id and no nested content object (the
+ *  live ledger says so). The ref behind the node id is one lookup away
+ *  (`client.nodeRef`). */
 export interface ProjectsV2ItemPayload {
   action: string;
-  project_node_id: string;
   changes?: {
     field_name?: string;
     field_value?: { from?: string; to?: string; field_name?: string };
   };
-  projects_v2_item: { content: { node_id: string | null } | null };
+  projects_v2_item: { project_node_id: string; content_node_id: string | null } | null;
 }
 
 /** The field a `projects_v2_item` edit changed, however GitHub spelled the
