@@ -189,9 +189,8 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
  * where a ticket goes next; the tracker only performs a move in its
  * platform's words. The names are the tracker platform's own state names.
  * Every board option may be a lane: the setup wizard asks what each one is
- * (ruled by the human 2026-10-08) — agent, human, or none. An option
- * answered none is simply absent from the array: aivi never reads it and
- * never moves a ticket into it.
+ * — agent, human, or none. An option answered none is simply absent from
+ * the array: aivi never reads it and never moves a ticket into it.
  */
 export const projectLaneSchema = z.strictObject({
   name: z.string().min(1).describe('The lane, spelled as the tracker platform spells its workflow state.'),

@@ -843,11 +843,11 @@ async function startGithub(
       const pending = store.pendingForIssue(issue.id);
       await stopOrphans(pending, issue, lane, human, event.changed);
       // Anything a person does to a ticket's place or standing wakes the
-      // walk — **unless the ticket sits where aivi does not look** (ruled
-      // by the human 2026-10-08): a human lane that is not the queue, or a
-      // Status option not in the array at all. Out of sight, out of mind —
-      // the event is ignored, not failed. A run the move stranded was
-      // already stopped above, and a stop wakes the walk itself.
+      // walk — **unless the ticket sits where aivi does not look**: a human
+      // lane that is not the queue, or a Status option not in the array at
+      // all. Out of sight, out of mind — the event is ignored, not failed.
+      // A run the move stranded was already stopped above, and a stop wakes
+      // the walk itself.
       if (event.changed.includes('state') || event.changed.includes('labels')) {
         services.orchestrator.cancelWaiting(MODULE_ID, issue.id); // a person's move cancels a waiting request
         if (lane === undefined || (lane.agent === undefined && !lane.queue)) return;

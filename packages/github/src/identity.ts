@@ -1,7 +1,7 @@
 /** The app identity, asked in one place. The forge and the tracker are **one
  *  GitHub app** (ruled 2026-10-07), so the guide, the two questions and the
  *  two secrets live here — not twice in two installers, where one fix would
- *  leave the other wrong (live, 2026-10-08).
+ *  leave the other wrong.
  *
  *  The identity is a home fact: it stands in `<home>/.env` as `GITHUB_APP_ID`
  *  beside `GITHUB_APP_PRIVATE_KEY`. When it is already there, nothing is

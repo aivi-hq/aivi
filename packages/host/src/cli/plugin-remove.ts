@@ -3,12 +3,11 @@
  *  block stands for a plugin that is no longer listed. That is **all three**
  *  places a plugin writes: the `plugins.<id>` block, the `projectDefaults.<id>`
  *  section, and the `<id>` section of every project. The composed schema
- *  refuses a leftover section of an unlisted plugin as an unrecognized key —
- *  a removal that left one behind broke the home: the next `aivi serve` and
- *  every CLI that loads the config failed to load it (found live when
- *  `aivi remove @aivi/tracker-linear` left `projects.aivi` unusable). The
- *  module id is the package's own declaration — read from its `./config` while
- *  the package is still installed, before npm is asked to take it away. */
+ *  refuses a leftover section of an unlisted plugin as an unrecognized key,
+ *  so a removal that leaves one behind breaks the home: the next `aivi serve`
+ *  and every config-loading CLI fails to load it. The module id is the
+ *  package's own declaration — read from its `./config` while the package is
+ *  still installed, before npm is asked to take it away. */
 import { readFileSync } from 'node:fs';
 import { deleteConfigBlock } from '@aivi/core';
 

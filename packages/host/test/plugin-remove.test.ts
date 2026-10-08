@@ -1,11 +1,10 @@
 /** pluginRemove takes a leaving plugin's whole config out of config.json: the
  *  `plugins` block, the `projectDefaults` section, and the plugin's section
  *  under every project. The composed schema refuses a section of a plugin no
- *  longer listed as an unrecognized key, so a removal that left one behind
- *  made the home un-loadable — found live when `aivi remove
- *  @aivi/tracker-linear` left `projects.aivi.tracker-linear` standing and the
- *  editor schema could not rebuild. The package's module id is read from its
- *  own `./config` declaration, exactly as remove reads it. */
+ *  longer listed as an unrecognized key, so a removal that leaves one behind
+ *  makes the home un-loadable and the editor schema cannot rebuild. The
+ *  package's module id is read from its own `./config` declaration, exactly
+ *  as remove reads it. */
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

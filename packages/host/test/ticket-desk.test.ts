@@ -3,7 +3,7 @@
  * once for the whole home, guards whose run a call comes from, and routes it
  * to the desk of the tracker that works that run's ticket. What a ticket *is*
  * on a platform is each tracker's own test; the permission gate is OpenCode's
- * and proven live. What lives here: which ids exist, who may call, what the
+ * own. What lives here: which ids exist, who may call, what the
  * arguments must be, and that the call reaches the right tracker's desk.
  */
 import assert from 'node:assert/strict';

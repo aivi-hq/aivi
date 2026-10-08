@@ -24,9 +24,9 @@ const log = getLogger(['aivi', 'projects']);
 
 /** The states the wizard asks about, in board order: deduped by name across
  *  the picked teams (two mapped teams can share a state name, and one name
- *  gets one lane). Nothing is dropped — **every state is asked** (ruled by
- *  the human 2026-10-08): what a state is for is the person's answer to the
- *  lane question, not aivi's guess from the state's type. Linear's `type` is
+ *  gets one lane). Nothing is dropped — **every state is asked**: what a
+ *  state is for is the person's answer to the lane question, not aivi's
+ *  guess from the state's type. Linear's `type` is
  *  real API data, so it only sets which answer the question starts on. The
  *  client already returns each team's states in board order (type group,
  *  then position). Exported pure for the test that pins the dedupe. */
@@ -136,9 +136,9 @@ async function pickTeams(ctx: ProjectSetupContext, teams: LinearTeam[]): Promise
   return pickedTeams as string[];
 }
 
-/** One question per state: what kind of lane it is (ruled by the human
- *  2026-10-08 — the kit's `LANE_KIND` words). The question **starts on** the
- *  answer Linear's state type suggests (`laneKindDefault`); the person's
+/** One question per state: what kind of lane it is, in the kit's
+ *  `LANE_KIND` words. The question **starts on** the answer Linear's state
+ *  type suggests (`laneKindDefault`); the person's
  *  answer wins. An `agent` answer is followed by the agent pick and, when a
  *  forge is configured, the branch question. A `human` answer writes a bare
  *  lane: the orchestrator's silence, and a legal queue or destination. A
@@ -228,9 +228,9 @@ async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Pr
 }
 
 /** The wizard, in its order: app, teams, the project's name, what kind of
- *  lane each board state is (agent, human, or none — ruled by the human
- *  2026-10-08), then the queue over the no-agent lanes. Each step is its
- *  own question and its own honest failure; the whole is the ruling. */
+ *  lane each board state is (agent, human, or none), then the queue over
+ *  the no-agent lanes. Each step is its own question and its own honest
+ *  failure; the whole is the ruling. */
 function makeContributor(makeClient: MakeTeamsClient = clientFor): ProjectContributor {
   return {
     role: 'tracker',

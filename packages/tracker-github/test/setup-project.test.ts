@@ -1,9 +1,9 @@
 /** The wizard's lane list: what it asks, in what order, and what each answer
- *  writes. **Every Status option is asked** — the lane model ruled by the
- *  human 2026-10-08: per option the person answers Agent, Human or None, and
- *  nothing is hidden because of its name or position (GitHub gives no state
- *  flag to hide behind). The queue rules are the same ruling's own words. The
- *  board read, the field creation, and the label are faked at the client
+ *  writes. **Every Status option is asked**: per option the person answers
+ *  Agent, Human or None, and nothing is hidden because of an option's name
+ *  or position — GitHub gives no state flag to hide behind. The queue rules
+ *  are the lane model's own words. The board read, the field creation, and
+ *  the label are faked at the client
  *  crossing, because the wizard's questions, order and written config are the
  *  unit — the GraphQL round trips are the live gate's, and the probe's own
  *  choices are proven below against the scripted GitHub. */
@@ -31,7 +31,7 @@ import { type Answer, connectApp, connectRoutes, graphql, issueNode, type Seen, 
 
 const statusOptions: SetupBoardOption[] = [
   // A board's Status options as GitHub answers them: board order already,
-  // an id and a name and nothing else (probed live 2026-10-08).
+  // an id and a name and nothing else.
   { id: 'o-0', name: 'Backlog' },
   { id: 'o-1', name: 'Todo' },
   { id: 'o-2', name: 'In Progress' },
@@ -287,9 +287,8 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
     ],
     'the questions, in the ruled order — every option asked, Done and Duplicate included',
   );
-  // The explanation: one entry, before the first kind question, carrying all
-  // three answers' words and the queue sentence (ruled by the human
-  // 2026-10-08).
+  // The explanation: one entry, before the first kind question, carrying
+  // all three answers' words and the queue sentence.
   const explained = tape.filter(line => line.includes('What each answer means'));
   assert.equal(explained.length, 1, `the explanation is one entry, never repeated: ${tape.join(' | ')}`);
   const entry = explained[0]!;
@@ -315,12 +314,11 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
 });
 
 test('the board number question really defaults to 1: Enter — an empty answer — takes it', async t => {
-  // The live bug (found by the human 2026-10-08): clack 1.x validates the
-  // raw input before finalize applies defaultValue, so a validate that
-  // refused '' made the default unreachable — Enter showed the error.
-  // The pin is the behavior, not the passed option: the person presses
-  // Enter, an empty string comes back, and board 1 is what gets read and
-  // written.
+  // clack 1.x validates the raw input before finalize applies
+  // defaultValue, so a validate that refuses '' makes the default
+  // unreachable. The pin is the behavior, not the passed option: the
+  // person presses Enter, an empty string comes back, and board 1 is what
+  // gets read and written.
   const { contributor, ctx, asks, live, cleanup } = wizard(['skip', '', ['acme/shop'], '', ...KINDS, 'Todo']);
   t.after(cleanup);
   const result = await contributor.setup(ctx);

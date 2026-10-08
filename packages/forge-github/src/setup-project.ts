@@ -101,10 +101,9 @@ export const contributor: ProjectContributor = {
 
     const suggestion = suggestedProjectId(remote.repo);
     // Enter takes the suggested name. clack 1.x runs `validate` on the raw
-    // input **before** `finalize` applies `defaultValue` — proven live
-    // 2026-10-08 on the GitHub tracker's board question, where the default
-    // was dead code. So '' passes validation here, and the default is
-    // folded in below, where it takes effect.
+    // input **before** `finalize` applies `defaultValue`, so a validate
+    // that refuses '' makes the default dead code. '' passes validation
+    // here; the default is folded in below, where it takes effect.
     let projectId = ctx.projectId ? String(ctx.projectId) : '';
     if (!projectId) {
       const answer = await settled(

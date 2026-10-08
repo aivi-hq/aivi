@@ -2,9 +2,9 @@
  *  subpath: it maps a new project to one projectsV2 board and the repositories
  *  whose issues feed it, and offers the project's lane array — the board's
  *  `Status` options in board order, each asked what kind of lane it is:
- *  Agent, Human or None (ruled by the human 2026-10-08; GitHub gives no
- *  state flag to guess from). It clones nothing
- *  (a tracker has no checkout to give): it hands back the `tracker-github`
+ *  Agent, Human or None — GitHub gives no state flag to guess from. It
+ *  clones nothing (a tracker has no checkout to give): it hands back the
+ *  `tracker-github`
  *  section core writes under the project, and the **core** `lanes` array core
  *  writes on the project. Everything GitHub-specific — the board, its fields,
  *  the human label — lives here; core only knows this plugin serves the
@@ -53,9 +53,9 @@ import { GITHUB_WEBHOOK_PATH } from './tracker.ts';
 
 const log = getLogger(['aivi', 'projects']);
 
-/** One Status option, as GitHub answers it: an id, a name, and nothing else.
- *  **GitHub says nothing about what an option means** (probed live,
- *  2026-10-08): `ProjectV2SingleSelectFieldOption` carries
+/** One Status option, as GitHub answers it: an id, a name, and nothing
+ *  else. **GitHub says nothing about what an option means**:
+ *  `ProjectV2SingleSelectFieldOption` carries
  *  `color, description, descriptionHTML, id, name, nameHTML` and no state
  *  flag — asking for `status` fails the whole read, because GraphQL rejects a
  *  query naming a field that does not exist. What a Status change does to an
@@ -303,10 +303,10 @@ export class BoardSetupClient implements GithubSetupClient {
     });
     const itemId: string = addProjectV2ItemById.item.id;
     const asked = ['issue opened', 'card added', 'Agent set', 'comment posted'];
-    // Status: the next option in board order the card is not already on
-    // (ruled by the human 2026-10-08 — no open/closed notion, GitHub has
-    // none). A mutation that changes nothing posts nothing, and a signal
-    // nobody paid for cannot land. A board's workflow may be wired to the
+    // Status: the next option in board order the card is not already on —
+    // there is no open/closed notion, GitHub has none. A mutation that
+    // changes nothing posts nothing, and a signal nobody paid for cannot
+    // land. A board's workflow may be wired to the
     // picked option and close the test card — accepted: the probe reports
     // what GitHub answers, not what aivi meant. A board with a single
     // Status option cannot show a move; skipping is not failing.
@@ -335,9 +335,9 @@ export class BoardSetupClient implements GithubSetupClient {
       optionId: agentOption.id,
     });
     const comment = await this.tracker.createComment(issue.ref, 'aivi projects add test — safe to ignore.');
-    // The reaction surface, paid and read back (ruled by the human
-    // 2026-10-08). It is **not a signal**: GitHub posts `reaction` events
-    // only to subscribers, and aivi subscribes to issue comment, issues and
+    // The reaction surface, paid and read back. It is **not a signal**:
+    // GitHub posts `reaction` events only to subscribers, and aivi
+    // subscribes to issue comment, issues and
     // projects v2 item — there is no delivery to wait for. Paying and
     // reading back proves the permission the tracker's status surface
     // (eyes, rocket) needs; cleanup takes the reaction off.
@@ -379,10 +379,10 @@ export class BoardSetupClient implements GithubSetupClient {
     const [owner = '', rest = ''] = handles.ref.split('/');
     const repo = rest.split('#')[0] ?? '';
     await this.tracker.deleteComment(handles.ref, handles.commentId);
-    // Report GitHub's answer, not aivi's intent (ruled by the human
-    // 2026-10-08): a workflow wired to the Status option the probe picked
-    // may have closed the card already — that is the operator's board
-    // speaking, and the probe says so instead of claiming its own close.
+    // Report GitHub's answer, not aivi's intent: a workflow wired to the
+    // Status option the probe picked may have closed the card already —
+    // that is the operator's board speaking, and the probe says so instead
+    // of claiming its own close.
     const { data: issue } = await this.app.octokit.rest.issues.get({ owner, repo, issue_number: handles.number });
     if (issue.state === 'closed')
       return `${handles.ref} rests closed by GitHub itself (${issue.state_reason ?? 'closed'}) — a workflow on the board closed the test card; aivi leaves it as GitHub left it`;
@@ -445,9 +445,9 @@ async function askLanes(
   const lanes: ProjectLaneInput[] = [];
   let explained = false;
   for (const option of options) {
-    // One log entry before the first question, never repeated per option
-    // (ruled by the human 2026-10-08). GitHub gives no state flag and no
-    // workflow rule, so the person decides — the note says why.
+    // One log entry before the first question, never repeated per option.
+    // GitHub gives no state flag and no workflow rule, so the person
+    // decides — the note says why.
     if (!explained) {
       explained = true;
       await ctx.prompts.log.message(
@@ -522,13 +522,11 @@ async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Pr
 async function askedBoard(ctx: ProjectSetupContext, client: GithubSetupClient): Promise<SetupBoard> {
   const answer = await ctx.prompts.text({
     message: 'The board number — the number at the end of the board URL (github.com/orgs/<org>/projects/1 is board 1)',
-    // Enter takes board 1 (ruled by the human 2026-10-08). clack 1.x runs
-    // `validate` on the raw input **before** `finalize` applies
-    // `defaultValue` — so with a validate that refuses '', the default is
-    // dead code (proven live: Enter showed the error, not board 1). The
-    // empty answer must pass validation here, the default is folded in
-    // below where it takes effect, and the placeholder shows what Enter
-    // will take.
+    // Enter takes board 1. clack 1.x runs `validate` on the raw input
+    // **before** `finalize` applies `defaultValue`, so a validate that
+    // refuses '' makes the default dead code. The empty answer passes
+    // validation here, the default is folded in below where it takes
+    // effect, and the placeholder shows what Enter will take.
     placeholder: '1',
     defaultValue: '1',
     validate: value =>
@@ -671,8 +669,8 @@ async function probeBoard(
 
 /** The wizard, in its order: the health gate as a choice, the board, the
  *  delegate surface and its view visibility, the repositories, the project's
- *  name, what kind of lane each Status option is (agent, human, or none —
- *  ruled by the human 2026-10-08), the queue over the no-agent lanes,
+ *  name, what kind of lane each Status option is (agent, human, or none),
+ *  the queue over the no-agent lanes,
  *  the human label in every mapped repository — and, when a live aivi was
  *  there to watch, the board probe last: it pays real mutations, so it comes
  *  after everything it tests. Each step is its own question and its own

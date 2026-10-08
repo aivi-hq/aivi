@@ -1039,9 +1039,9 @@ test('a lane move is a wake: the walk starts the ticket it finds, a stop ends th
   assert.equal(orchestrator.activeRun('tracker-linear', 'api-7'), undefined);
 });
 
-/** The three wake answers of the lane model (ruled by the human 2026-10-08):
- *  a working lane or the queue wakes, a human lane that is not the queue and
- *  a state missing from the array are out of sight, out of mind. A walk is
+/** The three wake answers of the lane model: a working lane or the queue
+ *  wakes, a human lane that is not the queue and a state missing from the
+ *  array are out of sight, out of mind. A walk is
  *  observable here as a board read: `tickets` answers lane by lane, so a wake
  *  that never fired leaves the counter where it stood. */
 test('a ticket moved into a human lane or a missing state is out of sight; the queue is watched', async t => {

@@ -61,8 +61,8 @@ A lane naming an `agent` is worked; one naming none is worked by humans; a
 Status option named nowhere in the array is silence. `queue: true` marks the
 workflow's **one** queue lane, with the same load rules as Linear's wizard.
 **GitHub says nothing about what a Status option means** — options carry no
-state flag, and a board workflow's rule is not in the API (probed live
-2026-10-08). So the wizard asks what every option is, in board order:
+state flag, and a board workflow's rule is not in the API. So the wizard
+asks what every option is, in board order:
 **Agent** (aivi delegates tickets there to an agent), **Human** (aivi ignores
 tickets there; it is only ever used as a queue or a destination), or **None**
 (the option is not part of aivi's workflow: never read, never moved into).

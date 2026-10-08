@@ -499,9 +499,9 @@ test('a lane move a person made wakes the walk, and the run works on while its l
   }
 });
 
-/** The three wake answers of the lane model (ruled by the human 2026-10-08):
- *  a working lane or the queue wakes, a human lane that is not the queue and
- *  a lane missing from the array are out of sight, out of mind. */
+/** The three wake answers of the lane model: a working lane or the queue
+ *  wakes, a human lane that is not the queue and a lane missing from the
+ *  array are out of sight, out of mind. */
 const statusMove = (from: string, to: string) => ({
   action: 'edited',
   project_node_id: 'PVT_board_1',

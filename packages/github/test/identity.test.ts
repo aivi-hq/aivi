@@ -1,7 +1,7 @@
-/** The identity questions, once for both installers. What the human's run
- *  proved broken (2026-10-08) is what this pins: a home that already holds the
- *  identity answers no question, and a typed `.pem` path is read from the
- *  directory the person typed it in, not from where npm moved the process. */
+/** The identity questions, once for both installers. Two failures this
+ *  pins: a home that already holds the identity answers no question, and a
+ *  typed `.pem` path is read from the directory the person typed it in, not
+ *  from where npm moved the process. */
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

@@ -66,7 +66,7 @@ an agent, or a queue whose next lane (by order or by `next`) works nothing.
 `pool` names the dispatcher pool the lane's work draws capacity from.
 `worktree: true` gives the worker its own git worktree; default false works
 the project checkout itself, where the agent file's own `edit` deny is the
-only guard. **Every state is asked** (ruled by the human 2026-10-08): the
+only guard. **Every state is asked** (ruled 2026-10-08): the
 wizard asks what kind of lane each state is — Agent, Human, or None. Linear's
 `type` is real API data, so it sets which answer the question starts on (a
 `completed` state starts on Human, `canceled` and `duplicate` on None); the

@@ -198,8 +198,8 @@ is in [plans/linear.md](plans/linear.md); configuration fields are in
    (ruled 2026-10-02, P6): it cancels a waiting request for that ticket,
    wakes the walk, and the walk reads the board afresh — a person's move on
    a queued ticket is cancel-on-move, the mechanism that replaced the
-   fulfilment re-check. The exception is the lane model (ruled by the human
-   2026-10-08): a ticket sitting in a **human lane that is not the queue**,
+   fulfilment re-check. The exception is the lane model (ruled 2026-10-08):
+   a ticket sitting in a **human lane that is not the queue**,
    or in a state **named nowhere in the array**, is out of sight, out of
    mind — its events cancel a waiting request and wake nothing. The issue is re-read from the API for every such
    change, so label and state names are current. A **create** is a state

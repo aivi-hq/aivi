@@ -3,8 +3,8 @@
  *  across type groups (Linear scopes position **within** a group), which
  *  shoved Done/Canceled/Duplicate before a late `started` lane; `listTeams`
  *  sorts (client.test.ts) and `boardStates` dedupes. **Every state is
- *  asked** (ruled by the human 2026-10-08): Linear's `type` is real API data,
- *  so it sets which answer the kind question starts on — it hides nothing. */
+ *  asked**: Linear's `type` is real API data, so it sets which answer the
+ *  kind question starts on — it hides nothing. */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ProjectLaneInput } from '@aivi/core';
@@ -190,9 +190,8 @@ test('the wizard walks the board in order: teams, name, one kind question per st
     ],
     'the questions, in the ruled order — Done asked like every other state',
   );
-  // The explanation: one entry, before the first kind question, carrying all
-  // three answers' words and the queue sentence (ruled by the human
-  // 2026-10-08).
+  // The explanation: one entry, before the first kind question, carrying
+  // all three answers' words and the queue sentence.
   const explained = tape.filter(line => line.includes('What each answer means'));
   assert.equal(explained.length, 1, `the explanation is one entry, never repeated: ${tape.join(' | ')}`);
   for (const words of [
