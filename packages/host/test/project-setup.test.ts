@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ProjectContributor } from '@aivi/plugin';
-import { projectSetupPlan } from '../src/cli/project-setup.ts';
+import { listLaneAgents, projectSetupPlan } from '../src/cli/project-setup.ts';
 import type { ProjectContributorEntry } from '../src/cli/registry.ts';
 
 /** A contributor entry carrying only what the plan reads; the setup body is
@@ -65,4 +68,45 @@ test('no contributors at all is an empty plan, not an error', () => {
     'every core role is still listed, empty — the runner then just asks a name',
   );
   assert.deepEqual(plan.extras, []);
+});
+
+test('the location is loaded before the agent list is asked: a never-seen directory answers empty until it is', async () => {
+  // The live failure this pins: the first wizard run after a service restart
+  // died with "no agents available" while the retry passed. The service
+  // answers an unloaded location\u2019s agent list empty (or LocationNotFoundError),
+  // and location.get is what loads it \u2014 the order, not a wait, is the fix.
+  const home = mkdtempSync(join(tmpdir(), 'aivi-lane-agents-'));
+  const calls: string[] = [];
+  let loaded = false;
+  const client = {
+    location: {
+      get: async () => {
+        calls.push('load');
+        loaded = true;
+        return {
+          directory: join(home, 'projects', 'shop', 'source'),
+          project: { id: 'p', directory: '', canonical: '' },
+        };
+      },
+    },
+    agent: {
+      list: async () => {
+        calls.push('list');
+        return {
+          data: loaded
+            ? [
+                { id: 'developer', mode: 'primary' },
+                { id: 'explore', mode: 'subagent' },
+              ]
+            : [],
+        };
+      },
+    },
+  } as never;
+  const agents = await listLaneAgents(home, { config: { opencode: {} } } as never, 'shop', () =>
+    Promise.resolve(client),
+  );
+  rmSync(home, { recursive: true, force: true });
+  assert.deepEqual(calls, ['load', 'list'], 'the load comes before the list \u2014 the order is the fix');
+  assert.deepEqual(agents, ['developer'], 'a lane works as a primary; the subagent-only one never shows');
 });

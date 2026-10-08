@@ -10,6 +10,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  type Config,
   errorMessage,
   type LoadedConfig,
   type ProjectLaneInput,
@@ -18,6 +19,7 @@ import {
   projectRoles,
 } from '@aivi/core';
 import { PluginSetupCancelled, type ProjectSetupContext } from '@aivi/plugin';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import * as p from '@clack/prompts';
 import { connectOpenCode } from '../opencode.ts';
 import { context, withStore } from './context.ts';
@@ -96,11 +98,26 @@ async function writeProjectSections(
  *  a wizard that cannot list agents is a broken wizard, so a failure here is
  *  said, not swallowed. A lane runs its agent as the session's primary;
  *  OpenCode says which agents can be (`mode`), so the subagent-only ones
- *  never show up as a lane's worker. */
-async function listLaneAgents(home: string, loaded: LoadedConfig, projectId: string): Promise<string[]> {
+ *  never show up as a lane's worker.
+ *
+ *  The location is loaded by name before it is listed: a directory the
+ *  service has never seen answers the agent list empty (or
+ *  LocationNotFoundError), and only a later ask answers — the live fact
+ *  behind the first wizard after a restart failing while the retry passed.
+ *  `location.get` is what loads it; the list after it answers at once.
+ *  `connect` is the injection point for the pin; live OpenCode is the
+ *  wizard's own gate. */
+export async function listLaneAgents(
+  home: string,
+  loaded: LoadedConfig,
+  projectId: string,
+  connect: (config: Config['opencode']) => Promise<OpenCodeClient> = config =>
+    connectOpenCode({ ...config, lifecycle: 'ensure' }),
+): Promise<string[]> {
   const source = join(home, 'projects', projectId, 'source');
   await mkdir(source, { recursive: true });
-  const client = await connectOpenCode({ ...loaded.config.opencode, lifecycle: 'ensure' });
+  const client = await connect(loaded.config.opencode);
+  await client.location.get({ location: { directory: source } });
   const listed = await client.agent.list({ location: { directory: source } });
   return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
 }
