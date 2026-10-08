@@ -1,13 +1,21 @@
 /** Linear's project-setup contributor, at its `./setupProject` subpath: it
  *  maps a new project to Linear teams and offers the project's lane array —
- *  the board's states in board order, each asked who works it. It clones
+ *  the board's states in board order, each asked what kind of lane it is
+ *  (agent, human, or none). It clones
  *  nothing (a tracker has no checkout to give): it hands back the `linear`
  *  section core writes under the project, and the **core** `lanes` array
  *  core writes on the project. Everything Linear-specific — apps, teams,
  *  workflow states — lives here; core only knows this plugin serves the
  *  `tracker` role. */
 import { getLogger, type Logger, type ProjectLaneInput } from '@aivi/core';
-import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
+import {
+  LANE_KIND,
+  type LaneKind,
+  laneKindLines,
+  PluginSetupCancelled,
+  type ProjectContributor,
+  type ProjectSetupContext,
+} from '@aivi/plugin';
 import { type LinearTeam, resolveTeams } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { clientFor } from './tracker.ts';
@@ -15,20 +23,31 @@ import { clientFor } from './tracker.ts';
 const log = getLogger(['aivi', 'projects']);
 
 /** The states the wizard asks about, in board order: deduped by name across
- *  the picked teams, and **closed states are gone** (ruled 2026-10-02 —
- *  Done, Canceled and Duplicate end work; the tracker recognizes them by
- *  type, they are not places in the workflow and never get written). A run
- *  that ends in the last configured lane moves nowhere: a person closes the
- *  ticket. Exported for the test that pins this ruling; the client already
- *  returns each team's states in board order (type group, then position). */
-export function openStates(states: LinearTeam['states']): LinearTeam['states'] {
-  const closed = new Set(['completed', 'canceled', 'duplicate']);
+ *  the picked teams (two mapped teams can share a state name, and one name
+ *  gets one lane). Nothing is dropped — **every state is asked** (ruled by
+ *  the human 2026-10-08): what a state is for is the person's answer to the
+ *  lane question, not aivi's guess from the state's type. Linear's `type` is
+ *  real API data, so it only sets which answer the question starts on. The
+ *  client already returns each team's states in board order (type group,
+ *  then position). Exported pure for the test that pins the dedupe. */
+export function boardStates(states: LinearTeam['states']): LinearTeam['states'] {
   const seen = new Set<string>();
   return states.filter(state => {
-    if (closed.has(state.type) || seen.has(state.name)) return false;
+    if (seen.has(state.name)) return false;
     seen.add(state.name);
     return true;
   });
+}
+
+/** Which answer the lane question starts on, from Linear's state type (real
+ *  API data): a `completed` state starts on Human — a person takes finished
+ *  work; `canceled` and `duplicate` start on None — they end out of the
+ *  workflow; everything else starts on Agent. A start is a highlight, not a
+ *  ruling: the person's answer wins. */
+export function laneKindDefault(type: string): LaneKind {
+  if (type === 'completed') return 'human';
+  if (type === 'canceled' || type === 'duplicate') return 'none';
+  return 'agent';
 }
 
 /** The lanes the queue question may offer (ruled 2026-10-02): **one**
@@ -38,10 +57,11 @@ export function openStates(states: LinearTeam['states']): LinearTeam['states'] {
  *  last lane feeds nothing at all. And a lane that has an agent is **never**
  *  an option (ruled 2026-10-02): a queue is where people wait for a worker,
  *  not a worker lane itself — the queue runs between the human lanes and
- *  the working ones, like a real board's waiting column. Offering anything
- *  else would write a config the operator did not mean. Exported pure, like
- *  the closed-state ruling above it, so the wizard's rules are testable
- *  apart from prompts. */
+ *  the working ones, like a real board's waiting column. A **human** lane is
+ *  a legal queue: that is what "used as a queue" means in the lane answer's
+ *  own words. Offering anything else would write a config the operator did
+ *  not mean. Exported pure, so the wizard's rules are testable apart from
+ *  prompts. */
 export function queueCandidates(lanes: ProjectLaneInput[]): ProjectLaneInput[] {
   return lanes.filter(lane => lane.agent === undefined && lanes[lanes.indexOf(lane) + 1]?.agent !== undefined);
 }
@@ -116,21 +136,49 @@ async function pickTeams(ctx: ProjectSetupContext, teams: LinearTeam[]): Promise
   return pickedTeams as string[];
 }
 
-/** One prompt per lane: who works it. "-- None --" leaves a human lane:
- *  the orchestrator's silence, exactly as configured. */
+/** One question per state: what kind of lane it is (ruled by the human
+ *  2026-10-08 — the kit's `LANE_KIND` words). The question **starts on** the
+ *  answer Linear's state type suggests (`laneKindDefault`); the person's
+ *  answer wins. An `agent` answer is followed by the agent pick and, when a
+ *  forge is configured, the branch question. A `human` answer writes a bare
+ *  lane: the orchestrator's silence, and a legal queue or destination. A
+ *  `none` answer writes nothing: the state is not in the array, so aivi
+ *  neither reads it nor moves a ticket into it. */
 async function askLanes(
   ctx: ProjectSetupContext,
   states: LinearTeam['states'],
   agentNames: string[],
 ): Promise<ProjectLaneInput[]> {
   const lanes: ProjectLaneInput[] = [];
+  let explained = false;
   for (const state of states) {
-    const answer = await ctx.prompts.select({
-      message: `Which OpenCode agent works the "${state.name}" lane?`,
-      options: [...agentNames.map(name => ({ value: name, label: name })), { value: '', label: '-- None --' }],
+    // One log entry before the first question, never repeated per state.
+    if (!explained) {
+      explained = true;
+      await ctx.prompts.log.message(
+        laneKindLines(
+          'Linear names what a state is, so each question starts on the answer its type suggests. Your answer wins.',
+        ).join('\n'),
+      );
+    }
+    const first = laneKindDefault(state.type);
+    const rest = (['agent', 'human', 'none'] as LaneKind[]).filter(kind => kind !== first);
+    const picked = await ctx.prompts.select({
+      message: `What kind of lane is the "${state.name}" state?`,
+      options: [first, ...rest].map(kind => LANE_KIND[kind]),
     });
-    if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
-    const agent = String(answer).trim();
+    if (ctx.prompts.isCancel(picked)) throw new PluginSetupCancelled('lane setup incomplete');
+    const kind = String(picked) as LaneKind;
+    if (kind === 'none') continue;
+    let agent = '';
+    if (kind === 'agent') {
+      const answer = await ctx.prompts.select({
+        message: `Which OpenCode agent works the "${state.name}" lane?`,
+        options: agentNames.map(name => ({ value: name, label: name })),
+      });
+      if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
+      agent = String(answer).trim();
+    }
     // A worked lane with git possible: does it work on the ticket's branch?
     // The worktree belongs to the branch, not to writing: a review lane
     // changes nothing yet must read the pull request's branch, and that
@@ -179,8 +227,9 @@ async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Pr
     );
 }
 
-/** The wizard, in its order: app, teams, the project's name, one agent per
- *  board state, then the queue over the finished lanes. Each step is its
+/** The wizard, in its order: app, teams, the project's name, what kind of
+ *  lane each board state is (agent, human, or none — ruled by the human
+ *  2026-10-08), then the queue over the no-agent lanes. Each step is its
  *  own question and its own honest failure; the whole is the ruling. */
 function makeContributor(makeClient: MakeTeamsClient = clientFor): ProjectContributor {
   return {
@@ -216,12 +265,12 @@ function makeContributor(makeClient: MakeTeamsClient = clientFor): ProjectContri
       // setup says so and stops.
       const agentNames = await ctx.agents(id);
       if (!agentNames.length) throw new Error('Unable to configure lanes: there appear to be no agents available.');
-      const lanes = await askLanes(ctx, openStates(chosen.flatMap(team => team.states)), agentNames);
+      const lanes = await askLanes(ctx, boardStates(chosen.flatMap(team => team.states)), agentNames);
       await askQueue(ctx, lanes);
 
       if (!lanes.length)
         await ctx.prompts.log.message(
-          'these teams have no workflow states yet — lanes get written once the board has some',
+          'no lanes were written — the boards had no states, or every state was answered “None” — so aivi works no tickets until lanes exist',
         );
 
       const section: Record<string, unknown> = { teams: resolveTeams(teams, teamIds) };
