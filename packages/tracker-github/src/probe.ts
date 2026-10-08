@@ -328,16 +328,19 @@ export async function waitForSignals(
 
 /** Whether a delivery is about the probe issue. `issue_comment` names it by
  *  `issue.number`; an `issues` delivery carries its number inside `issue`
- *  too — GitHub answers no top-level one (the live ledger says so); a
- *  `projects_v2_item` delivery names no number at all —
- *  only the content's node id — so the issue's own node id referees those. */
+ *  too — GitHub answers no top-level one (the live ledger says so). A
+ *  `projects_v2_item` delivery names neither repo nor number: its payload
+ *  carries no `repository` at all (keys: action, changes, installation,
+ *  organization, projects_v2_item, sender — the live ledger says so), so
+ *  the content's globally unique node id is the whole referee. Requiring a
+ *  repository there filtered every board delivery as foreign and the wait
+ *  sat out its window on signals it already held. */
 export const aboutIssue =
   (repoId: string, number: number, issueNodeId: string) =>
   (event: string, payload: any): boolean =>
-    payload?.repository?.full_name === repoId &&
-    (event === 'projects_v2_item'
+    event === 'projects_v2_item'
       ? payload?.projects_v2_item?.content_node_id === issueNodeId
-      : payload?.issue?.number === number);
+      : payload?.repository?.full_name === repoId && payload?.issue?.number === number;
 
 /** The board probe's verdict, pure: which signals landed, which did not, and
  *  what the missing one means. A signal never paid for (a board with one open

@@ -553,19 +553,16 @@ const FIVE = [
   row(2, 'projects_v2_item', {
     action: 'created',
     projects_v2_item: { project_node_id: 'PN_1', content_node_id: 'I_9' },
-    repository: { full_name: 'acme/shop' },
   }),
   row(3, 'projects_v2_item', {
     action: 'edited',
     changes: { field_name: 'Status' },
     projects_v2_item: { project_node_id: 'PN_1', content_node_id: 'I_9' },
-    repository: { full_name: 'acme/shop' },
   }),
   row(4, 'projects_v2_item', {
     action: 'edited',
     changes: { field_value: { field_name: 'Agent' } }, // the spelling the live probe saw too
     projects_v2_item: { project_node_id: 'PN_1', content_node_id: 'I_9' },
-    repository: { full_name: 'acme/shop' },
   }),
   row(5, 'issue_comment', {
     action: 'created',
