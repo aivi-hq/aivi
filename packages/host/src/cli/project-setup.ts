@@ -100,26 +100,36 @@ async function writeProjectSections(
  *  OpenCode says which agents can be (`mode`), so the subagent-only ones
  *  never show up as a lane's worker.
  *
- *  The location is loaded by name before it is listed: a directory the
- *  service has never seen answers the agent list empty (or
- *  LocationNotFoundError), and only a later ask answers — the live fact
- *  behind the first wizard after a restart failing while the retry passed.
- *  `location.get` is what loads it; the list after it answers at once.
- *  `connect` is the injection point for the pin; live OpenCode is the
- *  wizard's own gate. */
+ *  The location is loaded by name before it is listed, and an empty first
+ *  answer is asked once more after one second: a directory the service has
+ *  never seen boots asynchronously, so the first list races the boot and
+ *  answers empty while a second ask, a moment later, answers the agents —
+ *  the live fact behind the first wizard after a restart failing while the
+ *  retry passed. Two asks, then the answer stands: a second empty is a
+ *  genuine zero, which the wizard says as its own error. The one-second
+ *  gap is the human's ruling; `sleep` is its injection point, so no test
+ *  ever waits — a fake answers the gap as it happened. `connect` is the
+ *  client's injection point; live OpenCode is the wizard's own gate. */
 export async function listLaneAgents(
   home: string,
   loaded: LoadedConfig,
   projectId: string,
   connect: (config: Config['opencode']) => Promise<OpenCodeClient> = config =>
     connectOpenCode({ ...config, lifecycle: 'ensure' }),
+  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
 ): Promise<string[]> {
   const source = join(home, 'projects', projectId, 'source');
   await mkdir(source, { recursive: true });
   const client = await connect(loaded.config.opencode);
   await client.location.get({ location: { directory: source } });
-  const listed = await client.agent.list({ location: { directory: source } });
-  return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
+  const primaries = async (): Promise<string[]> => {
+    const listed = await client.agent.list({ location: { directory: source } });
+    return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
+  };
+  const first = await primaries();
+  if (first.length) return first;
+  await sleep(1_000);
+  return primaries();
 }
 
 export async function runProjectSetup(options: {

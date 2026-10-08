@@ -70,43 +70,111 @@ test('no contributors at all is an empty plan, not an error', () => {
   assert.deepEqual(plan.extras, []);
 });
 
-test('the location is loaded before the agent list is asked: a never-seen directory answers empty until it is', async () => {
-  // The live failure this pins: the first wizard run after a service restart
-  // died with "no agents available" while the retry passed. The service
-  // answers an unloaded location\u2019s agent list empty (or LocationNotFoundError),
-  // and location.get is what loads it \u2014 the order, not a wait, is the fix.
-  const home = mkdtempSync(join(tmpdir(), 'aivi-lane-agents-'));
+/** The fake service a location boot needs: `load` marks the directory known,
+ *  and the agent list answers `after` from the second sight on — the first
+ *  sight answers empty, as a booting location does. `gap` records every
+ *  asked wait instead of waiting: no test sleeps. The client is assembled
+ *  from the parts where it is handed over, cast once at that crossing. */
+function bootingService(answersOnSecondAsk = true) {
   const calls: string[] = [];
-  let loaded = false;
-  const client = {
-    location: {
-      get: async () => {
-        calls.push('load');
-        loaded = true;
-        return {
-          directory: join(home, 'projects', 'shop', 'source'),
-          project: { id: 'p', directory: '', canonical: '' },
-        };
-      },
+  let sighted = false;
+  const location = {
+    get: async () => {
+      calls.push('load');
+      return { directory: 'x', project: { id: 'p', directory: '', canonical: '' } };
     },
+  };
+  const list = async () => {
+    calls.push('list');
+    const ready = sighted ? answersOnSecondAsk : false;
+    sighted = true;
+    return {
+      data: ready
+        ? [
+            { id: 'developer', mode: 'primary' },
+            { id: 'explore', mode: 'subagent' },
+          ]
+        : [],
+    };
+  };
+  const client = { location, agent: { list } } as never;
+  const sleep = async (ms: number) => {
+    calls.push(`gap:${ms}`);
+  };
+  return { client, location, list, calls, sleep };
+}
+
+test('the location is loaded before the agent list is asked, and a first answer needs no second ask', async () => {
+  // The live failure this pins: the first wizard run after a service restart
+  // died with "no agents available" while the retry passed. A location the
+  // service has never seen boots asynchronously; location.get starts the
+  // boot. A service that answers the first list (one that knew the
+  // location) is asked once — the gap belongs to the empty answer alone.
+  const home = mkdtempSync(join(tmpdir(), 'aivi-lane-agents-'));
+  const service = bootingService();
+  const client = {
+    location: service.location,
     agent: {
       list: async () => {
-        calls.push('list');
+        service.calls.push('list');
         return {
-          data: loaded
-            ? [
-                { id: 'developer', mode: 'primary' },
-                { id: 'explore', mode: 'subagent' },
-              ]
-            : [],
+          data: [
+            { id: 'developer', mode: 'primary' },
+            { id: 'explore', mode: 'subagent' },
+          ],
         };
       },
     },
   } as never;
-  const agents = await listLaneAgents(home, { config: { opencode: {} } } as never, 'shop', () =>
-    Promise.resolve(client),
+  const agents = await listLaneAgents(
+    home,
+    { config: { opencode: {} } } as never,
+    'shop',
+    () => Promise.resolve(client),
+    service.sleep,
   );
   rmSync(home, { recursive: true, force: true });
-  assert.deepEqual(calls, ['load', 'list'], 'the load comes before the list \u2014 the order is the fix');
+  assert.deepEqual(service.calls, ['load', 'list'], 'the load comes before the list, and one ask answers');
   assert.deepEqual(agents, ['developer'], 'a lane works as a primary; the subagent-only one never shows');
+});
+
+test('an empty first list is asked again after the one-second gap — the gap is the fake, never the wait', async () => {
+  // The cold-boot capture: the first list races the location's boot and
+  // answers empty; a second ask a moment later answers the agents. The
+  // wizard asks twice; the gap lands as a recorded call — a real second
+  // of sleeping in a test would say this pin is wrong.
+  const home = mkdtempSync(join(tmpdir(), 'aivi-lane-agents-'));
+  const service = bootingService();
+  const agents = await listLaneAgents(
+    home,
+    { config: { opencode: {} } } as never,
+    'shop',
+    () => Promise.resolve(service.client),
+    service.sleep,
+  );
+  rmSync(home, { recursive: true, force: true });
+  assert.deepEqual(
+    service.calls,
+    ['load', 'list', 'gap:1000', 'list'],
+    'load, empty answer, the ruled one-second gap, the second ask — no more',
+  );
+  assert.deepEqual(agents, ['developer'], 'the boot lands inside the gap, as it does live');
+});
+
+test('two empty asks answer empty: the wizard says its own error, and no third wait is taken', async () => {
+  // A genuine zero is the wizard's error to say ("there appear to be no
+  // agents available"), not a loop of waits: the gap is taken once, never
+  // again, and the empty answer stands.
+  const home = mkdtempSync(join(tmpdir(), 'aivi-lane-agents-'));
+  const service = bootingService(false);
+  const agents = await listLaneAgents(
+    home,
+    { config: { opencode: {} } } as never,
+    'shop',
+    () => Promise.resolve(service.client),
+    service.sleep,
+  );
+  rmSync(home, { recursive: true, force: true });
+  assert.deepEqual(service.calls, ['load', 'list', 'gap:1000', 'list'], 'two asks, one gap, then the answer');
+  assert.deepEqual(agents, [], 'empty stands as the genuine zero the wizard reports');
 });
