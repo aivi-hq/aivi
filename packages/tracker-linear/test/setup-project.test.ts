@@ -138,6 +138,10 @@ const wizard = (
       },
       multiselect: async ({ message }: { message: string }) => prompt(message),
       text: async ({ message }: { message: string }) => prompt(message),
+      autocomplete: async (options: { message: string }) => {
+        asks.push({ message: options.message, opts: options });
+        return prompt(options.message);
+      },
       spinner: () => ({ start: () => {}, stop: () => {}, error: () => {} }),
       log: {
         message: async (line: string) => {
@@ -218,6 +222,18 @@ test('the question starts a completed state on Human and a working state on Agen
   const done = asks.find(a => a.message === 'What kind of lane is the "Done" state?');
   assert.ok(done, 'Done is asked like every other state');
   assert.deepEqual((done.opts as { options: unknown[] }).options, [LANE_KIND.human, LANE_KIND.agent, LANE_KIND.none]);
+});
+
+test('the agent question is the typing filter — the same picker a repository question uses', async () => {
+  const { contributor, ctx, asks } = wizard([['t-1'], '', ...KINDS, 'Todo']);
+  await contributor.setup(ctx);
+  const agent = asks.find(a => a.message === 'Which OpenCode agent works the "Backlog" lane?');
+  assert.ok(agent, 'the agent question was asked as a recorded prompt');
+  assert.deepEqual((agent.opts as { options: unknown[] }).options, [
+    { value: 'developer', label: 'developer' },
+    { value: 'reviewer', label: 'reviewer' },
+  ]);
+  assert.equal((agent.opts as { maxItems?: number }).maxItems, 12, 'the filter shape of a pick-list question');
 });
 
 test('with a forge configured a worked lane is asked whether it works on the ticket branch; a human lane never is', async () => {

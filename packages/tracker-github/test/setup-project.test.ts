@@ -202,7 +202,10 @@ const wizard = (
       },
       multiselect: async ({ message }: { message: string }) => prompt(message),
       confirm: async ({ message }: { message: string }) => prompt(message),
-      autocomplete: async ({ message }: { message: string }) => prompt(message),
+      autocomplete: async (options: { message: string }) => {
+        asks.push({ message: options.message, opts: options });
+        return prompt(options.message);
+      },
       spinner: () => ({
         start: (line: string) => live.push(line),
         message: (line: string) => live.push(line),
@@ -350,6 +353,19 @@ test('the kind question offers the three answers in the ruled words', async t =>
   const kind = asks.find(a => a.message === 'What kind of lane is the "Backlog" option?');
   assert.ok(kind, 'the kind question was asked');
   assert.deepEqual((kind.opts as { options: unknown[] }).options, [LANE_KIND.agent, LANE_KIND.human, LANE_KIND.none]);
+});
+
+test('the agent question is the typing filter — the same picker the repository question uses', async t => {
+  const { contributor, ctx, asks, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo']);
+  t.after(cleanup);
+  await contributor.setup(ctx);
+  const agent = asks.find(a => a.message === 'Which OpenCode agent works the "Backlog" lane?');
+  assert.ok(agent, 'the agent question was asked as a recorded prompt, not a plain list');
+  assert.deepEqual((agent.opts as { options: unknown[] }).options, [
+    { value: 'developer', label: 'developer' },
+    { value: 'reviewer', label: 'reviewer' },
+  ]);
+  assert.equal((agent.opts as { maxItems?: number }).maxItems, 12, 'the filter shape of the repository question');
 });
 
 test('a forge that settled a repository is the first answer, and taking it asks the app nothing', async t => {

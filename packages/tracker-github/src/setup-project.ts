@@ -468,9 +468,10 @@ async function askLanes(
     let agent = '';
     let worktree = false;
     if (kind === LANE_KIND.agent.value) {
-      const answer = await ctx.prompts.select({
+      const answer = await ctx.prompts.autocomplete({
         message: `Which OpenCode agent works the "${option.name}" lane?`,
         options: agentNames.map(name => ({ value: name, label: name })),
+        maxItems: 12,
       });
       if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
       agent = String(answer).trim();
