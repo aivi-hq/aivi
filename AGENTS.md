@@ -14,6 +14,17 @@ orchestration around it, all started by one `aivi serve`.
 - Always speak from confirmed truths. Verify and confirm.
 - Simplicity in architecture and use, and a focus on performance.
 
+## How to communicate
+
+- Answer exactly what was asked. A yes/no question gets a yes/no answer —
+  1-2 words when that is the whole question.
+- No uninvited information. Extra facts only when they change the decision
+  in front of us.
+- The operator's statements are input for discussion, not a green light.
+  State the finding, then wait for the word before building.
+- Short sentences. ASD-STE100. ADHD-shaped output: lists over prose. No
+  long paragraphs.
+
 ## Build and test
 
 - Node 26 (`engines` in `package.json`), pinned dependencies, npm workspaces.
