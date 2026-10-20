@@ -101,10 +101,13 @@ webhook must deliver `issue_comment`, `issues` and `projects_v2_item` to
 the app's own JWT reads the permissions (Issues and Organization projects,
 both write), the subscribed events, and where the webhook points. Then one
 wait proves the secret against a live delivery: the installer re-asks GitHub
-for its own newest `installation` delivery and watches the replay land at
-this aivi's route with a seal that verifies; with no such delivery in the
-history, the person installs or approves the app while the wait runs. This
-installer **writes nothing at GitHub**. A live aivi is asked as a choice,
+for the newest `installation` delivery in its last 25 and watches the replay
+land at this aivi's route with a seal that verifies. When the history holds
+none — the app was installed before this webhook pointed here — or GitHub
+refuses the replay, **no wait runs**: a trigger that cannot come is never sat
+out. The person reinstalls the app and retries, or skips webhook
+verification, and the summary says UNVERIFIED. This installer **writes
+nothing at GitHub**. A live aivi is asked as a choice,
 never presumed: no health answer offers "I started the server. Retry" or
 "Continue anyway", and continuing writes the configuration with UNVERIFIED —
 the unproved fact is precisely "GitHub can reach this machine" — in the

@@ -32,8 +32,8 @@ export const probeWindowMs = (): number => Number(process.env.AIVI_PROBE_WINDOW_
 const POLL_MS = 2_000;
 
 /** The events GitHub posts when a person installs the app or approves its
- *  grant — the `aivi add` probe's signal, and the natural one: the person is
- *  doing that act right now. */
+ *  grant — the `aivi add` probe's signal, replayed from the delivery history
+ *  (an older install posts nothing while the installer watches). */
 export const INSTALLATION_EVENTS = new Set(['installation', 'installation_repositories']);
 
 /** One payload as the live line says it, in GitHub's own words, naming the
