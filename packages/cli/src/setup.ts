@@ -106,6 +106,15 @@ export interface SetupIo {
     reach(): Promise<Reach>;
     url(): Promise<string>;
     token(): Promise<string>;
+    /** Each semantic model role, one question; Enter keeps qmd's default, so
+     *  only named roles come back. */
+    models(defaults: { embed: string; rerank: string; generate: string }): Promise<{
+      embed?: string;
+      rerank?: string;
+      generate?: string;
+    }>;
+    /** Fetch the semantic models now? */
+    fetchModels(): Promise<boolean>;
   };
   log(message: string): void;
   warn(message: string): void;
@@ -291,6 +300,51 @@ async function resolveReach(flags: SetupFlags, io: SetupIo): Promise<Reach> {
   return io.ask.reach();
 }
 
+/** Knowledge's setup: the semantic models are configured first, fetched after.
+ *  Enter keeps a role's qmd default, so answers that name nothing write
+ *  nothing — absent is the qmd default. Named roles land in `search.models`.
+ *  The fetch is `aivi knowledge warm`'s own code, imported from the installed
+ *  server the way the identity step imports its own. A failed fetch warns and
+ *  setup continues: keyword answers serve until the models arrive. A scripted
+ *  `--use` setup asks nothing and downloads nothing. */
+async function configureKnowledge(flags: SetupFlags, home: string, appDir: string, io: SetupIo): Promise<void> {
+  const path = join(home, 'config.json');
+  const config = JSON.parse(readFileSync(path, 'utf8')) as { search?: false | { [key: string]: unknown } };
+  if (config.search === false) return;
+  if (flags.use !== undefined) {
+    io.log(
+      'Knowledge: `aivi knowledge warm` fetches the local semantic models; searches answer with keywords until it has run once.',
+    );
+    return;
+  }
+  const { QMD_BUILTIN_MODELS, warmHome } = await importApp<{
+    QMD_BUILTIN_MODELS: { embed: string; rerank: string; generate: string };
+    warmHome: () => Promise<{ models: Record<string, string>; embedded: number; seconds: number }>;
+  }>(appDir, home, 'dist/cli/commands/knowledge.js');
+  const named = await io.ask.models(QMD_BUILTIN_MODELS);
+  if (Object.keys(named).length) {
+    config.search = { ...(typeof config.search === 'object' ? config.search : {}), models: named };
+    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+    io.log(`search.models written to ${path}.`);
+  }
+  if (!(await io.ask.fetchModels())) {
+    io.log(
+      'Knowledge: `aivi knowledge warm` fetches the local semantic models; searches answer with keywords until it has run once.',
+    );
+    return;
+  }
+  try {
+    const warm = await warmHome();
+    io.log(
+      `Semantic models in place (${warm.seconds}s); ${warm.embedded} chunks embedded. Open OpenCode — knowledge is there.`,
+    );
+  } catch (error) {
+    io.warn(
+      `the models were not fetched (${error instanceof Error ? error.message : String(error)}); searches answer with keywords until \`aivi knowledge warm\` succeeds.`,
+    );
+  }
+}
+
 async function createFlow(flags: SetupFlags, home: string, nodePath: string, io: SetupIo): Promise<void> {
   const major = Number(process.versions.node.split('.')[0]);
   if (major !== 26) throw new Error(`aivi needs Node 26 (below 27); running ${process.versions.node}.`);
@@ -328,11 +382,9 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   if (use === 'another') return;
 
   await ensurePlugins(io);
-  // The semantic models are the app's own (qmd runs them locally): setup says
-  // where they come from rather than downloading two gigabytes unasked.
-  io.log(
-    'Knowledge: `aivi knowledge warm` fetches the local semantic models; searches answer with keywords until it has run once.',
-  );
+  // The semantic models are the app's own (qmd runs them locally): configure
+  // them first, fetch after.
+  await configureKnowledge(flags, home, appDir, io);
   const background = process.stdin.isTTY ? await io.ask.background() : false;
   if (!background) {
     saveClientConfig({ person: { token: identity.token, ...(identity.name ? { name: identity.name } : {}) } });
@@ -635,6 +687,28 @@ const defaultIo: SetupIo = {
           validate: value => (String(value ?? '').trim() ? undefined : 'Paste the token shown by `aivi people token`'),
         }),
       ).then(value => value.trim()),
+    async models(defaults) {
+      const named: { embed?: string; rerank?: string; generate?: string } = {};
+      for (const role of ['embed', 'rerank', 'generate'] as const) {
+        if (!process.stdin.isTTY) throw new Cancelled(SCRIPT_FORM);
+        const answer = await p.text({
+          message: `Semantic ${role} model — Enter keeps qmd's own default`,
+          placeholder: defaults[role],
+        });
+        if (p.isCancel(answer)) throw new Cancelled('an answer was cancelled');
+        const uri = typeof answer === 'string' ? answer.trim() : '';
+        if (uri) named[role] = uri;
+      }
+      return named;
+    },
+    fetchModels: () =>
+      guarded<boolean>(() =>
+        p.confirm({
+          message:
+            'Fetch the semantic models now (~2 GB, once)? Searches answer with keywords until they are in place.',
+          initialValue: true,
+        }),
+      ),
   },
   log: message => console.log(message),
   warn: message => console.warn(message),

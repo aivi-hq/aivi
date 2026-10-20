@@ -221,29 +221,32 @@ reconsidered" failure the operator named. Doctrine:
    Meet room conversation → confirm IS reviewed (room platforms are default
    origins now); a `dreaming` origin → config refuses it.
 
-## Open — raised 2026-10-21, operator rejected both current fixes
+## Decided 2026-10-21 — cache location and the node-llama-cpp override
 
-**Problem 1: model-cache containment. DECIDED: no containment.** The
-`XDG_CACHE_HOME` import trick is fully reverted. Models live in qmd's own
-default cache (`~/.cache/qmd/models`, or the operator's own `XDG_CACHE_HOME`).
-The clean upstream fix would be qmd passing its internal `modelCacheDir`
-(llm.js:509) through the SDK `createStore` options; that is an upstream
-conversation, not an aivi workaround.
+**Model cache: no containment.** The `XDG_CACHE_HOME` import trick is fully
+reverted (and committed as reverted). Models live in qmd's own default cache
+(`~/.cache/qmd/models`, or the operator's own `XDG_CACHE_HOME`). The clean
+upstream fix would be qmd passing its internal `modelCacheDir` (llm.js:509)
+through the SDK `createStore` options; that is an upstream conversation, not
+an aivi workaround.
 
-**Problem 2: the node-llama-cpp override.** The Metal error on this M5 Max is
+**The node-llama-cpp override: kept.** The Metal error on this M5 Max is
 upstream: llama.cpp #27473 (tensor-API probe compiled at too-old Metal
 language version). qmd 2.8.3 pins node-llama-cpp 3.20.0 (llama.cpp b10361,
 predates the fix). node-llama-cpp 3.21.0 fixed it ("Metal 4 tensor API issues
-on M5 mac machines"). The built round adds a root npm override to 3.21.1 —
-the operator calls it a workaround, and the honest weaknesses: qmd pinned
-3.20.0 exactly; our test gates never exercise the native binding (real-QMD
-tests are keyword-only); the only proof is one live semantic run. Options:
-keep the override as a recorded decision after real verification against
-qmd's usage; or stay on 3.20.0 (search works, ~2 s queries, tensor API
-disabled); or wait for qmd to bump.
+on M5 mac machines"). The root npm override to 3.21.1 stays; the operator
+decided after a live re-verification on the default cache: no error line,
+semantic hits correct, 2.7 s cold / 0.4 s warm queries.
 
-Until decided: the semantic round stays UNCOMMITTED; the override can be
-dropped without touching anything else (3.20.0 ran the same proof).
+**Setup asks about the models: configure first, download after.** `aivi
+setup` (interactive create flow) asks one question per role — embed, rerank,
+generate — Enter keeps qmd's default (shown as the placeholder); named roles
+are written to `search.models`, unnamed roles stay absent, which IS the
+qmd default. Then a confirm fetches now or later; the fetch is `aivi
+knowledge warm`'s own code, shared through `warmHome` in the host's knowledge
+command module, imported the way setup imports the identity step's code. A
+failed fetch warns and setup continues; scripted `--use` setups ask and
+download nothing.
 
 ## Follow-ups deferred until the schema settles
 

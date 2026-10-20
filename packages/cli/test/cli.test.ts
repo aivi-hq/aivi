@@ -81,6 +81,8 @@ function fakeIo(overrides: Partial<SetupIo> = {}): {
       reach: async () => ({ kind: 'none' as const }),
       url: async () => 'http://127.0.0.1:4100',
       token: async () => TOKEN,
+      models: async () => ({}),
+      fetchModels: async () => false,
     },
     log: message => calls.logs.push(message),
     warn: () => {},

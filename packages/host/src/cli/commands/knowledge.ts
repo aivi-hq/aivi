@@ -1,10 +1,24 @@
 /** Knowledge: search over the running host and queued reindexing. */
 import { randomUUID } from 'node:crypto';
 import { selectSources } from '@aivi/core';
-import { warmKnowledge } from '@aivi/knowledge';
+import { QMD_BUILTIN_MODELS, warmKnowledge } from '@aivi/knowledge';
 import { createHostClient } from '@aivi/plugin/api';
 import type { Command } from 'commander';
 import { collect, context, hostUrl, print, withStore } from '../context.ts';
+
+/** Setup's fetch step reaches the models through this one edge (the CLI puts
+ *  its home in `AIVI_HOME` before importing): the home's composed config, the
+ *  download, the embed, the load — no server involved. The `knowledge warm`
+ *  command and setup share exactly this code. */
+export async function warmHome(): Promise<Awaited<ReturnType<typeof warmKnowledge>> & { seconds: number }> {
+  const { loaded, log } = await context();
+  const startedAt = Date.now();
+  const warm = await warmKnowledge(loaded, undefined, log.getChild('knowledge'));
+  return { ...warm, seconds: Math.round((Date.now() - startedAt) / 1000) };
+}
+// The model questions in `aivi setup` show these as each role's default; the
+// CLI reads them from this module, never from its own copy.
+export { QMD_BUILTIN_MODELS };
 
 export function registerKnowledge(program: Command): void {
   const knowledge = program.command('knowledge').description('search and indexing').helpGroup('Knowledge');
@@ -58,9 +72,6 @@ export function registerKnowledge(program: Command): void {
       'Fetch and load the semantic search models: downloads what `search.models` names (qmd defaults when unset), embeds the corpus, warms expansion and rerank. Searches stay keyword-only until this has run once.',
     )
     .action(async () => {
-      const { loaded, log } = await context();
-      const startedAt = Date.now();
-      const warm = await warmKnowledge(loaded, undefined, log.getChild('knowledge'));
-      print({ ...warm, seconds: Math.round((Date.now() - startedAt) / 1000) });
+      print(await warmHome());
     });
 }

@@ -66,9 +66,10 @@ const collectionID = (s: KnowledgeSource) =>
 export class SearchUnavailable extends Error {}
 
 /** QMD 2.8.3's built-in model URIs. The runtime never imports them as law —
- *  qmd resolves its own defaults when the config names none — they exist here
- *  only to locate a model's cache file for the availability probe. */
-const QMD_BUILTIN_MODELS = {
+ *  qmd resolves its own defaults when the config names none — they locate a
+ *  model's cache file for the availability probe, and `aivi setup` shows them
+ *  as the defaults of the model questions. */
+export const QMD_BUILTIN_MODELS = {
   embed: 'hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf',
   rerank: 'hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf',
   generate: 'hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf',
