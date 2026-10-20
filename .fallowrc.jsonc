@@ -50,6 +50,13 @@
     // ]
   },
   "typeAware": { "enabled": true },
+  "publicPackages": [
+    // @aivi/chrome ships its API to outside consumers (ruled 2026-10-20):
+    // used internally, published so people can drive a browser on their
+    // own. The published surface is the product, so fallow does not read
+    // it as unused here.
+    "@aivi/chrome"
+  ],
   "overrides": [
     {
       // scripts/ is dev tooling run against the tree (smoke and live checks):
