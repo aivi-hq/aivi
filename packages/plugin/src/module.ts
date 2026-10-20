@@ -22,7 +22,6 @@ import type {
   Job,
   JobEntry,
   KnowledgeService,
-  Lease,
   LoadedConfig,
   Logger,
   Person,
@@ -175,26 +174,8 @@ export interface Store {
   /** Materialize occurrences that came due while aivi slept; silence is a result. */
   materializeDue(now?: number, graceMs?: number): { created: number; missed: Run[] };
 
-  /** The scheduler's claim: one run whose dispatcher pool has a slot; empty `pools` is unmoderated. */
-  claim(owner: string, pools: Record<string, number>, now?: number): Run | null;
-  /** Pools whose queue could take another claim. */
-  queuedResources(): string[];
   /** The next occurrence to materialize; null when nothing is due. */
   nextDue(now?: number): number | null;
-  acquireLease(
-    id: string,
-    owner: string,
-    pool: string,
-    pools: Record<string, number>,
-    onAcquire?: () => void,
-    now?: number,
-  ): boolean;
-  releaseLease(id: string, owner: string): void;
-  blockLease(id: string, owner: string, reason: string): void;
-  blockLeasesOwnedBy(owner: string, reason: string): number;
-  /** Every held lease, as the module CLIs report them. */
-  leases(): Lease[];
-  leaseCount(): number;
   /** Name the session a claimed run opened, so reports can find their way back. */
   attachSession(id: string, owner: string, sessionId: string): void;
   /** Settle a claimed run: its result, its state, its reason. */

@@ -270,8 +270,11 @@ test('projects are the directories of <home>/projects; config.json only override
   );
   assert.deepEqual(
     selectSources(loaded, ['gone'], false).map(s => [s.id, s.path]),
-    [['memory', join(root, 'projects/gone/memory')]],
-    'a removed project keeps only its memory',
+    [
+      ['memory', join(root, 'projects/gone/memory')],
+      ['archive', join(root, 'projects/gone/memory/archive.md')],
+    ],
+    'a removed project keeps only its memory and its archive',
   );
   assert.equal(loaded.projects[1]!.directory, join(root, 'projects/website/source'));
   // (the `linear` section is a plugin's own: core passes it through unread; the
@@ -283,6 +286,7 @@ test('projects are the directories of <home>/projects; config.json only override
       ['docs', 'doc', join(root, 'projects/website/source/docs')],
       ['adr', 'decision', join(root, 'projects/website/source/docs/adr')],
       ['memory', 'memory', join(root, 'projects/website/memory')],
+      ['archive', 'archive', join(root, 'projects/website/memory/archive.md')],
     ],
   );
   assert.deepEqual(
@@ -290,14 +294,16 @@ test('projects are the directories of <home>/projects; config.json only override
     [
       ['pages', join(root, 'projects/wiki/source/pages')],
       ['memory', join(root, 'projects/wiki/memory')],
+      ['archive', join(root, 'projects/wiki/memory/archive.md')],
     ],
   );
-  // Core is the configured sources plus the org memory.
+  // Core is the configured sources plus the org memory and its archive.
   assert.deepEqual(
     selectSources(loaded, [], true).map(s => [s.id, s.path]),
     [
       ['company', join(root, 'handbook')],
       ['memory', join(root, 'memory')],
+      ['archive', join(root, 'memory/archive.md')],
     ],
   );
   assert.equal(selectSources(loaded, ['website'], false)[0]!.projectId, 'website');

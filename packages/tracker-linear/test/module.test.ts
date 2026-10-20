@@ -514,6 +514,17 @@ const knowledge: KnowledgeService = { search: async () => [], index: async () =>
  *  boot-reconcile test passes the same orchestrator to a second module. */
 function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController, git?: OrchestratorGit): AiviServices {
   const opencode = () => connectOpenCode(loaded.config.opencode, {});
+  // No pools configured here: the dispatcher tracks every lease and grants
+  // every request — the same capacity the tests always had. Clocks in ms:
+  // long enough that no test is struck by a clock it is not watching.
+  const dispatcher = new Dispatcher({
+    leases: new LeaseStore(store),
+    dispatcher: loaded.config.dispatcher,
+    idleMs: 60_000,
+    prepareMs: 300_000,
+    opencode,
+    signal: abort.signal,
+  });
   const orchestrator = new Orchestrator({
     ledger: new RunLedger(store),
     opencode,
@@ -526,17 +537,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
       if (!project) throw new Error(`no project ${id}`);
       return project.directory;
     },
-    // No pools configured here: the dispatcher tracks every lease and grants
-    // every request — the same capacity the tests always had. Clocks in ms:
-    // long enough that no test is struck by a clock it is not watching.
-    dispatcher: new Dispatcher({
-      leases: new LeaseStore(store),
-      dispatcher: loaded.config.dispatcher,
-      idleMs: 60_000,
-      prepareMs: 300_000,
-      opencode,
-      signal: abort.signal,
-    }),
+    dispatcher,
     forges: new Forges(),
     identity: async () => ({ name: 't', email: 't@t' }),
     keepAliveMs: 300_000,
@@ -557,7 +558,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
     voice: new Voice(),
-    dispatcher: {} as never,
+    dispatcher,
     orchestrator,
     wake: () => {},
     onWake: () => () => {},

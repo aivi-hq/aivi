@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { KnowledgeService, KnowledgeSource, LoadedConfig, Logger, SearchHit, SearchRequest } from '@aivi/core';
 import { searchSchema, selectSources } from '@aivi/core';
@@ -68,6 +68,12 @@ async function surveySources(loaded: LoadedConfig, log?: Logger) {
     // Memory directories are aivi's own and appear once dreaming writes; create them so they
     // are indexed from the start. A repository without the conventional directory is normal.
     if (source.kind === 'memory') await mkdir(source.path, { recursive: true });
+    // Archives are aivi's own too: touch the file so the source exists from the
+    // start; dreaming fills it as facts retire.
+    if (source.kind === 'archive') {
+      await mkdir(dirname(source.path), { recursive: true });
+      await writeFile(source.path, '', { flag: 'a' });
+    }
     const canonical = await realpath(source.path).catch(() => null);
     if (!canonical) {
       log?.warn('knowledge.missing', { source: source.id, projectId: source.projectId, path: source.path });
@@ -145,49 +151,65 @@ export async function createKnowledgeService(
       async close() {},
     };
   const sdk = await loader();
-  const search = loaded.config.search;
   const { collections, sources } = await surveySources(loaded, log);
   const folder = resolve(loaded.config.stateDirectory, 'knowledge');
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const store = await sdk.createStore({ dbPath: resolve(folder, 'qmd.sqlite'), config: { collections } });
-  let chain: Promise<unknown> = Promise.resolve();
-  let pending = 0;
   let closed = false;
-  const run = <T>(operation: () => Promise<T>): Promise<T> => {
+  // Searches never wait: QMD reads are synchronous SQLite on a WAL database,
+  // which the database itself serializes at millisecond granularity — an
+  // aivi-side queue could only add delay. Indexing owns its own lock (the
+  // sync refuses to overlap, not the scheduler): one scan runs, and a caller
+  // arriving mid-scan only indicates another sync is wanted — the re-scan
+  // runs detached afterwards, so files written mid-scan still land while the
+  // late caller is already on its way.
+  let again = false;
+  let scanning: Promise<unknown> | null = null;
+  const startScan = (): Promise<unknown> => {
+    const scan: Promise<unknown> = (async () => {
+      try {
+        return await store.update();
+      } finally {
+        scanning = null;
+        if (again && !closed) {
+          again = false;
+          startScan().catch(() => {}); // the wanted-again re-scan: nobody awaits it
+        }
+      }
+    })();
+    scanning = scan;
+    return scan;
+  };
+  const index = (): Promise<unknown> => {
     if (closed) return Promise.reject(new SearchUnavailable('Knowledge service is closing'));
-    if (pending >= search.maxPending) return Promise.reject(new SearchUnavailable('Knowledge queue is full'));
-    pending++;
-    const result = chain.then(operation);
-    chain = result
-      .catch(() => {})
-      .finally(() => {
-        pending--;
-      });
-    return result;
+    if (scanning) {
+      again = true;
+      return scanning; // resolves when the running scan ends; the follow-up is detached
+    }
+    return startScan();
   };
   return {
     async search(input: SearchRequest) {
+      if (closed) throw new SearchUnavailable('Knowledge service is closing');
       const request = searchSchema.parse(input);
       const ids = selectSources(loaded, request.projects, request.includeCore, request.kinds)
         .map(collectionID)
         .filter(id => sources.has(id));
       // Never pass an empty filter: QMD interprets it as an unscoped query.
       if (!ids.length) return [];
-      return run(async () => {
-        const results = await store.searchLex(request.query, { limit: request.limit, collection: ids });
-        const hits: SearchHit[] = [];
-        for (const result of results) {
-          if (!ids.includes(result.collectionName)) throw new Error('QMD returned an out-of-scope collection');
-          const hit = await toHit(sources.get(result.collectionName)!, result, request.query, sdk, warned, log);
-          if (hit) hits.push(hit);
-        }
-        return hits;
-      });
+      const results = await store.searchLex(request.query, { limit: request.limit, collection: ids });
+      const hits: SearchHit[] = [];
+      for (const result of results) {
+        if (!ids.includes(result.collectionName)) throw new Error('QMD returned an out-of-scope collection');
+        const hit = await toHit(sources.get(result.collectionName)!, result, request.query, sdk, warned, log);
+        if (hit) hits.push(hit);
+      }
+      return hits;
     },
-    index: () => run(() => store.update()),
+    index,
     async close() {
       closed = true;
-      await chain;
+      await scanning;
       await store.close();
     },
   };

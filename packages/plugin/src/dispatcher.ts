@@ -33,8 +33,22 @@ export interface Dispatcher {
    *  conversation on the endpoint that made it. */
   request(input: { service: string; pool?: string; resume?: string }): DispatcherGrant;
   /** Provide a preparing lease with its session: created with the pool's
-   *  model, or resumed with whatever it was born with. */
-  provide(leaseId: string, work: { agent: string; directory: string; sessionId?: string }): Promise<DispatcherLeaseRef>;
+   *  model, or resumed with whatever it was born with. `create` says the
+   *  named session does not exist yet: make it real under that id, with the
+   *  pool's model — a caller that pre-allocates ids keeps them. `title` and
+   *  `metadata` ride the create: the aivi origin that dreaming reviews and
+   *  the name OpenCode's list shows are set where the session is born. */
+  provide(
+    leaseId: string,
+    work: {
+      agent: string;
+      directory: string;
+      sessionId?: string;
+      create?: boolean;
+      title?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<DispatcherLeaseRef>;
   /** End the lease and open its slot to the queue. `pending` means the slot
    *  stays held until a kill is confirmed — the dispatcher keeps watching. */
   release(leaseId: string): Promise<{ ended: DispatcherLeaseRef } | { pending: DispatcherLeaseRef }>;

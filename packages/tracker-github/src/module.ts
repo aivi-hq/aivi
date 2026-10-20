@@ -25,7 +25,7 @@
  * brings us directly, which still rides the channel machinery until the
  * channels reform.
  */
-import { errorMessage, laneOf, type Project, type ProjectLane, poolCapacities } from '@aivi/core';
+import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
 import {
   ChannelEngine,
   ConversationStore,
@@ -193,6 +193,7 @@ async function startGithub(
       services.opencode,
       services.events,
       services.store,
+      services.dispatcher,
       services.log,
     );
     // A real comment the engine can edit by id and delete when the answer
@@ -227,19 +228,12 @@ async function startGithub(
         await tracker.comment(conversation, text, 'outcome');
       },
     };
-    engine = new ChannelEngine(
-      store,
-      { pool: config.pool, maxConcurrent: 8 },
-      poolCapacities(services.loaded.config.dispatcher),
-      ask,
-      delivery,
-      {
-        log, // the module's own child, so engine records carry the module category
-        onRelease: services.wake,
-        onFailure: services.fail,
-        progress: { mode: config.progress, events: services.events },
-      },
-    );
+    engine = new ChannelEngine(store, { pool: config.pool, maxConcurrent: 8 }, services.dispatcher, ask, delivery, {
+      log, // the module's own child, so engine records carry the module category
+      onRelease: services.wake,
+      onFailure: services.fail,
+      progress: { mode: config.progress, events: services.events },
+    });
 
     const refuse = async (conversation: string, why: string) => {
       log.info('session.refused', { conversation, why });

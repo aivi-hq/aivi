@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { configSchema, jobSchema, poolCapacities } from '@aivi/core';
+import { configSchema, jobSchema } from '@aivi/core';
 import type { AiviModule } from '@aivi/plugin/module';
 import type { HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
+import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { Forges } from '../src/forges.ts';
 import { ConfigurationError } from '../src/modules.ts';
@@ -325,10 +326,21 @@ test('scheduled knowledge indexing uses the same injected service', async t => {
   };
   const config = loaded();
   const job = store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, 'local-model', 'index');
+  // Invocation work holds no lease: the dispatcher's client is never reached.
+  const dispatcher = new Dispatcher({
+    leases: new LeaseStore(store),
+    dispatcher: configSchema.parse({ version: 1 }).dispatcher,
+    opencode: async () => {
+      throw new Error('not needed');
+    },
+    idleMs: 600_000,
+    prepareMs: 600_000,
+  });
   const scheduler = new Scheduler(
     store,
     config.config.scheduler,
-    poolCapacities(config.config.dispatcher),
+    dispatcher,
+    () => false,
     createExecutor(config, {
       store,
       knowledge,

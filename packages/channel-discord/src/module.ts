@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
-import { accessEntry, errorMessage, poolCapacities } from '@aivi/core';
+import { accessEntry, errorMessage } from '@aivi/core';
 import {
   announce,
   CHAT_COMMANDS,
@@ -172,6 +172,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
       services.opencode,
       services.events,
       services.store,
+      services.dispatcher,
       services.log,
     );
     // Discord's typing indicator lasts ~10 s; keep it alive while the agent works so people know it is alive.
@@ -202,12 +203,12 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
         ?.users.remove(client.user!.id)
         .catch(() => {});
     };
-    const askWithTyping: typeof ask = async (turn, signal, ready) => {
+    const askWithTyping: typeof ask = async (turn, signal, ready, lease) => {
       void clearQueued(turn);
       const done = new AbortController();
       void typing(turn.channel, AbortSignal.any([signal, done.signal]));
       try {
-        return await ask(turn, signal, ready);
+        return await ask(turn, signal, ready, lease);
       } finally {
         done.abort();
       }
@@ -215,7 +216,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
     engine = new ChannelEngine(
       store,
       config,
-      poolCapacities(services.loaded.config.dispatcher),
+      services.dispatcher,
       askWithTyping,
       {
         async send(channelId, content) {

@@ -75,6 +75,9 @@ const parseModelSpec = (spec: string): NativeModel => {
   return { providerID: ref.providerID, id: ref.id, ...(ref.variant ? { variant: ref.variant } : {}) };
 };
 
+/** The session-create body, as the SDK types it; the lease's provide builds one. */
+type SessionCreate = NonNullable<Parameters<OpenCodeClient['session']['create']>[0]>;
+
 export class Dispatcher {
   readonly leases: LeaseStore;
   private readonly deps: DispatcherDeps;
@@ -205,6 +208,11 @@ export class Dispatcher {
    *  every request is granted — unlimited, the intended default. */
   get moderated(): boolean {
     return Object.keys(this.pools).length > 0;
+  }
+
+  /** Slots held right now, across every pool: what `aivi status` counts. */
+  held(): number {
+    return this.leases.all().length;
   }
 
   /**
@@ -389,14 +397,27 @@ export class Dispatcher {
 
   /**
    * Provide the lease with its session: create it, or resume one the caller
-   * brings, and attach it. The pool decides the model at session create
-   * (ruled 2026-10-02); the agent file's own model wins only in a pool that
-   * names none — and in unlimited mode, which names none at all. A resumed
-   * session keeps whatever it was born with: nobody re-decides a model.
+   * brings, and attach it. The pool decides the model at session create; the
+   * agent file's own model wins only in a pool that names none — and in
+   * unlimited mode, which names none at all. A resumed session keeps whatever
+   * it was born with: nobody re-decides a model. `create` makes a caller's
+   * pre-allocated id real: an id that already exists is validated like a
+   * resume, so a lost create is not re-imagined into a different session.
+   * `title` and `metadata` ride the create — the aivi origin dreaming reviews
+   * is set where the session is born.
    */
   async provide(
     leaseId: string,
-    work: { agent: string; directory: string; sessionId?: string },
+    work: {
+      agent: string;
+      directory: string;
+      sessionId?: string;
+      create?: boolean;
+      title?: string;
+      metadata?: Record<string, unknown>;
+      /** A caller's model pin (a conversation's `/model`), in OpenCode's shape; it outranks the pool's choice. */
+      model?: { providerID: string; id: string; variant?: string };
+    },
   ): Promise<DispatcherLease> {
     const lease = this.leases.require(leaseId);
     if (lease.state !== 'preparing')
@@ -404,23 +425,46 @@ export class Dispatcher {
     const client = await this.deps.opencode();
     const request = { signal: this.deps.signal ?? AbortSignal.timeout(30_000) };
     let sessionId = work.sessionId;
-    if (sessionId) {
-      const session = await client.session.get({ sessionID: sessionId }, request);
-      if (session.agent !== work.agent || session.location.directory !== work.directory)
+    let existing: Awaited<ReturnType<OpenCodeClient['session']['get']>> | undefined;
+    if (sessionId && !work.create) {
+      const found = await client.session.get({ sessionID: sessionId }, request);
+      if (found.agent !== work.agent || found.location.directory !== work.directory)
         throw new Error(`session ${sessionId} no longer runs agent ${work.agent} in ${work.directory}`);
-    } else {
+      existing = found;
+    }
+    if (!existing) {
       // The id names the service: whose worker a session is stays readable
       // in OpenCode's own list, and tests can point at one kind of session.
-      sessionId = `ses_${lease.service}_${randomBytes(10).toString('hex')}`;
+      const id = sessionId ?? `ses_${lease.service}_${randomBytes(10).toString('hex')}`;
       const spec = this.pools[lease.pool]?.model;
-      const model = spec ? parseModelSpec(spec) : await agentModel(client, work.agent, work.directory, request);
-      await client.session.create(
-        { id: sessionId, agent: work.agent, location: { directory: work.directory }, ...(model ? { model } : {}) },
-        request,
-      );
+      // A pin the caller carries beats the pool, which beats the agent file:
+      // a session is born with the model its conversation was already promised.
+      const model =
+        work.model ?? (spec ? parseModelSpec(spec) : await agentModel(client, work.agent, work.directory, request));
+      try {
+        await client.session.create(
+          {
+            id,
+            agent: work.agent,
+            location: { directory: work.directory },
+            ...(model ? { model } : {}),
+            ...(work.title ? { title: work.title } : {}),
+            ...(work.metadata ? { metadata: work.metadata as NonNullable<SessionCreate['metadata']> } : {}),
+          },
+          request,
+        );
+      } catch (error) {
+        // A create that failed may still have landed (a lost response). If the
+        // session exists under this id running this agent in this directory,
+        // it is kept — a pre-allocated id is never re-imagined into a new one.
+        const found = await client.session.get({ sessionID: id }, request).catch(() => undefined);
+        if (!found || found.agent !== work.agent || found.location.directory !== work.directory) throw error;
+      }
+      sessionId = id;
     }
-    const attached = this.leases.attach(leaseId, sessionId);
-    this.leases.record(sessionId, attached.pool);
+    const born = sessionId!; // a resume brought its own id; a create made one
+    const attached = this.leases.attach(leaseId, born);
+    this.leases.record(born, attached.pool);
     this.#armFrom(attached); // the idle clock starts where the provide ends
     return attached;
   }

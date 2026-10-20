@@ -7,10 +7,31 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import { createTurnRunner, messageIdFor } from '../src/channel/turns.ts';
+import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
+import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { TurnNotStarted } from '../src/session.ts';
 import { Store } from '../src/store.ts';
+
+/** A real dispatcher, unmoderated: unlimited grants, and `provide` is the real thing. */
+const capacity = (opencode: () => Promise<OpenCodeClient>) =>
+  new Dispatcher({
+    leases: new LeaseStore(new Store(':memory:')),
+    dispatcher: configSchema.parse({ version: 1 }).dispatcher,
+    opencode,
+    idleMs: 600_000,
+    prepareMs: 600_000,
+    signal: AbortSignal.timeout(3_000),
+  });
+
+/** The engine's ask: a lease per turn, resumed once the conversation has its session. */
+const lease = (cap: Dispatcher, service: string, resume?: string) => {
+  const grant = cap.request({ service, ...(resume ? { resume } : {}) });
+  if ('lease' in grant) return grant.lease;
+  throw new Error('unlimited pools always grant');
+};
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 const config = { agent: 'assistant', directory: '/assistant' };
@@ -96,6 +117,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     sources: [],
   };
   const store = memory();
+  const cap = capacity(() => connectOpenCode(loaded.config.opencode));
   const ask = await createTurnRunner(
     platform,
     config,
@@ -103,18 +125,29 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     () => connectOpenCode(loaded.config.opencode),
     quiet,
     store,
+    cap,
   );
   let ready = 0;
   assert.equal(
-    await ask(turn, AbortSignal.timeout(3000), () => {
-      ready++;
-    }),
+    await ask(
+      turn,
+      AbortSignal.timeout(3000),
+      () => {
+        ready++;
+      },
+      lease(cap, 'discord'),
+    ),
     'Answer',
   );
   assert.equal(
-    await ask({ ...turn, id: 'two', ready: true }, AbortSignal.timeout(3000), () => {
-      ready++;
-    }),
+    await ask(
+      { ...turn, id: 'two', ready: true },
+      AbortSignal.timeout(3000),
+      () => {
+        ready++;
+      },
+      lease(cap, 'discord', turn.session),
+    ),
     'Answer',
   );
   assert.equal(ready, 1);
@@ -139,17 +172,32 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
   );
 
   // A script job's thread: the first turn carries the posted output as context, later ones do not.
-  await ask({ ...turn, id: 'seeded', seed: 'exit 0\ncleaned 12 files' }, AbortSignal.timeout(3000), () => {});
+  await ask(
+    { ...turn, id: 'seeded', seed: 'exit 0\ncleaned 12 files' },
+    AbortSignal.timeout(3000),
+    () => {},
+    lease(cap, 'discord'),
+  );
   const seeded = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
   assert.match(
     seeded.text,
     /^\[Earlier in this thread aivi posted this outcome of a scheduled job:\]\nexit 0\ncleaned 12 files\n\n\[Discord message from Name/,
   );
-  await ask({ ...turn, id: 'unseeded', ready: true, seed: 'stale' }, AbortSignal.timeout(3000), () => {});
+  await ask(
+    { ...turn, id: 'unseeded', ready: true, seed: 'stale' },
+    AbortSignal.timeout(3000),
+    () => {},
+    lease(cap, 'discord', turn.session),
+  );
   assert.doesNotMatch(requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body.text, /Earlier in this thread/);
 
   // A run's outcome re-entering the thread is marked as such, with the run id in its metadata.
-  await ask({ ...turn, id: 'run:abc', kind: 'job', ready: true, text: '✅ done' }, AbortSignal.timeout(3000), () => {});
+  await ask(
+    { ...turn, id: 'run:abc', kind: 'job', ready: true, text: '✅ done' },
+    AbortSignal.timeout(3000),
+    () => {},
+    lease(cap, 'discord', turn.session),
+  );
   const reentry = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
   assert.match(reentry.text, /^\[aivi delivers the outcome of a scheduled job[^\]]*\]\n✅ done$/);
   assert.equal(reentry.id, 'msg_discord_run_abc');
@@ -166,6 +214,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
       { ...turn, id: 'adopted', ready: true, agent: 'coder', directory: '/other' },
       AbortSignal.timeout(3000),
       () => {},
+      lease(cap, 'discord', turn.session),
     ),
     /no longer runs agent coder in \/other/,
   );
@@ -176,6 +225,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     { ...turn, id: 'pinned', ready: true, model: { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' } },
     AbortSignal.timeout(3000),
     () => {},
+    lease(cap, 'discord', turn.session),
   );
   const switched = requests.find(r => r.path.endsWith('/model'))!;
   assert.deepEqual(switched.body, { model: { providerID: 'openai', id: 'gpt-5.2', variant: 'high' } });
@@ -189,6 +239,7 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     describeSpeaker: t => `[Slack message from <@${t.user}>]`,
   };
   assert.equal(messageIdFor(slack, 'C1:1726000000.000100'), 'msg_slack_C1_1726000000_000100');
+  const slackCap = capacity(() => connectOpenCode(loaded.config.opencode));
   const slackAsk = await createTurnRunner(
     slack,
     config,
@@ -196,11 +247,13 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
     () => connectOpenCode(loaded.config.opencode),
     quiet,
     memory(),
+    slackCap,
   );
   await slackAsk(
     { ...turn, id: 'C1:1.5', ready: true, session: 'ses_slack_test' },
     AbortSignal.timeout(3000),
     () => {},
+    lease(slackCap, 'slack', 'ses_slack_test'),
   );
   const slackPrompt = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
   assert.equal(slackPrompt.id, 'msg_slack_C1_1_5');
@@ -210,18 +263,13 @@ test('a turn runner creates one fixed-agent session and reapplies only the sourc
 
 test('an unreachable OpenCode is a turn that never started, not a blocked one', async () => {
   const loaded = { config: configSchema.parse({ version: 1 }), path: '/config', projects: [], sources: [] };
-  const ask = await createTurnRunner(
-    platform,
-    config,
-    loaded,
-    async () => {
-      throw new Error('No running OpenCode v2 service found');
-    },
-    quiet,
-    memory(),
-  );
+  const dead = async () => {
+    throw new Error('No running OpenCode v2 service found');
+  };
+  const cap = capacity(dead);
+  const ask = await createTurnRunner(platform, config, loaded, dead, quiet, memory(), cap);
   await assert.rejects(
-    ask(turn, AbortSignal.timeout(3000), () => {}),
+    ask(turn, AbortSignal.timeout(3000), () => {}, lease(cap, 'discord')),
     (error: unknown) => error instanceof TurnNotStarted && /No running OpenCode/.test(error.message),
   );
 });
@@ -297,6 +345,7 @@ test('a source whose directory does not exist is skipped, not a module start tha
       },
     ],
   };
+  const cap = capacity(() => connectOpenCode(loaded.config.opencode));
   const ask = await createTurnRunner(
     platform,
     config,
@@ -304,8 +353,9 @@ test('a source whose directory does not exist is skipped, not a module start tha
     () => connectOpenCode(loaded.config.opencode),
     quiet,
     memory(),
+    cap,
   );
-  assert.equal(await ask(turn, AbortSignal.timeout(3000), () => {}), 'Answer');
+  assert.equal(await ask(turn, AbortSignal.timeout(3000), () => {}, lease(cap, 'discord')), 'Answer');
   const rules = requests.filter(r => r.method === 'PATCH' && r.path.startsWith('/api/session/'));
   assert.equal(rules.length, 1);
   assert.deepEqual(
@@ -375,6 +425,7 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
   const { code } = store.mintLinkCode(person.id);
   const outcome = store.redeemLinkCode(code, 'discord', 'human');
   assert.equal(outcome.reason, 'bound');
+  const cap = capacity(() => connectOpenCode(loaded.config.opencode));
   const ask = await createTurnRunner(
     platform,
     config,
@@ -382,8 +433,9 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
     () => connectOpenCode(loaded.config.opencode),
     quiet,
     store,
+    cap,
   );
-  await ask(turn, AbortSignal.timeout(3000), () => {});
+  await ask(turn, AbortSignal.timeout(3000), () => {}, lease(cap, 'discord'));
   const prompt = requests.filter(r => r.path.endsWith('/prompt'))[0]!.body;
   assert.equal(
     prompt.text,
@@ -401,7 +453,12 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
   const created = requests.find(r => r.path === '/api/session' && r.method === 'POST')!.body;
   assert.deepEqual(created.metadata, { aivi: { origin: 'discord', channel: 'dm', person: person.id } });
   // An unlinked user on the same store keeps the platform handle and no person stamp.
-  await ask({ ...turn, id: 'two', ready: true, user: 'stranger' }, AbortSignal.timeout(3000), () => {});
+  await ask(
+    { ...turn, id: 'two', ready: true, user: 'stranger' },
+    AbortSignal.timeout(3000),
+    () => {},
+    lease(cap, 'discord', turn.session),
+  );
   const stranger = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
   assert.equal(stranger.text, '[Discord message from Name (user stranger)]\nQuestion');
   assert.equal(stranger.metadata.aivi.person, undefined);

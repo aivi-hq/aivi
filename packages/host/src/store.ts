@@ -9,7 +9,6 @@ import type {
   JobEntry,
   JobSource,
   JobState,
-  Lease,
   Person,
   PersonToken,
   Report,
@@ -23,14 +22,6 @@ import { formatInstant, jobSchema, nextOccurrence } from '@aivi/core';
 import type { Store as StoreContract } from '@aivi/plugin/module';
 
 type Row = Record<string, unknown>;
-const lease = (r: Row): Lease => ({
-  id: String(r.id),
-  owner: String(r.owner),
-  resource: String(r.resource),
-  state: r.state as Lease['state'],
-  createdAt: Number(r.created_at),
-  reason: r.reason === null ? null : String(r.reason),
-});
 const audit = (r: Row): AuditEntry => ({
   seq: Number(r.seq),
   runId: String(r.run_id),
@@ -152,11 +143,9 @@ export class Store implements StoreContract {
         PRAGMA user_version=1;
       `);
     if (version < 2)
-      this.db.exec(`
-        CREATE TABLE resource_leases(id TEXT PRIMARY KEY, owner TEXT NOT NULL, resource TEXT NOT NULL,
-          state TEXT NOT NULL CHECK(state IN ('running','blocked')), created_at INTEGER NOT NULL, reason TEXT);
-        PRAGMA user_version=2;
-      `);
+      // The old capacity ledger's step: the table is gone (dispatcher leases are
+      // the capacity), the version step stands until the schema folds to v1.
+      this.db.exec(`PRAGMA user_version=2;`);
     if (version < 3)
       this.db.exec(`
         CREATE INDEX audit_job ON audit(job_id,seq);
@@ -651,41 +640,25 @@ export class Store implements StoreContract {
       )
       .run(jobId);
   }
-  /** Claim the oldest queued run whose pool has a slot. `pools` is the
-   *  dispatcher's capacity (name→slots); empty means capacity is unmoderated. */
-  claim(owner: string, pools: Record<string, number>, now = Date.now()): Run | null {
-    return this.transaction(() => {
-      const active = this.capacityUsage();
-      const counts = new Map(active.map(r => [String(r.resource), Number(r.n)]));
-      for (const row of this.db
+  /** Queued runs in claim order: oldest due first. Capacity is not decided
+   *  here — the dispatcher grants a lease before a run of a pool starts. */
+  queuedRuns(now = Date.now()): Run[] {
+    return (
+      this.db
         .prepare("SELECT * FROM runs WHERE state='queued' AND scheduled_for<=? ORDER BY scheduled_for,created_at,id")
-        .all(now)) {
-        const resource = String(row.resource);
-        const limit = Object.keys(pools).length === 0 ? Number.POSITIVE_INFINITY : pools[resource];
-        if (limit === undefined || (counts.get(resource) ?? 0) >= limit) continue;
-        this.db
-          .prepare("UPDATE runs SET state='running',owner=?,started_at=? WHERE id=?")
-          .run(owner, now, String(row.id));
-        this.record(String(row.id), 'claimed', owner, now);
-        return this.run(String(row.id));
-      }
-      return null;
+        .all(now) as Row[]
+    ).map(run);
+  }
+  /** Claim one queued run by id; null when it is no longer there to take. */
+  claimRun(id: string, owner: string, now = Date.now()): Run | null {
+    return this.transaction(() => {
+      const update = this.db
+        .prepare("UPDATE runs SET state='running',owner=?,started_at=? WHERE id=? AND state='queued'")
+        .run(owner, now, id);
+      if (Number(update.changes) !== 1) return null;
+      this.record(id, 'claimed', owner, now);
+      return this.run(id);
     });
-  }
-  private capacityUsage(): Row[] {
-    return this.db
-      .prepare(`SELECT resource,count(*) AS n FROM (
-      SELECT resource FROM runs WHERE state IN ('running','blocked')
-      UNION ALL SELECT resource FROM resource_leases
-    ) GROUP BY resource`)
-      .all();
-  }
-  /** Pools that queued work is waiting for; lets the scheduler notice a pool that no longer exists. */
-  queuedResources(): string[] {
-    return this.db
-      .prepare("SELECT DISTINCT resource FROM runs WHERE state='queued'")
-      .all()
-      .map(r => String(r.resource));
   }
   /**
    * The next future instant a job occurrence becomes due. Work that is already
@@ -694,60 +667,6 @@ export class Store implements StoreContract {
   nextDue(now = Date.now()): number | null {
     const row = this.db.prepare("SELECT MIN(next_at) AS due FROM jobs WHERE state='active' AND next_at>?").get(now);
     return row?.due === null || row?.due === undefined ? null : Number(row.due);
-  }
-  /**
-   * Reserve capacity for non-job work (for example one Discord turn). `pools`
-   * is the dispatcher's capacity (name→slots); empty means capacity is
-   * unmoderated and any pool name is granted. The caller's own state change
-   * runs inside the same transaction via `onAcquire`, so it must use
-   * `store.db` directly: Store methods that open their own transaction cannot
-   * nest here.
-   */
-  acquireLease(
-    id: string,
-    owner: string,
-    pool: string,
-    pools: Record<string, number>,
-    onAcquire: () => void = () => {},
-    now = Date.now(),
-  ): boolean {
-    return this.transaction(() => {
-      if (this.db.prepare('SELECT id FROM resource_leases WHERE id=?').get(id)) return false;
-      if (Object.keys(pools).length > 0) {
-        const capacity = pools[pool];
-        if (capacity === undefined) return false;
-        const usage = this.capacityUsage();
-        const count = Number(usage.find(r => r.resource === pool)?.n ?? 0);
-        if (count >= capacity) return false;
-      }
-      this.db.prepare("INSERT INTO resource_leases VALUES(?,?,?,'running',?,NULL)").run(id, owner, pool, now);
-      onAcquire();
-      return true;
-    });
-  }
-  releaseLease(id: string, owner: string): void {
-    const result = this.db.prepare('DELETE FROM resource_leases WHERE id=? AND owner=?').run(id, owner);
-    if (Number(result.changes) !== 1) throw new Error('Lost resource lease ownership');
-  }
-  blockLease(id: string, owner: string, reason: string): void {
-    const result = this.db
-      .prepare("UPDATE resource_leases SET state='blocked',reason=? WHERE id=? AND owner=?")
-      .run(reason, id, owner);
-    if (Number(result.changes) !== 1) throw new Error('Lost resource lease ownership');
-  }
-  /** Restart recovery for an adapter: every lease it held is now unverified and stays reserved. */
-  blockLeasesOwnedBy(owner: string, reason: string): number {
-    return Number(
-      this.db
-        .prepare("UPDATE resource_leases SET state='blocked',reason=? WHERE owner=? AND state='running'")
-        .run(reason, owner).changes,
-    );
-  }
-  leases(): Lease[] {
-    return (this.db.prepare('SELECT * FROM resource_leases ORDER BY created_at,id').all() as Row[]).map(lease);
-  }
-  leaseCount(): number {
-    return Number(this.db.prepare('SELECT count(*) AS n FROM resource_leases').get()!.n);
   }
   attachSession(id: string, owner: string, sessionId: string): void {
     const result = this.db

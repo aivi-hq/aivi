@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { getLogger, type LoadedConfig, loadConfig } from '@aivi/core';
 import { webhookSignature } from '@aivi/github';
-import { Store } from '@aivi/host';
+import { Dispatcher, LeaseStore, Store } from '@aivi/host';
 import type { AiviServices, PublicRequest, RunView } from '@aivi/plugin';
 import { GithubClient } from '../src/client.ts';
 import { githubSchema } from '../src/config.ts';
@@ -78,15 +78,24 @@ async function stubServices(loaded: LoadedConfig, store: Store): Promise<Harness
   const forms: { id: string }[] = [];
   const state: { active?: RunView; bySession?: RunView } = {};
   let route: any;
+  const opencode = async () => ({
+    session: {
+      form: { list: async () => forms },
+      prompt: async ({ text, delivery }: any) => void prompts.push({ text, delivery }),
+    },
+  });
   const services = {
     loaded,
     store,
     knowledge: {},
-    opencode: async () => ({
-      session: {
-        form: { list: async () => forms },
-        prompt: async ({ text, delivery }: any) => void prompts.push({ text, delivery }),
-      },
+    opencode,
+    // The engine's real capacity: unmoderated here, over the same fake client.
+    dispatcher: new Dispatcher({
+      leases: new LeaseStore(store),
+      dispatcher: loaded.config.dispatcher,
+      opencode: opencode as never,
+      idleMs: 60_000,
+      prepareMs: 300_000,
     }),
     events: { watch: () => () => {} },
     signal: new AbortController().signal,
@@ -102,7 +111,6 @@ async function stubServices(loaded: LoadedConfig, store: Store): Promise<Harness
     tools: {},
     forges: {},
     voice: {} as never,
-    dispatcher: {} as never,
     orchestrator: {
       addTracker: (t: any) => void trackers.push(t),
       wake: async (project?: string) => void wakes.push(project ?? '*'),

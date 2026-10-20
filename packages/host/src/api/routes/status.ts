@@ -6,7 +6,13 @@ import { status } from '../status.ts';
 
 export function registerStatus(
   app: Hono<AppEnv>,
-  deps: { store: Store; loaded: LoadedConfig; health?: (() => ModuleHealth[]) | undefined },
+  deps: {
+    store: Store;
+    loaded: LoadedConfig;
+    health?: (() => ModuleHealth[]) | undefined;
+    /** Slots the dispatcher holds right now; absent means nothing to count. */
+    leases?: (() => number) | undefined;
+  },
 ): void {
-  app.get('/status', c => c.json(status(deps.store, deps.loaded, Date.now(), deps.health?.() ?? [])));
+  app.get('/status', c => c.json(status(deps.store, deps.loaded, Date.now(), deps.health?.() ?? [], deps.leases)));
 }

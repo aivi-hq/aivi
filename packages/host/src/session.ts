@@ -118,13 +118,17 @@ async function prepareSession(
   const sessionID = input.sessionId;
   // The API does not substitute the agent file's model the way the TUI does (seen live 2026-09-15:
   // sessions ran OpenCode's default model). The model is a session property; aivi sets it.
+  // The agent file's model is the fallback at session create only; a session born from a lease
+  // keeps the model its pool gave it, and a `/model` pin outranks both.
   const wanted = input.model
     ? {
         providerID: input.model.providerID,
         id: input.model.modelID,
         ...(input.model.variant ? { variant: input.model.variant } : {}),
       }
-    : await agentModel(client, input.agent, input.directory, request);
+    : input.create
+      ? await agentModel(client, input.agent, input.directory, request)
+      : undefined;
   if (input.create) {
     await client.session.create(createBody(input, wanted), request);
     options.onCreated?.();

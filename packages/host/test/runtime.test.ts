@@ -2,15 +2,34 @@ import assert from 'node:assert/strict';
 import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
-import { configSchema, poolCapacities, taskSchema } from '@aivi/core';
+import { configSchema, taskSchema } from '@aivi/core';
+import type { OpenCodeClient } from '@aivi/plugin/module';
+import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
+import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { Forges } from '../src/forges.ts';
 import { connectOpenCode } from '../src/opencode.ts';
-import { createExecutor } from '../src/runtime.ts';
+import { createExecutor, needsLlmCapacity } from '../src/runtime.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 import { TaskRegistry } from '../src/tasks.ts';
 
 const quiet = { watch: () => () => {} };
+/** Shell and check work holds no lease; its dispatcher never reaches a client. */
+const thrower = async (): Promise<OpenCodeClient> => {
+  throw new Error('not needed');
+};
+
+/** A real dispatcher over the real lease tables, unmoderated unless a pool is
+ *  named: these tests exercise the executor; capacity is the dispatcher's. */
+function capacity(store: Store, opencode: () => Promise<OpenCodeClient>, pools?: Record<string, { capacity: number }>) {
+  return new Dispatcher({
+    leases: new LeaseStore(store),
+    dispatcher: configSchema.parse({ version: 1, ...(pools ? { dispatcher: { pools } } : {}) }).dispatcher,
+    opencode,
+    idleMs: 600_000,
+    prepareMs: 600_000,
+  });
+}
 
 test('opencode.prompt jobs run a full verified turn and succeed with the final answer', async t => {
   const store = new Store(':memory:');
@@ -27,6 +46,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
     auth: string | undefined;
   }[] = [];
   let promptId = '';
+  const known = new Set<string>();
   const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -75,11 +95,21 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
       );
       return;
     }
-    res.end(
-      JSON.stringify({
-        data: { id: body.id ?? received[0]!.body.id, agent: 'assistant', location: { directory: '/team' } },
-      }),
-    );
+    if (req.method === 'POST' && url.startsWith('/api/session')) {
+      known.add(body.id);
+      return void res.end(
+        JSON.stringify({ data: { id: body.id, agent: 'assistant', location: { directory: '/team' } } }),
+      );
+    }
+    const asked = decodeURIComponent(url.split('/').pop()!);
+    if (known.has(asked)) {
+      return void res.end(
+        JSON.stringify({ data: { id: asked, agent: 'assistant', location: { directory: '/team' } } }),
+      );
+    }
+    // An honest OpenCode: a session that was never created is not found.
+    res.writeHead(404);
+    res.end('{"error":"session not found"}');
   };
   const server = createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -95,7 +125,8 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    poolCapacities(config.dispatcher),
+    capacity(store, opencode),
+    needsLlmCapacity,
     createExecutor(
       {
         path: '/config.json',
@@ -137,7 +168,8 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    poolCapacities(config.dispatcher),
+    capacity(store, opencode),
+    needsLlmCapacity,
     createExecutor(
       {
         path: '/config.json',
@@ -203,7 +235,11 @@ test('a turn that times out while session.wait is pending reports the timeout, n
   assert.equal(job.task.kind, 'prompt');
   const outcome = await execute(
     { ...job, task: { ...job.task, timeoutMs: 300 } },
-    { signal: new AbortController().signal, attachSession() {} },
+    {
+      signal: new AbortController().signal,
+      attachSession() {},
+      lease: { id: 'lease_direct', provide: async () => ({ sessionId: 'ses_direct' }) },
+    },
   );
   assert.equal(outcome.state, 'blocked');
   assert.match(outcome.reason ?? '', /^Turn exceeded 300ms\. Inspect session ses_aivi_/);
@@ -232,7 +268,8 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    poolCapacities(config.dispatcher),
+    capacity(store, () => connectOpenCode(config.opencode, {})),
+    needsLlmCapacity,
     createExecutor(
       {
         path: '/config.json',
@@ -256,7 +293,7 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
   assert.match(result.error ?? '', /^Turn not started: /);
 });
 
-test('a dreaming job persists its session id before the first request and blocks if that request fails', async t => {
+test('a dreaming job persists its session id before the first request and fails if that request fails', async t => {
   const store = new Store(':memory:');
   const job = store.enqueue(
     taskSchema.parse({
@@ -285,7 +322,8 @@ test('a dreaming job persists its session id before the first request and blocks
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    poolCapacities(config.dispatcher),
+    capacity(store, () => connectOpenCode(config.opencode, {})),
+    needsLlmCapacity,
     createExecutor(
       {
         path: '/config.json',
@@ -309,9 +347,9 @@ test('a dreaming job persists its session id before the first request and blocks
   const expected = `ses_aivi_${job.id.replaceAll('-', '')}`;
   assert.equal(attachedAtRequest, expected, 'session id is on the job row before OpenCode is asked anything');
   const result = store.run(job.id);
-  assert.equal(result.state, 'blocked');
+  assert.equal(result.state, 'failed', 'the session never came to be: nothing reached the dreamer');
   assert.equal(result.sessionId, expected);
-  assert.match(result.error ?? '', /Inspect session ses_aivi_/);
+  assert.match(result.error ?? '', /^Dreaming not started: /);
 });
 
 test('shell tasks run argv without a shell, capture output, and map exit codes to states', async t => {
@@ -343,7 +381,8 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    { 'local-model': 2 },
+    capacity(store, thrower),
+    needsLlmCapacity,
     createExecutor(loaded, { store, events: quiet, opencode, tasks: new TaskRegistry(), forges: new Forges() }),
   );
   scheduler.tick();
@@ -395,7 +434,8 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    poolCapacities(config.dispatcher),
+    capacity(store, thrower),
+    needsLlmCapacity,
     createExecutor(
       {
         path: '/config.json',
@@ -442,7 +482,8 @@ test('a command that cannot start fails instead of blocking capacity', async t =
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    poolCapacities(config.dispatcher),
+    capacity(store, thrower),
+    needsLlmCapacity,
     createExecutor(
       {
         path: '/config.json',
@@ -489,7 +530,8 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
   const scheduler = new Scheduler(
     store,
     config.scheduler,
-    poolCapacities(config.dispatcher),
+    capacity(store, thrower),
+    needsLlmCapacity,
     createExecutor(
       {
         path: '/config.json',

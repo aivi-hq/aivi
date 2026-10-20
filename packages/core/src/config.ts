@@ -95,8 +95,15 @@ export const dreamingArgsSchema = z.strictObject({
     .array(z.string().min(1))
     .default([])
     .describe(
-      'Which aivi session origins to review (metadata.aivi.origin). Empty — the default — means every channel module registered when the run starts; a home with no channel module must name origins itself or the run says so.',
-    ),
+      'Which aivi session origins to review (metadata.aivi.origin). Empty — the default — means every door a person speaks through: the channel modules and the room platforms registered when the run starts; a home with neither must name origins itself or the run says so. `dreaming` is never reviewable: a dreamer reading its own dreams would invent memory.',
+    )
+    .superRefine((origins, ctx) => {
+      if (origins.includes('dreaming'))
+        ctx.addIssue({
+          code: 'custom',
+          message: 'origins may never include "dreaming": dreaming reviews conversations, never its own runs',
+        });
+    }),
   maxSessions: z
     .number()
     .int()
@@ -174,6 +181,8 @@ export const jobSchema = z
 export type Job = z.infer<typeof jobSchema>;
 /** The id every memory source carries: `<home>/memory` for the org, `<home>/memory/<project>` per project. */
 export const MEMORY_SOURCE_ID = 'memory';
+/** The id of each memory home's archive: `<memory>/archive.md`, superseded facts kept as history. */
+export const ARCHIVE_SOURCE_ID = 'archive';
 /**
  * The company-wide convention for what a repository's `docs/` holds. A file
  * belongs to the most specific source that contains it, so `docs/adr/*` is
@@ -739,10 +748,9 @@ const configShape = z.strictObject({
       z.strictObject({
         provider: z.literal('qmd'),
         indexOnStart: z.boolean().default(true),
-        maxPending: z.number().int().min(1).max(100).default(32),
       }),
     ])
-    .default({ provider: 'qmd', indexOnStart: true, maxPending: 32 })
+    .default({ provider: 'qmd', indexOnStart: true })
     .describe(
       'On by default: knowledge search runs on qmd and indexes at boot. `false` is the only off switch — a missing block means enabled, never a silent no-search install.',
     ),
@@ -879,12 +887,15 @@ function idsAreUnique(config: Config, report: AddIssue): void {
   }
 }
 
-/** The id `memory` belongs to the automatically registered memory source, at every level. */
+/** The ids `memory` and `archive` belong to the automatically registered sources, at every level. */
 function memoryIsReserved(config: Config, report: AddIssue): void {
   for (const [path, values] of sourceLists(config))
-    for (const [i, value] of values.entries())
+    for (const [i, value] of values.entries()) {
       if (value.id === MEMORY_SOURCE_ID)
         report([...path, i, 'id'], 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically');
+      if (value.id === ARCHIVE_SOURCE_ID)
+        report([...path, i, 'id'], 'Reserved: each memory home’s archive.md is registered automatically');
+    }
 }
 
 /** A plugin block that names a capacity pool must name a dispatcher pool that
@@ -1061,13 +1072,6 @@ export const PROJECTS_SYNC_JOB_ID = 'projects-sync';
 export function systemPool(config: Config, resource: string | undefined) {
   const pools = Object.keys(config.dispatcher.pools ?? {});
   return resource ?? (pools.includes('default') ? 'default' : pools[0]);
-}
-
-/** The dispatcher's pools as a plain name→capacity map — what every service
- *  that counts slots itself (channel turns, job runs) draws from. Empty means
- *  capacity is unmoderated (docs/orchestrator.md). */
-export function poolCapacities(dispatcher: Config['dispatcher']): Record<string, number> {
-  return Object.fromEntries(Object.entries(dispatcher.pools ?? {}).map(([name, pool]) => [name, pool.capacity]));
 }
 
 /** The system job `scheduler.retention` describes, or null when retention is off. */
@@ -1269,6 +1273,7 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
   const sources: KnowledgeSource[] = [
     ...config.knowledge.map((s): KnowledgeSource => ({ ...s, path: absolute(base, s.path), scope: 'core' })),
     { id: MEMORY_SOURCE_ID, path: resolve(base, 'memory'), kind: 'memory', scope: 'core' },
+    { id: ARCHIVE_SOURCE_ID, path: resolve(base, 'memory/archive.md'), kind: 'archive', scope: 'core' },
     ...(await manualSources(base)),
   ];
   const projects: Project[] = [];
@@ -1282,6 +1287,13 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
       for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
         sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
     sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
+    sources.push({
+      id: ARCHIVE_SOURCE_ID,
+      path: join(layout.memory, 'archive.md'),
+      kind: 'archive',
+      scope: 'project',
+      projectId,
+    });
     projects.push({
       id: projectId,
       directory: layout.source,

@@ -4,13 +4,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Person, Run } from '@aivi/core';
-import { configSchema, getLogger, poolCapacities } from '@aivi/core';
+import { configSchema, getLogger } from '@aivi/core';
 import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import {
   CHAT_COMMANDS,
   Channels,
   connectOpenCode,
+  Dispatcher,
   Forges,
+  LeaseStore,
   PublicRoutes,
   Store,
   TaskRegistry,
@@ -19,6 +21,7 @@ import {
   Voice,
 } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import { slackConfigSchema } from '../src/config.ts';
 import type { SlackCommand, SlackConnection, SlackEvent, SlackHandlers } from '../src/connection.ts';
 import { sdkLog } from '../src/connection.ts';
@@ -293,6 +296,17 @@ function fakeConnection() {
 }
 
 const noEvents: SessionEvents = { watch: () => () => {} };
+/** A real dispatcher over the real lease tables; unmoderated unless a pool is named. */
+function capacity(store: Store, opencode: () => Promise<OpenCodeClient>, pools?: Record<string, { capacity: number }>) {
+  return new Dispatcher({
+    leases: new LeaseStore(store),
+    dispatcher: configSchema.parse({ version: 1, ...(pools ? { dispatcher: { pools } } : {}) }).dispatcher,
+    opencode,
+    idleMs: 600_000,
+    prepareMs: 600_000,
+    signal: AbortSignal.timeout(25_000),
+  });
+}
 /** Link ME into a fresh store the way a real person does: mint a code, redeem it. */
 function linkMe(store: Store): Person {
   const person = store.createPerson({ name: 'Ada' });
@@ -348,6 +362,9 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
+  // The engine's capacity: a real dispatcher over the same OpenCode.
+  const cap = capacity(store, services.opencode);
+  services.dispatcher = cap;
   const running = await createSlackModule(config, slack.connection).start(services);
   t.after(async () => {
     await running.stop();
@@ -561,11 +578,12 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     },
     fail: error => assert.fail(String(error)),
   };
-  // Capacity is taken by a job, so the message waits.
-  const job = store.claim('host', poolCapacities(loaded.config.dispatcher), 0);
-  assert.equal(job, null);
-  store.enqueue({ kind: 'invocation', name: 'system.check' }, 'default', 'busy');
-  const busy = store.claim('host', poolCapacities(loaded.config.dispatcher))!;
+  // The engine's capacity: a real dispatcher over the same OpenCode.
+  const cap = capacity(store, services.opencode, { default: { capacity: 1 } });
+  services.dispatcher = cap;
+  // A job run holds the pool's only slot through the dispatcher, so the message waits.
+  const held = cap.request({ service: 'jobs', pool: 'default' });
+  assert.ok('lease' in held, 'the job takes the only slot');
   const running = await createSlackModule(config, slack.connection).start(services);
   t.after(async () => {
     await running.stop();
@@ -574,8 +592,8 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   await slack.event(message({ channel: DM, ts: '20.0', text: 'are you there?' }));
   assert.deepEqual(slack.reactions, [`+hourglass_flowing_sand@${DM}:20.0`]);
   assert.equal(openSlackStore(store, config).state(`${DM}:20.0`), 'queued');
-  store.finish(busy.id, 'host', 'succeeded', {}, 'done');
-  services.wake(); // what the host does when a run releases capacity; the engine ticks, nothing polls
+  await cap.release(held.lease.id); // the freed slot reaches the engine through its callback
+  services.wake();
   await until(() => slack.posts.length === 1, 'the person is told the turn did not start');
   await until(() => slack.reactions.length === 4, 'the working reaction is cleared too');
   assert.deepEqual(slack.reactions, [
@@ -586,7 +604,7 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   ]);
   assert.match(slack.posts[0]!.text, /send that again/);
   assert.equal(openSlackStore(store, config).list()[0]!.state, 'discarded');
-  assert.equal(store.leases().length, 0);
+  assert.equal(cap.held(), 0, 'the discarded turn paid its slot back');
 });
 
 test('progress: the placeholder goes into the thread, stays quiet inside its window, and goes when the answer lands', async t => {
@@ -632,6 +650,9 @@ test('progress: the placeholder goes into the thread, stays quiet inside its win
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
+  // The engine's capacity: a real dispatcher over the same OpenCode.
+  const cap = capacity(store, services.opencode);
+  services.dispatcher = cap;
   const running = await createSlackModule({ ...config, progress: 'tools' }, slack.connection).start(services);
   t.after(async () => {
     await running.stop();
@@ -685,6 +706,9 @@ test('progress when the turn cannot run: the notice edits the placeholder instea
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
+  // The engine's capacity: a real dispatcher over the same OpenCode.
+  const cap = capacity(store, services.opencode);
+  services.dispatcher = cap;
   const running = await createSlackModule({ ...config, progress: 'status' }, slack.connection).start(services);
   t.after(async () => {
     await running.stop();
@@ -773,6 +797,9 @@ test('a message interjects the running turn by default; /queue goes behind; -sto
     onWake: () => () => {},
     fail: error => assert.fail(String(error)),
   };
+  // The engine's capacity: a real dispatcher over the same OpenCode.
+  const cap = capacity(store, services.opencode);
+  services.dispatcher = cap;
   const running = await createSlackModule(config, slack.connection).start(services);
   t.after(async () => {
     release();
@@ -825,7 +852,7 @@ test('a message interjects the running turn by default; /queue goes behind; -sto
   // the queued one takes the freed capacity and answers after it.
   await until(() => slack.reactions.includes(`-eyes@${DM}:40.0`), 'the working reaction is cleared'); // includes: the queued turn's own reactions land after it
   release();
-  await until(() => slack.posts.length === 2 && store.leases().length === 0, 'the queued turn answers after the stop');
+  await until(() => slack.posts.length === 2 && cap.held() === 0, 'the queued turn answers after the stop');
   assert.deepEqual(slack.posts[1], { channel: DM, text: 'Answer' });
   assert.equal(
     inbox.state(inbox.list().find(t => t.state !== 'discarded')!.id),

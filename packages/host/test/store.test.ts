@@ -9,8 +9,12 @@ import { Store } from '../src/store.ts';
 const check = { kind: 'invocation', name: 'system.check' } as const;
 const start = Date.parse('2026-09-13T00:00:00Z');
 const daily = () => jobSchema.parse({ id: 'daily', cron: '* * * * *', resource: 'local-model', task: check });
-const pools = { 'local-model': 1 };
 const iso = (t: number) => new Date(t).toISOString();
+/** The oldest queued run, claimed by id: capacity is the dispatcher's to decide, not the store's. */
+const claimOne = (store: Store, owner: string, now?: number) => {
+  const next = store.runs().find(r => r.state === 'queued');
+  return next ? store.claimRun(next.id, owner, now) : null;
+};
 
 test('schema v1 upgrades in place without losing existing runs', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-migration-'));
@@ -19,7 +23,7 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   const old = new Store(path);
   // Rebuild the v1 shape by hand: one schedule-less job in the old `jobs` table.
   old.db.exec(`
-    DROP TABLE runs; DROP TABLE jobs; DROP TABLE resource_leases; DROP TABLE migrations; DROP INDEX audit_job;
+    DROP TABLE runs; DROP TABLE jobs; DROP TABLE IF EXISTS resource_leases; DROP TABLE migrations; DROP INDEX audit_job;
     DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS tokens;
     DROP TABLE IF EXISTS link_codes; DROP TABLE IF EXISTS channel_identities; DROP TABLE IF EXISTS requests;
     CREATE TABLE schedules(id TEXT PRIMARY KEY, spec TEXT NOT NULL, fingerprint TEXT NOT NULL,
@@ -40,10 +44,8 @@ test('schema v1 upgrades in place without losing existing runs', async t => {
   assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version, 11);
   assert.equal(upgraded.run('run-1').report, null);
   assert.equal(upgraded.history('run-1')[0]!.action, 'enqueued');
-  assert.equal(upgraded.acquireLease('discord:one', 'discord', 'local-model', pools), true);
-  assert.equal(upgraded.claim('host', pools), null);
-  assert.equal(upgraded.leaseCount(), 1);
-  assert.equal(upgraded.leases()[0]!.state, 'running');
+  assert.equal(upgraded.claimRun('run-1', 'host')!.state, 'running');
+  assert.equal(upgraded.run('run-1').owner, 'host');
 });
 
 test('schema v7 gives every one-off its own job definition and keeps schedule anchors', async t => {
@@ -128,23 +130,6 @@ test('adapters get versioned namespaced migrations and cannot downgrade', t => {
   assert.throws(() => store.migrate('demo', [steps[0]!]), /newer than this adapter/);
 });
 
-test('adapter restart blocks only running leases it owns', t => {
-  const store = new Store(':memory:');
-  t.after(() => store.close());
-  const two = { 'local-model': 2 };
-  assert.equal(store.acquireLease('discord:1', 'discord', 'local-model', two), true);
-  assert.equal(store.acquireLease('slack:1', 'slack', 'local-model', two), true);
-  assert.equal(store.blockLeasesOwnedBy('discord', 'restart'), 1);
-  assert.deepEqual(
-    store.leases().map(l => [l.id, l.state]),
-    [
-      ['discord:1', 'blocked'],
-      ['slack:1', 'running'],
-    ],
-  );
-  assert.throws(() => store.blockLease('missing', 'discord', 'x'), /Lost resource lease ownership/);
-});
-
 test('an immediate one-off is a job with its run; duplicate keys are idempotent, changed payloads refused', t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
@@ -157,13 +142,13 @@ test('an immediate one-off is a job with its run; duplicate keys are idempotent,
   assert.equal(job.spec.at, iso(start));
   assert.deepEqual([job.state, job.nextAt], ['active', null]);
   assert.equal(store.history(first.id)[0]!.reason, 'operator');
-  const claimed = store.claim('host', pools, start)!;
+  const claimed = claimOne(store, 'host', start)!;
   store.finish(claimed.id, 'host', 'succeeded', null, 'done', start + 10);
   assert.equal(store.job(first.jobId).state, 'done', 'the one-off is done when its run finishes');
   assert.equal(store.nextDue(start), null);
 });
 
-test('claims share capacity across database connections and blocked work reserves its slot', async t => {
+test('claims work across database connections; a blocked run keeps its one-off open', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-store-'));
   const a = new Store(join(root, 'queue.sqlite'));
   const b = new Store(join(root, 'queue.sqlite'));
@@ -175,17 +160,15 @@ test('claims share capacity across database connections and blocked work reserve
   const first = a.enqueue(check, 'local-model', 'a', start);
   const second = a.enqueue(check, 'local-model', 'b', start + 1);
   const third = a.enqueue(check, 'io', 'c', start + 2);
-  const two = { 'local-model': 1, io: 1 };
-  assert.equal(a.claim('one', two)!.id, first.id);
-  assert.equal(b.claim('two', two)!.id, third.id);
+  assert.equal(a.claimRun(first.id, 'one')!.id, first.id);
+  assert.equal(b.claimRun(third.id, 'two')!.id, third.id);
   a.finish(first.id, 'one', 'blocked', null, 'inspect native session');
   b.finish(third.id, 'two', 'succeeded', {}, 'done');
-  assert.equal(b.claim('two', two), null);
   assert.throws(() => b.finish(first.id, 'two', 'succeeded', {}, 'wrong owner'), /Lost run ownership/);
   assert.equal(a.job(first.jobId).state, 'active', 'a blocked run keeps its one-off open');
   a.resolveBlocked(first.id, 'succeeded', 'Native session and all its child work have stopped');
   assert.equal(a.job(first.jobId).state, 'done');
-  assert.equal(b.claim('two', two)!.id, second.id);
+  assert.equal(b.claimRun(second.id, 'two')!.id, second.id);
   assert.equal(a.history(first.id).at(-1)!.action, 'operator-resolved');
 });
 
@@ -196,7 +179,7 @@ test('an occurrence within its grace runs; outstanding runs suppress subsequent 
   assert.equal(store.materializeDue(start + 60_000).created, 1);
   assert.equal(store.materializeDue(start + 61_000).created, 0);
   assert.equal(store.runs().length, 1);
-  const run = store.claim('owner', pools)!;
+  const run = claimOne(store, 'owner')!;
   store.finish(run.id, 'owner', 'succeeded', null, 'done');
   assert.equal(store.materializeDue(start + 61_000).created, 0);
   assert.equal(store.materializeDue(start + 120_000).created, 1);
@@ -222,7 +205,7 @@ test('downtime past the grace records one missed run per job for the whole gap a
     ['missed'],
   );
   assert.equal(store.job('daily').nextAt, back + 30_000, 'the next occurrence is in the future');
-  assert.equal(store.claim('host', pools, back), null, 'a missed run never executes');
+  assert.equal(claimOne(store, 'host', back), null, 'a missed run never executes');
   assert.equal(store.recent(back).length, 1, 'missed runs are recent outcomes');
   assert.equal(store.failureStreak('daily'), 0, 'a missed run says nothing about the job itself');
   // Per-job grace overrides the default: a lenient job runs however late it is found.
@@ -289,7 +272,7 @@ test('reconciling config preserves due times but cancels stale queued runs of ch
   store.syncJobs([{ ...original, cron: '*/2 * * * *' }], [], start + 61_000);
   assert.equal(store.run(stale.id).state, 'cancelled');
   assert.equal(store.materializeDue(start + 120_000).created, 1);
-  const running = store.claim('owner', pools)!;
+  const running = claimOne(store, 'owner')!;
   store.syncJobs([], [], start + 121_000);
   assert.equal(store.run(running.id).state, 'running');
   assert.equal(store.job('daily').state, 'paused');
@@ -330,7 +313,7 @@ test('restart recovery blocks interrupted work without resubmitting it', async t
   const path = join(root, 'queue.sqlite');
   const before = new Store(path);
   const run = before.enqueue(check, 'local-model', 'one');
-  before.claim('old', pools);
+  claimOne(before, 'old');
   before.attachSession(run.id, 'old', 'ses_test');
   before.close();
   const after = new Store(path);
@@ -338,7 +321,7 @@ test('restart recovery blocks interrupted work without resubmitting it', async t
   after.acquireDaemon('new');
   assert.equal(after.run(run.id).state, 'blocked');
   assert.equal(after.run(run.id).sessionId, 'ses_test');
-  assert.equal(after.claim('new', pools), null);
+  assert.equal(claimOne(after, 'new'), null);
   assert.throws(() => after.acquireDaemon('duplicate'), /already owns/);
   assert.throws(() => after.cancelQueued(run.id), /Only queued/);
   assert.throws(() => after.resolveBlocked(run.id, 'failed', ' '), /reason/);
@@ -406,7 +389,7 @@ test('recent outcomes and failure streaks are read from the runs table', t => {
   store.syncJobs([daily()], [], start);
   const finish = (state: 'succeeded' | 'failed', at: number) => {
     store.materializeDue(at);
-    const run = store.claim('host', pools, at)!;
+    const run = claimOne(store, 'host', at)!;
     store.finish(run.id, 'host', state, null, state, at);
   };
   finish('succeeded', start + 60_000);
@@ -433,7 +416,7 @@ test('prune deletes finished runs with their audit rows and finished one-off job
   const day = 86_400_000;
   const cycle = (at: number, state: 'succeeded' | 'blocked') => {
     store.materializeDue(at);
-    const run = store.claim('host', { 'local-model': 5 }, at)!;
+    const run = claimOne(store, 'host', at)!;
     store.finish(run.id, 'host', state, null, state, at);
     return run;
   };
@@ -441,23 +424,9 @@ test('prune deletes finished runs with their audit rows and finished one-off job
   const blocked = cycle(start + 120_000, 'blocked');
   store.resolveBlocked(blocked.id, 'failed', 'looked', start + 121_000);
   const oldOneOff = store.enqueue(check, 'local-model', 'old', start + 1000);
-  store.finish(
-    store.claim('host', { 'local-model': 5 }, start + 1000)!.id,
-    'host',
-    'succeeded',
-    null,
-    'ok',
-    start + 2000,
-  );
+  store.finish(claimOne(store, 'host', start + 1000)!.id, 'host', 'succeeded', null, 'ok', start + 2000);
   const stuck = store.enqueue(check, 'local-model', 'stuck', start + 3000);
-  store.finish(
-    store.claim('host', { 'local-model': 5 }, start + 3000)!.id,
-    'host',
-    'blocked',
-    null,
-    'look',
-    start + 4000,
-  );
+  store.finish(claimOne(store, 'host', start + 3000)!.id, 'host', 'blocked', null, 'look', start + 4000);
   const fresh = cycle(start + 40 * day, 'succeeded');
   const result = store.prune(start + 30 * day);
   assert.deepEqual(result, { runs: 3, jobs: 1, linkCodes: 0 });

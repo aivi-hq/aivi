@@ -56,13 +56,13 @@ export default (ctx: PluginCliContext): Command => {
     });
   slack
     .command('status')
-    .description('Inspect Slack turns and leases')
+    .description('Inspect Slack turns')
     .action(async () => {
       const config = await enabled(ctx);
       const { openSlackStore } = await import('./index.ts');
       await ctx.withStore(store => {
         const inbox = openSlackStore(store, config);
-        ctx.print({ turns: inbox.list(), leases: store.leases() });
+        ctx.print({ turns: inbox.list() });
       });
     });
   slack

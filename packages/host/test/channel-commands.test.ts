@@ -27,9 +27,14 @@ import {
 import { ConversationStore } from '../src/channel/store.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { Store } from '../src/store.ts';
+import { TestCapacity } from './support.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
-const pools = { 'local-model': 1 };
+/** Claim a candidate by id: capacity is the dispatcher's, not the inbox's. */
+const claimTurn = (store: ConversationStore) => {
+  const candidate = store.nextTurn();
+  return candidate ? store.claimTurn(candidate.id) : null;
+};
 const limits = { pool: 'local-model', maxConcurrent: 1 };
 const binding = { agent: 'assistant', directory: '/home' };
 const message = (id: string, channel = 'dm-a') => ({
@@ -172,7 +177,7 @@ test('/jobs lists the next five occurrences and the last ten runs from the host 
   );
   for (let i = 0; i < 12; i++) {
     const run = core.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', `k${i}`, now + i);
-    const claimed = core.claim('host', pools, now + i)!;
+    const claimed = core.claimRun(run.id, 'host', now + i)!;
     core.finish(claimed.id, 'host', i % 2 ? 'failed' : 'succeeded', {}, 'boom', now + 1000 + i);
     assert.equal(claimed.id, run.id);
   }
@@ -254,7 +259,7 @@ test('/model shows the pin, the last answer and the agent default; switching val
     variant: 'high',
   });
   store.enqueue(message('one'), 10);
-  store.claim(pools, limits.pool);
+  claimTurn(store);
   store.ready('dm-a');
   assert.match(
     await switchModel(store, 'dm-a', binding, opencode, 'anthropic/claude-sonnet-5'),
@@ -276,10 +281,11 @@ test('/stop acts on the running turn; an interjection steers into it, marked for
   const store = new ConversationStore(core, platform, 'binding');
   const { opencode, requests } = await mockOpenCode(t);
   const sent: string[] = [];
+  const capacity = new TestCapacity(1);
   const engine = new ChannelEngine(
     store,
     limits,
-    pools,
+    capacity,
     (turn, signal, ready) =>
       new Promise<string>((_resolve, reject) => {
         ready();
@@ -341,7 +347,7 @@ test('/stop acts on the running turn; an interjection steers into it, marked for
   const one = store.list()[0]!;
   assert.deepEqual([one.state, one.error], ['discarded', STOPPED_REASON]);
   assert.deepEqual(sent, [STOPPED_NOTICE]);
-  assert.deepEqual(core.leases(), []);
+  assert.equal(capacity.heldCount(), 0, 'the stopped turn paid its slot back');
 });
 
 test('redeemLink answers in words; the host decides and the module only sends', () => {

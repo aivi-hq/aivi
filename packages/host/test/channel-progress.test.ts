@@ -15,10 +15,11 @@ import {
 } from '../src/channel/progress.ts';
 import { ConversationStore } from '../src/channel/store.ts';
 import { Store } from '../src/store.ts';
+import { TestCapacity } from './support.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
 const limits = { pool: 'local-model', maxConcurrent: 1 };
-const pools = { 'local-model': 1 };
+const pools = new TestCapacity(); // unmoderated: these tests measure progress, not capacity
 const S = 'ses_discord_a';
 const ev = (type: string, data: Record<string, unknown> = {}): SessionEvent => ({
   type,

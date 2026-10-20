@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger, Run } from '@aivi/core';
-import { getLogger, gitIdentity, parseDuration, poolCapacities, readPrompt, systemJobs } from '@aivi/core';
+import { getLogger, gitIdentity, parseDuration, readPrompt, systemJobs } from '@aivi/core';
 import type { AiviModule, AiviServices, OpenCodeClient } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
 import { attachExec } from './api/exec.ts';
@@ -20,7 +20,7 @@ import { RunLedger } from './orchestrator/ledger.ts';
 import { Orchestrator } from './orchestrator/orchestrator.ts';
 import { globalGitConfig } from './orchestrator/worktree.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
-import { createExecutor } from './runtime.ts';
+import { createExecutor, needsLlmCapacity } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import type { Store } from './store.ts';
 import { TaskRegistry } from './tasks.ts';
@@ -243,6 +243,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
         wake: () => wake.notify(),
         health: () => supervisor?.health() ?? [],
+        leases: () => dispatcher.held(),
         linkable: () => channels.linkable(),
         tools,
         context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
@@ -342,7 +343,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
-      poolCapacities(loaded.config.dispatcher),
+      dispatcher,
+      needsLlmCapacity,
       createExecutor(loaded, {
         store,
         knowledge,
@@ -352,7 +354,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         log,
         tasks,
         forges,
-        channelOrigins: () => channels.ids(),
+        channelOrigins: () => [...new Set([...channels.ids(), ...voice.origins()])],
       }),
       log,
       async (run, state, result, reason) => {

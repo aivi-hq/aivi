@@ -39,16 +39,6 @@ export interface RequestLogEntry {
   truncated: boolean;
   headers: Record<string, string>;
 }
-/** A held unit of capacity: one run of one resource, until it settles. The
- *  dispatcher's lease joins this table as a column when capacity lands. */
-export interface Lease {
-  id: string;
-  owner: string;
-  resource: string;
-  state: 'running' | 'blocked';
-  createdAt: number;
-  reason: string | null;
-}
 /** One line of a run's audit trail: what happened, when, and why. */
 export interface AuditEntry {
   seq: number;
@@ -87,10 +77,29 @@ export interface JobEntry {
   /** Idempotency key of a job created outside config.json (a tool message id, a CLI `--key`). */
   dedupeKey: string | null;
 }
-/** What a task handler may do while it runs: stop when told, name the session it opened. */
+/** The run's capacity slot, held by the scheduler from the dispatcher: one
+ *  LLM's worth of room, paid for until the run ends. Only work that speaks
+ *  to a model holds one; a script or a system check needs no slot. */
+export interface RunLease {
+  id: string;
+  /** Give the lease its session: created with the pool's model, or resumed
+   *  with whatever it was born with. `create` makes a given id real; `title`
+   *  and `metadata` ride the create. */
+  provide(work: {
+    agent: string;
+    directory: string;
+    sessionId?: string;
+    create?: boolean;
+    title?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ sessionId?: string }>;
+}
+/** What a task handler may do while it runs: stop when told, name the session it opened, spend its slot. */
 export interface ExecutionContext {
   signal: AbortSignal;
   attachSession(id: string): void;
+  /** The dispatcher lease this run works inside; absent for work that calls no model. */
+  lease?: RunLease | undefined;
 }
 /** How a task run ended, as the handler says; `blocked` waits for a person. */
 export type ExecutionResult = { state: 'succeeded' | 'failed' | 'blocked'; result: unknown; reason?: string };

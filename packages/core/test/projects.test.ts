@@ -35,7 +35,14 @@ test('remove deletes the checkout and keeps memory; purge shows first and delete
     [['site', true]],
   );
   assert.deepEqual(projectSummaries(loaded), [
-    { id: 'site', removed: true, sources: [{ id: 'memory', kind: 'memory' }] },
+    {
+      id: 'site',
+      removed: true,
+      sources: [
+        { id: 'memory', kind: 'memory' },
+        { id: 'archive', kind: 'archive' },
+      ],
+    },
   ]);
 
   const dry = await purgeProject(config, 'site');

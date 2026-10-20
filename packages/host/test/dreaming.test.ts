@@ -3,7 +3,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { dreamingArgsSchema } from '@aivi/core';
 import { collectSessions, dream, readCursor, renderTranscript } from '../src/dreaming.ts';
@@ -12,6 +12,9 @@ import { connectOpenCode } from '../src/opencode.ts';
 import { createExecutor } from '../src/runtime.ts';
 import { Store } from '../src/store.ts';
 import { TaskRegistry } from '../src/tasks.ts';
+
+/** The session id a request path names. */
+const url_id = (path: string) => path.split('/').pop()!;
 
 const T0 = Date.parse('2026-09-14T10:00:00Z');
 const sessions = [
@@ -54,7 +57,7 @@ const messages: Record<string, unknown[]> = {
   ],
 };
 
-function mockOpenCode(agent = 'dreamer') {
+function mockOpenCode(agent = 'dreamer', directory = '/lib') {
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
   let promptId = '';
   const respond: RequestListener = async (req, res) => {
@@ -111,7 +114,7 @@ function mockOpenCode(agent = 'dreamer') {
       );
       return;
     }
-    res.end(JSON.stringify({ data: { id: body.id ?? 'ses_aivi_x', agent, location: { directory: '/lib' } } }));
+    res.end(JSON.stringify({ data: { id: body.id ?? 'ses_aivi_x', agent, location: { directory } } }));
   };
   const server = createServer(respond);
   return { server, requests };
@@ -148,7 +151,7 @@ test('collectSessions picks aivi sessions by origin updated after the cursor, ol
   assert.match(transcript, /## ses_new \(discord, channel c1\)/);
 });
 
-test('dream writes the transcript, allows the same two write targets in the org and every project memory, advances the cursor, and reports changes', async t => {
+test('dream writes the transcript, allows facts/archive/proposals in the org and every project memory, advances the cursor, reports changes, and deletes the transcript', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-dream-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const memory = join(root, 'knowledge', 'memory');
@@ -163,8 +166,10 @@ test('dream writes the transcript, allows the same two write targets in the org 
   // Simulate the agent writing an org fact and a project fact during its turn.
   const originalPrompt = mock.server.listeners('request')[0] as (...args: unknown[]) => unknown;
   mock.server.removeAllListeners('request');
+  let dreamtTranscript = '';
   mock.server.on('request', async (req, res) => {
     if (req.url!.endsWith('/prompt')) {
+      dreamtTranscript = await readFile(join(root, 'state', 'dreaming', 'job-1.md'), 'utf8');
       await writeFile(
         join(memory, 'facts.md'),
         '# Facts\n\n## Deployment\n- 2026-09-14 (discord, Bob): deploys on Tuesdays.\n',
@@ -177,6 +182,8 @@ test('dream writes the transcript, allows the same two write targets in the org 
     store,
     client,
     events: { watch: () => () => {} },
+    // The run's dispatcher lease was provided with this session before dream ran.
+    sessionId: 'ses_aivi_job1',
     stateDirectory: join(root, 'state'),
     projects: [{ id: 'demo', memory: demo }],
     signal: AbortSignal.timeout(10000),
@@ -194,25 +201,33 @@ test('dream writes the transcript, allows the same two write targets in the org 
   assert.deepEqual(outcome.result.changed, ['demo/facts.md', 'facts.md']);
   assert.equal(outcome.result.text, 'Added 1 fact.');
   assert.equal(readCursor(store, memory), T0 + 3000, 'cursor advances to the newest reviewed session, not to now');
-  assert.match(await readFile(outcome.result.transcript!, 'utf8'), /We deploy on Tuesdays/);
+  assert.match(dreamtTranscript, /We deploy on Tuesdays/, 'the dreamer was handed the conversations');
+  assert.equal(outcome.result.transcript, undefined, 'a succeeded run reports no transcript: it is gone');
+  await assert.rejects(
+    readFile(join(root, 'state', 'dreaming', 'job-1.md'), 'utf8'),
+    'the convenience transcript leaves with the run — the OpenCode sessions are the record',
+  );
 
-  const create = mock.requests.find(r => r.method === 'POST' && r.path === '/api/session')!;
-  assert.equal(create.body.id, 'ses_aivi_job1');
-  assert.deepEqual(create.body.metadata, { aivi: { origin: 'dreaming', run: 'job-1' } });
+  // The lease's provide births the session (id, title, dreaming origin); dream() turns it and
+  // applies the write boundary itself: the session's own update carries the permissions.
+  const rules = mock.requests.find(r => r.method === 'PATCH' && r.path.startsWith('/api/session/'))!;
+  assert.equal(url_id(rules.path), 'ses_aivi_job1', 'the lease-provided session gets the write rules');
   // Permission resources use canonical paths (tmpdir is a symlink on macOS), as OpenCode matches them.
   const canonical = await realpath(memory);
-  const edits = create.body.permissions
+  const edits = rules.body.permissions
     .filter((p: { action: string }) => p.action === 'edit')
     .map((p: { resource: string }) => p.resource);
   assert.deepEqual(edits, [
     `${canonical}/facts.md`,
+    `${canonical}/archive.md`,
     `${canonical}/proposals/*`,
     `${canonical}/demo/facts.md`,
+    `${canonical}/demo/archive.md`,
     `${canonical}/demo/proposals/*`,
   ]);
   for (const dir of [canonical, `${canonical}/demo`])
     assert.ok(
-      create.body.permissions.some(
+      rules.body.permissions.some(
         (p: { action: string; resource: string }) => p.action === 'external_directory' && p.resource === `${dir}/**`,
       ),
     );
@@ -220,7 +235,7 @@ test('dream writes the transcript, allows the same two write targets in the org 
   assert.match(JSON.stringify(prompt.body), /demo: .*\/demo \(facts about the demo project go here\)/);
   // The agent file is the boundary; the job only adds where memory is and what may be written.
   assert.ok(
-    create.body.permissions.every((p: { action: string }) => ['external_directory', 'edit'].includes(p.action)),
+    rules.body.permissions.every((p: { action: string }) => ['external_directory', 'edit'].includes(p.action)),
     'no deny-all, no tool allow-list',
   );
 
@@ -275,7 +290,17 @@ test('the dreaming operation resolves its args against the home and demands a se
     const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', `dream:${memoryDirectory ?? 'default'}`);
     return execute(
       { ...job, id: `run:${memoryDirectory ?? 'default'}` },
-      { signal: new AbortController().signal, attachSession() {} },
+      {
+        signal: new AbortController().signal,
+        attachSession() {},
+        // The lease's provide is where OpenCode is first reached: failing here is the connection error.
+        lease: {
+          id: 'lease_dream',
+          provide: async () => {
+            throw new Error('no OpenCode here');
+          },
+        },
+      },
     );
   };
   const outside = await runDreaming('elsewhere/memory');
@@ -323,7 +348,19 @@ test('origins nobody named are the registered channel modules; a home with none 
       channelOrigins,
     });
     const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', 'dream:origins');
-    return execute({ ...job, id: 'run:origins' }, { signal: new AbortController().signal, attachSession() {} });
+    return execute(
+      { ...job, id: 'run:origins' },
+      {
+        signal: new AbortController().signal,
+        attachSession() {},
+        lease: {
+          id: 'lease_dream',
+          provide: async () => {
+            throw new Error('no OpenCode here');
+          },
+        },
+      },
+    );
   };
 
   const noChannels = await runOnce(() => []);
@@ -340,7 +377,7 @@ test('origins nobody named are the registered channel modules; a home with none 
     accepts: () => true,
     channelOf: async () => undefined,
   });
-  const mock = mockOpenCode();
+  const mock = mockOpenCode('dreamer', resolve(root, 'lib'));
   const client = await start(t, mock);
   const store = new Store(':memory:');
   t.after(() => store.close());
@@ -355,7 +392,11 @@ test('origins nobody named are the registered channel modules; a home with none 
   const job = store.enqueue(loaded.config.jobs[0]!.task, 'local-model', 'dream:slack');
   const viaRegistry = await execute(
     { ...job, id: 'run:slack' },
-    { signal: new AbortController().signal, attachSession() {} },
+    {
+      signal: new AbortController().signal,
+      attachSession() {},
+      lease: { id: 'lease_slack', provide: async () => ({ sessionId: 'ses_aivi_run_slack' }) },
+    },
   );
   assert.equal(viaRegistry.state, 'succeeded');
   assert.equal(

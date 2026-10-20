@@ -32,14 +32,16 @@ The orchestrator never counts capacity itself. It asks the dispatcher for a leas
 
 The dispatcher is a central system, and the orchestrator pulling work is
 only one of the things it is designed for. **One pool set —
-`dispatcher.pools` — is the capacity for every service**: ticket work asks
-the dispatcher for leases; jobs, dreaming and chat turns — Discord, Slack,
-the Linear assistant — claim the same pool capacities through the store's
-lease ledger (`Store.claim` / `Store.acquireLease` take the pool map derived
-from `dispatcher.pools`); voice rooms ask the dispatcher to run their turns.
-The older `scheduler.resources` capacity knobs are gone; `scheduler` keeps
-job *timing* defaults only. No pools configured means capacity is not
-moderated for any of them — the dispatcher's rule, applied everywhere.
+`dispatcher.pools` — is the capacity for every service.** Everything that
+calls an LLM holds a dispatcher lease: ticket work, voice rooms, jobs,
+dreaming and chat turns — Discord, Slack, the Linear assistant — all `request`
+the dispatcher, and one ledger (`dispatcher_leases`) is the only place a slot
+is held. Shell tasks and system invocations run lease-free: they never reach
+a model, so nothing moderates them. Blocked work keeps its lease until it
+resolves; the dispatcher's idle monitor is the reclaim net. The older
+`scheduler.resources` capacity knobs are gone; `scheduler` keeps job *timing*
+defaults only. No pools configured means capacity is not moderated for any
+of them — the dispatcher's rule, applied everywhere.
 
 ## The basics
 

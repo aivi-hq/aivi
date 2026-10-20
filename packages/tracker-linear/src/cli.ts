@@ -17,13 +17,13 @@ export default (ctx: PluginCliContext): Command => {
   const linear = new Command('linear').description('the Linear module');
   linear
     .command('status')
-    .description('Inspect Linear conversations (workers and the assistant) and leases')
+    .description('Inspect Linear conversations (workers and the assistant)')
     .action(async () => {
       await enabled(ctx);
       const { describeWorkers, openLinearStore } = await import('./index.ts');
       await ctx.withStore(store => {
         const inbox = openLinearStore(store);
-        ctx.print({ conversations: describeWorkers(inbox), leases: store.leases() });
+        ctx.print({ conversations: describeWorkers(inbox) });
       });
     });
   linear

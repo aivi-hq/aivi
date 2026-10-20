@@ -36,10 +36,14 @@ orchestration around it, all started by one `aivi serve`.
 
 ## Decisions
 
-- Decide only with precedent. Before deciding anything, search the knowledge
-  — recorded decisions, docs, memories, past conversations. What was ruled
-  before wins.
-- Without precedent, decide only when the answer is obvious.
+- Before deciding anything, search the knowledge — recorded decisions,
+  docs, memories, past conversations. Consider what you find; none of it
+  is a veto.
+- A recorded decision is raised only when it conflicts with what the
+  human is now saying, and raised as a question: "this earlier decision
+  says X — do we change it, or rethink the current approach?" Never
+  refuse work because something was once written down.
+- Without a conflict, decide only when the answer is obvious.
 - Any doubt at all: do not decide. Ask the human.
 
 ## Escape hatch
@@ -65,15 +69,15 @@ orchestration around it, all started by one `aivi serve`.
 | run | one execution of a job: `queued → running → succeeded / failed / blocked`, or `cancelled`, or `missed`; one row, one audit trail, always a `jobId`; snapshots the task |
 | missed | a run recorded for an occurrence found later than its misfire grace; terminal, never executed, reported like a failure |
 | turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a conversation turn is of kind `message` (a person) or `job` (an outcome re-entering) |
-| pool / lease | a slot in a named capacity pool. **One pool set: `dispatcher.pools`.** Every service draws from it: ticket work and voice rooms `request` the dispatcher (the orchestrator asks, the dispatcher decides), while **jobs and channel turns** claim the same capacities through the store's lease ledger ([orchestrator](docs/orchestrator.md)). `scheduler` holds job *timing* defaults only — no capacity |
+| pool / lease | a slot in a named capacity pool. **One pool set: `dispatcher.pools`.** Everything that calls an LLM holds a dispatcher lease: ticket work, voice rooms, jobs, dreaming and chat turns all `request` the dispatcher — the orchestrator asks, the scheduler asks, the channel engine asks; the dispatcher decides. Shell tasks and system invocations hold nothing. Blocked work keeps its lease until it resolves; the dispatcher's idle monitor is the reclaim net ([orchestrator](docs/orchestrator.md)). `scheduler` holds job *timing* defaults only — no capacity |
 | blocked | ended without proof that the external side stopped; keeps its capacity until `runs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
 | report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing; each carries `on` (`always`, `failure` or `never`; default `always`) for when it fires |
-| source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`, `manual` (docs shipped with an installed package); a file belongs to its most specific source |
+| source / kind | a configured document path, core or per-project, labelled `doc`, `decision`, `memory`, `conversation`, `manual` (docs shipped with an installed package), `archive` (a memory home's `archive.md`: superseded facts, searchable history); a file belongs to its most specific source |
 | project | what the team works on: one directory `<home>/projects/<id>` holding a checkout (`source/`), its memory (`memory/`) and worker worktrees (`worktrees/`), discovered from that directory (`projects.<id>` in `config.json` only overrides), indexed by the docs convention (`projectDefaults`); channels talk *about* projects, workers (Linear, later) work *in* them; a project with `memory/` but no `source/` is a *removed* project (still listed and searchable until `projects purge --confirm`); a project may be **repo-less** — a forge gives the checkout, so with no forge a project has memory and knowledge but no source |
 | forge / tracker | the two **systems** core names (in that order): a **forge** owns repositories (clones a project's checkout, branches, pull requests), a **tracker** owns tickets (lanes, delegation). Core spells the roles, never which plugin fills them; `projectRoles = ['forge', 'tracker']` |
-| dreaming | a scheduled agent that turns conversations since its last run into `facts.md` and proposals |
-| origin | `metadata.aivi.origin` on the OpenCode sessions aivi's **channel turns**, jobs and dreaming create — **not worker sessions**, which carry no aivi metadata and are known by the orchestrator's run rows: a channel **platform** id (`discord`, `slack`, `linear` — the platform a conversation is on, not the package that speaks for it, which is why `@aivi/tracker-linear` writes `linear`), `job`, `dreaming`; on messages also `job-result` |
+| dreaming | a scheduled agent that turns conversations since its last run into `facts.md`, `archive.md` and proposals |
+| origin | `metadata.aivi.origin` on the OpenCode sessions aivi's **channel turns**, **voice rooms**, jobs and dreaming create — **not worker sessions**, which carry no aivi metadata and are known by the orchestrator's run rows: a channel **platform** id (`discord`, `slack`, `linear` — the platform a conversation is on, not the package that speaks for it, which is why `@aivi/tracker-linear` writes `linear`), a room platform (`meet`), `job`, `dreaming`; on messages also `job-result` |
 | attribution | which names a commit carries: the bot as author/co-author from aivi's identity, the human as author from their own git config — a git fact, it never consults whoami ([people](docs/people.md)) |
 | association | which person a record belongs to: link codes, job ownership, session stamps, memories — a host fact, taken from the calling bearer, never from what a message claimed ([people](docs/people.md)) |
 | link | a channel account bound to a person, minted by `aivi link` and redeemed by `/link`; the binding is also the channel admission — who may talk, while config names only where ([people](docs/people.md)) |

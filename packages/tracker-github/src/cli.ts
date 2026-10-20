@@ -20,13 +20,13 @@ export default (ctx: PluginCliContext): Command => {
   const github = new Command('github').description('the GitHub tracker');
   github
     .command('status')
-    .description('Inspect GitHub conversations (workers and the assistant) and leases')
+    .description('Inspect GitHub conversations (workers and the assistant)')
     .action(async () => {
       await enabled(ctx);
       const { describeWorkers, openGithubStore } = await import('./index.ts');
       await ctx.withStore(store => {
         const inbox = openGithubStore(store);
-        ctx.print({ conversations: describeWorkers(inbox), leases: store.leases() });
+        ctx.print({ conversations: describeWorkers(inbox) });
       });
     });
   github

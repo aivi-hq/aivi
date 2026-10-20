@@ -95,6 +95,8 @@ export interface HostToolDeps {
   knowledge?: KnowledgeService | undefined;
   jobs?: JobHandler | undefined;
   health?: (() => ModuleHealth[]) | undefined;
+  /** Slots the dispatcher holds right now; absent means nothing to count. */
+  leases?: (() => number) | undefined;
   context?: ((sessionID: string, signal: AbortSignal) => Promise<string>) | undefined;
   /** Reload a config file under the **composed closed schema** — core plus
    *  the installed plugins, the same composition the boot makes. Supplied by
@@ -111,7 +113,7 @@ export interface HostToolDeps {
  * from the plugin rather than present and failing.
  */
 export function claimHostTools(tools: ToolRegistry, deps: HostToolDeps): void {
-  const { store, loaded, knowledge, jobs, health, context, compose, log } = deps;
+  const { store, loaded, knowledge, jobs, health, context, compose, leases, log } = deps;
   const claim = tools.claim.bind(tools, 'host');
   claim(
     {
@@ -120,7 +122,7 @@ export function claimHostTools(tools: ToolRegistry, deps: HostToolDeps): void {
       description: 'Inspect aivi job counts and capabilities. This does not start work.',
       input: { type: 'object', properties: {}, additionalProperties: false },
     },
-    async () => status(store, loaded, Date.now(), health?.() ?? []),
+    async () => status(store, loaded, Date.now(), health?.() ?? [], leases),
   );
   claim(
     {

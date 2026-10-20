@@ -12,7 +12,6 @@ export type {
   ExecutionContext,
   ExecutionResult,
   JobEntry,
-  Lease,
   RunFilter,
 } from '@aivi/core';
 export type {

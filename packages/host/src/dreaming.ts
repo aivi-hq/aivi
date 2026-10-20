@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { DreamingArgs, Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
@@ -11,6 +11,9 @@ export interface DreamingDeps {
   store: Store;
   client: OpenCodeClient;
   events: SessionEvents;
+  /** The session the run's dispatcher lease was provided with. The dreamer
+   *  turns it; it is never created here, so the pool decides the model. */
+  sessionId: string;
   stateDirectory: string;
   /** Each project's memory home (`<home>/projects/<id>/memory`); the dreamer may write there too. */
   projects?: { id: string; memory: string }[];
@@ -24,6 +27,9 @@ export interface DreamingResult {
   since: number;
   until: number;
   sessions: string[];
+  /** The convenience transcript's path — present only when the run could not
+   *  finish: a succeeded run deletes it (the OpenCode sessions are the record),
+   *  a failed one keeps it for the post-mortem. */
   transcript?: string;
   changed: string[];
   text?: string;
@@ -240,16 +246,26 @@ export async function dream(
     await stat(factsPath).catch(() =>
       writeFile(
         factsPath,
-        `# Facts${home.id ? `: ${home.id}` : ''}\n\nDurable facts and decisions${home.id ? ` about the ${home.id} project` : ''}, dated and attributed. Maintained by dreaming; humans may edit.\n`,
+        `# Facts${home.id ? `: ${home.id}` : ''}\n\nCurrent facts and decisions${home.id ? ` about the ${home.id} project` : ''}, dated and attributed. Maintained by dreaming; humans may edit.\n`,
+      ),
+    );
+    // The archive is where superseded facts go: facts.md carries only current
+    // truth, history moves here, dated, never edited again.
+    const archivePath = join(memory, 'archive.md');
+    await stat(archivePath).catch(() =>
+      writeFile(
+        archivePath,
+        `# Archive${home.id ? `: ${home.id}` : ''}\n\nRetired facts, dated and kept as history. Never authoritative for the present. Dreaming appends; nothing rewrites.\n`,
       ),
     );
     homes.push({ id: home.id, memory });
     // The agent file is the boundary; aivi adds only what it knows: where memory and the transcript
-    // are, and that facts.md and proposals/* may be written (appended last, so they win over an
+    // are, and that facts.md, archive.md and proposals/* may be written (appended last, so they win over an
     // `edit: deny` in the agent file). Everything else stays as the agent defines it.
     permissions.push(
       { action: 'external_directory', resource: `${posix(memory)}/**`, effect: 'allow' },
       { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
+      { action: 'edit', resource: `${posix(memory)}/archive.md`, effect: 'allow' },
       { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
     );
   }
@@ -268,7 +284,8 @@ export async function dream(
     return files;
   };
   const before = await snapshotAll();
-  const { sessionId, messageId } = turnIdsFor(runId);
+  const { messageId } = turnIdsFor(runId);
+  const sessionId = deps.sessionId;
   const metadata = { aivi: { origin: 'dreaming', run: runId } };
   const projectLines = homes
     .filter(h => h.id)
@@ -279,9 +296,7 @@ export async function dream(
       sessionId,
       agent: task.agent,
       directory: task.directory,
-      create: true,
-      title: `aivi dreaming ${new Date(now()).toISOString().slice(0, 10)}`,
-      sessionMetadata: metadata,
+      create: false,
       permissions,
       messageId,
       messageMetadata: metadata,
@@ -289,9 +304,9 @@ export async function dream(
         `Dreaming run. Review the conversations in ${transcript} (${sessions.length} session(s), ${since ? `since ${new Date(since).toISOString()}` : 'all history'}).`,
         `Org memory directory: ${org.memory}`,
         ...(projectLines.length ? ['Project memory directories:', ...projectLines] : []),
-        `- Read each facts.md you are about to change first and reconcile: update or date-supersede existing entries instead of duplicating them.`,
+        `- Read each facts.md you are about to change first and reconcile: update it in place, and move anything superseded into that directory's archive.md (dated, with what replaced it). facts.md carries current truth only — no struck-through bullets, no "used to be".`,
         `- A fact about one project belongs in that project's facts.md; everything else in the org's. When unsure, the org's.`,
-        `- You may edit only facts.md and files under proposals/ in these directories. Do not touch anything else.`,
+        `- You may edit only facts.md, archive.md, and files under proposals/ in these directories. Do not touch anything else.`,
         `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
       ].join('\n'),
     },
@@ -302,6 +317,10 @@ export async function dream(
   const changed = [...new Set([...before.keys(), ...after.keys()])]
     .filter(file => before.get(file) !== after.get(file))
     .sort();
+  // The transcript did its job: the conversations it rendered are OpenCode's
+  // own records, so the convenience copy leaves with the run. A failed run
+  // never reaches this line — its transcript stays for the post-mortem.
+  await unlink(transcript).catch(() => {});
   writeCursor(deps.store, task.memoryDirectory, until, now());
   log.info('dreamed', { reviewed: sessions.length, since, until, changed });
   return {
@@ -311,7 +330,6 @@ export async function dream(
       since,
       until,
       sessions: sessions.map(s => s.id),
-      transcript,
       changed,
       text: turn.text,
       rejectedPermissions: turn.rejected,
