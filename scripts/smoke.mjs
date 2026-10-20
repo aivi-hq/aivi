@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,9 +13,13 @@ const { version: aiviVersion } = JSON.parse(
   readFileSync(fileURLToPath(new URL('../packages/host/package.json', import.meta.url)), 'utf8'),
 );
 
-// The command surface the bin collects (the host parses no argv of its own),
-// and the boot file launchd would run.
-const surface = fileURLToPath(new URL('../packages/host/test/command-surface.mjs', import.meta.url));
+// The real bin, and the boot file launchd would run. The bin mounts the
+// host's command surface from the installed server at `<home>/app` — so the
+// smoke's temp home gets that shape: a symlink of the workspace's host
+// package where `aivi setup` would have put it. The production mount path
+// is what gets tested, with no stand-in for it.
+const bin = fileURLToPath(new URL('../packages/cli/dist/main.js', import.meta.url));
+const hostPackage = fileURLToPath(new URL('../packages/host', import.meta.url));
 const server = fileURLToPath(new URL('../packages/host/dist/server.js', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'aivi-smoke-'));
 const config = join(directory, 'config.json');
@@ -41,17 +45,26 @@ try {
       knowledge: [{ id: 'demo', path: '.' }],
     }),
   );
+  // The installed-server shape: <home>/app/node_modules/@aivi/host, where
+  // the bin looks and the only thing it checks before mounting the host's
+  // commands. Node resolves the symlink to the real package, so the host's
+  // imports (commander and friends) resolve as the host's own build does.
+  await mkdir(join(directory, 'app', 'node_modules', '@aivi'), { recursive: true });
+  await symlink(hostPackage, join(directory, 'app', 'node_modules', '@aivi', 'host'), 'dir');
   const task = join(directory, 'check.json');
   await writeFile(task, JSON.stringify({ kind: 'invocation', name: 'system.check' }));
-  // The temp directory is the aivi home: config.json, .env and state/ live there.
-  const env = { ...process.env, AIVI_HOME: directory };
+  // The temp directory is the aivi home: config.json, .env and state/ live
+  // there. AIVI_CONFIG names a record that does not exist, so a developer's
+  // own client record (with its installed appDir) can never redirect the
+  // bin's mount away from the app this smoke just built.
+  const env = { ...process.env, AIVI_HOME: directory, AIVI_CONFIG: join(directory, 'client.json') };
   // The CLI's stderr is captured, not passed through: `jobs add` honestly notes it could not wake
   // a host smoke has not started yet, and that note is smoke's business, not the operator's.
   // A run that actually fails still surfaces its stderr in the thrown error.
   const run = (...args) => {
     try {
       return JSON.parse(
-        execFileSync(process.execPath, [surface, ...args], {
+        execFileSync(process.execPath, [bin, ...args], {
           encoding: 'utf8',
           env,
           stdio: ['ignore', 'pipe', 'pipe'],
