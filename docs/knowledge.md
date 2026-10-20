@@ -74,8 +74,9 @@ conversations.
 Unknown IDs fail. An empty source selection returns nothing rather than an
 unscoped query. Filters are passed to QMD before retrieval; returned collections
 and file paths are also checked. Results contain source ID, scope, project ID
-where applicable, original file path, title, excerpt, line, and score. Scope is
-retrieval selection, not a multi-tenant access boundary.
+where applicable, original file path, title, excerpt, and score. A hit names the
+file, never a line inside it. Scope is retrieval selection, not a multi-tenant
+access boundary.
 
 ## Refresh and scheduling
 

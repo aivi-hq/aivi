@@ -97,7 +97,10 @@ test('real QMD keyword indexing retrieves scoped documents and refreshes modifie
   await service.index();
   const all = await service.search({ query: 'Orchard' });
   assert.equal(all.length, 2);
-  assert.ok(all.every(h => h.excerpt.includes('Orchard') && h.line > 0));
+  assert.ok(
+    all.every(h => h.excerpt.includes('Orchard')),
+    'the excerpt carries the matched passage',
+  );
   const scoped = await service.search({ query: 'Orchard', projects: ['app'], includeCore: false });
   assert.deepEqual(
     scoped.map(h => h.path),

@@ -223,6 +223,35 @@ reconsidered" failure the operator named. Doctrine:
    Meet room conversation → confirm IS reviewed (room platforms are default
    origins now); a `dreaming` origin → config refuses it.
 
+## Decided 2026-10-21 — a served hit names a file, never a line
+
+`SearchHit.line` is gone from the contract, the knowledge package, and the
+channel formatting. The reason, measured on the peck-track corpus: qmd's
+`extractSnippet` picks its line by counting literal query words per line
+(store.js:4226). When the query shares words with the answer it lands; on a
+paraphrase it can land on a heading or an unrelated line — in **both** gears,
+keyword and semantic. Example kept from the corpus: "what time is the food
+table published" answered at L6 (`## What the app is`) while the fact sits at
+L44 under `## The central product database`. The keyword gear did the same
+class of miss on another doc.
+
+Nothing upstream reports this. The two closed issues that touch it (#505, #507)
+asked for *more* `file:line` output for editor jumps, so the field's intent is
+on record and nobody has tested its accuracy. Discussions are disabled on the
+repo.
+
+The operator's ruling: a wrong pointer is worse than none, and no workaround.
+The excerpt and the chunk-position hint stay — qmd's query-focused window is
+still what a hit shows, and the hint makes that window land on the matched
+chunk. Only the number leaves.
+
+If a chapter-level pointer is ever wanted, the options are: derive the
+enclosing heading from `bestChunkPos` (exact only for documents longer than one
+chunk — qmd's chunk is 900 tokens, about 3600 characters, and our memory files
+are shorter, so a document IS one chunk and carries no section signal); keep
+memory files smaller than a chunk so file equals chapter; or ask a model which
+section answers. None built.
+
 ## Decided 2026-10-21 — cache location and the node-llama-cpp override
 
 **Model cache: no containment.** The `XDG_CACHE_HOME` import trick is fully

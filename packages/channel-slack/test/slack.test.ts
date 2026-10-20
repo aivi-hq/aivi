@@ -332,9 +332,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   const knowledge: KnowledgeService = {
     async search(request) {
       searches.push(request);
-      return [
-        { sourceId: 's', kind: 'doc', scope: 'core', path: '/k/a.md', title: 'A', excerpt: 'hit', line: 1, score: 1 },
-      ];
+      return [{ sourceId: 's', kind: 'doc', scope: 'core', path: '/k/a.md', title: 'A', excerpt: 'hit', score: 1 }];
     },
     index: async () => ({}),
     close: async () => {},
@@ -473,7 +471,7 @@ test('the module: a mention opens a thread and is answered there once; duplicate
   assert.match(slack.ephemerals.at(-1)!, /aivi link slack/, 'an unlinked DM is told the way in');
   await slack.command({ command: '/spider-search', text: 'working agreements demo' });
   assert.deepEqual(searches.at(-1), { query: 'working agreements', limit: 3, projects: ['demo'] });
-  assert.match(slack.ephemerals.at(-1)!, /^A — \/k\/a\.md:1\nhit$/);
+  assert.match(slack.ephemerals.at(-1)!, /^A — \/k\/a\.md\nhit$/);
   await slack.command({ command: '/spider-search', text: 'demo' });
   assert.deepEqual(searches.at(-1), { query: 'demo', limit: 3 }, 'a lone word is the query');
   await slack.command({ command: '/spider-search', text: '' });

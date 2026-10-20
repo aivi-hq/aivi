@@ -51,7 +51,9 @@ export interface QmdSDK {
       models?: { embed?: string; rerank?: string; generate?: string };
     };
   }): Promise<QmdStore>;
-  extractSnippet(body: string, query: string, maxLen: number): { snippet: string; line: number };
+  /** The query-focused excerpt of `body` for `query`; `chunkPos` focuses the window
+   *  on the matched chunk. Its line is QMD's own and aivi does not use it. */
+  extractSnippet(body: string, query: string, maxLen: number, chunkPos?: number): { snippet: string };
   /** Is this role's model on disk? Absent (a bare QMD module) means the built-in
    *  probe of QMD's documented model cache directory; tests name their own answer
    *  so search paths never depend on the machine running them. */
@@ -167,6 +169,7 @@ async function toHit(
   warned: Set<string>,
   log?: Logger,
   fullBody?: string,
+  chunkPos?: number,
 ): Promise<SearchHit | undefined> {
   const prefix = `${result.collectionName}/`;
   const display = result.displayPath.startsWith(prefix) ? result.displayPath.slice(prefix.length) : result.displayPath;
@@ -185,13 +188,13 @@ async function toHit(
     }
     return undefined;
   }
-  const snippet =
-    fullBody === undefined
-      ? sdk.extractSnippet(result.body ?? '', query, 900)
-      : {
-          snippet: (result.body ?? '').slice(0, 900),
-          line: Math.max(1, fullBody.slice(0, Math.max(0, fullBody.indexOf(result.body ?? ''))).split('\n').length),
-        };
+  // QMD's own snippet: the query-focused window inside the document. The semantic
+  // path hands over the whole body as well as the matched chunk's offset, because a
+  // document shorter than one chunk IS that chunk — cutting the excerpt from the
+  // chunk's start would show every such hit's header instead of the passage that
+  // matched. QMD's line for the snippet is dropped: it counts literal query words
+  // and misses the answer on a paraphrase.
+  const { snippet } = sdk.extractSnippet(fullBody ?? result.body ?? '', query, 900, chunkPos);
   return {
     sourceId: entry.source.id,
     kind: entry.source.kind,
@@ -199,8 +202,7 @@ async function toHit(
     ...(entry.source.projectId ? { projectId: entry.source.projectId } : {}),
     path: canonical,
     title: result.title,
-    excerpt: snippet.snippet,
-    line: snippet.line,
+    excerpt: snippet,
     score: result.score,
   };
 }
@@ -321,14 +323,16 @@ export async function createKnowledgeService(
                 displayPath: result.displayPath,
                 title: result.title,
                 score: result.score,
-                // The reranker's chunk is the excerpt; the whole body only locates its line.
+                // The reranker's chunk is the excerpt; the whole body and the
+                // chunk's offset tell QMD's snippet where the passage sits.
                 body: result.bestChunk || result.body,
               },
               request.query,
               sdk,
               warned,
               log,
-              result.body,
+              result.body || undefined,
+              result.bestChunkPos,
             );
             if (hit) hits.push(hit);
           }

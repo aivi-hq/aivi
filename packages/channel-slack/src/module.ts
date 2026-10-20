@@ -397,10 +397,7 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
         });
         return call.reply(
           hits.length
-            ? splitReply(
-                hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'),
-                SLACK.replyLimit,
-              )[0]!
+            ? splitReply(hits.map(h => `${h.title} — ${h.path}\n${h.excerpt}`).join('\n\n'), SLACK.replyLimit)[0]!
             : 'No matching documents.',
         );
       } catch (error) {

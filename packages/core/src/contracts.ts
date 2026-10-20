@@ -230,10 +230,12 @@ export interface SearchHit {
   kind: KnowledgeKind;
   scope: 'core' | 'project';
   projectId?: string;
+  /** The file that answers. Never a position inside it: a line picked by counting
+   *  literal query words lands in the wrong place on a paraphrase, and a wrong
+   *  pointer is worse than none. */
   path: string;
   title: string;
   excerpt: string;
-  line: number;
   score: number;
 }
 export interface KnowledgeService {

@@ -469,10 +469,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
           ...(project ? { projects: [project] } : {}),
         });
         const content = hits.length
-          ? splitReply(
-              hits.map(h => `${h.title} — ${h.path}:${h.line}\n${h.excerpt}`).join('\n\n'),
-              DISCORD.replyLimit,
-            )[0]!
+          ? splitReply(hits.map(h => `${h.title} — ${h.path}\n${h.excerpt}`).join('\n\n'), DISCORD.replyLimit)[0]!
           : 'No matching documents.';
         await interaction.editReply({
           content,
