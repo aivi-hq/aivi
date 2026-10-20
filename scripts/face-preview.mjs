@@ -3,7 +3,7 @@
    meeting takes, standalone mode. Output: tmp/face-scan<N>.png plus
    tmp/face-default.png. Usage:
    node --conditions=development scripts/face-preview.mjs [density...] */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Chrome } from '@aivi/chrome';

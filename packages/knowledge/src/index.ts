@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -40,8 +40,13 @@ export interface QmdStore {
   update(): Promise<unknown>;
   close(): Promise<void>;
 }
-/** `search.models` in the config, in its exact zod shape (`exactOptionalPropertyTypes`). */
-type SearchModels = { embed?: string | undefined; rerank?: string | undefined; generate?: string | undefined };
+/** `search.models` in the config, in its exact zod shape (`exactOptionalPropertyTypes`).
+ *  Exported: the module's exported signatures name it (fallow private-type-leak). */
+export type SearchModels = {
+  embed?: string | undefined;
+  rerank?: string | undefined;
+  generate?: string | undefined;
+};
 export interface QmdSDK {
   createStore(options: {
     dbPath: string;
@@ -77,7 +82,8 @@ export const QMD_BUILTIN_MODELS = {
   generate: 'hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf',
 } as const;
 const MODEL_ENV = { embed: 'QMD_EMBED_MODEL', rerank: 'QMD_RERANK_MODEL', generate: 'QMD_GENERATE_MODEL' } as const;
-type ModelRole = keyof typeof QMD_BUILTIN_MODELS;
+/** Exported: the module's exported signatures name it (fallow private-type-leak). */
+export type ModelRole = keyof typeof QMD_BUILTIN_MODELS;
 
 /** QMD's own resolution order: config URI, then its env override, then its default. */
 function resolveModel(role: ModelRole, models: SearchModels | undefined): string {

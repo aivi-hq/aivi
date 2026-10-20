@@ -41,8 +41,9 @@ export const INSTALLATION_EVENTS = new Set(['installation', 'installation_reposi
  *  status our side answered with is left out on purpose: with the module not
  *  yet loaded nothing can answer 2xx, and the delivery arriving is the point. */
 /** A webhook payload as the probe reads it: like tracker.ts, payloads are
- *  `unknown` until narrowed — the probe only ever asks for these fields. */
-type ProbePayload = {
+ *  `unknown` until narrowed — the probe only ever asks for these fields.
+ *  Exported because the waits' signatures name it (fallow private-type-leak). */
+export type ProbePayload = {
   action?: string;
   changes?: { field_name?: string; field_value?: { field_name?: string } };
   projects_v2_item?: { content_node_id?: string };
@@ -50,7 +51,7 @@ type ProbePayload = {
   issue?: { number?: number };
 };
 
-export const describeDelivery = (event: string, payload: unknown): string => {
+const describeDelivery = (event: string, payload: unknown): string => {
   const p = (payload ?? {}) as ProbePayload;
   const number = p.issue?.number;
   const at =
@@ -239,7 +240,7 @@ export async function waitDiary(
 /** The board probe's five signals: the mutations the wizard pays, and what
  *  each one's delivery looks like. Names are verdict words; the wizard says
  *  which landed and which did not. */
-export const BOARD_SIGNALS: Record<string, (event: string, payload: ProbePayload) => boolean> = {
+const BOARD_SIGNALS: Record<string, (event: string, payload: ProbePayload) => boolean> = {
   'issue opened': (event, payload) => event === 'issues' && payload?.action === 'opened',
   'card added': (event, payload) => event === 'projects_v2_item' && payload?.action === 'created',
   'Status moved': (event, payload) =>

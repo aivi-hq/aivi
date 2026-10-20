@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV } from '@aivi/github';
 
@@ -99,13 +98,4 @@ export function installationToken(sequence = 1): Answer {
       repository_selection: 'all',
     },
   };
-}
-
-/** The app's own JWT, with the claim that names it read back — the place a
- *  wrong app id shows up. */
-export function jwtClaims(authorization: string | undefined): { iss: string } {
-  assert.match(authorization ?? '', /^bearer ey/, 'the app authenticates its own JWT as a bearer token');
-  const [, payload] = (authorization ?? '').slice('bearer '.length).split('.');
-  const claims = JSON.parse(Buffer.from(payload ?? '', 'base64url').toString('utf8')) as { iss: string | number };
-  return { iss: String(claims.iss) };
 }

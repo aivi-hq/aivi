@@ -107,7 +107,7 @@ export function githubCredentials(env: NodeJS.ProcessEnv = process.env): GitHubC
  *  `INIT_CWD`; a relative path the person typed means their directory,
  *  not npm's — resolving it against the package root fails a typed
  *  `./.config/…pem` with ENOENT. */
-export const shellCwd = (): string => process.env.INIT_CWD ?? process.cwd();
+const shellCwd = (): string => process.env.INIT_CWD ?? process.cwd();
 
 /** A path as the person typed it: `~` is their home, and a relative path
  *  starts at the directory they ran the command from. */

@@ -24,7 +24,7 @@ export interface IssueRef {
   number: number;
 }
 
-export const REPO_ISSUE = /^([^/]+)\/([^/#]+)#(\d+)$/;
+const REPO_ISSUE = /^([^/]+)\/([^/#]+)#(\d+)$/;
 
 export function issueRef(id: string): IssueRef {
   const found = REPO_ISSUE.exec(id.trim());
@@ -318,10 +318,6 @@ export class GithubClient {
    *  option id on use. */
   get delegateName(): string {
     return this.app.appSlug;
-  }
-
-  get octokit(): GitHubApp['octokit'] {
-    return this.app.octokit;
   }
 
   /** Resolve a board's `Status` and `Agent` fields and their options, once.

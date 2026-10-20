@@ -6,7 +6,7 @@
  *  the copy-step. */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { installFace, installPrompts, readFaceHtml, stripPromptHeader } from '@aivi/core';
+import { installFace, readFaceHtml, stripPromptHeader } from '@aivi/core';
 import type { Command } from 'commander';
 import { home, print } from '../context.ts';
 

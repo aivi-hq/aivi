@@ -151,7 +151,6 @@ export const plugin: AiviPlugin<VoiceConfig> = {
   createModule: (config, home) =>
     // The cycle back into this file (the module imports its own schema) is
     // that lazy design, not a tangle.
-    // fallow-ignore-next-line circular-dependency
     import('./module.ts').then(m =>
       m.createVoiceModule({
         ...config,

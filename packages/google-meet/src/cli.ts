@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sleep } from '@aivi/chrome';
-import { errorMessage, jobSchema, type Run } from '@aivi/core';
+import { jobSchema, type Run } from '@aivi/core';
 import type { PluginCliContext } from '@aivi/plugin';
 import { Command } from 'commander';
 import { type MeetConfig, MODULE_ID, meetConfigSchema } from './config.ts';
@@ -62,7 +62,6 @@ const DONE: Run['state'][] = ['succeeded', 'failed', 'missed', 'cancelled'];
  *  running; status still tells the truth). */
 async function request(
   ctx: PluginCliContext,
-  stateDir: string,
   operation: string,
   args: Record<string, unknown>,
   watchMs: number,
@@ -106,7 +105,7 @@ export default (ctx: PluginCliContext): Command => {
         { requesting: url },
         'Requested the join. If Meet keeps a waiting room, the host must admit aivi — this terminal follows.',
       );
-      const run = await request(ctx, stateDir, 'meet.join', { url }, config.joinTimeoutMs + config.askTimeoutMs);
+      const run = await request(ctx, 'meet.join', { url }, config.joinTimeoutMs + config.askTimeoutMs);
       if (run === null) {
         ctx.print(
           { joined: false, watching: false },
@@ -165,7 +164,7 @@ export default (ctx: PluginCliContext): Command => {
         ctx.print({ left: false, cleaned: true }, 'Not in a call; the stale record is cleaned.');
         return;
       }
-      const run = await request(ctx, stateDir, 'meet.leave', {}, 60_000);
+      const run = await request(ctx, 'meet.leave', {}, 60_000);
       if (run === null || run.state !== 'succeeded') {
         ctx.print(
           { left: false, state: run?.state ?? 'watching' },

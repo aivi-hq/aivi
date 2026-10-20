@@ -36,17 +36,6 @@ export class TestCapacity implements Dispatcher {
     return this.held;
   }
 
-  /** Fire the service's callback the way a drain would, with a fresh lease. */
-  deliver(requestId: string): DispatcherLeaseRef | undefined {
-    const at = this.waiting.findIndex(request => request.id === requestId);
-    if (at < 0) return undefined;
-    const [request] = this.waiting.splice(at, 1);
-    this.held++;
-    const lease = this.lease(request!.service, request!.pool, request!.resume);
-    this.callbacks.get(request!.service)?.(requestId, lease);
-    return lease;
-  }
-
   request(input: { service: string; pool?: string; resume?: string }): DispatcherGrant {
     const pool = input.pool ?? 'default';
     if (this.throwing.has(pool)) throw new Error(`pool "${pool}" is not configured`);

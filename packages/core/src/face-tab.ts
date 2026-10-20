@@ -274,6 +274,21 @@ export const MEDIA_SHIM = `(() => {
  *  mono), and the CDP event that carries it back to us. */
 const AUDIO_BINDING = '__aiviAudio';
 
+/** The face page as the callbacks below reach it: `tab.call` serializes a
+ *  callback with `fn.toString()`, so this declaration is compile-time only
+ *  — the bytes that travel carry plain `window` accesses, and the names are
+ *  exactly the globals the shim and the face script above install. */
+declare const window: {
+  aiviFace?: { setState(name: string, detail?: unknown): void };
+  __aiviMic: {
+    /** Resolves in-page: true when the wav played through, false when a stop cut it. */
+    play(b64: string): boolean;
+    stopAll(): void;
+  };
+  __aiviTap?: boolean;
+  __aiviMute?: (on: boolean) => void;
+};
+
 /** The whole injection for one meeting page: shim first (it must own the
  *  devices before any page script can ask), then the face's script. */
 export async function faceInjection(home: string): Promise<string> {
@@ -387,7 +402,7 @@ export async function openFaceTab(options: FaceTabOptions): Promise<FaceTab> {
     // "Headless" in the first place, not have it patched after load
     await tab.hideHeadless();
     await tab.goto(options.url, { timeoutMs: options.readyTimeoutMs ?? 20_000 });
-    await tab.waitFor(() => typeof (window as any).aiviFace === 'object', {
+    await tab.waitFor(() => typeof window.aiviFace === 'object', {
       timeoutMs: options.readyTimeoutMs ?? 20_000,
     });
   } catch (error) {
@@ -397,22 +412,22 @@ export async function openFaceTab(options: FaceTabOptions): Promise<FaceTab> {
   }
   let closed = false;
   const setFaceState = async (state: string, detail?: Record<string, unknown>): Promise<void> => {
-    if (detail === undefined) await tab!.call((name: string) => (window as any).aiviFace?.setState(name), state);
-    else await tab!.call((name: string, d: unknown) => (window as any).aiviFace?.setState(name, d), state, detail);
+    if (detail === undefined) await tab!.call((name: string) => window.aiviFace?.setState(name), state);
+    else await tab!.call((name: string, d: unknown) => window.aiviFace?.setState(name, d), state, detail);
   };
   return {
     tab,
     cameraAsked: () => tab!.evaluate('window.__aiviCameraAsked'),
     setFaceState,
-    speak: wav => tab!.call((b64: string) => (window as any).__aiviMic.play(b64), wav.toString('base64')),
+    speak: wav => tab!.call((b64: string) => window.__aiviMic.play(b64), wav.toString('base64')),
     stopSpeaking: async () => {
-      await tab!.call(() => (window as any).__aiviMic.stopAll());
+      await tab!.call(() => window.__aiviMic.stopAll());
     },
     setTap: async (on, muteOutput = true) => {
       await tab!.call(
         (v: boolean, m: boolean) => {
-          (window as any).__aiviTap = v;
-          if (typeof (window as any).__aiviMute === 'function') (window as any).__aiviMute(m);
+          window.__aiviTap = v;
+          if (typeof window.__aiviMute === 'function') window.__aiviMute(m);
         },
         on,
         muteOutput,

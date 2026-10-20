@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, GitHubApp } from '@aivi/github';
 
@@ -6,7 +5,7 @@ import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, GitHubApp } from '@aivi/gith
  *  octokit signs and where they are sent. Every test that connects needs
  *  one, so it goes where the code looks for it, exactly as `<home>/.env`
  *  does. */
-export const privateKey = generateKeyPairSync('rsa', {
+const privateKey = generateKeyPairSync('rsa', {
   modulusLength: 2048,
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -140,13 +139,6 @@ export function graphql(handlers: Record<string, (variables: any) => unknown>): 
 }
 
 /** The app's own JWT claim, read back — the place a wrong app id shows up. */
-export function jwtClaims(authorization: string | undefined): { iss: string } {
-  assert.match(authorization ?? '', /^bearer ey/, 'the app authenticates its own JWT as a bearer token');
-  const [, payload] = (authorization ?? '').slice('bearer '.length).split('.');
-  const claims = JSON.parse(Buffer.from(payload ?? '', 'base64url').toString('utf8')) as { iss: string | number };
-  return { iss: String(claims.iss) };
-}
-
 // ——— builders for the canned answers ———
 
 /** A GitHub `databaseId` is a global row id, not the repository-local number
