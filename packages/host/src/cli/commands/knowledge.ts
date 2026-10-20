@@ -1,6 +1,7 @@
 /** Knowledge: search over the running host and queued reindexing. */
 import { randomUUID } from 'node:crypto';
 import { selectSources } from '@aivi/core';
+import { warmKnowledge } from '@aivi/knowledge';
 import { createHostClient } from '@aivi/plugin/api';
 import type { Command } from 'commander';
 import { collect, context, hostUrl, print, withStore } from '../context.ts';
@@ -50,5 +51,16 @@ export function registerKnowledge(program: Command): void {
         print(store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, values.resource, `index:${randomUUID()}`)),
       );
       await poke();
+    });
+  knowledge
+    .command('warm')
+    .description(
+      'Fetch and load the semantic search models: downloads what `search.models` names (qmd defaults when unset), embeds the corpus, warms expansion and rerank. Searches stay keyword-only until this has run once.',
+    )
+    .action(async () => {
+      const { loaded, log } = await context();
+      const startedAt = Date.now();
+      const warm = await warmKnowledge(loaded, undefined, log.getChild('knowledge'));
+      print({ ...warm, seconds: Math.round((Date.now() - startedAt) / 1000) });
     });
 }

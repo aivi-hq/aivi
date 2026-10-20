@@ -46,7 +46,8 @@ The routing relationship is many lanes to one OpenCode agent: the project's orde
 - OpenCode's existing session/message history is the authoritative transcript. Reuse it through the supported API/SDK; transcript exports are also candidates for indexing. A derived search index can be rebuilt from that history. The host does not implement a parallel session engine or independent authoritative transcript store. Research confirms SQLite-backed v2 storage and documented history/export interfaces; JSONL is not an integration assumption.
 - Retrieval must support keyword search and semantic retrieval where useful. The selected backend is QMD (next bullet); SQLite is the host's state and index bookkeeping.
 - QMD **is the selected backend** — built, and `knowledge.search` defaults to
-  it (`@tobilu/qmd`, keyword search; semantic retrieval stays on its road map).
+  it (`@tobilu/qmd`: BM25 always; expansion, vectors and reranking once
+  `aivi knowledge warm` has fetched the local models).
   The evaluation criteria that chose it: reliability, retrieval quality, peak
   memory, latency and dependency footprint.
 - Durable memory contains only facts and decisions that change future behavior. Temporary findings belong in searchable history, daily notes, or nowhere.

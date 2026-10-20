@@ -33,6 +33,13 @@ test('scopes are filtered before search; empty/unknown scopes cannot broaden ret
           requests.push(options.collection);
           return [];
         },
+        async search(o) {
+          requests.push(o.collections);
+          return [];
+        },
+        async embed() {
+          return { chunksEmbedded: 0, errors: 0 };
+        },
         async update() {},
         async close() {},
       };
@@ -40,6 +47,9 @@ test('scopes are filtered before search; empty/unknown scopes cannot broaden ret
     extractSnippet() {
       return { snippet: '', line: 1 };
     },
+    // Models "present": the scope filter is exercised on the semantic path;
+    // the mock records the collections either way it is asked.
+    modelCached: () => true,
   };
   const service = await createKnowledgeService(loaded, async () => sdk);
   t.after(() => service.close());
@@ -75,7 +85,9 @@ test('real QMD keyword indexing retrieves scoped documents and refreshes modifie
   let sdk: QmdSDK;
   try {
     const name = '@tobilu/qmd';
-    sdk = (await import(name)) as QmdSDK;
+    // Keyword path only, on every machine: these tests measure retrieval and
+    // nesting, not model loading. The semantic path earns its proof live.
+    sdk = { ...((await import(name)) as QmdSDK), modelCached: () => false };
   } catch {
     t.skip('Optional QMD dependency is not installed');
     return;
@@ -128,7 +140,9 @@ test('a file belongs to its most specific source; missing directories are skippe
   let sdk: QmdSDK;
   try {
     const name = '@tobilu/qmd';
-    sdk = (await import(name)) as QmdSDK;
+    // Keyword path only, on every machine: these tests measure retrieval and
+    // nesting, not model loading. The semantic path earns its proof live.
+    sdk = { ...((await import(name)) as QmdSDK), modelCached: () => false };
   } catch {
     t.skip('Optional QMD dependency is not installed');
     return;
@@ -200,11 +214,19 @@ test('backend scope violations are rejected; a result that escapes its source is
           async searchLex() {
             return results;
           },
+          async search() {
+            return [];
+          },
+          async embed() {
+            return { chunksEmbedded: 0, errors: 0 };
+          },
         };
       },
       extractSnippet() {
         return { snippet: '', line: 1 };
       },
+      // Keyword answers only, on every machine: this test is about the escape guard.
+      modelCached: () => false,
     }),
     warningCatcher(event => void warnings.push(event)),
   );

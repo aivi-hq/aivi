@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync } from 'node:fs';
 import { mkdir, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { KnowledgeService, KnowledgeSource, LoadedConfig, Logger, SearchHit, SearchRequest } from '@aivi/core';
 import { searchSchema, selectSources } from '@aivi/core';
 import { createStore, extractSnippet } from '@tobilu/qmd';
@@ -20,22 +22,81 @@ export interface QmdStore {
       body?: string;
     }[]
   >;
+  /** Full pipeline: expansion + multi-signal retrieval + reranking. `file` is the
+   *  same `qmd://<collection>/<path>` virtual path searchLex answers with. */
+  search(options: { query: string; limit: number; collections: string[] }): Promise<
+    {
+      file: string;
+      displayPath: string;
+      title: string;
+      body: string;
+      bestChunk: string;
+      bestChunkPos: number;
+      score: number;
+    }[]
+  >;
+  /** Embeds documents that lack vectors; downloads the embed model when absent. */
+  embed(options?: { force?: boolean }): Promise<{ chunksEmbedded: number; errors: number }>;
   update(): Promise<unknown>;
   close(): Promise<void>;
 }
+/** `search.models` in the config, in its exact zod shape (`exactOptionalPropertyTypes`). */
+type SearchModels = { embed?: string | undefined; rerank?: string | undefined; generate?: string | undefined };
 export interface QmdSDK {
   createStore(options: {
     dbPath: string;
-    config: { collections: Record<string, { path: string; pattern: string; ignore?: string[] }> };
+    config: {
+      collections: Record<string, { path: string; pattern: string; ignore?: string[] }>;
+      // QMD's own ModelsConfig shape: named URIs only, never explicit undefined.
+      models?: { embed?: string; rerank?: string; generate?: string };
+    };
   }): Promise<QmdStore>;
   extractSnippet(body: string, query: string, maxLen: number): { snippet: string; line: number };
+  /** Is this role's model on disk? Absent (a bare QMD module) means the built-in
+   *  probe of QMD's documented model cache directory; tests name their own answer
+   *  so search paths never depend on the machine running them. */
+  modelCached?(role: ModelRole, models?: SearchModels): boolean;
 }
+const defaultSDK: QmdSDK = { createStore, extractSnippet, modelCached };
 const collectionID = (s: KnowledgeSource) =>
   `aivi-${createHash('sha256')
     .update(JSON.stringify([s.scope, s.projectId, s.id, s.path]))
     .digest('hex')
     .slice(0, 24)}`;
 export class SearchUnavailable extends Error {}
+
+/** QMD 2.8.3's built-in model URIs. The runtime never imports them as law —
+ *  qmd resolves its own defaults when the config names none — they exist here
+ *  only to locate a model's cache file for the availability probe. */
+const QMD_BUILTIN_MODELS = {
+  embed: 'hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf',
+  rerank: 'hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf',
+  generate: 'hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf',
+} as const;
+const MODEL_ENV = { embed: 'QMD_EMBED_MODEL', rerank: 'QMD_RERANK_MODEL', generate: 'QMD_GENERATE_MODEL' } as const;
+type ModelRole = keyof typeof QMD_BUILTIN_MODELS;
+
+/** QMD's own resolution order: config URI, then its env override, then its default. */
+function resolveModel(role: ModelRole, models: SearchModels | undefined): string {
+  return models?.[role] || process.env[MODEL_ENV[role]] || QMD_BUILTIN_MODELS[role];
+}
+/** Where QMD caches model files (its documented cache directory). */
+function modelCacheDir(): string {
+  const cache = process.env.XDG_CACHE_HOME || join(homedir(), '.cache');
+  return join(cache, 'qmd', 'models');
+}
+/** QMD's own cache rule: node-llama-cpp names downloads its own way (it may
+ *  prefix the repo), so a model is on disk when any cached file contains the
+ *  URI's last segment. */
+function modelCached(role: ModelRole, models?: SearchModels): boolean {
+  const file = resolveModel(role, models).split('/').pop();
+  if (!file) return false;
+  try {
+    return readdirSync(modelCacheDir()).some(name => name.includes(file));
+  } catch {
+    return false;
+  }
+}
 
 /** What one collection holds: the configured source, its root on disk, and the
  *  file itself when the source is a single file. */
@@ -94,7 +155,9 @@ async function surveySources(loaded: LoadedConfig, log?: Logger) {
 
 /** The hit for one QMD result, or undefined when the file was deleted since the
  *  last index refresh or escaped its source. A symlink that leaves its source is
- *  not served, but it must not take the whole query down. */
+ *  not served, but it must not take the whole query down.
+ *  `fullBody` marks a semantic hit: the excerpt is the reranker's chunk (already
+ *  in `result.body`) and its line comes from the whole document. */
 async function toHit(
   entry: CollectionEntry,
   result: QmdResult,
@@ -102,6 +165,7 @@ async function toHit(
   sdk: QmdSDK,
   warned: Set<string>,
   log?: Logger,
+  fullBody?: string,
 ): Promise<SearchHit | undefined> {
   const prefix = `${result.collectionName}/`;
   const display = result.displayPath.startsWith(prefix) ? result.displayPath.slice(prefix.length) : result.displayPath;
@@ -120,7 +184,13 @@ async function toHit(
     }
     return undefined;
   }
-  const snippet = sdk.extractSnippet(result.body ?? '', query, 900);
+  const snippet =
+    fullBody === undefined
+      ? sdk.extractSnippet(result.body ?? '', query, 900)
+      : {
+          snippet: (result.body ?? '').slice(0, 900),
+          line: Math.max(1, fullBody.slice(0, Math.max(0, fullBody.indexOf(result.body ?? ''))).split('\n').length),
+        };
   return {
     sourceId: entry.source.id,
     kind: entry.source.kind,
@@ -134,9 +204,15 @@ async function toHit(
   };
 }
 
+/** Only named URIs ride to QMD; a role absent is left for QMD to resolve. */
+function namedModels(models: SearchModels | undefined) {
+  const entries = Object.entries(models ?? {}).filter(([, uri]) => !!uri) as [ModelRole, string][];
+  return entries.length ? { models: Object.fromEntries(entries) } : {};
+}
+
 export async function createKnowledgeService(
   loaded: LoadedConfig,
-  loader: () => Promise<QmdSDK> = async () => ({ createStore, extractSnippet }),
+  loader: () => Promise<QmdSDK> = async () => defaultSDK,
   log?: Logger,
 ): Promise<KnowledgeService> {
   const warned = new Set<string>();
@@ -152,9 +228,14 @@ export async function createKnowledgeService(
     };
   const sdk = await loader();
   const { collections, sources } = await surveySources(loaded, log);
+  const models = loaded.config.search.models;
+  const probe = (role: ModelRole) => (sdk.modelCached ?? modelCached)(role, models);
   const folder = resolve(loaded.config.stateDirectory, 'knowledge');
   await mkdir(folder, { recursive: true, mode: 0o700 });
-  const store = await sdk.createStore({ dbPath: resolve(folder, 'qmd.sqlite'), config: { collections } });
+  const store = await sdk.createStore({
+    dbPath: resolve(folder, 'qmd.sqlite'),
+    config: { collections, ...namedModels(models) },
+  });
   let closed = false;
   // Searches never wait: QMD reads are synchronous SQLite on a WAL database,
   // which the database itself serializes at millisecond granularity — an
@@ -168,7 +249,20 @@ export async function createKnowledgeService(
   const startScan = (): Promise<unknown> => {
     const scan: Promise<unknown> = (async () => {
       try {
-        return await store.update();
+        const updated = await store.update();
+        // Embedding rides the scan only when the model already sits on disk: a boot
+        // or a mid-scan re-sync never waits on a download. `aivi knowledge warm`
+        // brings the models; until then the corpus is keyword-only, by design.
+        if (probe('embed')) {
+          const embedded = await store.embed();
+          if (embedded.chunksEmbedded) log?.info('knowledge.embedded', { chunks: embedded.chunksEmbedded });
+        } else if (!warned.has('embed')) {
+          warned.add('embed');
+          log?.info('knowledge.semantic.off', {
+            hint: '`aivi knowledge warm` fetches the local models for semantic search',
+          });
+        }
+        return updated;
       } finally {
         scanning = null;
         if (again && !closed) {
@@ -197,6 +291,49 @@ export async function createKnowledgeService(
         .filter(id => sources.has(id));
       // Never pass an empty filter: QMD interprets it as an unscoped query.
       if (!ids.length) return [];
+      // Semantic when the models are home: expansion, vectors and reranking fused
+      // and re-scored. A pipeline failure answers with keyword search, and says
+      // it once; the scope guard below falls through to neither.
+      // The semantic pipeline serves only when all three models are on disk: a
+      // person's search never waits on a download. `aivi knowledge warm` brings
+      // the models; until then QMD's keyword search answers alone.
+      if ((['embed', 'rerank', 'generate'] as const).every(probe)) {
+        let found: Awaited<ReturnType<QmdStore['search']>> | undefined;
+        try {
+          found = await store.search({ query: request.query, limit: request.limit, collections: ids });
+        } catch (error) {
+          if (!warned.has('semantic')) {
+            warned.add('semantic');
+            log?.warn('knowledge.semantic.failed', { error, hint: 'answering with keyword search' });
+          }
+        }
+        if (found) {
+          const hits: SearchHit[] = [];
+          for (const result of found) {
+            const collection = /^qmd:\/\/([^/]+)\//.exec(result.file)?.[1];
+            if (!collection || !ids.includes(collection)) throw new Error('QMD returned an out-of-scope collection');
+            const hit = await toHit(
+              sources.get(collection)!,
+              {
+                collectionName: collection,
+                filepath: result.file,
+                displayPath: result.displayPath,
+                title: result.title,
+                score: result.score,
+                // The reranker's chunk is the excerpt; the whole body only locates its line.
+                body: result.bestChunk || result.body,
+              },
+              request.query,
+              sdk,
+              warned,
+              log,
+              result.body,
+            );
+            if (hit) hits.push(hit);
+          }
+          return hits;
+        }
+      }
       const results = await store.searchLex(request.query, { limit: request.limit, collection: ids });
       const hits: SearchHit[] = [];
       for (const result of results) {
@@ -213,4 +350,47 @@ export async function createKnowledgeService(
       await store.close();
     },
   };
+}
+
+/**
+ * Bring the semantic models to this home: download what is missing, embed the
+ * corpus, and load the expansion and rerank models with one scoped query.
+ * Searches answer with keyword search alone until this has run once; repeat it
+ * after changing `search.models` (vectors are not cross-model — repeat with
+ * force). It opens the same QMD database the way `aivi knowledge index` does:
+ * a short-lived visitor beside the host.
+ */
+export async function warmKnowledge(
+  loaded: LoadedConfig,
+  loader: () => Promise<QmdSDK> = async () => defaultSDK,
+  log?: Logger,
+): Promise<{ models: Record<ModelRole, string>; embedded: number }> {
+  if (loaded.config.search === false) throw new SearchUnavailable('Knowledge search is disabled in the config');
+  const sdk = await loader();
+  const { collections } = await surveySources(loaded, log);
+  const ids = Object.keys(collections);
+  if (!ids.length) throw new SearchUnavailable('No knowledge source exists yet to warm against');
+  const folder = resolve(loaded.config.stateDirectory, 'knowledge');
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const models = loaded.config.search.models;
+  const store = await sdk.createStore({
+    dbPath: resolve(folder, 'qmd.sqlite'),
+    config: { collections, ...namedModels(models) },
+  });
+  try {
+    await store.update();
+    // embed() is the embed model's download path; one full query is the other two's.
+    const embedded = await store.embed();
+    await store.search({ query: 'aivi', limit: 1, collections: ids });
+    return {
+      models: {
+        embed: resolveModel('embed', models),
+        rerank: resolveModel('rerank', models),
+        generate: resolveModel('generate', models),
+      },
+      embedded: embedded.chunksEmbedded,
+    };
+  } finally {
+    await store.close();
+  }
 }

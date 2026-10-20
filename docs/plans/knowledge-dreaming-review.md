@@ -149,14 +149,17 @@ loop (§D) is an explicit design discussion.
   diary (`clearRequests` on the same cutoff). Diary-vs-separate-db stays
   deferred until real traffic says so.
 
-### B. Knowledge service — still open
-- Wire embeddings + rerank: `store.embed()` after indexing + hybrid
-  `search()` (expansion + BM25 + vector + rerank). Needs a model choice,
-  model-resource accounting, an embedding-refresh story, and revisiting
-  the 10 s plugin timeout.
-- Dreaming per session (ruling 10): one dreamer turn per session instead
-  of one turn per batch — cheaper reconciliation per turn, finer cursor;
-  read-before-write keeps facts consistent across turns.
+### B. Knowledge service — semantic BUILT 2026-10-21; per-session dreaming still open
+- Built: the index scan embeds when the embed model is on disk; `search()` runs
+  expansion + vectors + reranking when all three models are cached, with
+  keyword fallback on any miss or failure (searches never wait on a download).
+  `search.models.{embed,rerank,generate}` configures the GGUF URIs (qmd
+  defaults when unset); `aivi knowledge warm` is the setup step that fetches,
+  embeds and loads. The 10 s plugin timeout stands: warm models answer
+  sub-second; cold starts are warm's job, not the timeout's.
+- Still open: dreaming per session (ruling 10): one dreamer turn per session
+  instead of one turn per batch — cheaper reconciliation per turn, finer
+  cursor; read-before-write keeps facts consistent across turns.
 
 ### C. Jobs adopt pool models via the dispatcher middle road — BUILT 2026-10-21
 - Job path (prompt tasks, dreaming included): request a lease →
@@ -217,6 +220,30 @@ reconsidered" failure the operator named. Doctrine:
 5. Direct-OpenCode conversation → confirm NOT reviewed (coverage decision).
    Meet room conversation → confirm IS reviewed (room platforms are default
    origins now); a `dreaming` origin → config refuses it.
+
+## Open — raised 2026-10-21, operator rejected both current fixes
+
+**Problem 1: model-cache containment. DECIDED: no containment.** The
+`XDG_CACHE_HOME` import trick is fully reverted. Models live in qmd's own
+default cache (`~/.cache/qmd/models`, or the operator's own `XDG_CACHE_HOME`).
+The clean upstream fix would be qmd passing its internal `modelCacheDir`
+(llm.js:509) through the SDK `createStore` options; that is an upstream
+conversation, not an aivi workaround.
+
+**Problem 2: the node-llama-cpp override.** The Metal error on this M5 Max is
+upstream: llama.cpp #27473 (tensor-API probe compiled at too-old Metal
+language version). qmd 2.8.3 pins node-llama-cpp 3.20.0 (llama.cpp b10361,
+predates the fix). node-llama-cpp 3.21.0 fixed it ("Metal 4 tensor API issues
+on M5 mac machines"). The built round adds a root npm override to 3.21.1 —
+the operator calls it a workaround, and the honest weaknesses: qmd pinned
+3.20.0 exactly; our test gates never exercise the native binding (real-QMD
+tests are keyword-only); the only proof is one live semantic run. Options:
+keep the override as a recorded decision after real verification against
+qmd's usage; or stay on 3.20.0 (search works, ~2 s queries, tensor API
+disabled); or wait for qmd to bump.
+
+Until decided: the semantic round stays UNCOMMITTED; the override can be
+dropped without touching anything else (3.20.0 ran the same proof).
 
 ## Follow-ups deferred until the schema settles
 

@@ -748,6 +748,27 @@ const configShape = z.strictObject({
       z.strictObject({
         provider: z.literal('qmd'),
         indexOnStart: z.boolean().default(true),
+        models: z
+          .strictObject({
+            embed: z
+              .string()
+              .optional()
+              .describe(
+                'HuggingFace GGUF URI (`hf:<user>/<repo>/<file>.gguf`) embedding documents with; absent: the qmd built-in default.',
+              ),
+            rerank: z
+              .string()
+              .optional()
+              .describe('HuggingFace GGUF URI re-scoring candidates with; absent: the qmd built-in default.'),
+            generate: z
+              .string()
+              .optional()
+              .describe('HuggingFace GGUF URI expanding queries with; absent: the qmd built-in default.'),
+          })
+          .optional()
+          .describe(
+            'The local models qmd runs. Every role absent means qmd resolves its own default. Switching the embed URI re-embeds the corpus: vectors are not cross-model. `aivi knowledge warm` downloads and warms what the config names.',
+          ),
       }),
     ])
     .default({ provider: 'qmd', indexOnStart: true })

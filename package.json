@@ -26,7 +26,8 @@
     "@opencode/protocol": "2.0.23",
     "ipull": {
       "commander": "15.0.0"
-    }
+    },
+    "node-llama-cpp": "3.21.1"
   },
   "private": true,
   "scripts": {

@@ -328,6 +328,11 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   if (use === 'another') return;
 
   await ensurePlugins(io);
+  // The semantic models are the app's own (qmd runs them locally): setup says
+  // where they come from rather than downloading two gigabytes unasked.
+  io.log(
+    'Knowledge: `aivi knowledge warm` fetches the local semantic models; searches answer with keywords until it has run once.',
+  );
   const background = process.stdin.isTTY ? await io.ask.background() : false;
   if (!background) {
     saveClientConfig({ person: { token: identity.token, ...(identity.name ? { name: identity.name } : {}) } });

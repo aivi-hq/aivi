@@ -17,9 +17,21 @@ owns them.
 QMD is a pinned dependency of the knowledge package, imported statically; a missing
 or broken install stops aivi from starting. Disabling search leaves the rest of aivi
 usable.
-This release calls QMD's `searchLex` API: keyword/BM25 retrieval, with no embedding,
-reranking, or query-expansion model loaded. The public SDK is the boundary; aivi
-does not query QMD's private database tables.
+
+Retrieval has two gears, and the public SDK is the boundary either way — aivi
+never queries QMD's private database tables:
+
+- **Keyword (BM25)** answers from the first boot, no models needed.
+- **Semantic** — query expansion, vector retrieval, and LLM reranking fused —
+  serves once the three local GGUF models sit in QMD's cache. `aivi knowledge
+  warm` fetches and loads them (configurable via `search.models`; qmd's own
+  defaults when unset). Searches never wait on a download: while any model is
+  missing, keyword answers alone, and a semantic failure answers with keyword
+  hits and says so once in the log.
+
+Embedding rides the index scan only when the embed model is already on disk,
+so boot never stalls on a download. Switching `search.models.embed` means
+re-embedding: vectors are not cross-model; run `aivi knowledge warm` again.
 
 ## Kinds
 
@@ -73,6 +85,17 @@ The default refresh happens on startup. Examples also schedule an hourly
 ```sh
 npm run aivi:cli -- knowledge index
 ```
+
+Fetch and load the semantic models once per machine (downloads what
+`search.models` names, embeds the corpus, warms expansion and rerank):
+
+```sh
+npm run aivi:cli -- knowledge warm
+```
+
+It opens the same QMD database the way `knowledge index` does — a short-lived
+visitor beside the host — and is the setup step: semantic search serves after
+it, keyword-only before it. Rerun it after changing the embed model.
 
 That queues a job; the host executes it against the same service. Searches
 run concurrently: QMD reads are synchronous SQLite on a WAL database, which
