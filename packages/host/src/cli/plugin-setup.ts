@@ -10,26 +10,26 @@ import { context, withStore } from './context.ts';
 /**
  * The plumbing step behind `aivi add`: run the plugin's own setup entry.
  * A package's `./setup` subpath is the whole contract — a package without one
- * has nothing to say at add time, and the command says so. Everything
- * platform-specific lives in the plugin; this only wires the context: clack
- * prompts, the config and .env writers with their write-validate-restore
- * guarantee, and the verified last line. A cancelled prompt stops the flow;
- * nothing after it is written. Answers the module id the setup enabled — the
- * id `aivi add` watches in `/status` — or undefined when the flow stopped.
+ * has nothing to say at add time: the flow answers **null** and `aivi add`
+ * carries on, the package joining the list with no block (its defaults or its
+ * own clear complaint speak at startup). Everything platform-specific lives
+ * in the plugin; this only wires the context: clack prompts, the config and
+ * .env writers with their write-validate-restore guarantee, and the verified
+ * last line. A cancelled prompt stops the flow; nothing after it is written.
+ * Answers the module id the setup enabled — the id `aivi add` watches in
+ * `/status` — null when the package has no flow, or undefined when a flow
+ * stopped.
  */
 export async function pluginSetup(
   spec: string,
   options: { home: string; configPath: string; identityName: string },
-): Promise<string | undefined> {
+): Promise<string | undefined | null> {
   let entry: unknown;
   try {
     entry = ((await import(import.meta.resolve(`${spec}/setup`))) as { default?: unknown }).default;
   } catch (error) {
     const code = (error as { code?: string }).code;
-    if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED')
-      throw new Error(
-        `${spec} has no setup command (no ./setup export); its package says how to configure it by hand.`,
-      );
+    if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return null;
     if (code === 'ERR_MODULE_NOT_FOUND')
       throw new Error(`${spec} is not installed in this installation. \`aivi add ${spec}\` adds it first.`);
     throw error;

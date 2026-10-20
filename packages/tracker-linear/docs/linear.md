@@ -16,7 +16,7 @@ speaks for it.
       "apps": { "aivi": {}, "reviewer": {} },
       "logMisroutes": true,
       "humanLabel": "needs-human",
-      "resource": "local-model",
+      "pool": "default",
       "progress": "tools"
     }
   }
@@ -30,7 +30,7 @@ speaks for it.
 | `apps.<id>` | A Linear OAuth application acting as an app user. The primary does the receiving; every other app is a **face** — a name and icon in Linear's UI with its own credentials, no routing meaning |
 | `logMisroutes` | `true`: log at warn a webhook delivered to the wrong endpoint — a data change on a face's route. It is dropped either way |
 | `humanLabel` | Issues with this label are never worked automatically — the only "not that one again" there is (a stop remembers nothing); a session created on one is refused with an explanation, and a failed closing or an unkillable worker marks the ticket with it |
-| `resource` | Pool a worker turn takes a slot in (must exist in `scheduler.resources`) |
+| `pool` | Dispatcher pool a worker turn takes a slot in (must exist in `dispatcher.pools` when pools are configured) |
 | `mcp` | On by default: the module serves Linear's hosted MCP on loopback (default port 4101), authorised with the app-actor token, so agents can act in Linear and writes attribute to the app; `false` disables it |
 | `progress` | `silent`, `status` or `tools`: what the ephemeral activities show while a worker runs |
 

@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "packages/core/tsconfig.build.json" },
+    { "path": "packages/chrome/tsconfig.build.json" },
+    { "path": "packages/google-meet/tsconfig.build.json" },
     { "path": "packages/github/tsconfig.build.json" },
     { "path": "packages/host/tsconfig.build.json" },
     { "path": "packages/host/tsconfig.cli.build.json" },
@@ -10,6 +12,7 @@
     { "path": "packages/browser/tsconfig.build.json" },
     { "path": "packages/channel-discord/tsconfig.build.json" },
     { "path": "packages/channel-slack/tsconfig.build.json" },
+    { "path": "packages/voice/tsconfig.build.json" },
     { "path": "packages/forge-github/tsconfig.build.json" },
     { "path": "packages/tracker-github/tsconfig.build.json" },
     { "path": "packages/tracker-linear/tsconfig.build.json" },

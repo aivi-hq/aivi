@@ -32,3 +32,6 @@ coverage/
 tmp/
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Python bytecode from the engine scripts: generated, never read.
+__pycache__/

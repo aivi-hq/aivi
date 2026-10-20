@@ -5,6 +5,7 @@ import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
 
 const config = configSchema.parse({ version: 1, scheduler: { agentSchedules: false } }).scheduler;
+const pools = { 'local-model': 1 };
 
 test('a slow task queues the next task; execution failure blocks further dispatch', async t => {
   const store = new Store(':memory:');
@@ -16,7 +17,7 @@ test('a slow task queues the next task; execution failure blocks further dispatc
     release = resolve;
   });
   let calls = 0;
-  const scheduler = new Scheduler(store, config, async () => {
+  const scheduler = new Scheduler(store, config, pools, async () => {
     calls++;
     await pending;
     throw new Error('Tool may still be running');
@@ -52,7 +53,7 @@ test('startup applies removed jobs before dispatching any stale queued run', asy
   );
   store.materializeDue(60_000);
   let calls = 0;
-  const scheduler = new Scheduler(store, config, async () => {
+  const scheduler = new Scheduler(store, config, pools, async () => {
     calls++;
     return { state: 'succeeded', result: null };
   });
@@ -88,6 +89,7 @@ test('a missed occurrence is reported like a failure and never executed', async 
   const scheduler = new Scheduler(
     store,
     config,
+    pools,
     async () => {
       calls++;
       return { state: 'succeeded', result: null };
@@ -110,7 +112,7 @@ test('runs abort stops one running run; it ends blocked and keeps its capacity',
   t.after(() => store.close());
   const job = store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'long');
   let seen: AbortSignal | undefined;
-  const scheduler = new Scheduler(store, config, async (_run, context) => {
+  const scheduler = new Scheduler(store, config, pools, async (_run, context) => {
     seen = context.signal;
     if (!context.signal.aborted)
       await new Promise<void>(resolve => context.signal.addEventListener('abort', () => resolve(), { once: true }));

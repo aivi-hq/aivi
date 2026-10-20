@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { Config } from '@aivi/core';
 import type {
   ChannelPlatform,
   ConversationStore as ConversationStoreApi,
@@ -255,7 +254,7 @@ export class ConversationStore implements ConversationStoreApi {
    * isolate concurrent work, so there is no per-project lock; capacity comes
    * from the shared pool, reserved in the same transaction.
    */
-  claim(config: Config['scheduler'], resource: string): Turn | null {
+  claim(pools: Record<string, number>, pool: string): Turn | null {
     const rows = this.core.db
       .prepare(`${this.select}
       WHERE t.state='queued' AND NOT EXISTS (
@@ -267,16 +266,9 @@ export class ConversationStore implements ConversationStoreApi {
       ) ORDER BY t.seq`)
       .all() as Row[];
     for (const row of rows) {
-      const acquired = this.core.acquireLease(
-        this.n.leaseID(String(row.id)),
-        this.n.leaseOwner,
-        resource,
-        config.maxConcurrent,
-        config.resources,
-        () => {
-          this.core.db.prepare(`UPDATE ${this.n.turns} SET state='running' WHERE id=?`).run(String(row.id));
-        },
-      );
+      const acquired = this.core.acquireLease(this.n.leaseID(String(row.id)), this.n.leaseOwner, pool, pools, () => {
+        this.core.db.prepare(`UPDATE ${this.n.turns} SET state='running' WHERE id=?`).run(String(row.id));
+      });
       if (acquired) return turn({ ...row, state: 'running' });
       // Every turn uses the same pool, so a refusal is a capacity refusal for all of them.
       break;

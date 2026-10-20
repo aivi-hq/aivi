@@ -651,16 +651,17 @@ export class Store implements StoreContract {
       )
       .run(jobId);
   }
-  claim(owner: string, maxConcurrent: number, resources: Record<string, number>, now = Date.now()): Run | null {
+  /** Claim the oldest queued run whose pool has a slot. `pools` is the
+   *  dispatcher's capacity (name→slots); empty means capacity is unmoderated. */
+  claim(owner: string, pools: Record<string, number>, now = Date.now()): Run | null {
     return this.transaction(() => {
       const active = this.capacityUsage();
-      if (active.reduce((sum, r) => sum + Number(r.n), 0) >= maxConcurrent) return null;
       const counts = new Map(active.map(r => [String(r.resource), Number(r.n)]));
       for (const row of this.db
         .prepare("SELECT * FROM runs WHERE state='queued' AND scheduled_for<=? ORDER BY scheduled_for,created_at,id")
         .all(now)) {
         const resource = String(row.resource);
-        const limit = resources[resource];
+        const limit = Object.keys(pools).length === 0 ? Number.POSITIVE_INFINITY : pools[resource];
         if (limit === undefined || (counts.get(resource) ?? 0) >= limit) continue;
         this.db
           .prepare("UPDATE runs SET state='running',owner=?,started_at=? WHERE id=?")
@@ -695,27 +696,31 @@ export class Store implements StoreContract {
     return row?.due === null || row?.due === undefined ? null : Number(row.due);
   }
   /**
-   * Reserve capacity for non-job work (for example one Discord turn). The
-   * caller's own state change runs inside the same transaction via `onAcquire`,
-   * so it must use `store.db` directly: Store methods that open their own
-   * transaction cannot nest here.
+   * Reserve capacity for non-job work (for example one Discord turn). `pools`
+   * is the dispatcher's capacity (name→slots); empty means capacity is
+   * unmoderated and any pool name is granted. The caller's own state change
+   * runs inside the same transaction via `onAcquire`, so it must use
+   * `store.db` directly: Store methods that open their own transaction cannot
+   * nest here.
    */
   acquireLease(
     id: string,
     owner: string,
-    resource: string,
-    maxConcurrent: number,
-    resources: Record<string, number>,
+    pool: string,
+    pools: Record<string, number>,
     onAcquire: () => void = () => {},
     now = Date.now(),
   ): boolean {
     return this.transaction(() => {
       if (this.db.prepare('SELECT id FROM resource_leases WHERE id=?').get(id)) return false;
-      const usage = this.capacityUsage();
-      if (usage.reduce((n, r) => n + Number(r.n), 0) >= maxConcurrent) return false;
-      const count = Number(usage.find(r => r.resource === resource)?.n ?? 0);
-      if (resources[resource] === undefined || count >= resources[resource]!) return false;
-      this.db.prepare("INSERT INTO resource_leases VALUES(?,?,?,'running',?,NULL)").run(id, owner, resource, now);
+      if (Object.keys(pools).length > 0) {
+        const capacity = pools[pool];
+        if (capacity === undefined) return false;
+        const usage = this.capacityUsage();
+        const count = Number(usage.find(r => r.resource === pool)?.n ?? 0);
+        if (count >= capacity) return false;
+      }
+      this.db.prepare("INSERT INTO resource_leases VALUES(?,?,?,'running',?,NULL)").run(id, owner, pool, now);
       onAcquire();
       return true;
     });

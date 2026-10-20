@@ -67,7 +67,7 @@ should be rules" is the intended workflow.
   "id": "dreaming",
   "cron": "0 3 * * *",
   "timezone": "Europe/Amsterdam",
-  "resource": "local-model",
+  "resource": "default",
   "task": {
     "kind": "invocation",
     "name": "dreaming",

@@ -40,7 +40,7 @@ export const slackConfigSchema = z
       .regex(/^[a-z][a-z0-9_-]*$/)
       .max(24)
       .default('aivi'),
-    resource: z.string().default('local-model'),
+    pool: z.string().default('default').describe('Dispatcher pool this module’s turns draw capacity from.'),
     /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
     access: accessPolicySchema,
     /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "slack" }`). Empty: never post proactively. */

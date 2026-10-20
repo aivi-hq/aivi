@@ -13,7 +13,7 @@ on rather than which package speaks for it.
     "tracker-github": {
       "agent": "assistant",
       "humanLabel": "needs-human",
-      "resource": "local-model",
+      "pool": "default",
       "progress": "tools",
       "trust": "members"
     }
@@ -25,7 +25,7 @@ on rather than which package speaks for it.
 | --- | --- |
 | `agent` | The OpenCode agent that answers people on GitHub — comment mentions no run is working: the **assistant**. A hand delegation is never its to answer: those get the fixed refusal. Default: `assistant` |
 | `humanLabel` | Issues carrying this label are never worked automatically; a failed closing and a hand-delegation refusal mark with it. Unlike Linear, where it must pre-exist, `aivi projects add` **creates** it in every mapped repository |
-| `resource` | Pool an assistant turn takes a slot in (must exist in `scheduler.resources`) |
+| `pool` | Dispatcher pool an assistant turn takes a slot in (must exist in `dispatcher.pools` when pools are configured) |
 | `progress` | `silent`, `status` or `tools`: what the status comment shows while a worker runs |
 | `trust` | Who comments may reach aivi — form answers, run steering, the assistant. `members`: GitHub's own `author_association` of OWNER, MEMBER or COLLABORATOR only; `everyone`: any GitHub user. A read per delivery, so a promotion or a removal lands at once. Default: `members` |
 

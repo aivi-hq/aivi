@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { setTimeout } from 'node:timers/promises';
-import { accessEntry, errorMessage } from '@aivi/core';
+import { accessEntry, errorMessage, poolCapacities } from '@aivi/core';
 import {
   announce,
   CHAT_COMMANDS,
@@ -27,6 +27,7 @@ import {
 } from '@aivi/host';
 import { type AiviModule, type AiviServices, ConfigurationError, type Store } from '@aivi/plugin';
 import type { ChannelPlatform, ChatCommand, ChatCommandName, DeliveryContext, Turn } from '@aivi/plugin/channel';
+import { VoiceNotLoaded } from '@aivi/plugin/voice';
 import {
   type AutocompleteInteraction,
   ChannelType,
@@ -46,6 +47,7 @@ import {
 } from 'discord.js';
 import type { DiscordConfig, Route } from './config.ts';
 import { authorized, MODULE_ID, reaches } from './config.ts';
+import { watchVoice } from './voice.ts';
 
 const safeSend = {
   allowedMentions: { parse: [] as never[], repliedUser: false },
@@ -129,6 +131,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.DirectMessages,
       ...(config.messageContent ? [GatewayIntentBits.MessageContent] : []),
+      ...(config.voice ? [GatewayIntentBits.GuildVoiceStates] : []), // who speaks, which stream
     ],
     partials: [Partials.Channel],
     allowedMentions: safeSend.allowedMentions,
@@ -138,6 +141,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
 
   const abort = new AbortController();
   let engine: ChannelEngine | undefined;
+  let voiceWatcher: import('./voice.ts').VoiceWatcher | null = null;
   const stop = () => {
     abort.abort();
     engine?.stop();
@@ -153,6 +157,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
     try {
       if (client.isReady()) await announce(config.reportChannels, post, OFFLINE_NOTICE, log);
       await engine?.shutdown();
+      await voiceWatcher?.stop(); // the meeting heard stops; running turns finish and release leases
     } finally {
       await client.destroy();
       services.signal.removeEventListener('abort', stop);
@@ -210,7 +215,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
     engine = new ChannelEngine(
       store,
       config,
-      services.loaded.config.scheduler,
+      poolCapacities(services.loaded.config.dispatcher),
       askWithTyping,
       {
         async send(channelId, content) {
@@ -606,6 +611,34 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
       error => log.warn('commands.register_failed', { error }),
     );
     void announce(config.reportChannels, post, ONLINE_NOTICE, log);
+
+    // Voice: presence-driven. Nothing is joined, opened or asked at startup —
+    // the watcher hears a configured channel only while a linked person sits
+    // in it, and closes the meeting (room, transcript, engine) when they
+    // leave. The voice plugin is resolved at the first join, so a missing
+    // voice plugin costs a loud line in the log, not the text bot.
+    if (config.voice) {
+      const voiceConfig = config.voice;
+      voiceWatcher = watchVoice({
+        client,
+        config: voiceConfig,
+        openRoom: () => {
+          try {
+            return services.voice.room({
+              id: DISCORD.id,
+              label: `discord:${voiceConfig.guild}`,
+              mode: voiceConfig.mode,
+              agent: voiceConfig.agent ?? config.agent,
+            });
+          } catch (error) {
+            if (error instanceof VoiceNotLoaded) return null;
+            throw error;
+          }
+        },
+        personName: userId => services.store.identityFor(DISCORD.id, userId)?.name,
+        log,
+      });
+    }
 
     // Nobody waits in silence: each conversation with an interrupted turn hears about it once.
     for (const channel of new Set(interrupted.map(t => t.channel))) {

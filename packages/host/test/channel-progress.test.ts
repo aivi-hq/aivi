@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
 import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/plugin/module';
 import { ChannelEngine } from '../src/channel/engine.ts';
@@ -18,8 +17,8 @@ import { ConversationStore } from '../src/channel/store.ts';
 import { Store } from '../src/store.ts';
 
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
-const limits = { resource: 'local-model', maxConcurrent: 1 };
-const scheduler = configSchema.parse({ version: 1 }).scheduler;
+const limits = { pool: 'local-model', maxConcurrent: 1 };
+const pools = { 'local-model': 1 };
 const S = 'ses_discord_a';
 const ev = (type: string, data: Record<string, unknown> = {}): SessionEvent => ({
   type,
@@ -252,7 +251,7 @@ test('progress: a placeholder is posted, edited at most once per window, and rep
   const answer = new Promise<string>(resolve => {
     release = () => resolve('The answer');
   });
-  const engine = new ChannelEngine(store, limits, scheduler, () => answer, delivery, {
+  const engine = new ChannelEngine(store, limits, pools, () => answer, delivery, {
     progress: { mode: 'tools', events, throttleMs: 100 },
   });
   engine.tick();
@@ -288,14 +287,9 @@ test('progress: a placeholder is posted, edited at most once per window, and rep
   // Without delete the placeholder becomes the first chunk; the rest follows as new messages.
   const noDelete = fakeDelivery({ deletable: false });
   const session2 = enqueue(store, 'two');
-  const engine2 = new ChannelEngine(
-    store,
-    limits,
-    scheduler,
-    async () => `${'a'.repeat(1900)}tail`,
-    noDelete.delivery,
-    { progress: { mode: 'status', events, throttleMs: 100 } },
-  );
+  const engine2 = new ChannelEngine(store, limits, pools, async () => `${'a'.repeat(1900)}tail`, noDelete.delivery, {
+    progress: { mode: 'status', events, throttleMs: 100 },
+  });
   engine2.tick();
   await engine2.drain();
   assert.deepEqual(noDelete.log, ['send:⏳ thinking…', `edit:m1:${'a'.repeat(1900)}`, 'send:tail']);
@@ -308,7 +302,7 @@ test('progress: a placeholder is posted, edited at most once per window, and rep
   ] as const) {
     const plain = fakeDelivery(options);
     enqueue(store, `plain-${mode}`);
-    const engine3 = new ChannelEngine(store, limits, scheduler, async () => 'Reply', plain.delivery, {
+    const engine3 = new ChannelEngine(store, limits, pools, async () => 'Reply', plain.delivery, {
       progress: { mode, events },
     });
     engine3.tick();
@@ -327,7 +321,7 @@ test('progress: a turn that cannot finish edits the placeholder into the notice 
   const engine = new ChannelEngine(
     store,
     limits,
-    scheduler,
+    pools,
     async () => {
       throw new Error('lost after prompt');
     },
@@ -349,7 +343,7 @@ test('progress: a turn that cannot finish edits the placeholder into the notice 
   const answer = new Promise<string>(resolve => {
     release = () => resolve('done');
   });
-  const engine2 = new ChannelEngine(store, limits, scheduler, () => answer, slow.delivery, {
+  const engine2 = new ChannelEngine(store, limits, pools, () => answer, slow.delivery, {
     progress: { mode: 'status', events, throttleMs: 10, clock: { longMs: 60, idleMs: 200, refreshMs: 60 } },
   });
   engine2.tick();

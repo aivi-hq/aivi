@@ -26,6 +26,7 @@ export class Scheduler {
   private failure: unknown;
   private readonly store: Store;
   private readonly config: Config['scheduler'];
+  private readonly pools: Record<string, number>;
   private readonly execute: Execute;
   private readonly log: Logger;
   private readonly onFinished: OnFinished | undefined;
@@ -33,12 +34,14 @@ export class Scheduler {
   constructor(
     store: Store,
     config: Config['scheduler'],
+    pools: Record<string, number>,
     execute: Execute,
     log: Logger = getLogger(['aivi']),
     onFinished?: OnFinished,
   ) {
     this.store = store;
     this.config = config;
+    this.pools = pools;
     this.execute = execute;
     this.log = log.getChild('scheduler');
     this.onFinished = onFinished;
@@ -64,7 +67,7 @@ export class Scheduler {
       }
     }
     for (const resource of this.store.queuedResources()) {
-      if (resource in this.config.resources || this.warned.has(resource)) continue;
+      if (Object.keys(this.pools).length === 0 || resource in this.pools || this.warned.has(resource)) continue;
       this.warned.add(resource);
       this.log.warn('pool.unknown', {
         resource,
@@ -72,7 +75,7 @@ export class Scheduler {
       });
     }
     while (true) {
-      const run = this.store.claim(this.owner, this.config.maxConcurrent, this.config.resources, now);
+      const run = this.store.claim(this.owner, this.pools, now);
       if (!run) break;
       this.launch(run);
     }

@@ -160,11 +160,11 @@ in fresh sessions and report to a configured destination. Conversation turns
 run in order within one thread, continue that thread's session, reply into the
 thread, and must start within seconds. Folding them into the job table would
 teach the scheduler what a conversation is. What the two share is capacity:
-every turn takes a resource lease from the same pools as jobs
-(`Store.acquireLease`), so the `local-model` limit holds across both. These
-pools are what jobs and channel turns still draw; **ticket work** draws the
-dispatcher's `dispatcher.pools` — the two systems coexist, and folding one
-into the other is tracked deliberately-later
+every turn takes a lease from the same `dispatcher.pools` as jobs
+(`Store.acquireLease` takes the pool capacities derived from them), so one
+pool's slots hold across turns and runs alike. One pool set serves every
+service — ticket work asks the dispatcher itself, jobs and chat turns claim
+the same capacities through the store's ledger
 ([orchestrator](orchestrator.md)).
 
 Linear workers are conversations of the same machinery, one per

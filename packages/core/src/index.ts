@@ -5,6 +5,8 @@ export * from './clock.ts';
 export * from './config.ts';
 export * from './config-write.ts';
 export * from './contracts.ts';
+export * from './face.ts';
+export * from './face-tab.ts';
 export * from './kinds.ts';
 export * from './log.ts';
 export * from './output.ts';

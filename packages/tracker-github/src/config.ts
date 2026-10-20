@@ -46,7 +46,7 @@ export const githubSchema = z.strictObject({
     .min(1)
     .default('needs-human')
     .describe('Issues carrying this label are never worked automatically; setup creates it in each mapped repository.'),
-  resource: id.default('local-model').describe('Pool an assistant turn takes a slot in.'),
+  pool: id.default('default').describe('Dispatcher pool an assistant turn takes a slot in.'),
   progress: z
     .enum(['silent', 'status', 'tools'])
     .default('tools')

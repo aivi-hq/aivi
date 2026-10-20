@@ -101,6 +101,8 @@ async function stubServices(loaded: LoadedConfig, store: Store): Promise<Harness
     tasks: {},
     tools: {},
     forges: {},
+    voice: {} as never,
+    dispatcher: {} as never,
     orchestrator: {
       addTracker: (t: any) => void trackers.push(t),
       wake: async (project?: string) => void wakes.push(project ?? '*'),

@@ -147,7 +147,7 @@ export const jobSchema = z
     timezone: z.string().default('UTC'),
     /** One-off: fires once at this ISO 8601 instant. Exactly one of `cron` or `at`. */
     at: z.string().regex(ISO_INSTANT).optional(),
-    resource: id.default('local-model'),
+    resource: id.default('default').describe('Dispatcher pool this job draws capacity from.'),
     enabled: z.boolean().default(true),
     /** What the job executes. A bare operation name is shorthand for an `invocation` of it: `"dreaming"` is `{ kind: 'invocation', name: 'dreaming' }`. */
     task: z.preprocess(value => (typeof value === 'string' ? { kind: 'invocation', name: value } : value), taskSchema),
@@ -762,14 +762,16 @@ const configShape = z.strictObject({
     .describe('Who aivi is: the persona every platform shows, and who a worker it launched commits as.'),
   scheduler: z
     .strictObject({
-      maxConcurrent: z.number().int().min(1).max(64).default(1),
       /** Host-wide default for derived schedules; a job's own `timezone` wins over it. */
       timezone: z.string().optional().describe('IANA timezone for derived system schedules; default the host’s.'),
-      resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
       agentSchedules: z
         .union([
           z.strictObject({
-            resource: id.default('local-model').describe('Pool that agent-created jobs run in.'),
+            resource: id
+              .optional()
+              .describe(
+                'Dispatcher pool that agent-created jobs run in; default the dispatcher’s `default` pool, or its first pool when that does not exist.',
+              ),
             max: z
               .number()
               .int()
@@ -780,7 +782,7 @@ const configShape = z.strictObject({
           }),
           z.literal(false),
         ])
-        .default({ resource: 'local-model', max: 50 })
+        .default({ max: 50 })
         .describe(
           'OpenCode agents create jobs through the aivi_jobs tool; whoever may talk to an agent may schedule. `false` disables the tool.',
         ),
@@ -799,7 +801,7 @@ const configShape = z.strictObject({
             resource: id
               .optional()
               .describe(
-                'Pool the prune run takes a slot in; default local-model, or the first pool when that does not exist.',
+                'Pool the prune run takes a slot in; default the dispatcher’s `default` pool, or its first pool when that does not exist.',
               ),
           }),
           z.literal(false),
@@ -816,7 +818,7 @@ const configShape = z.strictObject({
             resource: id
               .optional()
               .describe(
-                'Pool the sync run takes a slot in; default local-model, or the first pool when that does not exist.',
+                'Pool the sync run takes a slot in; default the dispatcher’s `default` pool, or its first pool when that does not exist.',
               ),
           }),
           z.literal(false),
@@ -827,9 +829,7 @@ const configShape = z.strictObject({
         ),
     })
     .default({
-      maxConcurrent: 1,
-      resources: { 'local-model': 1 },
-      agentSchedules: { resource: 'local-model', max: 50 },
+      agentSchedules: { max: 50 },
       misfire: { graceSeconds: 60 },
       retention: { cron: '0 4 * * *', olderThanDays: 30 },
       projectsSync: { cron: '0 * * * *' },
@@ -887,24 +887,32 @@ function memoryIsReserved(config: Config, report: AddIssue): void {
         report([...path, i, 'id'], 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically');
 }
 
-/** A plugin block that names a capacity pool must name one that exists. Generic on
- *  purpose: core never learns what a module is, only that a block may carry `resource`. */
+/** A plugin block that names a capacity pool must name a dispatcher pool that
+ *  exists. Generic on purpose: core never learns what a module is, only that a
+ *  block may carry `resource` or `pool`. While capacity is unmoderated (no
+ *  pools) any name is idle, so nothing is reported. */
 function pluginPoolsAreNamed(config: Config, report: AddIssue): void {
-  const resources = config.scheduler.resources;
+  const pools = config.dispatcher.pools;
+  if (!pools || Object.keys(pools).length === 0) return;
+  const named = Object.keys(pools).join(', ');
   for (const [moduleId, block] of Object.entries(config.plugins)) {
-    const resource = (block as { resource?: unknown } | undefined)?.resource;
-    if (typeof resource === 'string' && !(resource in resources))
-      report(
-        ['plugins', moduleId, 'resource'],
-        `Unknown resource pool; name one of scheduler.resources or remove the plugins.${moduleId} block`,
-      );
+    for (const key of ['resource', 'pool'] as const) {
+      const pool = (block as Record<string, unknown> | undefined)?.[key];
+      if (typeof pool === 'string' && !(pool in pools))
+        report(
+          ['plugins', moduleId, key],
+          `Unknown dispatcher pool; name one of ${named} or remove the ${key} from the plugins.${moduleId} block`,
+        );
+    }
   }
 }
 
 /** A job's pool must exist, and no job may take a system job's reserved id. */
 function jobsObeyTheirPools(config: Config, report: AddIssue): void {
+  const pools = config.dispatcher.pools ?? {};
+  const moderated = Object.keys(pools).length > 0;
   for (const [i, job] of config.jobs.entries()) {
-    if (!(job.resource in config.scheduler.resources)) report(['jobs', i, 'resource'], 'Unknown resource pool');
+    if (moderated && !(job.resource in pools)) report(['jobs', i, 'resource'], 'Unknown dispatcher pool');
     if (job.id === RETENTION_JOB_ID && config.scheduler.retention)
       report(
         ['jobs', i, 'id'],
@@ -920,21 +928,27 @@ function jobsObeyTheirPools(config: Config, report: AddIssue): void {
 
 /** The scheduler's own knobs name real pools, and their crons parse. */
 function schedulerKnobsAreSound(config: Config, report: AddIssue): void {
-  const resources = config.scheduler.resources;
-  if (config.scheduler.agentSchedules && !(config.scheduler.agentSchedules.resource in resources))
+  const pools = config.dispatcher.pools ?? {};
+  const moderated = Object.keys(pools).length > 0;
+  if (
+    moderated &&
+    config.scheduler.agentSchedules &&
+    config.scheduler.agentSchedules.resource !== undefined &&
+    !(config.scheduler.agentSchedules.resource in pools)
+  )
     report(
       ['scheduler', 'agentSchedules', 'resource'],
-      'Unknown resource pool; name one of scheduler.resources or set agentSchedules to false',
+      `Unknown dispatcher pool; name one of ${Object.keys(pools).join(', ')} or set agentSchedules to false`,
     );
   for (const [name, system] of [
     ['retention', config.scheduler.retention],
     ['projectsSync', config.scheduler.projectsSync],
   ] as const) {
     if (!system) continue;
-    if (system.resource !== undefined && !(system.resource in resources))
+    if (moderated && system.resource !== undefined && !(system.resource in pools))
       report(
         ['scheduler', name, 'resource'],
-        `Unknown resource pool; name one of scheduler.resources or set ${name} to false`,
+        `Unknown dispatcher pool; name one of ${Object.keys(pools).join(', ')} or set ${name} to false`,
       );
     if (
       !jobSchema.safeParse({
@@ -1042,10 +1056,19 @@ export const RETENTION_JOB_ID = 'retention';
 /** Id of the job the host seeds from `scheduler.projectsSync`. */
 export const PROJECTS_SYNC_JOB_ID = 'projects-sync';
 
-const systemPool = (config: Config, resource: string | undefined) => {
-  const pools = Object.keys(config.scheduler.resources);
-  return resource ?? (pools.includes('local-model') ? 'local-model' : pools[0]);
-};
+/** The pool a system schedule runs in when it names none: the dispatcher’s
+ *  `default` pool, or its first pool; undefined when capacity is unmoderated. */
+export function systemPool(config: Config, resource: string | undefined) {
+  const pools = Object.keys(config.dispatcher.pools ?? {});
+  return resource ?? (pools.includes('default') ? 'default' : pools[0]);
+}
+
+/** The dispatcher's pools as a plain name→capacity map — what every service
+ *  that counts slots itself (channel turns, job runs) draws from. Empty means
+ *  capacity is unmoderated (docs/orchestrator.md). */
+export function poolCapacities(dispatcher: Config['dispatcher']): Record<string, number> {
+  return Object.fromEntries(Object.entries(dispatcher.pools ?? {}).map(([name, pool]) => [name, pool.capacity]));
+}
 
 /** The system job `scheduler.retention` describes, or null when retention is off. */
 export function retentionJob(

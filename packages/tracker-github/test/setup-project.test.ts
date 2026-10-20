@@ -582,7 +582,7 @@ const ALL_ASKED = ['issue opened', 'card added', 'Agent set', 'comment posted', 
 const QUESTIONS = ['1', ['acme/shop'], '', ...KINDS, 'Todo'];
 
 const secrets = (t: TestContext, values: Record<string, string | undefined>) => {
-  const had = Object.fromEntries(Object.entries(values).map(([name, value]) => [name, process.env[name]]));
+  const had = Object.fromEntries(Object.entries(values).map(([name]) => [name, process.env[name]]));
   const put = (name: string, value: string | undefined) => {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value; // process.env stringifies: assigning undefined writes the string "undefined"

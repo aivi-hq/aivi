@@ -2,7 +2,7 @@
  *  GitHub. The platform under it is a recorder — what the platform *does*
  *  is `tracker.test.ts`'s subject, not this file's. */
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -87,7 +87,7 @@ function recorder(states: { name: string }[], standing: TrackerIssue = issue()) 
   return { platform, calls };
 }
 
-test('the desk reads the ticket as it stands, in neutral words', async t => {
+test('the desk reads the ticket as it stands, in neutral words', async () => {
   const l = await loaded({ site: { 'tracker-github': { board: 1, repos: ['acme/shop'] } } });
   const { platform, calls } = recorder([]);
   const desk = createGithubDesk(l, config, platform);
@@ -119,7 +119,7 @@ test('the desk reads the ticket as it stands, in neutral words', async t => {
   ]);
 });
 
-test('a new ticket is born where the config says, never where the caller wishes', async t => {
+test('a new ticket is born where the config says, never where the caller wishes', async () => {
   const l = await loaded({
     site: {
       lanes: [{ name: 'Triage', worktree: false }],
@@ -133,7 +133,7 @@ test('a new ticket is born where the config says, never where the caller wishes'
   assert.deepEqual(made, { identifier: 'acme/shop#48', url: 'u48', lane: 'Triage' });
 });
 
-test('the create lane falls back to the project’s first lane, then to the repository’s own default', async t => {
+test('the create lane falls back to the project’s first lane, then to the repository’s own default', async () => {
   const l = await loaded({
     site: {
       lanes: [{ name: 'Backlog', worktree: false }],
@@ -158,7 +158,7 @@ test('the create lane falls back to the project’s first lane, then to the repo
   );
 });
 
-test('an explicit create lane the board does not carry is said, never guessed past', async t => {
+test('an explicit create lane the board does not carry is said, never guessed past', async () => {
   const l = await loaded({
     site: { 'tracker-github': { board: 1, repos: ['acme/shop'], createLane: 'Review' } },
   });
@@ -170,14 +170,14 @@ test('an explicit create lane the board does not carry is said, never guessed pa
   );
 });
 
-test('a project with no repositories has nowhere to create, and says so', async t => {
+test('a project with no repositories has nowhere to create, and says so', async () => {
   const l = await loaded({ site: { enabled: true } });
   const { platform } = recorder([]);
   const desk = createGithubDesk(l, config, platform);
   await assert.rejects(desk.create(run('x', 'site'), { title: 't', description: 'd' }), /no GitHub repositories/);
 });
 
-test('every desk call speaks on the app’s own feed, never a session', async t => {
+test('every desk call speaks on the app’s own feed, never a session', async () => {
   const l = await loaded({ site: { 'tracker-github': { board: 1, repos: ['acme/shop'] } } });
   const seen: unknown[] = [];
   const { platform } = recorder([]);
@@ -191,7 +191,7 @@ test('every desk call speaks on the app’s own feed, never a session', async t 
           ['issue', 'ticketComments', 'teamLabels', 'editIssue', 'addComment', 'apply'].includes(String(prop))
         )
           seen.push(args[0]);
-        return (value as Function).apply(target, args);
+        return (value as (...args: unknown[]) => unknown).apply(target, args);
       };
     },
   }) as unknown as Platform;

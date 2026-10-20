@@ -326,8 +326,8 @@ test('a PTY session runs the CLI on a terminal and reports its exit code', async
   const pty = ptys[0]!;
   assert.deepEqual(pty.argv, ['jobs', 'list']);
   assert.equal(pty.options.env?.AIVI_OPERATOR_BEARER, secret, 'the PTY child carries this connection’s bearer');
-  assert.ok(
-    done.events.some(event => event.t === 'ready' && event.pid === 4243),
+  await until(
+    () => done.events.some(event => event.t === 'ready' && event.pid === 4243),
     'the PTY child announced itself',
   );
   pty.says('argv:jobs list\r\n');

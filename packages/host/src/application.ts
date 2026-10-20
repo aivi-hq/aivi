@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import type { KnowledgeService, LoadedConfig, Logger, Run } from '@aivi/core';
-import { getLogger, gitIdentity, parseDuration, readPrompt, systemJobs } from '@aivi/core';
+import { getLogger, gitIdentity, parseDuration, poolCapacities, readPrompt, systemJobs } from '@aivi/core';
 import type { AiviModule, AiviServices, OpenCodeClient } from '@aivi/plugin/module';
 import { createApp, serveApp } from './api/app.ts';
 import { attachExec } from './api/exec.ts';
@@ -26,6 +26,7 @@ import type { Store } from './store.ts';
 import { TaskRegistry } from './tasks.ts';
 import { createTicketDesk } from './ticket-desk.ts';
 import { ToolRegistry } from './tools.ts';
+import { Voice } from './voice.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
 const FAILURE_NUDGE_AT = 3;
@@ -148,6 +149,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   // task asks who owns a remote before fetching it, and `aivi_pr` asks the
   // same question before pushing; the review gather will ask it too.
   const forges = new Forges();
+  // The voice seat: the voice module provides its adapter here; room-holding
+  // modules ask the same seat for a room and fail honestly when it is empty.
+  const voice = new Voice();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
@@ -282,6 +286,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       tasks: tasks.forModule('host'),
       tools: tools.forModule('host'),
       forges,
+      voice,
+      dispatcher,
       orchestrator,
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
@@ -336,6 +342,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
+      poolCapacities(loaded.config.dispatcher),
       createExecutor(loaded, {
         store,
         knowledge,

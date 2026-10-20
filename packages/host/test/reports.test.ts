@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Run } from '@aivi/core';
-import { configSchema, jobSchema, taskSchema } from '@aivi/core';
+import { configSchema, jobSchema, poolCapacities, taskSchema } from '@aivi/core';
 import type { ChannelModule } from '@aivi/plugin/channel';
 import { Channels } from '../src/channel/router.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from '../src/reports.ts';
@@ -115,6 +115,7 @@ test('scheduled outcomes are posted through the registered channel module and au
     const scheduler = new Scheduler(
       store,
       config.scheduler,
+      poolCapacities(config.dispatcher),
       async () => ({ state: 'succeeded', result: { ok: true } }),
       undefined,
       async (run, state, result, reason) => {

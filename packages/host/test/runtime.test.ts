@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
-import { configSchema, taskSchema } from '@aivi/core';
+import { configSchema, poolCapacities, taskSchema } from '@aivi/core';
 import { Forges } from '../src/forges.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { createExecutor } from '../src/runtime.ts';
@@ -95,6 +95,7 @@ test('opencode.prompt jobs run a full verified turn and succeed with the final a
   const scheduler = new Scheduler(
     store,
     config.scheduler,
+    poolCapacities(config.dispatcher),
     createExecutor(
       {
         path: '/config.json',
@@ -136,6 +137,7 @@ test('an unreachable OpenCode fails the job: nothing external happened, so the n
   const scheduler = new Scheduler(
     store,
     config.scheduler,
+    poolCapacities(config.dispatcher),
     createExecutor(
       {
         path: '/config.json',
@@ -230,6 +232,7 @@ test('a prompt job whose session cannot be created fails; nothing was submitted 
   const scheduler = new Scheduler(
     store,
     config.scheduler,
+    poolCapacities(config.dispatcher),
     createExecutor(
       {
         path: '/config.json',
@@ -282,6 +285,7 @@ test('a dreaming job persists its session id before the first request and blocks
   const scheduler = new Scheduler(
     store,
     config.scheduler,
+    poolCapacities(config.dispatcher),
     createExecutor(
       {
         path: '/config.json',
@@ -338,7 +342,8 @@ test('shell tasks run argv without a shell, capture output, and map exit codes t
   );
   const scheduler = new Scheduler(
     store,
-    { ...config.scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
+    config.scheduler,
+    { 'local-model': 2 },
     createExecutor(loaded, { store, events: quiet, opencode, tasks: new TaskRegistry(), forges: new Forges() }),
   );
   scheduler.tick();
@@ -390,6 +395,7 @@ test('shell tasks inherit the host environment minus aivi secrets and .env keys;
   const scheduler = new Scheduler(
     store,
     config.scheduler,
+    poolCapacities(config.dispatcher),
     createExecutor(
       {
         path: '/config.json',
@@ -436,6 +442,7 @@ test('a command that cannot start fails instead of blocking capacity', async t =
   const scheduler = new Scheduler(
     store,
     config.scheduler,
+    poolCapacities(config.dispatcher),
     createExecutor(
       {
         path: '/config.json',
@@ -482,6 +489,7 @@ test('a shell task that exceeds its timeout is blocked, not failed', async t => 
   const scheduler = new Scheduler(
     store,
     config.scheduler,
+    poolCapacities(config.dispatcher),
     createExecutor(
       {
         path: '/config.json',

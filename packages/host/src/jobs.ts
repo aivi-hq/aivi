@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Job, JobEntry, JobItem, JobRequest, JobResponse, LoadedConfig, Report } from '@aivi/core';
-import { formatInstant, jobSchema, nextOccurrences, parseDue, userTaskSchema } from '@aivi/core';
+import { formatInstant, jobSchema, nextOccurrences, parseDue, systemPool, userTaskSchema } from '@aivi/core';
 import type { OpenCodeClient } from '@aivi/plugin/module';
 import type { Channels } from './channel/router.ts';
 import { SESSION_DESTINATION } from './reports.ts';
@@ -223,7 +223,7 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
       throw new JobRefused(`The limit of ${settings.max} agent-created jobs is reached; remove one first.`, 409);
 
     const at = now();
-    const base = draft(input, task, report, settings.resource);
+    const base = draft(input, task, report, systemPool(loaded.config, settings.resource) ?? 'default');
     return input.at !== undefined ? addOneOff(input, base, at, dedupeKey) : addRecurring(input, base, at);
   }
 

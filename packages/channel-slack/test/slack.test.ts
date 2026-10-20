@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { KnowledgeService, Person, Run } from '@aivi/core';
-import { configSchema, getLogger } from '@aivi/core';
+import { configSchema, getLogger, poolCapacities } from '@aivi/core';
 import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/host';
 import {
   CHAT_COMMANDS,
@@ -16,6 +16,7 @@ import {
   TaskRegistry,
   ToolRegistry,
   usageHint,
+  Voice,
 } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
 import { slackConfigSchema } from '../src/config.ts';
@@ -340,6 +341,8 @@ test('the module: a mention opens a thread and is answered there once; duplicate
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
+    voice: new Voice(),
+    dispatcher: {} as never,
     orchestrator: {} as AiviServices['orchestrator'],
     wake: () => {},
     onWake: () => () => {},
@@ -523,7 +526,12 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
   const store = new Store(':memory:');
   linkMe(store);
   const woken = new Set<() => void>();
-  const loaded = { config: configSchema.parse({ version: 1 }), path: '/config.json', projects: [], sources: [] };
+  const loaded = {
+    config: configSchema.parse({ version: 1, dispatcher: { pools: { default: { capacity: 1 } } } }),
+    path: '/config.json',
+    projects: [],
+    sources: [],
+  };
   const slack = fakeConnection();
   const abort = new AbortController();
   const services: AiviServices = {
@@ -541,6 +549,8 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
+    voice: new Voice(),
+    dispatcher: {} as never,
     orchestrator: {} as AiviServices['orchestrator'],
     wake: () => {
       for (const l of woken) l();
@@ -552,10 +562,10 @@ test('a queued message shows the hourglass until its turn starts; a turn that ne
     fail: error => assert.fail(String(error)),
   };
   // Capacity is taken by a job, so the message waits.
-  const job = store.claim('host', 1, loaded.config.scheduler.resources, 0);
+  const job = store.claim('host', poolCapacities(loaded.config.dispatcher), 0);
   assert.equal(job, null);
-  store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'busy');
-  const busy = store.claim('host', 1, loaded.config.scheduler.resources)!;
+  store.enqueue({ kind: 'invocation', name: 'system.check' }, 'default', 'busy');
+  const busy = store.claim('host', poolCapacities(loaded.config.dispatcher))!;
   const running = await createSlackModule(config, slack.connection).start(services);
   t.after(async () => {
     await running.stop();
@@ -615,6 +625,8 @@ test('progress: the placeholder goes into the thread, stays quiet inside its win
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
+    voice: new Voice(),
+    dispatcher: {} as never,
     orchestrator: {} as AiviServices['orchestrator'],
     wake: () => {},
     onWake: () => () => {},
@@ -666,6 +678,8 @@ test('progress when the turn cannot run: the notice edits the placeholder instea
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
+    voice: new Voice(),
+    dispatcher: {} as never,
     orchestrator: {} as AiviServices['orchestrator'],
     wake: () => {},
     onWake: () => () => {},
@@ -752,6 +766,8 @@ test('a message interjects the running turn by default; /queue goes behind; -sto
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
+    voice: new Voice(),
+    dispatcher: {} as never,
     orchestrator: {} as AiviServices['orchestrator'],
     wake: () => {},
     onWake: () => () => {},

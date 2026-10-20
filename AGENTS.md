@@ -65,7 +65,7 @@ orchestration around it, all started by one `aivi serve`.
 | run | one execution of a job: `queued → running → succeeded / failed / blocked`, or `cancelled`, or `missed`; one row, one audit trail, always a `jobId`; snapshots the task |
 | missed | a run recorded for an occurrence found later than its misfire grace; terminal, never executed, reported like a failure |
 | turn | one prompt to a verified final answer in one OpenCode session (`runTurn`); a conversation turn is of kind `message` (a person) or `job` (an outcome re-entering) |
-| pool / lease | a slot in a named capacity pool. Two systems coexist (no merger yet): **ticket work** draws the dispatcher's `dispatcher.pools` (the orchestrator asks, the dispatcher decides), while **jobs and channel turns** draw `scheduler.resources`: [orchestrator](docs/orchestrator.md) |
+| pool / lease | a slot in a named capacity pool. **One pool set: `dispatcher.pools`.** Every service draws from it: ticket work and voice rooms `request` the dispatcher (the orchestrator asks, the dispatcher decides), while **jobs and channel turns** claim the same capacities through the store's lease ledger ([orchestrator](docs/orchestrator.md)). `scheduler` holds job *timing* defaults only — no capacity |
 | blocked | ended without proof that the external side stopped; keeps its capacity until `runs resolve` |
 | failed | ended before anything external happened; the next occurrence retries |
 | report | where an outcome goes: `{to: "session", session}` (back into that session as a prompt), `{to: "channel", module, channel}` (posted by a channel module), or nothing; each carries `on` (`always`, `failure` or `never`; default `always`) for when it fires |
@@ -114,8 +114,9 @@ runtime into `<state>/cache/schema.json`, composed from the plugin list. aivi re
 `AIVI_HOME`): `config.json` (the live config, never version-controlled), `.env`,
 `app/package.json` (the installed server, and the `aivi-plugins` list that
 enables plugins), `projects/<id>/{source,memory,worktrees}` per project,
-`memory/` (org), and `state/` with `aivi.sqlite`, the QMD index, the editor
-schema cache, and dreaming transcripts.
+`memory/` (org), `runtimes/<plugin>/` (installs a plugin owns, e.g. voice's
+python engine — an install is not state), and `state/` with `aivi.sqlite`,
+the QMD index, the editor schema cache, and dreaming transcripts.
 `dev/` is a real development home, produced by `npm run aivi:cli setup` against
 the local build (only its README is tracked; everything else, including the
 app manifest setup writes, is generated or git-ignored). `npm run aivi:cli`

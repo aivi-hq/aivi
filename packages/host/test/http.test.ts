@@ -307,7 +307,7 @@ test('jobs API validates the body, maps refusals to their status, and status lis
   };
   store.syncJobs(loaded.config.jobs, [], Date.now());
   const done = store.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'done');
-  const claimed = store.claim('host', 1, { 'local-model': 1 })!;
+  const claimed = store.claim('host', { 'local-model': 1 })!;
   store.finish(claimed.id, 'host', 'failed', null, 'boom');
   const requests: unknown[] = [];
   const server = serveApp(

@@ -31,13 +31,15 @@ Many concepts touch the flow of work, but two systems are responsible for actual
 The orchestrator never counts capacity itself. It asks the dispatcher for a lease and, once one is granted, works with it.
 
 The dispatcher is a central system, and the orchestrator pulling work is
-only one of the things it is designed for. Today it is the only user:
-**ticket work** draws `dispatcher.pools`. Jobs, dreaming and chat turns —
-Discord, Slack and the Linear assistant — still draw the older
-`scheduler.resources` from the store's own leases. The two systems coexist;
-folding them into the dispatcher's one pool set — including the turn lease
-below — is tracked deliberately-later in
-[plans/orchestrator.md](plans/orchestrator.md).
+only one of the things it is designed for. **One pool set —
+`dispatcher.pools` — is the capacity for every service**: ticket work asks
+the dispatcher for leases; jobs, dreaming and chat turns — Discord, Slack,
+the Linear assistant — claim the same pool capacities through the store's
+lease ledger (`Store.claim` / `Store.acquireLease` take the pool map derived
+from `dispatcher.pools`); voice rooms ask the dispatcher to run their turns.
+The older `scheduler.resources` capacity knobs are gone; `scheduler` keeps
+job *timing* defaults only. No pools configured means capacity is not
+moderated for any of them — the dispatcher's rule, applied everywhere.
 
 ## The basics
 
@@ -309,9 +311,13 @@ There are two lease types; only the second is built:
 
 A turn lease would ask the dispatcher to run a prompt. Nothing sends such a
 request yet: the services named above run their turns through their own
-machinery against `scheduler.resources`, and the steer-versus-queue delivery
-this section's rulings settled lives today in the channel engine
-([channels](channels.md)), not in the dispatcher.
+machinery against the same `dispatcher.pools` capacities (the store's lease
+ledger), and the steer-versus-queue delivery this section's rulings settled
+lives today in the channel engine ([channels](channels.md)), not in the
+dispatcher. The closest built shape is the voice module: it asks the
+dispatcher for a slot, and the pool decides the session's model at create
+([voice](../packages/voice/README.md)) — but the module, not the dispatcher,
+sends the prompt.
 
 When granted, the dispatcher claims a slot, creates or resumes the session, and runs the prompt.
 

@@ -40,13 +40,24 @@ export const INSTALLATION_EVENTS = new Set(['installation', 'installation_reposi
  *  ticket it is about — during a test several issues can be in play. The
  *  status our side answered with is left out on purpose: with the module not
  *  yet loaded nothing can answer 2xx, and the delivery arriving is the point. */
-export const describeDelivery = (event: string, payload: any): string => {
-  const number = payload?.issue?.number;
+/** A webhook payload as the probe reads it: like tracker.ts, payloads are
+ *  `unknown` until narrowed — the probe only ever asks for these fields. */
+type ProbePayload = {
+  action?: string;
+  changes?: { field_name?: string; field_value?: { field_name?: string } };
+  projects_v2_item?: { content_node_id?: string };
+  repository?: { full_name?: string };
+  issue?: { number?: number };
+};
+
+export const describeDelivery = (event: string, payload: unknown): string => {
+  const p = (payload ?? {}) as ProbePayload;
+  const number = p.issue?.number;
   const at =
-    payload?.repository?.full_name && number !== undefined
-      ? `${payload.repository.full_name}#${number}`
+    p.repository?.full_name && number !== undefined
+      ? `${p.repository.full_name}#${number}`
       : 'something the payload did not name';
-  const action = typeof payload?.action === 'string' ? ` ${payload.action}` : '';
+  const action = typeof p.action === 'string' ? ` ${p.action}` : '';
   return `${event}${action} on ${at}`;
 };
 
@@ -129,9 +140,9 @@ const verifyRow = (secret: string, row: { body: string | null; headers: Record<s
 function verifiedRow(
   secret: string,
   row: { body: string | null; headers: Record<string, string>; status: number },
-): any {
+): ProbePayload {
   if (!verifyRow(secret, row)) throw badSeal(row);
-  return JSON.parse(row.body ?? '{}');
+  return JSON.parse(row.body ?? '{}') as ProbePayload;
 }
 
 /**
@@ -146,8 +157,8 @@ export async function waitDiary(
     path: string;
     secret: string;
     windowMs: number;
-    accepts: (event: string, payload: any) => boolean;
-    about: (event: string, payload: any) => boolean;
+    accepts: (event: string, payload: ProbePayload) => boolean;
+    about: (event: string, payload: ProbePayload) => boolean;
   },
   cursor: number,
   say: (line: string) => void,
@@ -228,7 +239,7 @@ export async function waitDiary(
 /** The board probe's five signals: the mutations the wizard pays, and what
  *  each one's delivery looks like. Names are verdict words; the wizard says
  *  which landed and which did not. */
-export const BOARD_SIGNALS: Record<string, (event: string, payload: any) => boolean> = {
+export const BOARD_SIGNALS: Record<string, (event: string, payload: ProbePayload) => boolean> = {
   'issue opened': (event, payload) => event === 'issues' && payload?.action === 'opened',
   'card added': (event, payload) => event === 'projects_v2_item' && payload?.action === 'created',
   'Status moved': (event, payload) =>
@@ -253,7 +264,7 @@ export async function waitForSignals(
     secret: string;
     windowMs: number;
     asked: string[];
-    about: (event: string, payload: any) => boolean;
+    about: (event: string, payload: ProbePayload) => boolean;
   },
   cursor: number,
   say: (line: string) => void,
@@ -337,7 +348,7 @@ export async function waitForSignals(
  *  sat out its window on signals it already held. */
 export const aboutIssue =
   (repoId: string, number: number, issueNodeId: string) =>
-  (event: string, payload: any): boolean =>
+  (event: string, payload: ProbePayload): boolean =>
     event === 'projects_v2_item'
       ? payload?.projects_v2_item?.content_node_id === issueNodeId
       : payload?.repository?.full_name === repoId && payload?.issue?.number === number;

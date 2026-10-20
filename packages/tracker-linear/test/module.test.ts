@@ -32,6 +32,7 @@ import {
   Store,
   TaskRegistry,
   ToolRegistry,
+  Voice,
 } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
 import type { ChannelDelivery } from '@aivi/plugin/channel';
@@ -555,6 +556,8 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
+    voice: new Voice(),
+    dispatcher: {} as never,
     orchestrator,
     wake: () => {},
     onWake: () => () => {},

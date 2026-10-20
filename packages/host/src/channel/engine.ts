@@ -1,4 +1,4 @@
-import type { Config, Logger } from '@aivi/core';
+import type { Logger } from '@aivi/core';
 import { errorMessage, getLogger } from '@aivi/core';
 import type { ChannelDelivery, EngineNotices, Turn } from '@aivi/plugin/channel';
 import { TurnNotStarted } from '../session.ts';
@@ -24,7 +24,7 @@ export function splitReply(text: string, limit: number): string[] {
 export type Ask = (turn: Turn, signal: AbortSignal, ready: () => void) => Promise<string>;
 export type Send = ChannelDelivery['send'];
 export interface EngineLimits {
-  resource: string;
+  pool: string;
   maxConcurrent: number;
 }
 export interface EngineOptions {
@@ -45,7 +45,7 @@ export class ChannelEngine {
   private readonly log: Logger;
   private readonly store: ConversationStore;
   private readonly limits: EngineLimits;
-  private readonly scheduler: Config['scheduler'];
+  private readonly pools: Record<string, number>;
   private readonly ask: Ask;
   private readonly delivery: ChannelDelivery;
   private readonly progress: ProgressOptions | undefined;
@@ -55,14 +55,14 @@ export class ChannelEngine {
   constructor(
     store: ConversationStore,
     limits: EngineLimits,
-    scheduler: Config['scheduler'],
+    pools: Record<string, number>,
     ask: Ask,
     delivery: ChannelDelivery,
     options: EngineOptions = {},
   ) {
     this.store = store;
     this.limits = limits;
-    this.scheduler = scheduler;
+    this.pools = pools;
     this.ask = ask;
     this.delivery = delivery;
     this.progress = options.progress;
@@ -74,7 +74,7 @@ export class ChannelEngine {
 
   tick(): void {
     while (!this.abort.signal.aborted && this.active.size < this.limits.maxConcurrent) {
-      const turn = this.store.claim(this.scheduler, this.limits.resource);
+      const turn = this.store.claim(this.pools, this.limits.pool);
       if (!turn) break;
       this.launch(turn);
     }

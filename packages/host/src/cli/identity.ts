@@ -2,7 +2,14 @@
  *  directly, and the client config file it signs in with. */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { clientConfigPath, installPrompts, loadConfig, printedBaseUrl, writeConfigBlock } from '@aivi/core';
+import {
+  clientConfigPath,
+  installFace,
+  installPrompts,
+  loadConfig,
+  printedBaseUrl,
+  writeConfigBlock,
+} from '@aivi/core';
 import { Store } from '@aivi/host';
 import * as p from '@clack/prompts';
 import { hostUrl } from './context.ts';
@@ -44,6 +51,11 @@ export async function serverCreate(options: {
   // the operator has words to edit from the first breath. Delete a file and
   // the built-in returns; `aivi prompts` is the sight and the re-copy.
   await installPrompts(home);
+  // The face rides with the home the same way (docs/plans/voice-ship.md
+  // item 9b): core's built-in page is copied to `<home>/face/index.html`,
+  // never overwriting. It is what every camera aivi shows wears; `aivi
+  // face` is the sight and the re-copy.
+  await installFace(home);
   // The reach address lands before anything reads the config: an invalid
   // value fails here, with nothing minted yet.
   await storeReach(configPath, options);

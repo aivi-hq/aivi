@@ -43,8 +43,9 @@ export function registerKnowledge(program: Command): void {
     .action(async values => {
       const { loaded, poke } = await context();
       if (loaded.config.search === false) throw new Error('Knowledge search is disabled in the config');
-      if (!(values.resource in loaded.config.scheduler.resources))
-        throw new Error('Configure a maintenance resource pool or pass --resource');
+      const pools = loaded.config.dispatcher.pools ?? {};
+      if (Object.keys(pools).length > 0 && !(values.resource in pools))
+        throw new Error(`Unknown dispatcher pool: ${values.resource}; name one of ${Object.keys(pools).join(', ')}`);
       await withStore(loaded, store =>
         print(store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, values.resource, `index:${randomUUID()}`)),
       );

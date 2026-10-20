@@ -1,9 +1,11 @@
 /**
- * The install contract an installable plugin package fills. `aivi add`
+ * The install contract an installable plugin package may fill. `aivi add`
  * npm-installs the package into the server home and then runs its `./setup`
- * entry; the CLI knows nothing platform-specific. Everything the flow needs
- * arrives through the context, so the flow prints its own platform
- * instructions and is testable without a terminal or a platform account.
+ * entry — if it has one: a plugin whose `./config` export is its whole say at
+ * add time joins the list on that alone, the editor schema composed from it.
+ * The CLI knows nothing platform-specific. Everything the flow needs arrives
+ * through the context, so the flow prints its own platform instructions and
+ * is testable without a terminal or a platform account.
  */
 
 import type { OutputBlock } from '@aivi/core';

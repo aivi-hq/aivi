@@ -90,7 +90,7 @@ export function githubPrivateKey(env: NodeJS.ProcessEnv = process.env): string {
  */
 export function githubCredentials(env: NodeJS.ProcessEnv = process.env): GitHubCredentials {
   const written = env[GITHUB_APP_ID_ENV];
-  if (!written || !written.trim())
+  if (!written?.trim())
     throw new ConfigurationError(
       `github: ${GITHUB_APP_ID_ENV} is not set. Put the app's numeric id — the number on the app settings page, next to "App ID" — in <home>/.env.`,
     );

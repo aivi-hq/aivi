@@ -5,7 +5,8 @@ import { connectOpenCode, status } from '@aivi/host';
 import type { MachineStatus } from '@aivi/plugin';
 import type { Command } from 'commander';
 import { startServer } from '../../server.ts';
-import { context, hostUrl, print, withStore } from '../context.ts';
+import { context, home, hostUrl, print, withStore } from '../context.ts';
+import { writeEditorSchema } from '../schema-cache.ts';
 
 export function registerServer(program: Command, machine: MachineStatus): void {
   program
@@ -60,6 +61,15 @@ export function registerServer(program: Command, machine: MachineStatus): void {
         sources: loaded.sources.length,
         host: loaded.config.host,
       });
+    });
+  config
+    .command('schema')
+    .description(
+      'Rebuild <state>/cache/schema.json from the plugin list: run it when a plugin block changed and the editor still complains (or stays silent) about fields — normally setup/add/remove keep it current',
+    )
+    .action(async () => {
+      const file = await writeEditorSchema(home());
+      print({ file }, `Editor schema rebuilt: ${file}`);
     });
 
   const opencode = program.command('opencode').description('the OpenCode service the host uses').helpGroup('Server');

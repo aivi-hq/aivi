@@ -110,6 +110,40 @@ const optionNamed = (options: { id: string; name: string }[], name: string): str
  *  `completed` one does. */
 export const dependencyCompleted = (state: string): boolean => state === 'closed';
 
+/** The GraphQL node shapes these documents answer with: the looseness stays
+ *  in the query documents, the mapping code below speaks types. Shared with
+ *  setup-project, which reads the same board. */
+export type GqlOption = { id: string; name: string };
+export type GqlField = { id: string; name?: string | null; options?: GqlOption[] | null };
+export type GqlView = { id: string; name?: string | null; fields?: { nodes?: { id?: string | null }[] } | null };
+export type GqlBoard = {
+  id: string;
+  title: string;
+  fields?: { nodes?: (GqlField | null)[] } | null;
+  views?: { nodes?: (GqlView | null)[] } | null;
+};
+type GqlFieldVal = { field?: { name?: string | null } | null; name?: string | null; optionId?: string | null };
+type GqlProjectItem = {
+  id: string;
+  project?: { number?: number | string | null } | null;
+  fieldValues?: { nodes?: (GqlFieldVal | null)[] } | null;
+};
+type GqlIssueNode = {
+  id: string;
+  number: number;
+  title: string;
+  body?: string | null;
+  url: string;
+  state: string;
+  stateReason?: string | null;
+  labels?: { nodes?: GqlOption[] } | null;
+  assignees?: { nodes?: { id: string; login: string }[] } | null;
+  projectItems?: { nodes?: (GqlProjectItem | null)[] } | null;
+  blockedBy?: {
+    nodes?: { repository: { owner: { login: string }; name: string }; number: number; state: string }[];
+  } | null;
+};
+
 /** Whether GitHub says the thing **does not exist** rather than "try
  *  again": a deleted issue answers its comments, its board item and its own
  *  node with 404 (REST) or `Could not resolve to a Node` (GraphQL). A
@@ -228,7 +262,7 @@ const CLEAR_SELECT = /* GraphQL */ `
  *  here and stops existing above this file. The `number` is the
  *  repository-local one — `databaseId` is a global row id (billions for a
  *  repo's 52nd issue) and appears in no id aivi builds. */
-function mapIssue(owner: string, name: string, node: Record<string, any>): GithubIssue {
+function mapIssue(owner: string, name: string, node: GqlIssueNode): GithubIssue {
   const repo = `${owner}/${name}`;
   const ref = repoIssueId(owner, name, node.number);
   return {
@@ -241,16 +275,16 @@ function mapIssue(owner: string, name: string, node: Record<string, any>): Githu
     url: node.url,
     state: node.state === 'CLOSED' ? 'closed' : 'open',
     stateReason: node.stateReason ? String(node.stateReason).toLowerCase() : null,
-    labels: (node.labels?.nodes ?? []).map((l: any) => ({ id: l.id, name: l.name })),
-    assignees: (node.assignees?.nodes ?? []).map((a: any) => ({ id: a.id, name: a.login })),
-    projectItems: (node.projectItems?.nodes ?? []).map((item: any) => ({
-      itemId: item.id,
-      boardNumber: Number(item.project?.number),
-      values: (item.fieldValues?.nodes ?? [])
-        .filter((v: any) => v?.field?.name)
-        .map((v: any) => ({ field: v.field.name, name: v.name, optionId: v.optionId })),
+    labels: (node.labels?.nodes ?? []).map(l => ({ id: l.id, name: l.name })),
+    assignees: (node.assignees?.nodes ?? []).map(a => ({ id: a.id, name: a.login })),
+    projectItems: (node.projectItems?.nodes ?? []).map(item => ({
+      itemId: item?.id ?? '',
+      boardNumber: Number(item?.project?.number),
+      values: (item?.fieldValues?.nodes ?? [])
+        .filter((v): v is GqlFieldVal & { field: { name: string } } => Boolean(v?.field?.name))
+        .map(v => ({ field: v.field.name, name: v.name ?? '', optionId: v.optionId ?? '' })),
     })),
-    blockedBy: (node.blockedBy?.nodes ?? []).map((d: any) => ({
+    blockedBy: (node.blockedBy?.nodes ?? []).map(d => ({
       id: repoIssueId(d.repository.owner.login, d.repository.name, d.number),
       completed: dependencyCompleted(d.state === 'CLOSED' ? 'closed' : 'open'),
     })),
@@ -296,14 +330,14 @@ export class GithubClient {
   async boardFields(boardNumber: number): Promise<BoardFields> {
     const known = this.boards.get(boardNumber);
     if (known) return known;
-    const { organization } = await this.app.octokit.graphql<{ organization: any }>(BOARD_FIELDS, {
+    const { organization } = await this.app.octokit.graphql<{ organization?: { projectV2?: GqlBoard } }>(BOARD_FIELDS, {
       owner: this.org,
       number: boardNumber,
     });
     const project = organization?.projectV2;
     if (!project) throw new Error(`board ${boardNumber} is not visible to the app in ${this.org}`);
-    let status: any;
-    let agent: any;
+    let status: GqlField | undefined;
+    let agent: GqlField | undefined;
     for (const field of project.fields?.nodes ?? [])
       if (field?.name === STATUS_FIELD) status = field;
       else if (field?.name === AGENT_FIELD) agent = field;
@@ -319,9 +353,9 @@ export class GithubClient {
       projectId: project.id,
       number: boardNumber,
       statusFieldId: status.id,
-      statusOptions: (status.options ?? []).map((o: any) => ({ id: o.id, name: o.name })),
+      statusOptions: (status.options ?? []).map(o => ({ id: o.id, name: o.name })),
       agentFieldId: agent.id,
-      agentOptions: (agent.options ?? []).map((o: any) => ({ id: o.id, name: o.name })),
+      agentOptions: (agent.options ?? []).map(o => ({ id: o.id, name: o.name })),
     };
     this.boards.set(boardNumber, fields);
     return fields;
@@ -335,7 +369,7 @@ export class GithubClient {
 
   async issue(id: string): Promise<GithubIssue> {
     const { owner, name, number } = issueRef(id);
-    const { repository } = await this.app.octokit.graphql<{ repository: any }>(ISSUE_FACTS, {
+    const { repository } = await this.app.octokit.graphql<{ repository?: { issue?: GqlIssueNode } }>(ISSUE_FACTS, {
       owner,
       repo: name,
       number,
@@ -349,13 +383,16 @@ export class GithubClient {
    *  round trip). Capped; a truncated read is said, never silently short. */
   async openIssues(repo: string, cap = 100): Promise<{ issues: GithubIssue[]; truncated: boolean }> {
     const [owner, name] = repo.split('/');
-    const { repository } = await this.app.octokit.graphql<{ repository: any }>(OPEN_ISSUES, {
-      owner,
-      repo: name,
-      first: cap,
-    });
+    const { repository } = await this.app.octokit.graphql<{ repository?: { issues?: { nodes?: GqlIssueNode[] } } }>(
+      OPEN_ISSUES,
+      {
+        owner,
+        repo: name,
+        first: cap,
+      },
+    );
     const nodes = repository?.issues?.nodes ?? [];
-    return { issues: nodes.map((n: any) => mapIssue(owner!, name!, n)), truncated: nodes.length >= cap };
+    return { issues: nodes.map(n => mapIssue(owner!, name!, n)), truncated: nodes.length >= cap };
   }
 
   /** The issue's lane on one board, read from its item: undefined when the
@@ -368,7 +405,7 @@ export class GithubClient {
   laneOf(issue: GithubIssue, boardNumber: number): { name: string; optionId: string } | undefined {
     const item = itemOn(issue, boardNumber);
     const status = item?.values.find(v => v.field === STATUS_FIELD);
-    return status && status.name ? { name: status.name, optionId: status.optionId } : undefined;
+    return status?.name ? { name: status.name, optionId: status.optionId } : undefined;
   }
 
   /** The issue's `Agent` value on one board: the option's name, or undefined
@@ -376,7 +413,7 @@ export class GithubClient {
   agentOn(issue: GithubIssue, boardNumber: number): string | undefined {
     const item = itemOn(issue, boardNumber);
     const agent = item?.values.find(v => v.field === AGENT_FIELD);
-    return agent && agent.name ? agent.name : undefined;
+    return agent?.name || undefined;
   }
 
   /** Move an issue into a board's Status option: onto the board first (the
@@ -392,11 +429,13 @@ export class GithubClient {
     const issue = await this.issue(id);
     let item = itemOn(issue, boardNumber);
     if (!item) {
-      const { addProjectV2ItemById } = await this.app.octokit.graphql<{ addProjectV2ItemById: any }>(ADD_ITEM, {
+      const { addProjectV2ItemById } = await this.app.octokit.graphql<{
+        addProjectV2ItemById?: { item?: { id: string } };
+      }>(ADD_ITEM, {
         projectId: fields.projectId,
         contentId: issue.id,
       });
-      item = { itemId: addProjectV2ItemById.item.id, boardNumber, values: [] };
+      item = { itemId: addProjectV2ItemById?.item?.id ?? '', boardNumber, values: [] };
     }
     if (item.values.find(v => v.field === STATUS_FIELD)?.name === lane) return; // already there
     await this.app.octokit.graphql(SET_SELECT, {
@@ -541,8 +580,10 @@ export class GithubClient {
    *  the node's `databaseId` is a global row id and resolves to no issue.
    *  Non-issue nodes answer undefined. */
   async nodeRef(nodeId: string): Promise<string | undefined> {
-    const { node } = await this.app.octokit.graphql<{ node: any }>(NODE_REF, { id: nodeId });
-    if (!node?.repository) return undefined;
+    const { node } = await this.app.octokit.graphql<{
+      node?: { repository?: { owner: { login: string }; name: string }; number?: number };
+    }>(NODE_REF, { id: nodeId });
+    if (!node?.repository || node.number === undefined) return undefined;
     return repoIssueId(node.repository.owner.login, node.repository.name, node.number);
   }
 

@@ -7,7 +7,8 @@
     "./kinds": { "development": "./src/kinds.ts", "default": "./dist/kinds.js" }
   },
   "files": [
-    "dist"
+    "dist",
+    "face"
   ],
   "engines": {
     "node": ">=26.1.0 <27"
@@ -25,6 +26,7 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
+    "@aivi/chrome": "^0.1.0",
     "@logtape/file": "2.3.6",
     "@logtape/logtape": "2.3.6",
     "@logtape/pretty": "2.3.6",

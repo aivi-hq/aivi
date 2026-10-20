@@ -49,7 +49,7 @@ export function registerJobs(program: Command): void {
     .option('--cron <expr>', 'a recurring schedule')
     .option('--timezone <tz>', "IANA timezone for --cron; defaults to this machine's")
     .option('--title <text>', 'a title for the job')
-    .option('--resource <pool>', "the resource pool; the task file's resource, else local-model")
+    .option('--resource <pool>', "the dispatcher pool; the task file's resource, else the `default` pool")
     .option('--key <id>', 'deduplicates identical requests')
     .action(async (file, values) => {
       const { loaded, poke } = await context();
@@ -65,8 +65,10 @@ export function registerJobs(program: Command): void {
       // Invocation args belong to the claimant: they resolve when the operation runs.
       if (task.kind === 'prompt') task.directory = resolve(home(), task.directory);
       if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home(), task.cwd);
-      const resource = values.resource ?? fileResource ?? 'local-model';
-      if (!(resource in loaded.config.scheduler.resources)) throw new Error(`Unknown resource pool: ${resource}`);
+      const resource = values.resource ?? fileResource ?? 'default';
+      const pools = loaded.config.dispatcher.pools ?? {};
+      if (Object.keys(pools).length > 0 && !(resource in pools))
+        throw new Error(`Unknown dispatcher pool: ${resource}; name one of ${Object.keys(pools).join(', ')}`);
       if (values.at && values.cron) throw new Error('Choose --at (one-off) or --cron (recurring)');
       const now = Date.now();
       const spec = jobSchema.parse({

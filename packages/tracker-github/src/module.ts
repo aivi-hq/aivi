@@ -25,7 +25,7 @@
  * brings us directly, which still rides the channel machinery until the
  * channels reform.
  */
-import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
+import { errorMessage, laneOf, type Project, type ProjectLane, poolCapacities } from '@aivi/core';
 import {
   ChannelEngine,
   ConversationStore,
@@ -35,7 +35,7 @@ import {
 } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
-import type { Platform, TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
+import type { TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
 import type { GithubClient } from './client.ts';
 import { githubClient, isGoneError } from './client.ts';
 import type { GithubConfig } from './config.ts';
@@ -229,8 +229,8 @@ async function startGithub(
     };
     engine = new ChannelEngine(
       store,
-      { resource: config.resource, maxConcurrent: 8 },
-      services.loaded.config.scheduler,
+      { pool: config.pool, maxConcurrent: 8 },
+      poolCapacities(services.loaded.config.dispatcher),
       ask,
       delivery,
       {

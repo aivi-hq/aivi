@@ -34,7 +34,6 @@ import type {
   TrackerUpdate,
 } from '@aivi/plugin/tracker';
 import type { GithubClient, GithubIssue } from './client.ts';
-import { isGoneError } from './client.ts';
 import type { ProjectGithub } from './config.ts';
 import { MODULE_ID } from './config.ts';
 import { projectForIssue, projectGithub } from './projects.ts';
@@ -575,7 +574,7 @@ export const GITHUB_WEBHOOK_PATH = '/github/webhooks';
 export function registerWebhookRoute(
   routes: PublicRoutes,
   platform: GithubPlatform,
-  log: Logger = getLogger(['aivi', MODULE_ID]),
+  _log: Logger = getLogger(['aivi', MODULE_ID]),
 ): () => void {
   return routes.register(GITHUB_WEBHOOK_PATH, async request => {
     if (request.method !== 'POST') return { status: 405, body: { error: 'Use POST' } };

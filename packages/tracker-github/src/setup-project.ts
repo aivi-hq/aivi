@@ -38,6 +38,7 @@ import {
   type ProjectContributor,
   type ProjectSetupContext,
 } from '@aivi/plugin';
+import type { GqlBoard, GqlField } from './client.ts';
 import { GithubClient } from './client.ts';
 import { AGENT_FIELD, githubSchema, STATUS_FIELD } from './config.ts';
 import {
@@ -228,10 +229,13 @@ export class BoardSetupClient implements GithubSetupClient {
   }
 
   async readBoard(boardNumber: number): Promise<SetupBoard> {
-    const { organization } = await this.app.octokit.graphql<{ organization: any }>(BOARD_SETUP, {
-      owner: this.app.accountLogin,
-      number: boardNumber,
-    });
+    const { organization } = await this.app.octokit.graphql<{ organization?: { id: string; projectV2?: GqlBoard } }>(
+      BOARD_SETUP,
+      {
+        owner: this.app.accountLogin,
+        number: boardNumber,
+      },
+    );
     if (!organization)
       throw new Error(
         `${this.app.accountLogin} answers nothing for the app: the installation is not on that organization`,
@@ -241,8 +245,8 @@ export class BoardSetupClient implements GithubSetupClient {
       throw new Error(
         `board ${boardNumber} is not visible to the app in ${this.app.accountLogin}: check the number at the end of the board URL, and that the installation has “Organization projects: Read & write”`,
       );
-    let status: any;
-    let agent: any;
+    let status: GqlField | undefined;
+    let agent: GqlField | undefined;
     for (const field of project.fields?.nodes ?? [])
       if (field?.name === STATUS_FIELD) status = field;
       else if (field?.name === AGENT_FIELD) agent = field;
@@ -255,10 +259,10 @@ export class BoardSetupClient implements GithubSetupClient {
       number: boardNumber,
       orgId: organization.id,
       title: project.title,
-      statusOptions: (status.options ?? []).map((o: any) => ({ id: o.id, name: o.name })),
+      statusOptions: (status.options ?? []).map(o => ({ id: o.id, name: o.name })),
       statusFieldId: status.id,
       ...(agent ? { agentFieldId: agent.id } : {}),
-      agentOptions: ((agent?.options ?? []) as any[]).map((o: any) => ({ id: o.id, name: o.name })),
+      agentOptions: (agent?.options ?? []).map(o => ({ id: o.id, name: o.name })),
     };
   }
 
@@ -267,15 +271,16 @@ export class BoardSetupClient implements GithubSetupClient {
   }
 
   async showAgentOnViews(board: SetupBoard, agentFieldId: string): Promise<string[]> {
-    const { organization } = await this.app.octokit.graphql<{ organization: any }>(BOARD_VIEWS, {
+    const { organization } = await this.app.octokit.graphql<{ organization?: { projectV2?: GqlBoard } }>(BOARD_VIEWS, {
       owner: this.app.accountLogin,
       number: board.number,
     });
     const shown: string[] = [];
     for (const view of organization?.projectV2?.views?.nodes ?? []) {
-      const ids = (view?.fields?.nodes ?? [])
-        .map((field: any) => field?.id)
-        .filter((id: unknown): id is string => typeof id === 'string');
+      if (!view) continue;
+      const ids = (view.fields?.nodes ?? [])
+        .map(field => field?.id)
+        .filter((id): id is string => typeof id === 'string');
       if (ids.includes(agentFieldId)) continue; // already visible: idempotent, write nothing
       await this.app.octokit.graphql(SHOW_AGENT_FIELD, { viewId: view.id, visibleFieldIds: [...ids, agentFieldId] });
       shown.push(String(view.name ?? view.id));
@@ -298,11 +303,13 @@ export class BoardSetupClient implements GithubSetupClient {
       title: 'aivi projects add test — safe to ignore',
       body: 'A test card from `aivi projects add`: it proves GitHub’s deliveries reach this aivi. Closed and archived when the test ends.',
     });
-    const { addProjectV2ItemById } = await this.app.octokit.graphql<{ addProjectV2ItemById: any }>(PROBE_ADD_ITEM, {
+    const { addProjectV2ItemById } = await this.app.octokit.graphql<{
+      addProjectV2ItemById?: { item?: { id: string } };
+    }>(PROBE_ADD_ITEM, {
       projectId: board.id,
       contentId: issue.id,
     });
-    const itemId: string = addProjectV2ItemById.item.id;
+    const itemId: string = addProjectV2ItemById?.item?.id ?? '';
     const asked = ['issue opened', 'card added', 'Agent set', 'comment posted'];
     // Status: the next option in board order the card is not already on —
     // there is no open/closed notion, GitHub has none. A mutation that

@@ -41,9 +41,11 @@ export interface ModuleState {
 
 export interface AddIo {
   install(spec: string, appDir: string): void;
-  /** Run the plugin's own `./setup` in-process in the installed app's code;
-   *  answers the module id it enabled, or undefined when the flow stopped. */
-  setupPlugin(spec: string, options: AddOptions): Promise<string | undefined>;
+  /** Run the plugin's own `./setup` in-process in the installed app's code.
+   *  Answers the module id it enabled; **null** when the package has no
+   *  `./setup` export — a config-only plugin has nothing to say at add time
+   *  and the command carries on without one; undefined when a flow stopped. */
+  setupPlugin(spec: string, options: AddOptions): Promise<string | undefined | null>;
   /** Rebuild `<state>/cache/schema.json` and config.json's `$schema` line. */
   rebuildSchema(home: string, appDir: string): Promise<void>;
   healthUrl(home: string): Promise<string>;
@@ -76,7 +78,7 @@ const defaultIo: AddIo = {
       pluginSetup: (
         spec: string,
         options: { home: string; configPath: string; identityName: string },
-      ) => Promise<string | undefined>;
+      ) => Promise<string | undefined | null>;
     }>(options.appDir, options.home, 'dist/cli/plugin-setup.js');
     return pluginSetup(spec, {
       home: options.home,
@@ -176,7 +178,7 @@ function dependencyFor(appDir: string, spec: string, before: string[]): string {
 
 /** Bring it up: restart aivi, then read the module's own health. The command
  *  ends only when the module itself reports running (or gives a reason). */
-async function restartAndReport(io: AddIo, url: string, label: string, moduleId: string | undefined) {
+async function restartAndReport(io: AddIo, url: string, label: string, moduleId: string | undefined | null) {
   // The one notice ("server restarting…") rides inside serviceRestart: the
   // chokepoint announces before the host drops, whoever asked — over an exec
   // relay this command's own process is the host's child and dies with it.
@@ -213,11 +215,14 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
   // the fact), and npm's own diff still gets the last word when it surprises.
   const listed = dependencyNames(options.appDir).includes(pkg) ? pkg : dependencyFor(options.appDir, spec, before);
 
-  // The plugin configures itself: instructions, prompts, verification and
-  // writes all live in its ./setup entry, run in-process; the flow's ending
-  // is its own last line. The list entry waits for the setup to have spoken,
-  // so a stopped flow leaves the package installed but inert: no entry means
-  // the server never imports it, and the block was never written.
+  // The plugin configures itself if it wants to: instructions, prompts,
+  // verification and writes live in its ./setup entry, run in-process; the
+  // flow's ending is its own last line. A plugin with only ./config (the
+  // schema export every editor schema is composed from) has nothing to say
+  // at add time: pluginSetup answers null and the join carries on with the
+  // defaults. Only a stopped flow — a flow that spoke and refused — leaves
+  // the package installed but inert: no entry means the server never imports
+  // it, and the block was never written.
   const moduleId = await setupOrSay(io, listed, options);
   if (process.exitCode) {
     io.log('Nothing joined the plugin list, and nothing was restarted.');
@@ -239,8 +244,10 @@ export async function add(args: string[], options: AddOptions, io: AddIo = defau
 }
 
 /** Run the plugin's own setup flow; its failure is said in the flow's own
- *  last line and kept as the exit code — the caller reads that and stops. */
-async function setupOrSay(io: AddIo, listed: string, options: AddOptions): Promise<string | undefined> {
+ *  last line and kept as the exit code — the caller reads that and stops.
+ *  Null (no ./setup export at all) is not a failure: the flow simply has
+ *  nothing to say. */
+async function setupOrSay(io: AddIo, listed: string, options: AddOptions): Promise<string | undefined | null> {
   try {
     return await io.setupPlugin(listed, options);
   } catch (error) {

@@ -1,5 +1,5 @@
 import type { AccessRoute } from '@aivi/core';
-import { accessEntry } from '@aivi/core';
+import { accessEntry, poolCapacities } from '@aivi/core';
 import {
   announce,
   CHAT_COMMANDS,
@@ -283,7 +283,7 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
     engine = new ChannelEngine(
       store,
       config,
-      services.loaded.config.scheduler,
+      poolCapacities(services.loaded.config.dispatcher),
       async (turn, signal, ready) => {
         void working(turn);
         try {

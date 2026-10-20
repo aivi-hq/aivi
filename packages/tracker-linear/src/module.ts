@@ -22,7 +22,7 @@
  * conversation a person brings us directly, which still rides the channel
  * machinery until the channels reform.
  */
-import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
+import { errorMessage, laneOf, type Project, type ProjectLane, poolCapacities } from '@aivi/core';
 import {
   ChannelEngine,
   ConversationStore,
@@ -204,8 +204,8 @@ async function startLinear(
     };
     engine = new ChannelEngine(
       store,
-      { resource: config.resource, maxConcurrent: 8 },
-      services.loaded.config.scheduler,
+      { pool: config.pool, maxConcurrent: 8 },
+      poolCapacities(services.loaded.config.dispatcher),
       ask,
       delivery,
       {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { configSchema, jobSchema } from '@aivi/core';
+import { configSchema, jobSchema, poolCapacities } from '@aivi/core';
 import type { AiviModule } from '@aivi/plugin/module';
 import type { HostResources } from '../src/application.ts';
 import { runHost } from '../src/application.ts';
@@ -328,6 +328,7 @@ test('scheduled knowledge indexing uses the same injected service', async t => {
   const scheduler = new Scheduler(
     store,
     config.config.scheduler,
+    poolCapacities(config.config.dispatcher),
     createExecutor(config, {
       store,
       knowledge,

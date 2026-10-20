@@ -123,7 +123,7 @@ test('a frozen status comment is the closing’s last word: a trailing edit neve
 });
 
 test('comment words land where the conversation says: run edits, ticket posts', async t => {
-  const { platform, script, root } = await harness({
+  const { platform, root } = await harness({
     'GET /repos/acme/shop/issues/comments/1234': () => ({
       status: 200,
       body: { body: '**Working**\n<!-- {"kind":"status"} -->' },
