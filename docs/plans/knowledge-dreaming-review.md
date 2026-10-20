@@ -130,8 +130,8 @@ loop (§D) is an explicit design discussion.
 - Transcript: a succeeded run DELETES `<state>/dreaming/<runId>.md` (the
   OpenCode sessions are the record); a failed run keeps it for the
   post-mortem. No forever-accumulation.
-- NOT built (deferred by ruling): per-session dreaming; fact inventory
-  metadata (§F); staleness loop (§D).
+- NOT built (deferred by ruling): fact inventory metadata (§F); staleness loop
+  (§D).
 
 ### Queue — BUILT 2026-10-20
 - The knowledge package's promise chain (born in the first commit, no
@@ -149,7 +149,7 @@ loop (§D) is an explicit design discussion.
   diary (`clearRequests` on the same cutoff). Diary-vs-separate-db stays
   deferred until real traffic says so.
 
-### B. Knowledge service — semantic BUILT 2026-10-21; per-session dreaming still open
+### B. Knowledge service — semantic BUILT 2026-10-21; per-session dreaming BUILT 2026-10-21
 - Built: the index scan embeds when the embed model is on disk; `search()` runs
   expansion + vectors + reranking when all three models are cached, with
   keyword fallback on any miss or failure (searches never wait on a download).
@@ -157,9 +157,11 @@ loop (§D) is an explicit design discussion.
   defaults when unset); `aivi knowledge warm` is the setup step that fetches,
   embeds and loads. The 10 s plugin timeout stands: warm models answer
   sub-second; cold starts are warm's job, not the timeout's.
-- Still open: dreaming per session (ruling 10): one dreamer turn per session
-  instead of one turn per batch — cheaper reconciliation per turn, finer
-  cursor; read-before-write keeps facts consistent across turns.
+- Built: dreaming runs one dreamer turn per session, oldest first, each turn
+  with its own transcript (deleted when its turn succeeds). The cursor advances
+  after each digested session, so a run that dies mid-backlog resumes at the
+  failed session, not the whole backlog; read-before-write keeps facts
+  consistent across turns.
 
 ### C. Jobs adopt pool models via the dispatcher middle road — BUILT 2026-10-21
 - Job path (prompt tasks, dreaming included): request a lease →

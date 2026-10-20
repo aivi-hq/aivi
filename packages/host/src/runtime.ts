@@ -212,7 +212,8 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
           await deps.knowledge.index().catch(error => log.warn('dreaming.index.failed', { error }));
         return outcome;
       } catch (error) {
-        // The cursor did not advance, so the next run reviews the same conversations again.
+        // The cursor advanced per digested session, so the next run resumes at
+        // the session this one died on, not the whole backlog.
         log.warn('dreaming.failed', { error });
         return ended(error, {
           sessionId,

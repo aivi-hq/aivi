@@ -211,6 +211,9 @@ async function snapshot(directory: string): Promise<Map<string, string>> {
  * Dreaming: review conversations since the last run and let the dreamer agent
  * distil them into memory files. The host only moves data and enforces the
  * write boundary; what counts as memorable lives in the agent definition.
+ * One dreamer turn per session, oldest first: each turn reconciles against the
+ * facts.md it just read, and the cursor advances after each digested session,
+ * so a run that dies mid-backlog resumes where the dreamer actually got to.
  */
 export async function dream(
   task: DreamingArgs,
@@ -270,8 +273,6 @@ export async function dream(
     );
   }
   const org = homes[0]!;
-  const transcript = join(runDir, `${runId}.md`);
-  await writeFile(transcript, renderTranscript(sessions, since), { mode: 0o600 });
 
   // Changed files are labelled relative to the org memory; a project home outside it (a custom
   // `memoryDirectory`) is labelled `<id>/…`, which is what the default layout yields anyway.
@@ -290,49 +291,61 @@ export async function dream(
   const projectLines = homes
     .filter(h => h.id)
     .map(h => `  - ${h.id}: ${h.memory} (facts about the ${h.id} project go here)`);
-  const turn = await runTurn(
-    client,
-    {
-      sessionId,
-      agent: task.agent,
-      directory: task.directory,
-      create: false,
-      permissions,
-      messageId,
-      messageMetadata: metadata,
-      text: [
-        `Dreaming run. Review the conversations in ${transcript} (${sessions.length} session(s), ${since ? `since ${new Date(since).toISOString()}` : 'all history'}).`,
-        `Org memory directory: ${org.memory}`,
-        ...(projectLines.length ? ['Project memory directories:', ...projectLines] : []),
-        `- Read each facts.md you are about to change first and reconcile: update it in place, and move anything superseded into that directory's archive.md (dated, with what replaced it). facts.md carries current truth only — no struck-through bullets, no "used to be".`,
-        `- A fact about one project belongs in that project's facts.md; everything else in the org's. When unsure, the org's.`,
-        `- You may edit only facts.md, archive.md, and files under proposals/ in these directories. Do not touch anything else.`,
-        `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
-      ].join('\n'),
-    },
-    { signal: deps.signal, onPermission: 'reject', events: deps.events, log },
-  );
+  // One turn per session, oldest first. A failed turn leaves its transcript for
+  // the post-mortem and stops the run; the cursor stands at the last session
+  // that finished, so the next run resumes with this one.
+  let reviewed = 0;
+  const texts: string[] = [];
+  const rejected: { action: string; resources: string[] }[] = [];
+  for (const [index, session] of sessions.entries()) {
+    const transcript = join(runDir, `${runId}-${session.id}.md`);
+    await writeFile(transcript, renderTranscript([session], since), { mode: 0o600 });
+    const turn = await runTurn(
+      client,
+      {
+        sessionId,
+        agent: task.agent,
+        directory: task.directory,
+        create: false,
+        permissions,
+        messageId: `${messageId}-${index + 1}`,
+        messageMetadata: metadata,
+        text: [
+          `Dreaming run. Review the conversation in ${transcript}: session ${session.id} (${session.origin}${session.channel ? `, channel ${session.channel}` : ''}), ${session.lines.length} new message(s).`,
+          `Org memory directory: ${org.memory}`,
+          ...(projectLines.length ? ['Project memory directories:', ...projectLines] : []),
+          `- Read each facts.md you are about to change first and reconcile: update it in place, and move anything superseded into that directory's archive.md (dated, with what replaced it). facts.md carries current truth only — no struck-through bullets, no "used to be".`,
+          `- A fact about one project belongs in that project's facts.md; everything else in the org's. When unsure, the org's.`,
+          `- You may edit only facts.md, archive.md, and files under proposals/ in these directories. Do not touch anything else.`,
+          `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
+        ].join('\n'),
+      },
+      { signal: deps.signal, onPermission: 'reject', events: deps.events, log },
+    );
+    // The transcript did its job: the conversation is OpenCode's own record, so
+    // the convenience copy leaves with the turn; then the cursor moves to it.
+    await unlink(transcript).catch(() => {});
+    writeCursor(deps.store, task.memoryDirectory, session.updated, now());
+    reviewed++;
+    if (turn.text) texts.push(turn.text);
+    rejected.push(...turn.rejected);
+  }
 
   const after = await snapshotAll();
   const changed = [...new Set([...before.keys(), ...after.keys()])]
     .filter(file => before.get(file) !== after.get(file))
     .sort();
-  // The transcript did its job: the conversations it rendered are OpenCode's
-  // own records, so the convenience copy leaves with the run. A failed run
-  // never reaches this line — its transcript stays for the post-mortem.
-  await unlink(transcript).catch(() => {});
-  writeCursor(deps.store, task.memoryDirectory, until, now());
-  log.info('dreamed', { reviewed: sessions.length, since, until, changed });
+  log.info('dreamed', { reviewed, since, until, changed });
   return {
     state: 'succeeded',
     result: {
-      reviewed: sessions.length,
+      reviewed,
       since,
       until,
       sessions: sessions.map(s => s.id),
       changed,
-      text: turn.text,
-      rejectedPermissions: turn.rejected,
+      text: texts.join('\n\n'),
+      rejectedPermissions: rejected,
     },
   };
 }

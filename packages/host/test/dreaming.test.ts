@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -57,9 +57,10 @@ const messages: Record<string, unknown[]> = {
   ],
 };
 
-function mockOpenCode(agent = 'dreamer', directory = '/lib') {
+function mockOpenCode(agent = 'dreamer', directory = '/lib', options: { failPromptAt?: number } = {}) {
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
   let promptId = '';
+  let promptCount = 0;
   const respond: RequestListener = async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -91,6 +92,12 @@ function mockOpenCode(agent = 'dreamer', directory = '/lib') {
       return;
     }
     if (url.pathname.endsWith('/prompt')) {
+      promptCount++;
+      if (options.failPromptAt === promptCount) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'mock model failure' }));
+        return;
+      }
       promptId = body.id;
       res.end(JSON.stringify({ data: { id: body.id } }));
       return;
@@ -151,7 +158,7 @@ test('collectSessions picks aivi sessions by origin updated after the cursor, ol
   assert.match(transcript, /## ses_new \(discord, channel c1\)/);
 });
 
-test('dream writes the transcript, allows facts/archive/proposals in the org and every project memory, advances the cursor, reports changes, and deletes the transcript', async t => {
+test('dream runs one turn per session with its own transcript, allows facts/archive/proposals in the org and every project memory, advances the cursor per turn, and reports changes', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-dream-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const memory = join(root, 'knowledge', 'memory');
@@ -163,13 +170,16 @@ test('dream writes the transcript, allows facts/archive/proposals in the org and
   // The schema default is the empty list (the executor fills it from the module
   // registry); dream() itself reviews what the args name.
   const task = dreamingArgsSchema.parse({ directory: '/lib', memoryDirectory: memory, origins: ['discord'] });
-  // Simulate the agent writing an org fact and a project fact during its turn.
+  // Simulate the agent writing an org fact and a project fact during its turns.
   const originalPrompt = mock.server.listeners('request')[0] as (...args: unknown[]) => unknown;
   mock.server.removeAllListeners('request');
-  let dreamtTranscript = '';
+  const dreamtTranscripts: string[] = [];
   mock.server.on('request', async (req, res) => {
     if (req.url!.endsWith('/prompt')) {
-      dreamtTranscript = await readFile(join(root, 'state', 'dreaming', 'job-1.md'), 'utf8');
+      // One transcript per turn: whatever job-1 transcript stands now is what this prompt reviews.
+      const dir = join(root, 'state', 'dreaming');
+      const names = (await readdir(dir)).filter(name => name.startsWith('job-1-'));
+      dreamtTranscripts.push(await readFile(join(dir, names[0]!), 'utf8'));
       await writeFile(
         join(memory, 'facts.md'),
         '# Facts\n\n## Deployment\n- 2026-09-14 (discord, Bob): deploys on Tuesdays.\n',
@@ -199,13 +209,16 @@ test('dream writes the transcript, allows facts/archive/proposals in the org and
   assert.equal(outcome.result.reviewed, 2);
   assert.deepEqual(outcome.result.sessions, ['ses_old_updated', 'ses_new']);
   assert.deepEqual(outcome.result.changed, ['demo/facts.md', 'facts.md']);
-  assert.equal(outcome.result.text, 'Added 1 fact.');
+  assert.equal(outcome.result.text, 'Added 1 fact.\n\nAdded 1 fact.', 'one summary per session turn');
   assert.equal(readCursor(store, memory), T0 + 3000, 'cursor advances to the newest reviewed session, not to now');
-  assert.match(dreamtTranscript, /We deploy on Tuesdays/, 'the dreamer was handed the conversations');
+  assert.equal(dreamtTranscripts.length, 2, 'one transcript, one turn per session');
+  assert.match(dreamtTranscripts[0]!, /ses_old_updated/, 'oldest session first');
+  assert.match(dreamtTranscripts[1]!, /We deploy on Tuesdays/, 'the dreamer was handed the conversations');
   assert.equal(outcome.result.transcript, undefined, 'a succeeded run reports no transcript: it is gone');
-  await assert.rejects(
-    readFile(join(root, 'state', 'dreaming', 'job-1.md'), 'utf8'),
-    'the convenience transcript leaves with the run — the OpenCode sessions are the record',
+  assert.deepEqual(
+    (await readdir(join(root, 'state', 'dreaming'))).filter(name => name.startsWith('job-1-')),
+    [],
+    'the convenience transcripts leave with their turns — the OpenCode sessions are the record',
   );
 
   // The lease's provide births the session (id, title, dreaming origin); dream() turns it and
@@ -243,8 +256,43 @@ test('dream writes the transcript, allows facts/archive/proposals in the org and
   assert.equal(again.result.reviewed, 0, 'nothing new after the cursor');
   assert.equal(
     mock.requests.filter(r => r.path.endsWith('/prompt')).length,
-    1,
+    2,
     'no model call when there is nothing to review',
+  );
+});
+
+test('a run that dies mid-backlog leaves the cursor at the last digested session and the failed transcript behind', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-dream-mid-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const memory = join(root, 'knowledge', 'memory');
+  const mock = mockOpenCode('dreamer', '/lib', { failPromptAt: 2 });
+  const client = await start(t, mock);
+  const store = new Store(':memory:');
+  t.after(async () => store.close());
+  const task = dreamingArgsSchema.parse({ directory: '/lib', memoryDirectory: memory, origins: ['discord'] });
+  store.migrate('dreaming', [
+    'CREATE TABLE dreaming_cursor(key TEXT PRIMARY KEY, since INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
+  ]);
+  store.db.prepare('INSERT INTO dreaming_cursor VALUES(?,?,?)').run(memory, T0, T0);
+  await assert.rejects(
+    dream(task, 'job-9', {
+      store,
+      client,
+      events: { watch: () => () => {} },
+      sessionId: 'ses_aivi_job9',
+      stateDirectory: join(root, 'state'),
+      signal: AbortSignal.timeout(10000),
+    }),
+  );
+  assert.equal(
+    readCursor(store, memory),
+    T0 + 2000,
+    'the first session stands digested; the second waits for the next run',
+  );
+  assert.deepEqual(
+    await readdir(join(root, 'state', 'dreaming')),
+    ['job-9-ses_new.md'],
+    'the failed turn keeps its transcript for the post-mortem; the succeeded one left with its turn',
   );
 });
 
