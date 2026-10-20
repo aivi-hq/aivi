@@ -6,13 +6,6 @@
     "src/main.{ts,tsx,js,jsx}"
   ],
   "dynamicallyLoaded": [
-    // Git hooks and operator scripts are run by path (`node
-    // scripts/face-preview.mjs`); nothing imports them, so the static graph
-    // alone would report them dead.
-    "scripts/commit-msg.mjs",
-    "scripts/face-preview.mjs",
-    "scripts/follow-events.mjs",
-    "scripts/meet-trace.mjs",
     // The CLI's one edge into the installed server: importApp() imports these
     // host modules by string path (`dist/cli/*.js`) — `aivi remove` drops
     // a plugin's config block, setup/add/remove/update rebuild the editor
@@ -23,9 +16,13 @@
     "packages/host/src/cli/commands/knowledge.ts"
   ],
   // dev/ is the generated development home (an installed app, its own
-  // package.json, worktrees) — not this repo's source.
+  // package.json, worktrees) — not this repo's source. scripts/ is dev
+  // tooling run against the tree (ruled 2026-10-20): its use of the root's
+  // devDependencies is not worth analyzing, and the checks that gate the
+  // product (smoke) reach the tree through spawned paths, not imports.
   "ignorePatterns": [
-    "dev/**"
+    "dev/**",
+    "scripts/**"
   ],
   // @discordjs/voice requires its sodium implementation at runtime; the
   // declaration is what supplies it, and no import in our sources names it.
@@ -56,15 +53,6 @@
     // own. The published surface is the product, so fallow does not read
     // it as unused here.
     "@aivi/chrome"
-  ],
-  "overrides": [
-    {
-      // scripts/ is dev tooling run against the tree (smoke and live checks):
-      // using the root's devDependencies there is the design, not a shipping
-      // violation — nothing ships from the private root.
-      "files": ["scripts/**"],
-      "rules": { "dev-dependencies-in-production": "off" }
-    }
   ],
   "health": {
     // Istanbul coverage from `npm run test:cov`, so CRAP scores are measured, not estimated.
