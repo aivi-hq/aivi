@@ -17,6 +17,10 @@ export const knowledgeKinds = {
   conversation: {
     description: 'Indexed conversation transcripts. Useful for recovering details; never authoritative.',
   },
+  archive: {
+    description:
+      'How things used to be: superseded facts and decisions, dated and kept for the record. Never authoritative for the present; cite them only as history.',
+  },
   manual: {
     description:
       'Docs shipped with an installed aivi package: what is installed and how it is configured. Authoritative for this installation, version-matched with the code, refreshed by `aivi upgrade`.',

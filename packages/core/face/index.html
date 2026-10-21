@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>aivi face</title>
+<style>
+  /* Canvas-only: one <canvas>, the whole picture is drawn inside it — a
+     webcam feed is canvas.captureStream(), which sees nothing else. The
+     canvas is the 4:3 screen itself (no letterbox inside the feed); the
+     black page around it is for humans looking at the file (`npx serve .`
+     in this directory shows the face). */
+  html, body { height: 100%; margin: 0; background: #000; overflow: hidden; }
+  body { display: grid; place-items: center; }
+  canvas.aivi-face {
+    width: min(100vw, calc(100vh * 4 / 3));
+    height: min(100vh, calc(100vw * 3 / 4));
+    display: block;
+  }
+</style>
+</head>
+<body>
+<script>
+/* THE aivi FACE — the default picture behind aivi's camera everywhere:
+   every webcam aivi shows (Meet today, other rooms later) is this page's
+   script, injected before the meeting page's own scripts run. This file
+   is yours: copy it to <home>/face/index.html (`aivi face install`) and
+   edit; the next meeting wears your edits. Delete the copy and the
+   built-in returns.
+
+   The CRT shader is "Serenity" by Matt Sephton (MIT,
+   github.com/gingerbeardman/webgl-crt-shader, LICENSE-crt-shader next to
+   this file), ported from three.js to raw WebGL — GLSL unchanged except
+   the parts marked "aivi addition".
+
+   Two ways this script runs, and it must not care which:
+   - STANDALONE (someone opened this file): document.body exists, the
+     canvas is appended and visible, sized by the CSS above.
+   - INJECTED (aivi put it in a meeting page at document_start): no body
+     yet — the canvas is never appended (captureStream sees a detached
+     canvas fine, proven on real Meet 2026-10-13) and is fixed at the
+     feed size 640x480. */
+(() => {
+  'use strict';
+
+  const INJECTED = document.body === null;
+  const FEED_W = 640, FEED_H = 480; // what the meeting receives
+
+  /* ================= CONFIG: the framework knobs =================
+     colors: one palette; every sprite reads from it.
+     crt:    the shader's knobs, passed to the GPU as-is. Live-tunable:
+     aiviFace.crt({ scanlineCount: 12 }) changes the look from the next
+     frame — no reload, no rebuild. */
+  const CONFIG = {
+    colors: {
+      f: '#8cf2ff', // feature line
+      a: '#3fa7ff', // feature shade
+      w: '#ffffff', // highlight
+      m: '#c23a77', // open-mouth inside
+      p: '#ff8fc0', // cheek
+      c: '#ff7eb6', // cheek shade
+    },
+    crt: {
+      scanlineIntensity: 0.3,   // the dark row is 30% black
+      scanlineCount: 72,        // fine lines across (operator 2026-10-13: 6 read thick, 72 reads like a tube)
+      brightness: 1.25,         // pays back what the fine 72-line scanlines darken (was 1.1 at the fat lines)
+      contrast: 1.05,
+      saturation: 1.1,
+      bloomIntensity: 0.0,      // the shader's own bloom; the face glow lives in CONFIG.glow instead
+      bloomThreshold: 0.5,
+      rgbShift: 0.0,
+      adaptiveIntensity: 0.0,
+      vignetteStrength: 0.3,
+      curvature: 0.0,           // flat glass
+      flickerStrength: 0.04,    // visible breathing of the tube (0.01 read as nothing)
+      maskStrength: 0.25,       // aperture grille: the vertical R/G/B wires of the original div.mask (aivi addition; 0.08 read as nothing)
+      maskPeriod: 6,            // the wires' period in device pixels (aivi addition; like scanlineCount, but vertical; 3 = the original hairline)
+      rollStrength: -0.22,      // the band that rolls down (aivi addition; negative = a light sweep, positive = the old shadow)
+      rollSpeed: -0.1,          // how fast that band crosses the glass, and which way (aivi addition; negative rolls up)
+      scanScroll: 0.0,          // the scanline pattern itself: still (a live knob, 0 = no crawl)
+    },
+    glow: {
+      /* the face's own glow, painted in the content not the shader: a
+         pink halo outside and a tight cyan rim, like the CSS
+         drop-shadow pair it was copied from. Live: aiviFace.glow({
+         haloBlur: 20 }) — colors are "r,g,b" triples, alphas 0..1. */
+      haloColor: '255,126,182', haloAlpha: 0.45, haloBlur: 11,
+      rimColor: '140,242,255', rimAlpha: 0.9, rimBlur: 2,
+    },
+  };
+  const PAL = CONFIG.colors;
+
+  /* ================= THE CONTRACT =================
+    window.aiviFace = { setState(state, detail), state, detail, states,
+                        config, canvas, crt(knobs) }
+
+  state is one of: idle | listening | thinking | speaking | waiting | tool
+  detail is optional extras, e.g. { tool: 'websearch' } for state 'tool';
+  a face may animate on them or ignore them. Unknown states are ignored,
+  never a crash. `canvas` is the picture core's camera shim hands to any
+  page that asks for a camera. The one hard rule: the picture lives in a
+  canvas, because the webcam feed is canvas.captureStream() and that sees
+  nothing else. */
+
+  /* ================= sprites ('.' = empty) — combine freely ================= */
+  const S = {
+    eyeOpen:   ['.ffff.', 'fwwfff', 'fwwfff', 'ffffff', 'ffffff', 'aaaaaa', '.aaaa.'],
+    eyeHalf:   ['.ffff.', 'ffffff', 'aaaaaa', '.aaaa.'],
+    eyeClosed: ['ffffff', '.aaaa.'],
+    cheek:     ['ccc', 'ccc'],
+    smile:     ['f......f', '.ffffff.'],
+    line:      ['.ffffff.'],            // calm closed mouth: listening
+    tiny:      ['ff', 'ff'],            // nearly nothing: waiting
+    // thinking: two question marks bobbing in the top corners, alternating
+    // (2026-10-14: first a raised-brow box collided with the eye — the box
+    // went; then a shrunken left mark read as a smudge — it went too. The
+    // one good mark, twice, is simpler and reads as a question mark)
+    qmark:     ['.fff.', 'f...f', '...ff', '..ff.', '.....', '..ff.'],
+    // tool: a wrench rocking between upright and tilted
+    wrenchV:   ['f.f', 'faf', '.a.', '.a.', '.a.'],
+    wrenchT:   ['ff.', '.fa', '..a', '..a', '..a'],
+  };
+  /* Talking is an animation, not audio-driven: the mouth cycles these
+     frames at syllable-ish timing. Nobody hears the pixels. */
+  const TALK = [
+    S.tiny,
+    ['.ff.', 'fmmf', '.ff.'],
+    ['.ffff.', 'fmmmmf', 'fmmmmf', '.ffff.'],
+    ['ffffff', 'fmmmmmmf', '.fppppf.'],
+  ];
+
+  /* ================= states: the room's words =================
+     gaze: wander | follow | up | still   bob: ms per full bob, 0 = none
+     blink: [min, max] ms between blinks
+     extra: think (raised brow + floating question marks)
+            wrench (a rocking wrench — the tool is working) */
+  const STATES = {
+    idle:      { eyes: 'open', mouth: 'smile', cheeks: true,  bob: 2400, gaze: 'wander', blink: [2200, 5200] },
+    listening: { eyes: 'open', mouth: 'line',  cheeks: true,  bob: 1500, gaze: 'follow', blink: [2600, 5600] },
+    thinking:  { eyes: 'open', mouth: 'line',  cheeks: false, bob: 0,    gaze: 'up',     blink: [3200, 6500], extra: 'think' },
+    speaking:  { eyes: 'open', mouth: 'talk',  cheeks: true,  bob: 900,  gaze: 'wander', blink: [2200, 5200] },
+    waiting:   { eyes: 'half', mouth: 'tiny',  cheeks: false, bob: 3000, gaze: 'still',  blink: [4200, 8000] },
+    tool:      { eyes: 'open', mouth: 'tiny',  cheeks: false, bob: 0,    gaze: 'wander', blink: [3200, 6500], extra: 'wrench' },
+  };
+
+  /* ================= the face: a 32x24 sprite buffer ================= */
+  const W = 32, H = 24;
+  const buf = document.createElement('canvas');
+  buf.width = W; buf.height = H;
+  const bctx = buf.getContext('2d');
+
+  function stamp(ctx, rows, x, y) {
+    for (let j = 0; j < rows.length; j++) {
+      const row = rows[j];
+      for (let i = 0; i < row.length; i++) {
+        const ch = row[i];
+        if (ch === '.') continue;
+        ctx.fillStyle = PAL[ch];
+        ctx.fillRect(x + i, y + j, 1, 1);
+      }
+    }
+  }
+
+  // st: { blink(0/1/2), gx, gy, oy, talk, beat }
+  function drawFace(ctx, s, st) {
+    const calm = s.gaze === 'up' || s.gaze === 'still';
+    const gx = calm ? (s.gaze === 'up' ? st.gx : 0) : st.gx;
+    const gy = calm ? (s.gaze === 'up' ? st.gy : 0) : st.gy;
+    const oy = st.oy;
+
+    const EYE_CY = 9.5, EYE_L = 10, EYE_R = 22;
+    const eye = (rows, center) => stamp(
+      ctx, rows,
+      Math.round(center - rows[0].length / 2) + gx * 2,
+      Math.floor(EYE_CY - rows.length / 2) + gy + oy,
+    );
+    const blinkable = rows => st.blink === 0 ? rows : (st.blink === 1 ? S.eyeHalf : S.eyeClosed);
+    const eyeRows = s.eyes === 'half' ? S.eyeHalf : blinkable(S.eyeOpen);
+
+    if (s.cheeks) {
+      stamp(ctx, S.cheek, 4 + gx, 14 + oy);
+      stamp(ctx, S.cheek, 25 + gx, 14 + oy);
+    }
+    eye(eyeRows, EYE_L);
+    eye(eyeRows, EYE_R);
+
+    const mouth = s.mouth === 'talk' ? TALK[st.talk] : S[s.mouth];
+    stamp(ctx, mouth,
+      Math.round(16 - mouth[0].length / 2) + gx,
+      Math.floor(18 - mouth.length / 2) + oy);
+
+    if (s.extra === 'think') {
+      // the ask: the same good mark in both corners, bobbing alternately —
+      // clear of the eyes at every gaze shift (gaze 'up' already tilts
+      // toward the right one)
+      const bob = st.beat % 2;
+      stamp(ctx, S.qmark, 27, 1 - bob);
+      stamp(ctx, S.qmark, 1, 1 + bob);
+    } else if (s.extra === 'wrench') {
+      // the tool is working: a wrench rocking between upright and tilted
+      stamp(ctx, st.beat % 2 ? S.wrenchT : S.wrenchV, 2, 1);
+    }
+  }
+
+  /* ================= the canvas =================
+     Standalone: appended, sized by CSS (the 4:3 box). Injected: never
+     appended, fixed at the feed size. The content canvas is kept exactly
+     the size of the view so the GL texture upload resamples nothing: the
+     pixel blocks land crisp, and the shader's dark rows cut them into
+     stripes. */
+  const view = document.createElement('canvas');
+  view.className = 'aivi-face';
+  view.setAttribute('aria-label', 'aivi face, idle');
+  if (!INJECTED) document.body.appendChild(view);
+
+  let CW = FEED_W, CH = FEED_H;
+  const content = document.createElement('canvas');
+  content.width = CW; content.height = CH;
+  const cctx = content.getContext('2d');
+
+  /* Safe area, derived not guessed (verified on real phones, 2026-10-13):
+     Meet center-crops the feed to fill a tile. For a feed of aspect F into
+     a tile of aspect A, the surviving fraction is A/F of the width when
+     the tile is squarer than the feed, F/A of the height when wider.
+     Tiles we commit to surviving: 1:1 (phone portrait) and 16:9 (desktop
+     grid). Feed 4:3 -> both 0.75. The features draw at this scale,
+     centered, and no crop cuts them. (SMPTE/EBU safe areas are for
+     overscan, a different problem.) */
+  const TILES = [1, 16 / 9];
+  const safe = Math.min(...TILES.map(a => (a < CW / CH ? a / (CW / CH) : (CW / CH) / a)));
+
+  const tubeGrad = (() => {
+    const g = cctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    g.addColorStop(0, '#33236f'); g.addColorStop(0.45, '#231657'); g.addColorStop(1, '#130b33');
+    return g;
+  })();
+  const glareGrad = (() => {
+    const g = cctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    g.addColorStop(0, 'rgba(255,255,255,.2)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    return g;
+  })();
+  function fillGrad(ctx, grad, cx, cy, rx, ry) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(Math.max(rx, 1), Math.max(ry, 1));
+    ctx.fillStyle = grad;
+    ctx.fillRect(-1, -1, 2, 2);
+    ctx.restore();
+  }
+
+  /* glow, per the CSS reference: drop-shadow(0 0 2px cyan) and
+     drop-shadow(0 0 11px pink) — tight rims and a modest halo around crisp
+     pixels. The silhouette is built at display size (crisp upscale of the
+     face, tinted) and the blur runs in screen pixels; blurring the 32x24
+     buffer and blowing it up becomes a cloud, and a cloud is exactly what
+     did NOT look like a CRT. */
+  let sil = document.createElement('canvas');
+  const sctx = sil.getContext('2d');
+  function glow(color, blurPx) {
+    sctx.clearRect(0, 0, sil.width, sil.height);
+    sctx.imageSmoothingEnabled = false;
+    sctx.drawImage(buf, SIL.x, SIL.y, SIL.w, SIL.h);
+    sctx.globalCompositeOperation = 'source-in';
+    sctx.fillStyle = color;
+    sctx.fillRect(0, 0, sil.width, sil.height);
+    sctx.globalCompositeOperation = 'source-over';
+    cctx.save();
+    cctx.filter = 'blur(' + blurPx + 'px)';
+    cctx.drawImage(sil, 0, 0);
+    cctx.restore();
+    cctx.filter = 'none';
+  }
+  // where the safe-scaled face lands, recomputed on resize
+  let SIL = { x: 0, y: 0, w: CW, h: CH };
+
+  function drawContent(t, s, st) {
+    cctx.clearRect(0, 0, CW, CH);
+    fillGrad(cctx, tubeGrad, CW / 2, CH * 0.46, CW * 0.75, CH * 0.70);
+    bctx.clearRect(0, 0, W, H);
+    drawFace(bctx, s, st);
+    const g = CONFIG.glow; // read every frame: glow({...}) changes bite at once
+    glow(`rgba(${g.haloColor},${g.haloAlpha})`, g.haloBlur); // outer halo, like the CSS pair
+    glow(`rgba(${g.rimColor},${g.rimAlpha})`, g.rimBlur);    // tight rim
+    cctx.imageSmoothingEnabled = false;
+    cctx.drawImage(buf, SIL.x, SIL.y, SIL.w, SIL.h);
+    // state-change glitch: torn rows and static for a moment
+    if (t < glitchUntil) {
+      for (let row = 0; row < 24; row++) {
+        const off = rand() < 0.3 ? Math.round((rand() - 0.5) * 6) * (CH / 24) : 0;
+        cctx.drawImage(content, 0, row * (CH / 24), CW, CH / 24, off, row * (CH / 24), CW, CH / 24);
+      }
+      for (let i = 0; i < 70; i++) {
+        cctx.fillStyle = 'rgba(200,220,255,' + (0.1 + rand() * 0.35).toFixed(2) + ')';
+        cctx.fillRect(rand() * CW, rand() * CH, (1 + rand() * 4) * (CW / 32), CH / 24 * 0.5);
+      }
+    }
+    // one soft highlight, the glass sheen
+    fillGrad(cctx, glareGrad, CW * 0.22, CH * 0.08, CW * 0.6, CH * 0.38);
+  }
+
+  /* ================= the shader: Serenity, raw WebGL =================
+     Matt Sephton's CRT shader (MIT), GLSL kept as written; only the
+     three.js plumbing replaced (uv passes straight through a fullscreen
+     triangle). aivi additions are marked; everything else unchanged. */
+  const VERT = `
+    attribute vec2 aPos;
+    varying vec2 vUv;
+    void main() {
+      vUv = aPos * 0.5 + 0.5;
+      gl_Position = vec4(aPos, 0.0, 1.0);
+    }
+  `;
+  const FRAG = `
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+      precision highp float;
+    #else
+      precision mediump float;
+    #endif
+
+    uniform sampler2D tDiffuse;
+    uniform float scanlineIntensity;
+    uniform float scanlineCount;
+    uniform float time;
+    uniform float yOffset;
+    uniform float brightness;
+    uniform float contrast;
+    uniform float saturation;
+    uniform float bloomIntensity;
+    uniform float bloomThreshold;
+    uniform float rgbShift;
+    uniform float adaptiveIntensity;
+    uniform float vignetteStrength;
+    uniform float curvature;
+    uniform float flickerStrength;
+    uniform float maskStrength; // aivi addition: aperture-grille stripes
+    uniform float maskPeriod;   // aivi addition: the grille's wire period in device pixels
+    uniform float rollStrength; // aivi addition: the rolling band (negative = a light sweep)
+    uniform float rollSpeed;    // aivi addition: how fast it rolls
+
+    varying vec2 vUv;
+
+    const float PI = 3.14159265;
+    const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+    const float BLOOM_THRESHOLD_FACTOR = 0.5;
+    const float BLOOM_FACTOR_MULT = 1.5;
+    const float RGB_SHIFT_SCALE = 0.005;
+    const float RGB_SHIFT_INTENSITY = 0.08;
+
+    vec2 curveRemapUV(vec2 uv, float curvature) {
+      vec2 coords = uv * 2.0 - 1.0;
+      float curveAmount = curvature * 0.25;
+      float dist = dot(coords, coords);
+      coords = coords * (1.0 + dist * curveAmount);
+      return coords * 0.5 + 0.5;
+    }
+
+    vec4 sampleBloom(sampler2D tex, vec2 uv, float radius, vec4 centerSample) {
+      vec2 o = vec2(radius);
+      vec4 c = centerSample * 0.4;
+      vec4 cross = (
+        texture2D(tex, uv + vec2(o.x, 0.0)) +
+        texture2D(tex, uv - vec2(o.x, 0.0)) +
+        texture2D(tex, uv + vec2(0.0, o.y)) +
+        texture2D(tex, uv - vec2(0.0, o.y))
+      ) * 0.15;
+      return c + cross;
+    }
+
+    float vignetteApprox(vec2 uv, float strength) {
+      vec2 vigCoord = uv * 2.0 - 1.0;
+      float dist = max(abs(vigCoord.x), abs(vigCoord.y));
+      return 1.0 - dist * dist * strength;
+    }
+
+    void main() {
+      vec2 uv = vUv;
+
+      if (curvature > 0.001) {
+        uv = curveRemapUV(uv, curvature);
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+          gl_FragColor = vec4(0.0);
+          return;
+        }
+      }
+
+      vec4 pixel = texture2D(tDiffuse, uv);
+
+      if (bloomIntensity > 0.001) {
+        float pixelLum = dot(pixel.rgb, LUMA);
+        float bloomThresholdHalf = bloomThreshold * BLOOM_THRESHOLD_FACTOR;
+        if (pixelLum > bloomThresholdHalf) {
+          vec4 bloomSample = sampleBloom(tDiffuse, uv, 0.005, pixel);
+          bloomSample.rgb *= brightness;
+          float bloomLum = dot(bloomSample.rgb, LUMA);
+          float bloomFactor = bloomIntensity * max(0.0, (bloomLum - bloomThreshold) * BLOOM_FACTOR_MULT);
+          pixel.rgb += bloomSample.rgb * bloomFactor;
+        }
+      }
+
+      if (rgbShift > 0.005) {
+        float shift = rgbShift * RGB_SHIFT_SCALE;
+        pixel.r += texture2D(tDiffuse, vec2(uv.x + shift, uv.y)).r * RGB_SHIFT_INTENSITY;
+        pixel.b += texture2D(tDiffuse, vec2(uv.x - shift, uv.y)).b * RGB_SHIFT_INTENSITY;
+      }
+
+      pixel.rgb *= brightness;
+
+      float luminance = dot(pixel.rgb, LUMA);
+      pixel.rgb = (pixel.rgb - 0.5) * contrast + 0.5;
+      pixel.rgb = mix(vec3(luminance), pixel.rgb, saturation);
+
+      float lightingMask = 1.0;
+
+      if (scanlineIntensity > 0.001) {
+        float scanlineY = (uv.y + yOffset) * scanlineCount;
+        float scanlinePattern = abs(sin(scanlineY * PI));
+        float adaptiveFactor = 1.0;
+        if (adaptiveIntensity > 0.001) {
+          float yPattern = sin(uv.y * 30.0) * 0.5 + 0.5;
+          adaptiveFactor = 1.0 - yPattern * adaptiveIntensity * 0.2;
+        }
+        lightingMask *= 1.0 - scanlinePattern * scanlineIntensity * adaptiveFactor;
+      }
+
+      if (flickerStrength > 0.001) {
+        lightingMask *= 1.0 + sin(time * 110.0) * flickerStrength;
+      }
+
+      if (rollStrength > 0.001 || rollStrength < -0.001) {
+        // aivi addition: one soft band rolling slowly down the glass, the
+        // way a tired tube refreshes. Distance is wrapped so the band
+        // re-enters from the top as it leaves the bottom. Its sign is the
+        // whole story: positive darkens (the old shadow), negative lightens.
+        float wrapped = abs(fract(uv.y - time * rollSpeed + 0.5) - 0.5);
+        float band = smoothstep(0.14, 0.0, wrapped);
+        lightingMask *= 1.0 - band * rollStrength;
+      }
+
+      if (vignetteStrength > 0.001) {
+        lightingMask *= vignetteApprox(uv, vignetteStrength);
+      }
+
+      pixel.rgb *= lightingMask;
+
+      // aivi addition (the rest of this shader is Serenity, MIT): the
+      // aperture grille — vertical R/G/B wires, like a real Trinitron.
+      // gl_FragCoord is in device pixels, so maskPeriod is device pixels
+      // too: 3 is the original div.mask's hairline, bigger is chunkier.
+      if (maskStrength > 0.001) {
+        float wire = mod(gl_FragCoord.x, maskPeriod);
+        float third = maskPeriod / 3.0;
+        vec3 grille = wire < third ? vec3(1.0, 0.72, 0.72)
+                  : wire < 2.0 * third ? vec3(0.72, 1.0, 0.72)
+                                       : vec3(0.72, 0.72, 1.0);
+        pixel.rgb *= mix(vec3(1.0), grille, maskStrength);
+      }
+
+      gl_FragColor = pixel;
+    }
+  `;
+
+  // No preserveDrawingBuffer, on evidence (2026-10-13): an animated WebGL
+  // canvas tapped with captureStream(30) delivered 25/25 real frames into a
+  // <video> WITHOUT the flag. If a feed ever arrives blank, this is the
+  // first knob to try — but it does not "just help", so it stays off.
+  const gl = view.getContext('webgl', { alpha: false, antialias: false });
+  let glOk = true;
+  let tex = null, u = {};
+  if (gl) {
+    const compile = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        console.error('crt shader compile failed:', gl.getShaderInfoLog(sh));
+        return null;
+      }
+      return sh;
+    };
+    const vs = compile(gl.VERTEX_SHADER, VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    if (vs && fs) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.error('crt shader link failed:', gl.getProgramInfoLog(prog));
+        glOk = false;
+      } else {
+        gl.useProgram(prog);
+        const quad = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        const aPos = gl.getAttribLocation(prog, 'aPos');
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+        for (const name of ['tDiffuse', 'scanlineIntensity', 'scanlineCount', 'time', 'yOffset',
+          'brightness', 'contrast', 'saturation', 'bloomIntensity', 'bloomThreshold', 'rgbShift',
+          'adaptiveIntensity', 'vignetteStrength', 'curvature', 'flickerStrength', 'maskStrength',
+          'maskPeriod', 'rollStrength', 'rollSpeed']) {
+          u[name] = gl.getUniformLocation(prog, name);
+        }
+        tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        // canvas rows start top-left, GL textures start bottom-left: flip
+        // on upload or the face stares back upside down (verified the hard way)
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      }
+    } else glOk = false;
+  } else glOk = false;
+  if (!glOk) console.warn('no webgl: the face shows without the crt shader');
+  const ctx2d = gl ? null : view.getContext('2d');
+
+  function resize() {
+    if (INJECTED) {
+      CW = FEED_W; CH = FEED_H; // the feed is the feed: fixed 4:3
+    } else {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      CW = Math.max(2, Math.round(view.clientWidth * dpr));
+      CH = Math.max(2, Math.round(view.clientHeight * dpr));
+    }
+    view.width = CW; view.height = CH;
+    content.width = CW; content.height = CH;
+    sil.width = CW; sil.height = CH;
+    // the safe-scaled landing box for the 32x24 face
+    const s = safe;
+    SIL = { x: Math.round(CW * (1 - s) / 2), y: Math.round(CH * (1 - s) / 2), w: Math.round(CW * s), h: Math.round(CH * s) };
+    if (gl) gl.viewport(0, 0, CW, CH);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  /* ================= state ================= */
+  let stateName = 'idle';
+  let detail = {};
+  let gx = 0, gy = 0, nextGaze = 1800;
+  let blinkStart = -1e9, nextBlink = 1600;
+  let talk = 0, nextSyllable = 0, beat = 0, nextBeat = 0;
+  let glitchUntil = 0;
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let seed = 0x9e3779b9;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const randBetween = ([a, b]) => a + rand() * (b - a);
+
+  function setState(name, d) {
+    if (!STATES[name]) return; // the contract: unknown states are ignored
+    const changed = name !== stateName;
+    stateName = name;
+    detail = d || {};
+    view.setAttribute('aria-label', `aivi face, ${name}`);
+    if (changed && !reduced) glitchUntil = performance.now() + 180;
+    if (changed) { gx = 0; gy = 0; nextGaze = 0; nextBlink = 0; } // the face reacts
+  }
+
+  /* ================= face motion (the page's own clock; aivi never polls) */
+  function faceState(t, s) {
+    if (s.eyes === 'open' && t >= nextBlink) { blinkStart = t; nextBlink = t + randBetween(s.blink); }
+    const be = t - blinkStart;
+    const blink = reduced || s.eyes !== 'open' || be < 0 ? 0 : be < 70 ? 1 : be < 150 ? 2 : be < 220 ? 1 : 0;
+
+    if (t >= nextGaze) {
+      if (s.gaze === 'up') { gx = rand() < 0.5 ? -1 : 1; gy = -1; nextGaze = t + randBetween([1800, 3400]); }
+      else if (s.gaze === 'follow') { gx = rand() < 0.5 ? 0 : (rand() < 0.5 ? -1 : 1); gy = 0; nextGaze = t + randBetween([700, 1600]); }
+      else if (s.gaze === 'wander') {
+        const r = rand();
+        gx = r < 0.5 ? 0 : (r < 0.75 ? -1 : 1);
+        gy = rand() < 0.7 ? 0 : (rand() < 0.5 ? -1 : 1);
+        nextGaze = t + randBetween([1400, 3600]);
+      } else { gx = 0; gy = 0; nextGaze = t + 1e9; }
+    }
+
+    if (s.mouth === 'talk' && !reduced && t >= nextSyllable) {
+      talk = talk === 0 ? 1 + ((rand() * (TALK.length - 1)) | 0) : (rand() < 0.5 ? 0 : talk);
+      nextSyllable = t + 90 + rand() * 110;
+    }
+    if ((s.extra === 'think' || s.extra === 'wrench') && !reduced && t >= nextBeat) {
+      beat++;
+      nextBeat = t + 300;
+    }
+
+    const phase = reduced || !s.bob ? 0 : Math.floor(t / (s.bob / 2)) % 2;
+    return { blink, gx, gy, oy: reduced || s.gaze === 'up' ? 0 : phase, talk, beat };
+  }
+
+  /* ================= loop ================= */
+  function frame(t) {
+    const s = STATES[stateName];
+    drawContent(t, s, faceState(t, s));
+    if (glOk) {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, content);
+      const crt = CONFIG.crt; // read every frame: crt({...}) changes bite at once
+      gl.uniform1i(u.tDiffuse, 0);
+      gl.uniform1f(u.scanlineIntensity, crt.scanlineIntensity);
+      gl.uniform1f(u.scanlineCount, crt.scanlineCount > 0 ? crt.scanlineCount : 72);
+      gl.uniform1f(u.time, t / 1000);
+      // the scanline pattern's own slow crawl (the roll band above is not
+      // the only thing that moves on a tired tube)
+      gl.uniform1f(u.yOffset, reduced ? 0 : (t / 1000) * crt.scanScroll);
+      gl.uniform1f(u.brightness, crt.brightness);
+      gl.uniform1f(u.contrast, crt.contrast);
+      gl.uniform1f(u.saturation, crt.saturation);
+      gl.uniform1f(u.bloomIntensity, reduced ? 0 : crt.bloomIntensity);
+      gl.uniform1f(u.bloomThreshold, crt.bloomThreshold);
+      gl.uniform1f(u.rgbShift, crt.rgbShift);
+      gl.uniform1f(u.adaptiveIntensity, crt.adaptiveIntensity);
+      gl.uniform1f(u.vignetteStrength, crt.vignetteStrength);
+      gl.uniform1f(u.curvature, crt.curvature);
+      gl.uniform1f(u.flickerStrength, reduced ? 0 : crt.flickerStrength);
+      gl.uniform1f(u.maskStrength, crt.maskStrength);
+      gl.uniform1f(u.maskPeriod, crt.maskPeriod > 0 ? crt.maskPeriod : 3);
+      gl.uniform1f(u.rollStrength, reduced ? 0 : crt.rollStrength);
+      gl.uniform1f(u.rollSpeed, crt.rollSpeed);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    } else if (ctx2d) {
+      // no webgl at all: show the unshaded picture
+      ctx2d.drawImage(content, 0, 0, CW, CH);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  /* ================= boot ================= */
+  const initial = location.hash.slice(1); // #listening etc. — how the page opens at a state
+  setState(STATES[initial] ? initial : 'idle');
+  requestAnimationFrame(frame);
+
+  window.aiviFace = {
+    setState,
+    get state() { return stateName; },
+    get detail() { return detail; },
+    states: Object.keys(STATES),
+    config: CONFIG,
+    canvas: view, // core's camera shim hands this to any page asking for a camera
+    crt(knobs) { Object.assign(CONFIG.crt, knobs || {}); }, // live-tune the tube
+    glow(knobs) { Object.assign(CONFIG.glow, knobs || {}); }, // live-tune the face's glow
+  };
+})();
+</script>
+</body>
+</html>

@@ -187,8 +187,7 @@ whole setup:
       },
       "reportChannels": ["C0000000001"],
       "progress": "status",
-      "resource": "local-model",
-      "maxConcurrent": 1,
+      "pool": "default",
       "maxPending": 100
     }
   }

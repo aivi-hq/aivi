@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>aivi voice room</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui; background: #111418; color: #e6e6e6; margin: 0; padding: 1.2rem; }
+      h1 { font-size: 1.05rem; color: #8ab4f8; }
+      #bar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+      input { background: #1c2128; border: 1px solid #333; color: #e6e6e6; padding: 0.45rem 0.6rem; border-radius: 6px; min-width: 14rem; }
+      button { background: #2b3a55; border: 0; color: #fff; padding: 0.5rem 0.9rem; border-radius: 6px; cursor: pointer; }
+      button:disabled { opacity: 0.35; cursor: default; }
+      #status { margin-left: auto; color: #9aa4af; }
+      #lines div { margin: 0.35rem 0; padding: 0.4rem 0.6rem; background: #191e24; border-radius: 8px; }
+      #lines b { color: #8ab4f8; }
+      #lines i { color: #6a737d; font-style: normal; margin-right: 0.4rem; }
+      #live { margin-top: 0.6rem; color: #9aa4af; font-style: italic; min-height: 1.2em; }
+    </style>
+  </head>
+  <body>
+    <h1>aivi voice room</h1>
+    <div id="bar">
+      <input id="token" type="password" placeholder="room token" />
+      <button id="join">join with mic</button>
+      <button id="tab">share tab audio</button>
+      <button id="leave" disabled>leave</button>
+      <span id="status">offline</span>
+    </div>
+    <div id="lines"></div>
+    <div id="live"></div>
+    <script>
+      const $ = id => document.getElementById(id);
+      $('token').value = localStorage.getItem('aivi-room-token') || '';
+      let ws = null, ctx = null, framer = null, micStream = null, tabStream = null, playCtx = null, playing = [], playQ = Promise.resolve(), playGen = 0;
+
+      // Resample + frame in the audio thread: no JS timers, 16 kHz Int16
+      // chunks of 100 ms leave through the port. The mic stays OPEN while
+      // aivi speaks: that is what makes the conversation interruptible
+      // (barge-in). Chrome's echo cancellation cancels the browser's own
+      // playback (aivi's voice), so it never reaches the engine as speech.
+      // (The worklet global is `sampleRate` — there is no `inputSampleRate`;
+      // a typo there throws per block and the room hears nothing forever.)
+      const framerCode = `
+class Framer extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.rate = o.processorOptions.outRate;
+    this.buf = new Int16Array(1600); this.n = 0; this.gate = 1;
+    this.port.onmessage = e => { if (e.data && e.data.gate !== undefined) this.gate = e.data.gate; };
+  }
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (ch && ch.length) {
+      const step = sampleRate / this.rate;
+      for (let p = 0; p + step <= ch.length; p += step) {
+        const i0 = Math.floor(p), i1 = Math.min(i0 + 1, ch.length - 1), f = p - i0;
+        const s = (ch[i0] * (1 - f) + ch[i1] * f) * this.gate;
+        this.buf[this.n++] = Math.max(-32768, Math.min(32767, Math.round(s * 32768)));
+        if (this.n === this.buf.length) {
+          const out = this.buf; this.port.postMessage(out.buffer, [out.buffer]);
+          this.buf = new Int16Array(1600); this.n = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('framer', Framer);`;
+
+      const status = t => { $('status').textContent = t; };
+
+      function connect() {
+        const token = $('token').value.trim();
+        localStorage.setItem('aivi-room-token', token);
+        ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/?token=' + encodeURIComponent(token));
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = () => status('online'); // the handshake is the hello
+        ws.onclose = () => status('offline — press join to rejoin');
+        ws.onmessage = m => handleEvent(JSON.parse(m.data));
+      }
+
+      // The page loads before the token is typed, so the first handshake is
+      // often refused; join and share-tab press a fresh one instead of
+      // demanding a reload.
+      function ensureWs() {
+        if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) connect();
+      }
+
+      function handleEvent(e) {
+        if (e.ev === 'engine') status(
+          e.state === 'ready' ? 'online' :
+          e.state === 'failed' ? 'engine failed — say something again to retry' :
+          'engine ' + e.state + ' — models load on first audio, lines land after');
+        else if (e.ev === 'delta') $('live').textContent = ($('live').textContent + e.text).replace(/\s+/g, ' ');
+        else if (e.ev === 'session_reset') $('live').textContent = '';
+        else if (e.ev === 'reply_audio') {
+          const bin = atob(e.b64);
+          const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+          playWav(bytes.buffer);
+        } else if (e.ev === 'stop_audio') {
+          // Barge-in: aivi falls silent at once, mid-sentence, and the
+          // sentences still queued to be spoken never get the air.
+          playGen++;
+          for (const src of playing) {
+            try {
+              src.stop();
+            } catch (err) {}
+          }
+          playing = [];
+        } else if (e.ev === 'line') {
+          $('live').textContent = '';
+          const row = document.createElement('div');
+          const who = document.createElement('b');
+          who.textContent = e.speaker + ': ';
+          const at = document.createElement('i');
+          at.textContent = Math.round(e.t0) + 's';
+          row.append(at, who, document.createTextNode(e.text));
+          $('lines').appendChild(row);
+          window.scrollTo(0, document.body.scrollHeight);
+        }
+      }
+
+      // Sentences arrive as separate reply_audio events (the answer is spoken
+      // as it is written). They must play IN ORDER, one after another — so
+      // each waits on the last, and a barge-in (playGen++) drops the ones
+      // still queued behind the sentence it silenced.
+      function playWav(buf) {
+        playCtx = playCtx || ctx || new AudioContext();
+        const gen = playGen;
+        playQ = playQ
+          .then(async () => {
+            if (gen !== playGen) return; // interrupted before it got the air
+            const audio = await playCtx.decodeAudioData(buf.slice(0));
+            if (gen !== playGen) return;
+            await new Promise(res => {
+              const src = playCtx.createBufferSource();
+              src.buffer = audio;
+              src.connect(playCtx.destination);
+              src.onended = () => {
+                playing = playing.filter(s => s !== src);
+                res();
+              };
+              playing.push(src);
+              src.start();
+            });
+          })
+          .catch(() => {});
+      }
+
+      async function ensureFramer() {
+        if (ctx) { await ctx.resume(); return; }
+        ctx = new AudioContext();
+        // The click's user activation was spent on the getUserMedia await:
+        // Chrome creates this context SUSPENDED, and a suspended context
+        // silently processes nothing — the room would sit at "engine idle"
+        // forever. Resume it, and again if it ever suspends.
+        await ctx.resume();
+        ctx.onstatechange = () => { if (ctx.state === 'suspended') ctx.resume(); };
+        const url = URL.createObjectURL(new Blob([framerCode], { type: 'application/javascript' }));
+        await ctx.audioWorklet.addModule(url);
+        framer = new AudioWorkletNode(ctx, 'framer', { processorOptions: { outRate: 16000 } });
+        const silent = ctx.createGain(); // a silent sink keeps the processor running
+        silent.gain.value = 0;
+        framer.connect(silent).connect(ctx.destination);
+        framer.port.onmessage = e => { if (ws && ws.readyState === 1) ws.send(e.data); };
+      }
+
+      $('join').onclick = async () => {
+        try {
+          if (!$('token').value.trim()) { status('room token first'); return; }
+          ensureWs();
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+          await ensureFramer();
+          ctx.createMediaStreamSource(micStream).connect(framer); // same input: mic + tab mix into one room
+          $('leave').disabled = false;
+        } catch (err) { status('mic failed: ' + err); }
+      };
+
+      $('tab').onclick = async () => {
+        try {
+          if (!$('token').value.trim()) { status('room token first'); return; }
+          ensureWs();
+          tabStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+          if (!tabStream.getAudioTracks().length) {
+            tabStream.getTracks().forEach(t => t.stop());
+            status('no tab audio — in the picker pick a CHROME TAB that plays sound and tick "Also share tab audio"');
+            return;
+          }
+          await ensureFramer();
+          ctx.createMediaStreamSource(tabStream).connect(framer);
+          tabStream.getVideoTracks()[0]?.addEventListener('ended', () => status('tab share ended'));
+          $('leave').disabled = false;
+        } catch (err) { status('tab share failed: ' + err); }
+      };
+
+      $('leave').onclick = () => {
+        for (const s of [micStream, tabStream]) s?.getTracks().forEach(t => t.stop());
+        micStream = tabStream = null;
+        $('leave').disabled = true;
+      };
+
+      connect();
+    </script>
+  </body>
+</html>

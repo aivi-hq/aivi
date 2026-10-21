@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { Config } from '@aivi/core';
 import type {
   ChannelPlatform,
   ConversationStore as ConversationStoreApi,
@@ -61,8 +60,8 @@ const PENDING = "('queued','running','replying','blocked')";
  *  It is still an adapter author's string, so it enters SQL as a **quoted**
  *  identifier: unquoted, an id carrying dashes would parse as subtraction and
  *  the adapter would die at its first `CREATE TABLE`. Quoting renames nothing —
- *  `"linear_turns"` is the table `linear_turns` was. Values (the lease owner,
- *  the lease id, a session id) are not identifiers and are left exactly as
+ *  `"linear_turns"` is the table `linear_turns` was. Values (a channel id,
+ *  a session id) are not identifiers and are left exactly as
  *  written. */
 const table = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
@@ -70,8 +69,6 @@ const namesFor = (id: string) => ({
   binding: table(`${id}_binding`),
   sessions: table(`${id}_sessions`),
   turns: table(`${id}_turns`),
-  leaseOwner: id,
-  leaseID: (turnId: string) => `${id}:${turnId}`,
   newSession: () => `ses_${id}_${randomUUID().replaceAll('-', '')}`,
 });
 
@@ -161,12 +158,14 @@ export class ConversationStore implements ConversationStoreApi {
       ).map(r => ({ id: String(r.id), channel: String(r.channel), state: r.state as 'running' | 'replying' }));
       for (const turn of interrupted) {
         if (this.platform.effects === 'work') {
+          // A worker's checkout may still be moving: the turn blocks, and its
+          // dispatcher lease stands until the dispatcher's boot pass checks
+          // the session against OpenCode's reality.
           this.core.db
             .prepare(
               `UPDATE ${this.n.turns} SET state='blocked',error='Interrupted by a restart while working; inspect the session, then resolve' WHERE id=?`,
             )
             .run(turn.id);
-          this.core.blockLease(this.n.leaseID(turn.id), this.n.leaseOwner, 'Interrupted by a restart while working');
           continue;
         }
         this.core.db
@@ -174,7 +173,6 @@ export class ConversationStore implements ConversationStoreApi {
             `UPDATE ${this.n.turns} SET state='discarded',text='',result=NULL,error='Interrupted by a restart' WHERE id=?`,
           )
           .run(turn.id);
-        this.core.releaseLease(this.n.leaseID(turn.id), this.n.leaseOwner);
       }
       return interrupted;
     });
@@ -252,11 +250,12 @@ export class ConversationStore implements ConversationStoreApi {
   /**
    * One turn per channel at a time, and for bound workers one per issue
    * across channels (a blocked worker keeps it until resolved). Worktrees
-   * isolate concurrent work, so there is no per-project lock; capacity comes
-   * from the shared pool, reserved in the same transaction.
+   * isolate concurrent work, so there is no per-project lock. The candidate
+   * is not claimed: capacity is the dispatcher's to grant, and the winner is
+   * taken with `claimTurn`.
    */
-  claim(config: Config['scheduler'], resource: string): Turn | null {
-    const rows = this.core.db
+  nextTurn(): Turn | null {
+    const row = this.core.db
       .prepare(`${this.select}
       WHERE t.state='queued' AND NOT EXISTS (
         SELECT 1 FROM ${this.n.turns} busy JOIN ${this.n.sessions} bs ON bs.channel=busy.channel
@@ -264,24 +263,21 @@ export class ConversationStore implements ConversationStoreApi {
           busy.channel=t.channel
           OR (s.issue IS NOT NULL AND bs.issue=s.issue)
         )
-      ) ORDER BY t.seq`)
-      .all() as Row[];
-    for (const row of rows) {
-      const acquired = this.core.acquireLease(
-        this.n.leaseID(String(row.id)),
-        this.n.leaseOwner,
-        resource,
-        config.maxConcurrent,
-        config.resources,
-        () => {
-          this.core.db.prepare(`UPDATE ${this.n.turns} SET state='running' WHERE id=?`).run(String(row.id));
-        },
-      );
-      if (acquired) return turn({ ...row, state: 'running' });
-      // Every turn uses the same pool, so a refusal is a capacity refusal for all of them.
-      break;
-    }
-    return null;
+      ) ORDER BY t.seq LIMIT 1`)
+      .get() as Row | undefined;
+    return row ? turn(row) : null;
+  }
+
+  /** Begin a named candidate: queued → running; null when it is no longer there to take. */
+  claimTurn(id: string): Turn | null {
+    return this.core.transaction(() => {
+      const update = this.core.db
+        .prepare(`UPDATE ${this.n.turns} SET state='running' WHERE id=? AND state='queued'`)
+        .run(id);
+      if (Number(update.changes) !== 1) return null;
+      const row = this.core.db.prepare(`${this.select} WHERE t.id=?`).get(id);
+      return row ? turn({ ...row, state: 'running' }) : null;
+    });
   }
 
   state(id: string): TurnState | undefined {
@@ -375,56 +371,44 @@ export class ConversationStore implements ConversationStoreApi {
   }
 
   sent(id: string): void {
-    this.core.transaction(() => {
-      // The native session keeps the transcript; the inbox only needs the delivery record.
-      this.core.db.prepare(`UPDATE ${this.n.turns} SET state='sent',text='',result=NULL WHERE id=?`).run(id);
-      this.core.releaseLease(this.n.leaseID(id), this.n.leaseOwner);
-    });
+    // The native session keeps the transcript; the inbox only needs the delivery record.
+    this.core.db.prepare(`UPDATE ${this.n.turns} SET state='sent',text='',result=NULL WHERE id=?`).run(id);
   }
 
   block(id: string): void {
-    this.core.transaction(() => {
-      // Avoid persisting provider/platform error bodies that may contain credentials or private tool output.
-      this.core.db
-        .prepare(
-          `UPDATE ${this.n.turns} SET state='blocked',error='Turn or delivery interrupted; operator inspection required' WHERE id=?`,
-        )
-        .run(id);
-      this.core.blockLease(this.n.leaseID(id), this.n.leaseOwner, 'Turn or delivery interrupted');
-    });
+    // Avoid persisting provider/platform error bodies that may contain credentials or private tool output.
+    this.core.db
+      .prepare(
+        `UPDATE ${this.n.turns} SET state='blocked',error='Turn or delivery interrupted; operator inspection required' WHERE id=?`,
+      )
+      .run(id);
   }
 
   /**
    * The turn ended knowably: the prompt never reached the agent, or it came back with a clean
-   * terminal state (a provider/auth error, a timeout). Nothing external is in doubt, so
-   * capacity is released at once; the caller says why. Never persist provider/platform error
-   * bodies verbatim (they can carry credentials): a short reason only.
+   * terminal state (a provider/auth error, a timeout). Nothing external is in doubt; the engine
+   * pays its dispatcher slot back at once and the caller says why. Never persist provider/platform
+   * error bodies verbatim (they can carry credentials): a short reason only.
    */
   fail(id: string, reason = 'Not started: agent runtime unreachable or session setup failed'): void {
-    this.core.transaction(() => {
-      this.core.db
-        .prepare(
-          `UPDATE ${this.n.turns} SET state='discarded',text='',error=? WHERE id=? AND state IN ('running','replying')`,
-        )
-        .run(reason, id);
-      this.core.releaseLease(this.n.leaseID(id), this.n.leaseOwner);
-    });
+    this.core.db
+      .prepare(
+        `UPDATE ${this.n.turns} SET state='discarded',text='',error=? WHERE id=? AND state IN ('running','replying')`,
+      )
+      .run(reason, id);
   }
 
   /**
    * The turn ends without an answer by choice: the host is going down, or the person asked
    * (`/stop`). Like a restart, the turn's only external effect is its reply, so it is
-   * discarded and its capacity released; the caller tells the person.
+   * discarded; the engine pays its slot back and the caller tells the person.
    */
   interrupt(id: string, reason = 'Interrupted by a shutdown'): void {
-    this.core.transaction(() => {
-      this.core.db
-        .prepare(
-          `UPDATE ${this.n.turns} SET state='discarded',text='',result=NULL,error=? WHERE id=? AND state IN ('running','replying')`,
-        )
-        .run(reason, id);
-      this.core.releaseLease(this.n.leaseID(id), this.n.leaseOwner);
-    });
+    this.core.db
+      .prepare(
+        `UPDATE ${this.n.turns} SET state='discarded',text='',result=NULL,error=? WHERE id=? AND state IN ('running','replying')`,
+      )
+      .run(reason, id);
   }
 
   /** Conversations with messages still waiting; they survive a restart and are answered after it. */
@@ -461,13 +445,10 @@ export class ConversationStore implements ConversationStoreApi {
 
   resolve(id: string, reason: string): void {
     if (!reason.trim()) throw new Error('A reason is required');
-    this.core.transaction(() => {
-      const result = this.core.db
-        .prepare(`UPDATE ${this.n.turns} SET state='discarded',error=? WHERE id=? AND state='blocked'`)
-        .run(reason, id);
-      if (!Number(result.changes)) throw new Error('Only a blocked turn can be resolved');
-      this.core.releaseLease(this.n.leaseID(id), this.n.leaseOwner);
-    });
+    const result = this.core.db
+      .prepare(`UPDATE ${this.n.turns} SET state='discarded',error=? WHERE id=? AND state='blocked'`)
+      .run(reason, id);
+    if (!Number(result.changes)) throw new Error('Only a blocked turn can be resolved');
   }
 
   list(channel?: string): Turn[] {

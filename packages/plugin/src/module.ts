@@ -22,7 +22,6 @@ import type {
   Job,
   JobEntry,
   KnowledgeService,
-  Lease,
   LoadedConfig,
   Logger,
   Person,
@@ -37,9 +36,11 @@ import type {
 } from '@aivi/core';
 import type { OpenCode } from '@opencode/client';
 import type { Channels } from './channel.ts';
+import type { Dispatcher } from './dispatcher.ts';
 import type { Forges } from './forge.ts';
 import type { RunView } from './run.ts';
 import type { Tracker } from './tracker.ts';
+import type { Voice } from './voice.ts';
 
 /** The OpenCode client a module receives from `services.opencode()`: the
  *  SDK's own client, named here because this is where plugins meet it. */
@@ -107,6 +108,16 @@ export interface AiviServices {
    *  the host's machinery asks who owns a project's remote. A project with no
    *  forge is not a failure — the answer is simply nobody. */
   forges: Forges;
+  /** The voice seat: the voice module provides its one adapter at start;
+   *  modules standing in a room (discord, meet, …) open `room` handles and
+   *  feed audio. No adapter loaded, no hearing: `room` throws VoiceNotLoaded
+   *  naming the fix — the plugin is optional and the failure is honest. */
+  voice: Voice;
+  /** Capacity as named pools: every service that works asks for a slot before
+   *  working (the ticket workers drew it first; voice rooms draw the same).
+   *  A pool is an endpoint — capacity, an optional model, an optional
+   *  fallback. Pools are how a local box and a remote endpoint stay apart. */
+  dispatcher: Dispatcher;
   /** Ticket-to-run machinery: a tracker module registers its stages, stops
    *  runs and reads run records here. The orchestrator owns the run's state
    *  machine, the worker session, and the worker tools; it never calls back. */
@@ -163,27 +174,8 @@ export interface Store {
   /** Materialize occurrences that came due while aivi slept; silence is a result. */
   materializeDue(now?: number, graceMs?: number): { created: number; missed: Run[] };
 
-  /** The scheduler's claim: one run of one resource, under the capacity ceilings. */
-  claim(owner: string, maxConcurrent: number, resources: Record<string, number>, now?: number): Run | null;
-  /** Resources whose queue could take another claim. */
-  queuedResources(): string[];
   /** The next occurrence to materialize; null when nothing is due. */
   nextDue(now?: number): number | null;
-  acquireLease(
-    id: string,
-    owner: string,
-    resource: string,
-    maxConcurrent: number,
-    resources: Record<string, number>,
-    onAcquire?: () => void,
-    now?: number,
-  ): boolean;
-  releaseLease(id: string, owner: string): void;
-  blockLease(id: string, owner: string, reason: string): void;
-  blockLeasesOwnedBy(owner: string, reason: string): number;
-  /** Every held lease, as the module CLIs report them. */
-  leases(): Lease[];
-  leaseCount(): number;
   /** Name the session a claimed run opened, so reports can find their way back. */
   attachSession(id: string, owner: string, sessionId: string): void;
   /** Settle a claimed run: its result, its state, its reason. */

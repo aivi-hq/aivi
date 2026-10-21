@@ -71,7 +71,7 @@ export const linearSchema = z
       .describe(
         'Issues carrying this label are never worked automatically; a hand delegation is refused with an explanation.',
       ),
-    resource: id.default('local-model').describe('Pool a worker turn takes a slot in.'),
+    pool: id.default('default').describe('Dispatcher pool a worker turn takes a slot in.'),
     mcp: z
       .union([
         z.strictObject({

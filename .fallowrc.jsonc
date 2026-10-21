@@ -6,15 +6,28 @@
     "src/main.{ts,tsx,js,jsx}"
   ],
   "dynamicallyLoaded": [
-    // Git hooks lefthook invokes by path; nothing imports them, so the static
-    // graph alone would report them dead.
-    "scripts/commit-msg.mjs",
     // The CLI's one edge into the installed server: importApp() imports these
-    // two host modules by string path (`dist/cli/*.js`) — `aivi remove` drops
-    // a plugin's config block, and setup/add/remove/update rebuild the editor
-    // schema. Nothing imports them statically, by design.
+    // host modules by string path (`dist/cli/*.js`) — `aivi remove` drops
+    // a plugin's config block, setup/add/remove/update rebuild the editor
+    // schema, and setup asks the models question through warmHome. Nothing
+    // imports them statically, by design.
     "packages/host/src/cli/plugin-remove.ts",
-    "packages/host/src/cli/schema-cache.ts"
+    "packages/host/src/cli/schema-cache.ts",
+    "packages/host/src/cli/commands/knowledge.ts"
+  ],
+  // dev/ is the generated development home (an installed app, its own
+  // package.json, worktrees) — not this repo's source. scripts/ is dev
+  // tooling run against the tree (ruled 2026-10-20): its use of the root's
+  // devDependencies is not worth analyzing, and the checks that gate the
+  // product (smoke) reach the tree through spawned paths, not imports.
+  "ignorePatterns": [
+    "dev/**",
+    "scripts/**"
+  ],
+  // @discordjs/voice requires its sodium implementation at runtime; the
+  // declaration is what supplies it, and no import in our sources names it.
+  "ignoreDependencies": [
+    "libsodium-wrappers"
   ],
   "workspaces": {
     "patterns": [
@@ -34,6 +47,13 @@
     // ]
   },
   "typeAware": { "enabled": true },
+  "publicPackages": [
+    // @aivi/chrome ships its API to outside consumers (ruled 2026-10-20):
+    // used internally, published so people can drive a browser on their
+    // own. The published surface is the product, so fallow does not read
+    // it as unused here.
+    "@aivi/chrome"
+  ],
   "health": {
     // Istanbul coverage from `npm run test:cov`, so CRAP scores are measured, not estimated.
     "coverage": "./coverage/coverage-final.json",

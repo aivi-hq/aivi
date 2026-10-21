@@ -7,14 +7,20 @@ import { hostVersion } from '../version.ts';
  * The host's own report, as `GET /status` and the `aivi_status` tool answer
  * it. The version is the package-set constant every client negotiates with.
  */
-export function status(store: Store, loaded: LoadedConfig, now = Date.now(), modules: ModuleHealth[] = []): Status {
+export function status(
+  store: Store,
+  loaded: LoadedConfig,
+  now = Date.now(),
+  modules: ModuleHealth[] = [],
+  leaseCount: () => number = () => 0,
+): Status {
   const printed = printedBaseUrl(loaded.config);
   return {
     version: hostVersion,
     url: { base: printed.url, declared: printed.declared },
     counts: store.counts(),
     sources: loaded.sources.length,
-    leases: store.leaseCount(),
+    leases: leaseCount(),
     completion: 'verified-final-answer',
     modules,
     upcoming: store

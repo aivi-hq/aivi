@@ -31,13 +31,17 @@ Many concepts touch the flow of work, but two systems are responsible for actual
 The orchestrator never counts capacity itself. It asks the dispatcher for a lease and, once one is granted, works with it.
 
 The dispatcher is a central system, and the orchestrator pulling work is
-only one of the things it is designed for. Today it is the only user:
-**ticket work** draws `dispatcher.pools`. Jobs, dreaming and chat turns —
-Discord, Slack and the Linear assistant — still draw the older
-`scheduler.resources` from the store's own leases. The two systems coexist;
-folding them into the dispatcher's one pool set — including the turn lease
-below — is tracked deliberately-later in
-[plans/orchestrator.md](plans/orchestrator.md).
+only one of the things it is designed for. **One pool set —
+`dispatcher.pools` — is the capacity for every service.** Everything that
+calls an LLM holds a dispatcher lease: ticket work, voice rooms, jobs,
+dreaming and chat turns — Discord, Slack, the Linear assistant — all `request`
+the dispatcher, and one ledger (`dispatcher_leases`) is the only place a slot
+is held. Shell tasks and system invocations run lease-free: they never reach
+a model, so nothing moderates them. Blocked work keeps its lease until it
+resolves; the dispatcher's idle monitor is the reclaim net. The older
+`scheduler.resources` capacity knobs are gone; `scheduler` keeps job *timing*
+defaults only. No pools configured means capacity is not moderated for any
+of them — the dispatcher's rule, applied everywhere.
 
 ## The basics
 
@@ -79,10 +83,12 @@ By default, workflow movement follows that same order. A lane can override its n
 
 **Ruled 2026-10-02:** the config key for a lane's name stays **`name`** (the
 operator agreed `lane.lane` is weird; everything else in this document's
-vocabulary stands), and **closed states are never configured** — the tracker
-recognizes them by type, so Done, Canceled and Duplicate are not lanes in
-the array. A run ending in the last configured lane moves nowhere: a person
-closes the ticket.
+vocabulary stands). The same ruling's "closed states are never configured"
+was the assistant's own decision, not the operator's, and is **superseded
+2026-10-08**: every board option is asked, and the person answers Agent,
+Human or None. A state answered None is not in the array — aivi never reads
+it and never moves a ticket into it. A run ending in the last configured
+lane moves nowhere.
 
 | Type            | How it is recognized            | What happens                                                                           |
 | --------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
@@ -307,9 +313,13 @@ There are two lease types; only the second is built:
 
 A turn lease would ask the dispatcher to run a prompt. Nothing sends such a
 request yet: the services named above run their turns through their own
-machinery against `scheduler.resources`, and the steer-versus-queue delivery
-this section's rulings settled lives today in the channel engine
-([channels](channels.md)), not in the dispatcher.
+machinery against the same `dispatcher.pools` capacities (the store's lease
+ledger), and the steer-versus-queue delivery this section's rulings settled
+lives today in the channel engine ([channels](channels.md)), not in the
+dispatcher. The closest built shape is the voice module: it asks the
+dispatcher for a slot, and the pool decides the session's model at create
+([voice](../packages/voice/README.md)) — but the module, not the dispatcher,
+sends the prompt.
 
 When granted, the dispatcher claims a slot, creates or resumes the session, and runs the prompt.
 

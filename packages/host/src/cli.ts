@@ -12,6 +12,7 @@ import { configureLogging, isTty } from '@aivi/core';
 import type { MachineStatus } from '@aivi/plugin';
 import type { Command } from 'commander';
 import { registerChannels } from './cli/commands/channels.ts';
+import { registerFace } from './cli/commands/face.ts';
 import { registerGettingStarted } from './cli/commands/getting-started.ts';
 import { registerHost } from './cli/commands/host.ts';
 import { registerJobs } from './cli/commands/jobs.ts';
@@ -38,6 +39,7 @@ export async function registerCommands(program: Command, machine: MachineStatus)
   registerPeople(program);
   registerProjects(program);
   registerPrompts(program);
+  registerFace(program);
   registerKnowledge(program);
   registerJobs(program);
   // The plugin commands mount before parsing: their packages are asked for

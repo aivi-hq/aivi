@@ -571,7 +571,7 @@ async function waitDiary(
         last = row.id;
         if (row.truncated)
           throw new Error(
-            `a delivery arrived but the diary cut its body at 8 KiB (row ${row.id}) — verification needs the whole body.`,
+            `a delivery arrived but its body is not readable JSON — the diary cut it off (row ${row.id}) — verification needs the whole body.`,
           );
         const verdict = verifyWebhook({
           body: Buffer.from(row.body ?? '', 'utf8'),

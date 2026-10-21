@@ -47,8 +47,14 @@ test('composeConfigSchema closes the plugins record to the registered plugins', 
   );
   assert.equal(composed.safeParse({ version: 1, unexpected: true }).success, false, 'core fields stay strict');
   assert.match(
-    JSON.stringify(composed.safeParse({ version: 1, plugins: { alpha: { resource: 'nope' } } }).error?.issues),
-    /Unknown resource pool; name one of scheduler\.resources or remove the plugins\.alpha block/,
+    JSON.stringify(
+      composed.safeParse({
+        version: 1,
+        dispatcher: { pools: { 'local-model': { capacity: 1 } } },
+        plugins: { alpha: { resource: 'nope' } },
+      }).error?.issues,
+    ),
+    /Unknown dispatcher pool; name one of local-model or remove the resource from the plugins\.alpha block/,
   );
 });
 
@@ -86,10 +92,11 @@ test('plugins contribute project sections: projects close like the plugins recor
   );
 });
 
-test('config rejects invalid job resources and timezones and unknown fields', () => {
+test('config rejects invalid job pools and timezones and unknown fields', () => {
   assert.equal(
     configSchema.safeParse({
       version: 1,
+      dispatcher: { pools: { 'local-model': { capacity: 1 } } },
       jobs: [
         {
           id: 'check',
@@ -149,20 +156,25 @@ test('retention is a system job derived from config: default pool, host timezone
       'retention',
       '0 4 * * *',
       'Europe/Amsterdam',
-      'local-model',
+      'default',
       { kind: 'invocation', name: 'runs.prune', args: { olderThanDays: 30 } },
     ],
   );
   const custom = configSchema.parse({
     version: 1,
-    scheduler: { resources: { gpu: 1 }, agentSchedules: false, retention: { timezone: 'UTC', olderThanDays: 7 } },
+    dispatcher: { pools: { gpu: { capacity: 1 } } },
+    scheduler: { agentSchedules: false, retention: { timezone: 'UTC', olderThanDays: 7 } },
   });
-  assert.equal(retentionJob(custom, 'Europe/Amsterdam')!.resource, 'gpu', 'the first pool when local-model is absent');
+  assert.equal(retentionJob(custom, 'Europe/Amsterdam')!.resource, 'gpu', 'the first pool when default is absent');
   assert.equal(retentionJob(custom, 'Europe/Amsterdam')!.timezone, 'UTC');
   assert.equal(retentionJob(configSchema.parse({ version: 1, scheduler: { retention: false } })), null);
   assert.match(
     JSON.stringify(
-      configSchema.safeParse({ version: 1, scheduler: { retention: { resource: 'nope' } } }).error?.issues,
+      configSchema.safeParse({
+        version: 1,
+        dispatcher: { pools: { 'local-model': { capacity: 1 } } },
+        scheduler: { retention: { resource: 'nope' } },
+      }).error?.issues,
     ),
     /set retention to false/,
   );
@@ -189,7 +201,7 @@ test('projects-sync is a system job too: hourly by default, same pool rule, rese
   const job = projectsSyncJob(configSchema.parse({ version: 1 }), 'UTC')!;
   assert.deepEqual(
     [job.id, job.cron, job.timezone, job.resource, job.task],
-    ['projects-sync', '0 * * * *', 'UTC', 'local-model', { kind: 'invocation', name: 'projects.sync' }],
+    ['projects-sync', '0 * * * *', 'UTC', 'default', { kind: 'invocation', name: 'projects.sync' }],
   );
   assert.deepEqual(
     systemJobs(configSchema.parse({ version: 1, scheduler: { retention: false } }), 'UTC').map(j => j.id),
@@ -198,7 +210,11 @@ test('projects-sync is a system job too: hourly by default, same pool rule, rese
   assert.equal(projectsSyncJob(configSchema.parse({ version: 1, scheduler: { projectsSync: false } })), null);
   assert.match(
     JSON.stringify(
-      configSchema.safeParse({ version: 1, scheduler: { projectsSync: { resource: 'nope' } } }).error?.issues,
+      configSchema.safeParse({
+        version: 1,
+        dispatcher: { pools: { 'local-model': { capacity: 1 } } },
+        scheduler: { projectsSync: { resource: 'nope' } },
+      }).error?.issues,
     ),
     /set projectsSync to false/,
   );
@@ -254,8 +270,11 @@ test('projects are the directories of <home>/projects; config.json only override
   );
   assert.deepEqual(
     selectSources(loaded, ['gone'], false).map(s => [s.id, s.path]),
-    [['memory', join(root, 'projects/gone/memory')]],
-    'a removed project keeps only its memory',
+    [
+      ['memory', join(root, 'projects/gone/memory')],
+      ['archive', join(root, 'projects/gone/memory/archive.md')],
+    ],
+    'a removed project keeps only its memory and its archive',
   );
   assert.equal(loaded.projects[1]!.directory, join(root, 'projects/website/source'));
   // (the `linear` section is a plugin's own: core passes it through unread; the
@@ -267,6 +286,7 @@ test('projects are the directories of <home>/projects; config.json only override
       ['docs', 'doc', join(root, 'projects/website/source/docs')],
       ['adr', 'decision', join(root, 'projects/website/source/docs/adr')],
       ['memory', 'memory', join(root, 'projects/website/memory')],
+      ['archive', 'archive', join(root, 'projects/website/memory/archive.md')],
     ],
   );
   assert.deepEqual(
@@ -274,14 +294,16 @@ test('projects are the directories of <home>/projects; config.json only override
     [
       ['pages', join(root, 'projects/wiki/source/pages')],
       ['memory', join(root, 'projects/wiki/memory')],
+      ['archive', join(root, 'projects/wiki/memory/archive.md')],
     ],
   );
-  // Core is the configured sources plus the org memory.
+  // Core is the configured sources plus the org memory and its archive.
   assert.deepEqual(
     selectSources(loaded, [], true).map(s => [s.id, s.path]),
     [
       ['company', join(root, 'handbook')],
       ['memory', join(root, 'memory')],
+      ['archive', join(root, 'memory/archive.md')],
     ],
   );
   assert.equal(selectSources(loaded, ['website'], false)[0]!.projectId, 'website');
@@ -460,18 +482,25 @@ test('calendar calculations use the configured timezone across daylight saving c
   );
 });
 
-test('agent scheduling is on by default in local-model, can be disabled, and must name an existing pool', () => {
-  assert.deepEqual(configSchema.parse({ version: 1 }).scheduler.agentSchedules, { resource: 'local-model', max: 50 });
+test('agent scheduling is on by default, can be disabled, and must name an existing pool', () => {
+  assert.deepEqual(configSchema.parse({ version: 1 }).scheduler.agentSchedules, { max: 50 });
   assert.equal(
     configSchema.parse({ version: 1, scheduler: { agentSchedules: false } }).scheduler.agentSchedules,
     false,
   );
-  const custom = configSchema.safeParse({ version: 1, scheduler: { resources: { gpu: 1 } } });
+  const custom = configSchema.safeParse({
+    version: 1,
+    dispatcher: { pools: { gpu: { capacity: 1 } } },
+    scheduler: { agentSchedules: { resource: 'local-model' } },
+  });
   assert.equal(custom.success, false, 'default pool local-model does not exist here');
   assert.match(JSON.stringify(custom.error?.issues), /set agentSchedules to false/);
   assert.deepEqual(
-    configSchema.parse({ version: 1, scheduler: { resources: { gpu: 1 }, agentSchedules: { resource: 'gpu' } } })
-      .scheduler.agentSchedules,
+    configSchema.parse({
+      version: 1,
+      dispatcher: { pools: { gpu: { capacity: 1 } } },
+      scheduler: { agentSchedules: { resource: 'gpu' } },
+    }).scheduler.agentSchedules,
     { resource: 'gpu', max: 50 },
   );
 });

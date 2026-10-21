@@ -2,9 +2,10 @@ import { realpath, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LoadedConfig, Logger } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { Dispatcher } from '@aivi/plugin/dispatcher';
 import type { OpenCodeClient, SessionEvents, Store } from '@aivi/plugin/module';
 import { reentryPrompt } from '../reports.ts';
-import { connectForTurn, runTurn } from '../session.ts';
+import { connectForTurn, runTurn, TurnNotStarted } from '../session.ts';
 import type { Ask } from './engine.ts';
 
 /** Native message id for a turn; only `[A-Za-z0-9_]` survive so any platform id fits. */
@@ -30,6 +31,7 @@ export async function createTurnRunner(
   opencode: () => Promise<OpenCodeClient>,
   events: SessionEvents,
   store: Store,
+  dispatcher: Dispatcher,
   log?: Logger,
 ): Promise<Ask> {
   const permissions: { action: string; resource: string; effect: 'allow' }[] = [];
@@ -47,7 +49,7 @@ export async function createTurnRunner(
       effect: 'allow',
     });
   }
-  return async (turn, signal, ready) => {
+  return async (turn, signal, ready, lease) => {
     const client = await connectForTurn(opencode);
     // A conversation that adopted a job's session keeps that session's agent and directory.
     const agent = turn.agent ?? config.agent;
@@ -62,17 +64,44 @@ export async function createTurnRunner(
         : !turn.ready && turn.seed
           ? `[Earlier in this thread aivi posted this outcome of a scheduled job:]\n${turn.seed}\n\n${said}`
           : said;
+    const origin = { aivi: { origin: platform.id, channel: turn.channel, ...(who ? { person: who.id } : {}) } };
+    if (!lease) throw new Error(`${platform.label} turn: no dispatcher slot; the engine grants one before asking`);
+    if (lease.state === 'preparing') {
+      // The lease's provide births the conversation's session: the id the store
+      // pre-allocated is kept, the pool decides the model, and the origin that
+      // dreaming reviews is stamped where the session is born. A conversation
+      // that already has its session resumes as it was. A provide that fails is
+      // a turn that never started.
+      await dispatcher
+        .provide(lease.id, {
+          agent,
+          directory,
+          sessionId: turn.session,
+          create: !turn.ready,
+          title: `${platform.label} ${turn.channel}`,
+          metadata: origin,
+          ...(turn.model
+            ? {
+                model: {
+                  providerID: turn.model.providerID,
+                  id: turn.model.modelID,
+                  ...(turn.model.variant ? { variant: turn.model.variant } : {}),
+                },
+              }
+            : {}),
+        })
+        .catch(error => {
+          throw new TurnNotStarted(error);
+        });
+      if (!turn.ready) ready();
+    }
     const result = await runTurn(
       client,
       {
         sessionId: turn.session,
         agent,
         directory,
-        create: !turn.ready,
-        title: `${platform.label} ${turn.channel}`,
-        sessionMetadata: {
-          aivi: { origin: platform.id, channel: turn.channel, ...(who ? { person: who.id } : {}) },
-        },
+        create: false, // the lease's provide created it; the conversation keeps its history
         permissions,
         messageId: messageIdFor(platform, turn.id),
         // Role behaviour lives in the agent definition; the prompt only carries who said what.
@@ -89,9 +118,10 @@ export async function createTurnRunner(
                   ...(who ? { person: who.id } : {}),
                 },
         },
+        // A `/model` pin outranks the pool's choice; prepareSession applies it to the session.
         ...(turn.model ? { model: turn.model } : {}),
       },
-      { signal, onPermission: 'reject', events, onCreated: ready, ...(log ? { log } : {}) },
+      { signal, onPermission: 'reject', events, ...(log ? { log } : {}) },
     );
     return result.text;
   };

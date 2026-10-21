@@ -40,14 +40,13 @@ export const slackConfigSchema = z
       .regex(/^[a-z][a-z0-9_-]*$/)
       .max(24)
       .default('aivi'),
-    resource: z.string().default('local-model'),
+    pool: z.string().default('default').describe('Dispatcher pool this module’s turns draw capacity from.'),
     /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
     access: accessPolicySchema,
     /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "slack" }`). Empty: never post proactively. */
     reportChannels: z.array(channelId).default([]),
     /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
     progress: z.enum(['silent', 'status', 'tools']).default('status'),
-    maxConcurrent: z.number().int().min(1).max(32).default(1),
     maxPending: z.number().int().min(1).max(1000).default(100),
   })
   .superRefine((config, ctx) => {

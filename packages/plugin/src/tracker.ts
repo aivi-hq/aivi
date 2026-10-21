@@ -76,6 +76,16 @@ export interface Tracker {
    *  spent rather than undone. */
   ticketLane(projectId: string, ticketId: string): Promise<string | undefined>;
 
+  /** The **ticket desk**: a worker's hand on the ticket itself, with no
+   *  conversation to speak through. The host claims the `aivi_ticket_*` ids
+   *  exactly once and routes every call to the desk of the tracker that works
+   *  the calling run's ticket — so several trackers can run in one home and a
+   *  worker never names a ticket. Required of every tracker: the desk is
+   *  ticket work, and a tracker that cannot do ticket work is not a tracker.
+   *  Each method receives the run, never a bare id: the ticket is the run's,
+   *  and the ground truth of who may touch it is the ledger's. */
+  desk: TicketDesk;
+
   /** The dispatcher's slot is in hand and the run is claimed: open the
    *  ticket to work on the platform and answer with the **work entry**:
    *  the summary the worker is started with, and the **branch the ticket
@@ -192,6 +202,57 @@ export const TICKET_TOOL_ACTIONS = [
 export type TicketToolAction = (typeof TICKET_TOOL_ACTIONS)[number];
 
 /**
+ * The ticket desk in the tracker's own words: what each `aivi_ticket_*` tool
+ * does to the ticket its run works. The host owns the tools — one claim of
+ * each id, the argument checks, and the guard that the call comes from a live
+ * run of this tracker — because that is run domain. What a ticket is on the
+ * platform is tracker domain: which conversation a plain comment lands on,
+ * which team a new ticket is born in, what "the label the team knows" means.
+ * Every method receives the run, whose `ticketId` is the only ticket it may
+ * touch; the answer shapes are what the worker reads, and they are the same
+ * on every platform.
+ */
+export interface TicketDesk {
+  /** Read the ticket: the words a worker starts from, as they now stand. */
+  read(run: RunView): Promise<{
+    identifier: string;
+    title: string;
+    description: string | null;
+    lane: string;
+    labels: string[];
+    url: string;
+  }>;
+  /** The comment trail, oldest first. */
+  comments(run: RunView): Promise<TrackerComment[]>;
+  /** The team's label catalogue and what stands on the ticket now. */
+  labels(run: RunView): Promise<{ team: string[]; on: string[] }>;
+  /** Rewrite the ticket's own words; only what is named is touched. */
+  edit(
+    run: RunView,
+    changes: { title?: string; description?: string },
+  ): Promise<{
+    identifier: string;
+    title: string;
+    url: string;
+  }>;
+  /** A plain comment on the ticket, as aivi's own — what a person typed
+   *  lands as what a person reads. */
+  comment(run: RunView, text: string): Promise<void>;
+  /** Open a new ticket — the escape hatch for work this ticket should not
+   *  carry. Where it lands is the tracker's config, never the caller's word. */
+  create(
+    run: RunView,
+    input: { title: string; description: string },
+  ): Promise<{
+    identifier: string;
+    url: string;
+    lane: string;
+  }>;
+  /** Put one label on the ticket (`on`) or take it off. */
+  label(run: RunView, label: string, on: boolean): Promise<void>;
+}
+
+/**
  * The normalized signals everything downstream keys off — never raw
  * webhooks. `started` is a working session opened on a ticket (a
  * delegation, a mention, whatever brought it); `prompted` is a message
@@ -269,9 +330,9 @@ export interface Platform {
    *  facts needed to build a worker's first message. Absent until a
    *  pull-shaped tracker needs it. */
   candidates?(conversation: string, lane: string): Promise<TrackerIssue[]>;
-  /** Apply one neutral outcome to a ticket. Absent while the machinery
-   *  still writes its updates through the members below. */
-  apply?(conversation: string, issueId: string, update: TrackerUpdate): Promise<void>;
+  /** Apply one neutral outcome to a ticket (a lane move, one label, a plain
+   *  comment). Required: the machinery's asks all speak through it. */
+  apply(conversation: string, issueId: string, update: TrackerUpdate): Promise<void>;
   /** The ticket, fresh from the platform — the only routing input, never
    *  trusted from an event's own words. Delivered in the neutral shape;
    *  the adapter's translation is where platform fields stop existing. */
@@ -358,19 +419,20 @@ export interface Platform {
   /**
    * The ticket desk — what `aivi_ticket_*` tools do to tickets **directly**,
    * with no agent session to speak through (the `conversation` is the app's
-   * own feed, as in `notify`). Optional as a set: a module claims its desk
-   * only over a platform that answers these, so a worker of another tracker
-   * simply never sees the tools. All of it is the **worker's hand on the
-   * ticket**, gated by OpenCode permissions (denied by default, allowed per
-   * agent); nothing here decides who may call.
+   * own feed, as in `notify`). **Required as a set** (ruled 2026-10-07): the
+   * host claims the desk ids once for the whole home and routes each call to
+   * the tracker that works the run's ticket, so a tracker that skipped its
+   * desk would fail its own workers rather than nobody's. All of it is the
+   * **worker's hand on the ticket**, gated by OpenCode permissions (denied by
+   * default, allowed per agent); nothing here decides who may call.
    */
-  ticketComments?(conversation: string, issueId: string): Promise<TrackerComment[]>;
+  ticketComments(conversation: string, issueId: string): Promise<TrackerComment[]>;
   /** A plain comment on the ticket, as the app's own — no activity type,
    *  no marker: what a person typed lands as what a person reads. */
-  addComment?(conversation: string, issueId: string, text: string): Promise<void>;
+  addComment(conversation: string, issueId: string, text: string): Promise<void>;
   /** Rewrite the ticket's own words: title and/or description. Returns the
    *  ticket as it now stands, so the caller reports the truth it wrote. */
-  editIssue?(
+  editIssue(
     conversation: string,
     issueId: string,
     changes: { title?: string; description?: string },
@@ -378,13 +440,13 @@ export interface Platform {
   /** Open a new ticket in the named team, landing it in `lane` when a lane
    *  is named (the adapter resolves the name against the team's states and
    *  says so when none matches). */
-  createIssue?(
+  createIssue(
     conversation: string,
     input: { teamId: string; title: string; description?: string; lane?: string },
   ): Promise<TrackerIssue>;
   /** The team's label catalogue — every name the team knows, so a worker
    *  can pick honestly instead of guessing. */
-  teamLabels?(conversation: string, teamId: string): Promise<string[]>;
+  teamLabels(conversation: string, teamId: string): Promise<string[]>;
   /** Subscribe to the normalized events. The adapter owns the platform's
    *  whole inbound surface — endpoints, signatures, acknowledgements;
    *  registration happens at module start. Returns the unsubscribe. */

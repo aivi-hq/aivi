@@ -76,6 +76,14 @@ interface ArgSchema<A> {
 }
 type TaskHandler2<A> = (run: Run, context: ExecutionContext, args: A) => Promise<ExecutionResult>;
 
+/**
+ * Which work speaks to a model: a prompt task, and the `dreaming` operation —
+ * it runs the dreamer's turn. Scripts and system checks call no model and
+ * need no dispatcher slot.
+ */
+export const needsLlmCapacity = (task: Task): boolean =>
+  task.kind === 'prompt' || (task.kind === 'invocation' && task.name === 'dreaming');
+
 export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execute {
   const log = deps.log ?? getLogger(['aivi']);
   const protectedEnv = [...(deps.protectedEnv ?? [])];
@@ -123,7 +131,17 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
     },
     'runs.prune': operation('runs.prune', runsPruneArgsSchema, async (_run, _context, args) => {
       const cutoff = Date.now() - args.olderThanDays * 86_400_000;
-      return { state: 'succeeded', result: { olderThan: new Date(cutoff).toISOString(), ...deps.store.prune(cutoff) } };
+      // The request diary is the one table that grows with traffic, so the
+      // retention pass retires it on the same age; a diary older than the
+      // runs it explains is of no use.
+      return {
+        state: 'succeeded',
+        result: {
+          olderThan: new Date(cutoff).toISOString(),
+          ...deps.store.prune(cutoff),
+          requests: deps.store.clearRequests(cutoff),
+        },
+      };
     }),
     dreaming: operation('dreaming', dreamingArgsSchema, async (run, context, args) => {
       const directory = resolve(home, args.directory);
@@ -150,16 +168,39 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
         };
       }
       const task: DreamingArgs = { ...args, directory, memoryDirectory, origins };
-      const { sessionId } = turnIdsFor(run.id);
+      const lease = context.lease;
+      if (!lease)
+        return {
+          state: 'failed',
+          result: null,
+          reason: 'Dreaming: no dispatcher slot was granted; the dreamer turn needs one',
+        };
       const timeout = AbortSignal.timeout(task.timeoutMs);
+      const { sessionId } = turnIdsFor(run.id);
       try {
         const client = await connectForTurn(deps.opencode);
-        // Persist the intended ID BEFORE any request. A dropped response then has a known reconciliation target.
+        // The dreamer's session is born from the run's lease: the pool's model decides.
+        // The deterministic id persists BEFORE any request — a dropped response has a
+        // known reconciliation target — and the dreaming origin, never reviewable, is
+        // stamped where the session is born.
         context.attachSession(sessionId);
+        await lease
+          .provide({
+            agent: task.agent,
+            directory,
+            sessionId,
+            create: true,
+            title: `aivi dreaming ${new Date().toISOString().slice(0, 10)}`,
+            metadata: { aivi: { origin: 'dreaming', run: run.id } },
+          })
+          .catch(error => {
+            throw new TurnNotStarted(error);
+          });
         const outcome = await dream(task, run.id, {
           store: deps.store,
           events: deps.events,
           client,
+          sessionId,
           stateDirectory: loaded.config.stateDirectory,
           projects: loaded.sources
             .filter(s => s.scope === 'project' && s.id === MEMORY_SOURCE_ID)
@@ -171,7 +212,8 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
           await deps.knowledge.index().catch(error => log.warn('dreaming.index.failed', { error }));
         return outcome;
       } catch (error) {
-        // The cursor did not advance, so the next run reviews the same conversations again.
+        // The cursor advanced per digested session, so the next run resumes at
+        // the session this one died on, not the whole backlog.
         log.warn('dreaming.failed', { error });
         return ended(error, {
           sessionId,
@@ -276,19 +318,39 @@ async function runPrompt(
   const { sessionId, messageId } = turnIdsFor(run.id);
   const timeout = AbortSignal.timeout(task.timeoutMs);
   const metadata = { aivi: { origin: 'job', run: run.id } };
+  const lease = context.lease;
+  if (!lease)
+    return {
+      state: 'failed',
+      result: null,
+      reason: 'Prompt job: no dispatcher slot was granted; prompt work needs one',
+    };
   try {
     const client = await connectForTurn(deps.opencode);
-    // Persist the intended ID BEFORE the request. A dropped response then has a known reconciliation target.
+    // The deterministic id is persisted BEFORE any request: a dropped response
+    // then has a known reconciliation target. The lease's provide births the
+    // session under that id with the pool's model; a session that already
+    // exists (a lost create) is validated, not re-imagined.
     context.attachSession(sessionId);
+    await lease
+      .provide({
+        agent: task.agent,
+        directory: task.directory,
+        sessionId,
+        create: true,
+        title: `aivi ${run.id}`,
+        metadata,
+      })
+      .catch(error => {
+        throw new TurnNotStarted(error);
+      });
     const turn = await runTurn(
       client,
       {
         sessionId,
         agent: task.agent,
         directory: task.directory,
-        create: true,
-        title: `aivi ${run.id}`,
-        sessionMetadata: metadata,
+        create: false,
         messageId,
         text: task.prompt,
         messageMetadata: metadata,

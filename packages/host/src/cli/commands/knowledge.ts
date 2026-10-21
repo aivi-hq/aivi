@@ -1,9 +1,24 @@
 /** Knowledge: search over the running host and queued reindexing. */
 import { randomUUID } from 'node:crypto';
 import { selectSources } from '@aivi/core';
+import { QMD_BUILTIN_MODELS, warmKnowledge } from '@aivi/knowledge';
 import { createHostClient } from '@aivi/plugin/api';
 import type { Command } from 'commander';
 import { collect, context, hostUrl, print, withStore } from '../context.ts';
+
+/** Setup's fetch step reaches the models through this one edge (the CLI puts
+ *  its home in `AIVI_HOME` before importing): the home's composed config, the
+ *  download, the embed, the load — no server involved. The `knowledge warm`
+ *  command and setup share exactly this code. */
+export async function warmHome(): Promise<Awaited<ReturnType<typeof warmKnowledge>> & { seconds: number }> {
+  const { loaded, log } = await context();
+  const startedAt = Date.now();
+  const warm = await warmKnowledge(loaded, undefined, log.getChild('knowledge'));
+  return { ...warm, seconds: Math.round((Date.now() - startedAt) / 1000) };
+}
+// The model questions in `aivi setup` show these as each role's default; the
+// CLI reads them from this module, never from its own copy.
+export { QMD_BUILTIN_MODELS };
 
 export function registerKnowledge(program: Command): void {
   const knowledge = program.command('knowledge').description('search and indexing').helpGroup('Knowledge');
@@ -43,11 +58,20 @@ export function registerKnowledge(program: Command): void {
     .action(async values => {
       const { loaded, poke } = await context();
       if (loaded.config.search === false) throw new Error('Knowledge search is disabled in the config');
-      if (!(values.resource in loaded.config.scheduler.resources))
-        throw new Error('Configure a maintenance resource pool or pass --resource');
+      const pools = loaded.config.dispatcher.pools ?? {};
+      if (Object.keys(pools).length > 0 && !(values.resource in pools))
+        throw new Error(`Unknown dispatcher pool: ${values.resource}; name one of ${Object.keys(pools).join(', ')}`);
       await withStore(loaded, store =>
         print(store.enqueue({ kind: 'invocation', name: 'knowledge.index' }, values.resource, `index:${randomUUID()}`)),
       );
       await poke();
+    });
+  knowledge
+    .command('warm')
+    .description(
+      'Fetch and load the semantic search models: downloads what `search.models` names (qmd defaults when unset), embeds the corpus, warms expansion and rerank. Searches stay keyword-only until this has run once.',
+    )
+    .action(async () => {
+      print(await warmHome());
     });
 }

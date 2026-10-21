@@ -16,6 +16,10 @@ aivi.json
 dev/*
 !dev/README.md
 
+# A hand-made backup of an old dev home (same generated contents, plus a
+# source checkout inside whose biome.json breaks the root lint if scanned).
+dev.bak/
+
 # Build output: compiled packages (the published artifact; exports maps default
 # to dist/) and their build info.
 dist/
@@ -28,3 +32,6 @@ coverage/
 tmp/
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Python bytecode from the engine scripts: generated, never read.
+__pycache__/

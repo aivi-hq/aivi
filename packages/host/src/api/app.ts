@@ -36,6 +36,8 @@ export interface HostApiOptions {
   wake?: (() => void) | undefined;
   /** Module health for `/status`; absent from the CLI. */
   health?: (() => ModuleHealth[]) | undefined;
+  /** Slots the dispatcher holds, for `/status` and `aivi_status`; absent from the CLI. */
+  leases?: (() => number) | undefined;
   /** `GET /context?session=`: describe an OpenCode session for the agent running in it; absent without OpenCode. */
   context?: ((sessionID: string, signal: AbortSignal) => Promise<string>) | undefined;
   /** The composed-schema reload behind `aivi_config` writes; see `HostToolDeps.compose`. */
@@ -76,6 +78,7 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
     jobs,
     wake,
     health,
+    leases,
     context,
     compose,
     runMembership,
@@ -85,7 +88,7 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
     log = getLogger(['aivi']),
   } = options;
   const app = new Hono<AppEnv>();
-  if (tools) claimHostTools(tools, { store, loaded, knowledge, jobs, health, context, compose, log });
+  if (tools) claimHostTools(tools, { store, loaded, knowledge, jobs, health, leases, context, compose, log });
   // The version contract binds the paths this host itself serves; the set
   // fills from the route table once the endpoints below are registered.
   const coreSurface = new Set<string>();
@@ -109,7 +112,7 @@ export function createApp(options: HostApiOptions): Hono<AppEnv> {
   app.use('/people/*', requireOperator);
 
   registerWhoami(app);
-  registerStatus(app, { store, loaded, health });
+  registerStatus(app, { store, loaded, health, leases });
   registerKnowledge(app, { loaded, knowledge, log });
   registerContext(app, { context, log });
   registerRun(app, { runMembership, log });

@@ -28,13 +28,13 @@ export default (ctx: PluginCliContext): Command => {
     });
   discord
     .command('status')
-    .description('Inspect Discord turns and leases')
+    .description('Inspect Discord turns')
     .action(async () => {
       const config = await enabled(ctx);
       const { openDiscordStore } = await import('./index.ts');
       await ctx.withStore(store => {
         const inbox = openDiscordStore(store, config);
-        ctx.print({ turns: inbox.list(), leases: store.leases() });
+        ctx.print({ turns: inbox.list() });
       });
     });
   discord

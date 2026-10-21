@@ -4,6 +4,8 @@ import type { Run } from '@aivi/core';
 import { configSchema, jobSchema, taskSchema } from '@aivi/core';
 import type { ChannelModule } from '@aivi/plugin/channel';
 import { Channels } from '../src/channel/router.ts';
+import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
+import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from '../src/reports.ts';
 import { Scheduler } from '../src/scheduler.ts';
 import { Store } from '../src/store.ts';
@@ -112,9 +114,21 @@ test('scheduled outcomes are posted through the registered channel module and au
     }),
   );
   const run = async (now: number) => {
+    // Invocation work holds no lease: the dispatcher's client is never reached.
+    const dispatcher = new Dispatcher({
+      leases: new LeaseStore(store),
+      dispatcher: configSchema.parse({ version: 1 }).dispatcher,
+      opencode: async () => {
+        throw new Error('not needed');
+      },
+      idleMs: 600_000,
+      prepareMs: 600_000,
+    });
     const scheduler = new Scheduler(
       store,
       config.scheduler,
+      dispatcher,
+      () => false,
       async () => ({ state: 'succeeded', result: { ok: true } }),
       undefined,
       async (run, state, result, reason) => {

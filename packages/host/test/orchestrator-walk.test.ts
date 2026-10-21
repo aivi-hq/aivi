@@ -11,6 +11,7 @@ import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { Forges } from '../src/forges.ts';
+import { ConfigurationError } from '../src/modules.ts';
 import { RunLedger } from '../src/orchestrator/ledger.ts';
 import { Orchestrator, type OrchestratorGit } from '../src/orchestrator/orchestrator.ts';
 import { Store } from '../src/store.ts';
@@ -33,6 +34,21 @@ const quiet = {
   getChild: () => quiet,
   with: () => quiet,
 } as unknown as Logger;
+
+/** The ticket desk is required of every tracker, but the walk never calls it:
+ *  these boards carry a stub that says so the moment a test reaches for it. */
+const noDesk = (): never => {
+  throw new Error('the ticket desk is not part of the walk');
+};
+const stubDesk = {
+  read: noDesk,
+  comments: noDesk,
+  labels: noDesk,
+  edit: noDesk,
+  comment: noDesk,
+  create: noDesk,
+  label: noDesk,
+} satisfies Tracker['desk'];
 
 /** An event stream a test can speak into: `emit` is the server putting an
  *  event on the wire for the sessions that are watching. */
@@ -158,6 +174,7 @@ function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boo
     moves: [],
     moveDepths: [],
     stages: [],
+    desk: stubDesk,
     projects: () => ['p'],
     tickets: async (_projectId, state) =>
       (lanes.get(state) ?? []).map(t => ({ id: t.id, blocked: t.blocked ?? false })),
@@ -380,6 +397,7 @@ test('blocked tickets wait, and a ticket gone by initWork fails its run visibly 
       { id: 'gone-1', blocked: false },
     ],
     moveTo: async () => {},
+    desk: stubDesk,
     ticketLane: async (_projectId, ticketId) => (ticketId === 'gone-1' ? undefined : 'In Progress'),
     initWork: async run => {
       if (run.ticketId === 'gone-1') throw new Error('the ticket is gone from the board (deleted by a person)');
@@ -1553,6 +1571,7 @@ test('a worktree lane whose tracker named no branch fails the run visibly and sa
     projects: () => ['p'],
     tickets: async () => [{ id: 't-2', blocked: false }],
     moveTo: async () => {},
+    desk: stubDesk,
     ticketLane: async () => 'In Progress',
     initWork: async () => ({ summary: 'no branch here' }),
     ready: () => {},
@@ -1790,4 +1809,20 @@ test('the operator’s edited prompts are the words the run speaks: read at use,
   const title = g.fake.forms[0]!.title ?? '';
   assert.match(title, /^Human: https:\/\/github\.com\/acme\/site\/pull\/1 still owes:/, 'the edited escalation asks');
   assert.match(title, /- a\.ts: Why is this nil\? \(id PRRT_1\)/, 'with the owed list in place');
+});
+
+test('a project has one tracker: a second over the same project is refused at the door', () => {
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, {});
+  const { orchestrator } = harness([lane('Triage', { agent: 'dev' })], {}, feed, fake);
+  // The harness already registered the scripted board, which speaks for 'p'.
+  assert.throws(
+    () => orchestrator.addTracker({ ...feed, id: 'second-tracker' }),
+    (e: unknown) => e instanceof ConfigurationError && /both speak for project p/.test(e.message),
+    'two trackers over one project would walk one lane array twice and race for the same tickets',
+  );
+  // A module restarting registers under its own id again: that replaces, it
+  // does not collide — and a tracker for another project lives beside this one.
+  assert.doesNotThrow(() => orchestrator.addTracker(feed));
+  assert.doesNotThrow(() => orchestrator.addTracker({ ...feed, id: 'other-tracker', projects: () => ['q'] }));
 });

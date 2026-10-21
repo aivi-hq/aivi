@@ -26,7 +26,8 @@
     "@opencode/protocol": "2.0.23",
     "ipull": {
       "commander": "15.0.0"
-    }
+    },
+    "node-llama-cpp": "3.21.1"
   },
   "private": true,
   "scripts": {
@@ -40,17 +41,20 @@
     "smoke": "npm run build -s && node scripts/smoke.mjs && node scripts/pack-smoke.mjs",
     "smoke:browser": "npm run build -s && node scripts/browser-smoke.mjs",
     "live:opencode": "node scripts/live-opencode.mjs",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "lint": "biome check . --error-on-warnings --reporter=github",
+    "lint:fix": "biome check --write . --error-on-warnings --reporter=github",
     "format": "biome format --write .",
     "quality": "npx fallow --format json",
     "quality:h": "npx fallow",
-    "agentic:verify": "biome check --write . && npm run check && npm run quality",
+    "agentic:verify": "npm run lint:fix && npm run check && npm run quality",
     "prepare": "lefthook install"
   },
   "type": "module",
   "version": "0.1.0",
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "allowScripts": {
+    "@discordjs/opus@0.10.0": true
+  }
 }

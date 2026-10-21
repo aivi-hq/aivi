@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { Config, ExecutionContext, ExecutionResult, Logger, Run } from '@aivi/core';
+import type { Config, ExecutionContext, ExecutionResult, Logger, Run, Task } from '@aivi/core';
 import { errorMessage, getLogger, taskLabel } from '@aivi/core';
+import type { Dispatcher } from './dispatcher/dispatcher.ts';
+import type { DispatcherLease } from './dispatcher/leases.ts';
 import type { Store } from './store.ts';
 
 /** Runs one run; the run carries its task snapshot. */
@@ -12,11 +14,25 @@ export type OnFinished = (
   result: unknown,
   reason: string,
 ) => Promise<void>;
+/** Whether one run's task speaks to a model: work that does asks the dispatcher for a slot first. */
+export type NeedsCapacity = (task: Task) => boolean;
+
+/** The dispatcher's callback namespace for job work. */
+const SERVICE = 'jobs';
 
 /**
  * Materializes due job occurrences, claims runs from the store and executes
  * them. The host drives `tick()` from its own loop; the scheduler owns no
  * timers and never acquires the daemon lock.
+ *
+ * Capacity is the dispatcher's to decide: work that calls a model asks for a
+ * lease (pool = the run's resource) and waits on the dispatcher's queue when
+ * the pool is full — one queue place per pool, so a tick asks each full pool
+ * at most once and the grant callback brings the next run. Scripts and
+ * system checks call no model and run straight from the queue. A tick is
+ * never re-entered: a callback that lands mid-tick sets "wanted again" and
+ * one more pass follows it, so the maps below are only ever walked by one
+ * pass at a time.
  */
 export class Scheduler {
   readonly owner = randomUUID();
@@ -26,25 +42,65 @@ export class Scheduler {
   private failure: unknown;
   private readonly store: Store;
   private readonly config: Config['scheduler'];
+  private readonly dispatcher: Dispatcher;
+  private readonly needsCapacity: NeedsCapacity;
   private readonly execute: Execute;
   private readonly log: Logger;
   private readonly onFinished: OnFinished | undefined;
+  /** Requests the dispatcher took: request id → the run waiting behind it. */
+  private readonly requested = new Map<string, { runId: string; pool: string }>();
+  /** Runs waiting behind a request, so the claim pass never asks twice. */
+  private readonly waitingRuns = new Set<string>();
+  /** Grants the callback delivered but no claim pass has collected yet. */
+  private readonly grants = new Map<string, DispatcherLease>();
+  /** Pools whose queue place the jobs service holds this pass. */
+  private readonly poolsWaiting = new Set<string>();
+  private ticking = false;
+  private wantedAgain = false;
 
   constructor(
     store: Store,
     config: Config['scheduler'],
+    dispatcher: Dispatcher,
+    needsCapacity: NeedsCapacity,
     execute: Execute,
     log: Logger = getLogger(['aivi']),
     onFinished?: OnFinished,
   ) {
     this.store = store;
     this.config = config;
+    this.dispatcher = dispatcher;
+    this.needsCapacity = needsCapacity;
     this.execute = execute;
     this.log = log.getChild('scheduler');
     this.onFinished = onFinished;
+    dispatcher.registerCallback(SERVICE, (requestId, lease) => {
+      this.grants.set(requestId, lease);
+      this.tick();
+    });
   }
 
   tick(now = Date.now()): void {
+    if (this.ticking) {
+      this.wantedAgain = true;
+      return;
+    }
+    this.ticking = true;
+    try {
+      this.due(now);
+      this.collectGrants(now);
+      this.dispatchQueued(now);
+    } finally {
+      this.ticking = false;
+    }
+    if (this.wantedAgain) {
+      this.wantedAgain = false;
+      this.tick(now);
+    }
+  }
+
+  /** Occurrences that came due, missed ones reported, and operator aborts delivered. */
+  private due(now: number): void {
     if (this.abort.signal.aborted) return;
     const { created, missed } = this.store.materializeDue(now, this.config.misfire.graceSeconds * 1000);
     if (created) this.log.debug('jobs.materialized', { created });
@@ -63,18 +119,80 @@ export class Scheduler {
         entry.abort.abort();
       }
     }
-    for (const resource of this.store.queuedResources()) {
-      if (resource in this.config.resources || this.warned.has(resource)) continue;
-      this.warned.add(resource);
-      this.log.warn('pool.unknown', {
-        resource,
-        hint: 'Queued runs wait until this pool is configured or they are cancelled.',
-      });
+  }
+
+  /** Runs whose lease landed while the queue was elsewhere: claim and launch. */
+  private collectGrants(now: number): void {
+    for (const [requestId, lease] of [...this.grants]) {
+      this.grants.delete(requestId);
+      const waiting = this.requested.get(requestId);
+      this.requested.delete(requestId);
+      if (waiting) {
+        this.waitingRuns.delete(waiting.runId);
+        this.poolsWaiting.delete(waiting.pool);
+      }
+      if (this.abort.signal.aborted) {
+        void this.release(lease.id); // stopped: nobody left to hand the slot to
+        continue;
+      }
+      const run = waiting ? this.store.claimRun(waiting.runId, this.owner, now) : null;
+      if (!run) {
+        void this.release(lease.id); // the run was cancelled or claimed elsewhere: pay the slot back
+        continue;
+      }
+      this.launch(run, lease);
     }
-    while (true) {
-      const run = this.store.claim(this.owner, this.config.maxConcurrent, this.config.resources, now);
-      if (!run) break;
-      this.launch(run);
+  }
+
+  /** The claim pass: lease-free work runs at once; model work asks the dispatcher per pool. */
+  private dispatchQueued(now: number): void {
+    if (this.abort.signal.aborted) return;
+    for (const candidate of this.store.queuedRuns(now)) {
+      if (this.waitingRuns.has(candidate.id)) continue; // a grant may already be on its way
+      if (!this.needsCapacity(candidate.task)) {
+        const run = this.store.claimRun(candidate.id, this.owner, now);
+        if (run) this.launch(run);
+        continue;
+      }
+      if (this.poolsWaiting.has(candidate.resource)) continue; // one queue place per pool; the callback wakes the rest
+      let grant: ReturnType<Dispatcher['request']>;
+      try {
+        grant = this.dispatcher.request({ service: SERVICE, pool: candidate.resource });
+      } catch (error) {
+        if (!this.warned.has(candidate.resource)) {
+          this.warned.add(candidate.resource);
+          this.log.warn('pool.unknown', {
+            resource: candidate.resource,
+            hint: 'Queued runs wait until this pool is configured or they are cancelled.',
+            error: errorMessage(error),
+          });
+        }
+        continue;
+      }
+      if ('lease' in grant) {
+        const run = this.store.claimRun(candidate.id, this.owner, now);
+        if (!run) {
+          void this.release(grant.lease.id);
+          continue;
+        }
+        this.launch(run, grant.lease);
+      } else if ('queued' in grant) {
+        this.requested.set(grant.queued, { runId: candidate.id, pool: candidate.resource });
+        this.waitingRuns.add(candidate.id);
+        this.poolsWaiting.add(candidate.resource);
+      } else if (grant.refused === 'pool-gone') {
+        if (!this.warned.has(grant.pool)) {
+          this.warned.add(grant.pool);
+          this.log.warn('pool.gone', {
+            resource: grant.pool,
+            hint: 'Queued runs wait until this pool is configured again or they are cancelled.',
+          });
+        }
+      } else {
+        // `waiting` means the place is held and a grant is coming; `full` means no
+        // callback — registering in the constructor is what makes a pool waitable.
+        this.poolsWaiting.add(grant.pool);
+      }
     }
   }
 
@@ -87,19 +205,35 @@ export class Scheduler {
     this.active.set(`report:${run.id}`, { promise, abort: new AbortController() });
   }
 
-  private launch(run: Run): void {
+  private launch(run: Run, lease?: DispatcherLease): void {
     const log = this.log.with({ run: run.id, job: run.jobId, kind: taskLabel(run.task), resource: run.resource });
-    log.info('run.started');
+    log.info('run.started', lease ? { lease: lease.id, pool: lease.pool } : {});
     const own = new AbortController();
     const signal = AbortSignal.any([this.abort.signal, own.signal]);
     const promise = Promise.resolve()
       .then(async () => {
         let outcome: ExecutionResult;
         try {
-          outcome = await this.execute(run, {
+          const context: ExecutionContext = {
             signal,
             attachSession: id => this.store.attachSession(run.id, this.owner, id),
-          });
+            ...(lease
+              ? {
+                  lease: {
+                    id: lease.id,
+                    provide: (work: {
+                      agent: string;
+                      directory: string;
+                      sessionId?: string;
+                      create?: boolean;
+                      title?: string;
+                      metadata?: Record<string, unknown>;
+                    }) => this.dispatcher.provide(lease.id, work),
+                  },
+                }
+              : {}),
+          };
+          outcome = await this.execute(run, context);
           log.info('run.finished', { state: outcome.state, reason: outcome.reason ?? 'completed' });
         } catch (error) {
           // A rejected Promise does not establish that external effects stopped.
@@ -111,6 +245,12 @@ export class Scheduler {
           outcome = { ...outcome, state: 'blocked', reason: `Aborted by operator. ${outcome.reason ?? ''}`.trim() };
         const reason = outcome.reason ?? 'completed';
         this.store.finish(run.id, this.owner, outcome.state, outcome.result, reason);
+        if (lease && outcome.state !== 'blocked') await this.release(lease.id);
+        else if (lease)
+          log.warn('lease.held', {
+            lease: lease.id,
+            hint: 'A blocked run keeps its slot; the dispatcher monitor reclaims it when the session proves silent.',
+          });
         if (this.onFinished)
           await this.onFinished(run, outcome.state, outcome.result, reason).catch(error =>
             log.warn('run.report.failed', { error }),
@@ -126,6 +266,17 @@ export class Scheduler {
     this.active.set(run.id, { promise, abort: own });
   }
 
+  /** Pay a slot back; an unconfirmed kill keeps it held — the monitor is still watching. */
+  private async release(leaseId: string): Promise<void> {
+    try {
+      const outcome = await this.dispatcher.release(leaseId);
+      if ('pending' in outcome)
+        this.log.warn('lease.expire.pending', { lease: leaseId, hint: 'the dispatcher keeps trying to confirm' });
+    } catch (error) {
+      this.log.warn('lease.release.failed', { lease: leaseId, error });
+    }
+  }
+
   get activeCount(): number {
     return [...this.active.keys()].filter(k => !k.startsWith('report:')).length;
   }
@@ -137,6 +288,9 @@ export class Scheduler {
 
   stop(): void {
     this.abort.abort();
+    // Queue places are the dispatcher's memory; give ours back so a restarting
+    // host's fresh requests are not refused by ghosts of this one.
+    for (const requestId of this.requested.keys()) this.dispatcher.cancel(requestId);
   }
   get stopped(): boolean {
     return this.abort.signal.aborted;

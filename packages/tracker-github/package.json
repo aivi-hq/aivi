@@ -1,0 +1,61 @@
+{
+  "name": "@aivi/tracker-github",
+  "version": "0.0.0",
+  "description": "The GitHub tracker for aivi: the projectsV2 board the walk reads, the issues a worker works, and the status comment that is the run's conversation.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "development": "./src/config.ts",
+      "default": "./dist/config.js"
+    },
+    "./setup": {
+      "development": "./src/setup.ts",
+      "default": "./dist/setup.js"
+    },
+    "./setupProject": {
+      "development": "./src/setup-project.ts",
+      "default": "./dist/setup-project.js"
+    },
+    "./cli": {
+      "development": "./src/cli.ts",
+      "default": "./dist/cli.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=26.1.0 <27"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivi-hq/aivi.git",
+    "directory": "packages/tracker-github"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "tsc -b tsconfig.build.json"
+  },
+  "dependencies": {
+    "@aivi/core": "^0.7.1",
+    "@aivi/github": "^0.0.0",
+    "@aivi/host": "^0.8.1",
+    "@aivi/plugin": "^0.1.0",
+    "commander": "15.0.0",
+    "zod": "4.1.13"
+  },
+  "peerDependencies": {
+    "@aivi/host": "^0.8.1"
+  },
+  "devDependencies": {
+    "@aivi/host": "^0.8.1"
+  }
+}

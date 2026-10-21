@@ -57,10 +57,8 @@ function setup(store: Store, url: string, enabled = true) {
   const config = configSchema.parse({
     version: 1,
     opencode: { url },
-    scheduler: {
-      resources: { 'local-model': 1, agents: 2 },
-      agentSchedules: enabled ? { resource: 'agents', max: 3 } : false,
-    },
+    dispatcher: { pools: { 'local-model': { capacity: 1 }, agents: { capacity: 2 } } },
+    scheduler: { agentSchedules: enabled ? { resource: 'agents', max: 3 } : false },
   });
   const channels = new Channels(async () => {});
   channels.register({

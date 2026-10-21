@@ -15,6 +15,7 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getLogger, type Logger } from '@aivi/core';
+import { type GitHubApp, type GitRunner, gitCredential, parseWorker, runGit, signComment } from '@aivi/github';
 import type {
   Forge,
   ForgeProject,
@@ -25,9 +26,7 @@ import type {
   ReviewFacts,
   ReviewThread,
 } from '@aivi/plugin/forge';
-import { type GitHubApp, type GitRunner, gitCredential, runGit } from './github.ts';
 import { httpsRemote, isGitHub, parseRemote } from './remote.ts';
-import { parseWorker, signComment } from './signature.ts';
 
 /** Who and what, out of the opaque `RepoRef` aivi hands back: the two parts of
  *  the forge's own name for a repository, which is all an API call needs. The

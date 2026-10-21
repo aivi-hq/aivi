@@ -27,7 +27,7 @@ registers one `ChannelModule` with `services.channels.register(module)`:
 
 | Member | Meaning |
 | --- | --- |
-| `id` | The **platform** id (`discord`, `slack`): `report.module`, table prefix, lease owner, `metadata.aivi.origin`. Not the plugin registry's module id, which is the package's short name and keys `plugins.<id>` — `@aivi/tracker-linear` registers the platform `linear` |
+| `id` | The **platform** id (`discord`, `slack`): `report.module`, table prefix, dispatcher service, `metadata.aivi.origin`. Not the plugin registry's module id, which is the package's short name and keys `plugins.<id>` — `@aivi/tracker-linear` registers the platform `linear` |
 | `ownsSession(sessionId)` | This OpenCode session is one of the module's conversations (bound or adopted) |
 | `reenter(sessionId, text, context)` | Bring a run's outcome into the conversation bound to that session as a turn of kind `job`; `context` is `{ run, state }` |
 | `post(channel, text, context)` | Post text to a platform channel; throw if aivi may not post there (`reportChannels`) |
@@ -57,15 +57,19 @@ conversation-binding names — travel to plugin authors as
   `message` (a person) or `job` (an outcome re-entering). A conversation is a
   string the module chooses (a Discord thread id, a Slack `channel:thread_ts`,
   a DM channel); each has one session at a time, `ready` once created. It
-  provides: `enqueue` (dedupe by turn id, `maxPending`), `claim` (one turn per
-  conversation, a lease on the module's pool in the same transaction),
-  `ready`, `result`/`sent`, `block` (workers only), `fail`, `resolve`, `recover` (restart:
-  interrupted turns are discarded, capacity released, the callers told),
+  provides: `enqueue` (dedupe by turn id, `maxPending`), `nextTurn` (the oldest
+  candidate in a conversation that is not busy), `claimTurn` (a candidate
+  becomes `running` under its owner id; capacity is not the store's business —
+  the engine holds the dispatcher lease),
+  `ready`, `result`/`sent`, `block` (workers only; the dispatcher lease stays
+  held until `resolve`), `fail`, `resolve`, `recover` (restart:
+  interrupted turns are discarded, the callers told; their leases were already
+  dropped with the process),
   `interrupt` (a turn ended by choice, a shutdown or a `/stop`: discarded with
-  the reason, lease released), `reset` (`/new`; refused while work is
+  the reason), `reset` (`/new`; refused while work is
   pending), `adopt` (a report thread continues a job's session, or is seeded
   with a script's output), `bind` (a worker conversation: a fresh session
-  with its own agent and directory, keyed by `project` and `issue`; `claim`
+  with its own agent and directory, keyed by `project` and `issue`; `nextTurn`
   then admits one turn per project and per issue across conversations, a
   blocked one holding that lock until resolved, and `waitingOn` names what a
   queued turn waits for), `setModel` (the conversation's model pin, see
@@ -74,8 +78,11 @@ conversation-binding names — travel to plugin authors as
   `sessionOf`, and the binding rotation: constructing the store with a
   different binding (agent, directory, application) acts as `/new` for every
   conversation, refused while any turn is queued or blocked.
-- **`ChannelEngine`**: claims queued turns within `maxConcurrent` and shared
-  capacity, calls the turn runner, splits the reply at
+- **`ChannelEngine`**: takes queued turns, asking the dispatcher for a lease on
+  the module's pool per turn (the platform id is the service; one queue place
+  per pool; the grant arrives through the registered callback), calls the turn
+  runner — which lets the lease provide the
+  conversation's session — splits the reply at
   `replyLimit` (UTF-16 units, surrogate pairs intact) and sends it, records
   `sent`; `TurnNotStarted` → the turn is discarded and the person asked to
   resend. Anything else depends on the platform's `effects`: a reply-only
@@ -83,7 +90,8 @@ conversation-binding names — travel to plugin authors as
   with the reason; a platform whose turns have effects beyond the reply
   (`effects: 'work'`, which is how Linear's assistant turns run) ends
   `blocked` with "an operator has been notified" — its side effects may
-  stand, so the turn is not quietly retried. No turn is bounded by a clock
+  stand, so the turn is not quietly retried, and its lease stays held: the
+  dispatcher's idle monitor is the reclaim net. No turn is bounded by a clock
   here (2026-10-03): the platform `turnTimeoutMs` options bounded chat
   turns only and lied about worker turns, so they are gone; the bound's
   right home is the dispatcher, which watches every session

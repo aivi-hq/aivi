@@ -1,22 +1,19 @@
 /** The GitHub forge's registry declaration, at its `./config` subpath: the
  *  module id and the block's own schema. The CLI imports this for every
  *  command, so nothing here pulls octokit — `createModule` reaches the module
- *  code lazily, and the credential is read where the network is reached.
+ *  code lazily.
  *
- *  The block is minimal to the point of empty on purpose (ruled 2026-09-29):
- *  the app id is the only fact aivi cannot learn for itself, the repositories
- *  come from each project's own `origin`, and the private key is a secret and
- *  so lives in `<home>/.env`. **There is no per-project forge config**: a
- *  forge is asked about a checkout it did not create and reads the answer off
- *  the checkout.
+ *  **The block holds nothing** (ruled 2026-10-07): the app's identity moved to
+ *  the environment — `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` in
+ *  `<home>/.env` — because the forge and the tracker are one app and a plugin
+ *  block cannot be the shared source for two plugins (`@aivi/github` reads
+ *  both). The repositories come from each project's own `origin`; there is no
+ *  per-project forge config. The empty block still marks the forge as
+ *  configured: core offers the forge role to a project only when its block
+ *  stands in `config.json`.
  */
 import type { AiviPlugin } from '@aivi/plugin';
 import { z } from 'zod';
-
-/** The environment name the app's PEM private key is read from. It is a
- *  secret, so it is never in `config.json`, never echoed by a flow, and never
- *  inherited by a task script (`<home>/.env`'s keys are all protected). */
-export const GITHUB_PRIVATE_KEY_ENV = 'GITHUB_APP_PRIVATE_KEY';
 
 /**
  * The `forge-github` module: the repository host a project's `origin` names,
@@ -29,20 +26,14 @@ export const GITHUB_PRIVATE_KEY_ENV = 'GITHUB_APP_PRIVATE_KEY';
  * The block lives at `plugins.forge-github` in config.json; the `aivi-plugins`
  * list in `app/package.json` says whether the module runs.
  */
-export const forgeGithubSchema = z.strictObject({
-  app: z
-    .number()
-    .int()
-    .positive()
-    .describe(
-      'The GitHub App id — the number on the app settings page (`App ID`), not its name. The private key is `GITHUB_APP_PRIVATE_KEY` in <home>/.env; the app must be installed on the account holding the repositories, exactly one installation.',
-    ),
-});
+export const forgeGithubSchema = z.strictObject({});
 export type ForgeGithubConfig = z.infer<typeof forgeGithubSchema>;
 
 /** The registry entry: the block holds no paths, so `home` finds nothing to
  *  resolve here. No project section is contributed: which repository a project
- *  works is a fact about its checkout, not about its configuration. */
+ *  works is a fact about its checkout, not about its configuration. The block
+ *  itself is unused by the module — the credential is read from the
+ *  environment where it is written. */
 export const plugin: AiviPlugin<ForgeGithubConfig> = {
   id: 'forge-github',
   configSchema: forgeGithubSchema,
@@ -50,6 +41,5 @@ export const plugin: AiviPlugin<ForgeGithubConfig> = {
   // pulling the host's world in, and the module arrives only when the host
   // actually builds. The cycle back into this file (the module imports its
   // own schema) is that design, not a tangle.
-  // fallow-ignore-next-line circular-dependency
-  createModule: config => import('./module.ts').then(m => m.createForgeGithubModule(config)),
+  createModule: () => import('./module.ts').then(m => m.createForgeGithubModule()),
 };

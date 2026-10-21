@@ -32,6 +32,7 @@ import {
   Store,
   TaskRegistry,
   ToolRegistry,
+  Voice,
 } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
 import type { ChannelDelivery } from '@aivi/plugin/channel';
@@ -348,6 +349,39 @@ class FakeTracker implements Platform {
     if (this.closingNotes.some(n => n.issueId === issueId && n.text === text)) return;
     this.closingNotes.push({ conversation, issueId, text });
   }
+  /** The ticket-desk members, in the fake's own records. The desk's contract
+   *  is the host's test (`packages/host/test/ticket-desk.test.ts`); these
+   *  exist because the desk is required of every Platform. */
+  ticketTrail: Record<string, { author: string | null; body: string; at: string }[]> = {};
+  createdIssues: { teamId: string; title: string; description?: string; lane?: string }[] = [];
+  async ticketComments(_conversation: string, issueId: string) {
+    return this.ticketTrail[issueId] ?? [];
+  }
+  async addComment(_conversation: string, issueId: string, text: string): Promise<void> {
+    const trail = this.ticketTrail[issueId] ?? [];
+    trail.push({ author: 'aivi', body: text, at: '2026-10-07' });
+    this.ticketTrail[issueId] = trail;
+  }
+  async editIssue(_conversation: string, issueId: string, changes: { title?: string; description?: string }) {
+    const found = this.issues.get(issueId)!;
+    if (changes.title !== undefined) found.title = changes.title;
+    if (changes.description !== undefined) found.description = changes.description;
+    return found;
+  }
+  async createIssue(
+    _conversation: string,
+    input: { teamId: string; title: string; description?: string; lane?: string },
+  ): Promise<TrackerIssue> {
+    this.createdIssues.push(input);
+    return issue('t-new', {
+      identifier: 'AIV-9',
+      title: input.title,
+      state: { id: 's-new', name: input.lane ?? 'Triage', type: 'triage' },
+    });
+  }
+  async teamLabels(): Promise<string[]> {
+    return ['needs-human', 'ready'];
+  }
   /** Questions the follower rendered from the run's `question` events. */
   asks: { conversation: string; question: RunQuestion }[] = [];
   async ask(conversation: string, question: RunQuestion): Promise<void> {
@@ -480,6 +514,17 @@ const knowledge: KnowledgeService = { search: async () => [], index: async () =>
  *  boot-reconcile test passes the same orchestrator to a second module. */
 function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController, git?: OrchestratorGit): AiviServices {
   const opencode = () => connectOpenCode(loaded.config.opencode, {});
+  // No pools configured here: the dispatcher tracks every lease and grants
+  // every request — the same capacity the tests always had. Clocks in ms:
+  // long enough that no test is struck by a clock it is not watching.
+  const dispatcher = new Dispatcher({
+    leases: new LeaseStore(store),
+    dispatcher: loaded.config.dispatcher,
+    idleMs: 60_000,
+    prepareMs: 300_000,
+    opencode,
+    signal: abort.signal,
+  });
   const orchestrator = new Orchestrator({
     ledger: new RunLedger(store),
     opencode,
@@ -492,17 +537,7 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
       if (!project) throw new Error(`no project ${id}`);
       return project.directory;
     },
-    // No pools configured here: the dispatcher tracks every lease and grants
-    // every request — the same capacity the tests always had. Clocks in ms:
-    // long enough that no test is struck by a clock it is not watching.
-    dispatcher: new Dispatcher({
-      leases: new LeaseStore(store),
-      dispatcher: loaded.config.dispatcher,
-      idleMs: 60_000,
-      prepareMs: 300_000,
-      opencode,
-      signal: abort.signal,
-    }),
+    dispatcher,
     forges: new Forges(),
     identity: async () => ({ name: 't', email: 't@t' }),
     keepAliveMs: 300_000,
@@ -522,6 +557,8 @@ function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController
     tasks: new TaskRegistry().forModule('test'),
     tools: new ToolRegistry().forModule('test'),
     forges: new Forges(),
+    voice: new Voice(),
+    dispatcher,
     orchestrator,
     wake: () => {},
     onWake: () => () => {},
@@ -1004,6 +1041,90 @@ test('a lane move is a wake: the walk starts the ticket it finds, a stop ends th
     'the label stopped the run',
   );
   assert.equal(orchestrator.activeRun('tracker-linear', 'api-7'), undefined);
+});
+
+/** The three wake answers of the lane model: a working lane or the queue
+ *  wakes, a human lane that is not the queue and a state missing from the
+ *  array are out of sight, out of mind. A walk is
+ *  observable here as a board read: `tickets` answers lane by lane, so a wake
+ *  that never fired leaves the counter where it stood. */
+test('a ticket moved into a human lane or a missing state is out of sight; the queue is watched', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-ignoresight-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await checkout(root, 'api');
+  const opencode = await fakeOpenCode(t, 'Shipped.');
+  const config = configSchema.parse({
+    version: 1,
+    opencode: { url: opencode.url },
+    plugins: { 'tracker-linear': { apps: { dev: {} }, mcp: false } },
+    projects: {
+      api: {
+        'tracker-linear': { teams: ['t'] },
+        lanes: [{ name: 'Backlog', queue: true }, { name: 'Todo', agent: 'developer' }, { name: 'Done' }],
+      },
+    },
+  });
+  const loaded: LoadedConfig = {
+    config,
+    path: join(root, 'home/config.json'),
+    projects: [{ id: 'api', directory: source, lanes: config.projects.api!.lanes! }],
+    sources: [],
+  };
+  const tracker = new FakeTracker(linearBlock(config));
+  const api = issue('api-7', {
+    identifier: 'API-7',
+    title: 'Add rate limits',
+    description: null,
+    branchName: 'me/api-7-rate-limits',
+    state: { id: 'todo', name: 'Todo', type: 'unstarted' },
+    delegateId: null,
+  });
+  tracker.issues.set('api-7', api);
+  const store = new Store(':memory:');
+  const abort = new AbortController();
+  const services = makeServices(loaded, store, abort);
+  const board = fakeBoard(tracker, 'api');
+  let reads = 0;
+  const watched = {
+    ...board,
+    tickets: async (p: string, lane: string) => {
+      reads++;
+      return board.tickets(p, lane);
+    },
+  };
+  const running = await createLinearModule(
+    linearBlock(config),
+    async () => tracker,
+    () => watched,
+  ).start(services);
+  t.after(async () => {
+    await running.stop();
+    store.close();
+  });
+  const updated = async (changed: TrackerChange[]) => {
+    await tracker.drive({ kind: 'updated', conversation: 'dev', issueId: 'api-7', changed });
+  };
+
+  // The person moves the ticket to Done — a human lane: the event is ignored.
+  api.state = { id: 'done', name: 'Done', type: 'completed' };
+  let before = reads;
+  await updated(['state']);
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(reads, before, 'no walk for a ticket in a human lane: aivi does not look there');
+
+  // A state named nowhere in the array: the same silence.
+  api.state = { id: 'gone', name: 'Shipped', type: 'completed' };
+  before = reads;
+  await updated(['state']);
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(reads, before, 'the missing state is not aivi’s workflow: the event is ignored');
+
+  // Backlog is the queue: a move into it wakes — waiting is how the queue
+  // feeds, and the walk is what finds the waiting ticket.
+  api.state = { id: 'backlog', name: 'Backlog', type: 'backlog' };
+  before = reads;
+  await updated(['state']);
+  await until(() => reads > before, 'the queue is watched: the wake walked');
 });
 
 test('a run that dies before its session exists leaves a plain word on the ticket, and the walk does not knock twice', async t => {

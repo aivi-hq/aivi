@@ -10,6 +10,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  type Config,
   errorMessage,
   type LoadedConfig,
   type ProjectLaneInput,
@@ -18,6 +19,7 @@ import {
   projectRoles,
 } from '@aivi/core';
 import { PluginSetupCancelled, type ProjectSetupContext } from '@aivi/plugin';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import * as p from '@clack/prompts';
 import { connectOpenCode } from '../opencode.ts';
 import { context, withStore } from './context.ts';
@@ -96,13 +98,38 @@ async function writeProjectSections(
  *  a wizard that cannot list agents is a broken wizard, so a failure here is
  *  said, not swallowed. A lane runs its agent as the session's primary;
  *  OpenCode says which agents can be (`mode`), so the subagent-only ones
- *  never show up as a lane's worker. */
-async function listLaneAgents(home: string, loaded: LoadedConfig, projectId: string): Promise<string[]> {
+ *  never show up as a lane's worker.
+ *
+ *  The location is loaded by name before it is listed, and an empty first
+ *  answer is asked once more after one second: a directory the service has
+ *  never seen boots asynchronously, so the first list races the boot and
+ *  answers empty while a second ask, a moment later, answers the agents —
+ *  the live fact behind the first wizard after a restart failing while the
+ *  retry passed. Two asks, then the answer stands: a second empty is a
+ *  genuine zero, which the wizard says as its own error. The one-second
+ *  gap is the human's ruling; `sleep` is its injection point, so no test
+ *  ever waits — a fake answers the gap as it happened. `connect` is the
+ *  client's injection point; live OpenCode is the wizard's own gate. */
+export async function listLaneAgents(
+  home: string,
+  loaded: LoadedConfig,
+  projectId: string,
+  connect: (config: Config['opencode']) => Promise<OpenCodeClient> = config =>
+    connectOpenCode({ ...config, lifecycle: 'ensure' }),
+  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
+): Promise<string[]> {
   const source = join(home, 'projects', projectId, 'source');
   await mkdir(source, { recursive: true });
-  const client = await connectOpenCode({ ...loaded.config.opencode, lifecycle: 'ensure' });
-  const listed = await client.agent.list({ location: { directory: source } });
-  return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
+  const client = await connect(loaded.config.opencode);
+  await client.location.get({ location: { directory: source } });
+  const primaries = async (): Promise<string[]> => {
+    const listed = await client.agent.list({ location: { directory: source } });
+    return listed.data.filter(agent => agent.mode !== 'subagent').map(agent => agent.id);
+  };
+  const first = await primaries();
+  if (first.length) return first;
+  await sleep(1_000);
+  return primaries();
 }
 
 export async function runProjectSetup(options: {
@@ -178,13 +205,14 @@ function sayStopped(error: unknown): void {
 }
 
 /** What the contributors have answered so far: the project the first one
- *  named, each one's section whole, the one lane array, and whether any of
- *  them brought a checkout. */
+ *  named, each one's section whole, the one lane array, whether any of
+ *  them brought a checkout, and the repository a forge settled. */
 interface SetupAnswers {
   projectId?: string | undefined;
   sections: Record<string, Record<string, unknown>>;
   lanes?: ProjectLaneInput[];
   cloned: boolean;
+  repository?: string;
 }
 
 /** Run one contributor with its configured context, folding its answer into
@@ -215,8 +243,10 @@ async function runContributor(
   const defaults = (loaded.config.projectDefaults as Record<string, unknown>)[chosen.moduleId];
   if (defaults !== undefined) ctx.projectDefaults = defaults as Record<string, unknown>;
   if (answers.projectId !== undefined) ctx.projectId = answers.projectId;
+  if (answers.repository !== undefined) ctx.forgeRepository = answers.repository;
   const result = await chosen.contributor.setup(ctx);
   answers.projectId ??= result.id;
+  if (result.repository !== undefined) answers.repository ??= result.repository;
   if (result.section) answers.sections[chosen.moduleId] = result.section;
   if (result.lanes) {
     if (answers.lanes) throw new Error(`${chosen.moduleId} also named a lane array; a project has one workflow`);

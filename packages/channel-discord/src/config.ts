@@ -30,7 +30,7 @@ export const discordConfigSchema = z
     agent: z.string().default('assistant'),
     /** OpenCode location that defines the agent. Default: the aivi home, whose .opencode/ holds the agents. */
     directory: z.string().min(1).default('.'),
-    resource: z.string().default('local-model'),
+    pool: z.string().default('default').describe('Dispatcher pool this module’s turns draw capacity from.'),
     /** Where the bot listens: shared channels (with their threads). Who may talk is decided by linking. */
     access: accessPolicySchema,
     /** Channels aivi may post scheduled job outcomes to (`report: { to: "channel", module: "discord" }`). Empty: never post proactively. */
@@ -39,8 +39,26 @@ export const discordConfigSchema = z
     messageContent: z.boolean().default(false),
     /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
     progress: z.enum(['silent', 'status', 'tools']).default('status'),
-    maxConcurrent: z.number().int().min(1).max(32).default(1),
     maxPending: z.number().int().min(1).max(1000).default(100),
+    /** Voice channels aivi joins and hears. Needs the voice plugin loaded —
+     *  Discord names the speaker (a linked account speaks under its aivi
+     *  person name); transcription, wake and transcripts are the voice
+     *  plugin's. Absent: aivi never joins voice. */
+    voice: z
+      .strictObject({
+        /** Guild whose voice channels to join. */
+        guild: snowflake,
+        channels: z.array(snowflake).min(1),
+        /** Quiet that ends an utterance (Discord's own silence detection). */
+        silenceMs: z.number().int().min(200).max(3000).default(500),
+        /** What the voice rooms are: call (default — the conversation,
+         *  barge-in) or meeting (record + wake). Declared here because the
+         *  room is Discord's (ruled 2026-10-13). */
+        mode: z.enum(['call', 'meeting']).default('call'),
+        /** The agent voice rooms run as; absent: this module's `agent`. */
+        agent: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .superRefine((config, ctx) => {
     if (!config.messageContent && config.access.channels.some(c => c.trigger !== 'mention')) {

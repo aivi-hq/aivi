@@ -62,7 +62,8 @@ module must never take the knowledge server and scheduler down
 Adapters keep their own tables in the host database under a name prefix and
 declare them through `Store.migrate(namespace, steps)`, which versions them
 independently of the host schema. Host tables are only reached through `Store`
-methods; shared capacity uses `acquireLease`/`releaseLease`/`blockLease`.
+methods; capacity is not one of them — the dispatcher's lease ledger
+(`LeaseStore`) is the single place a slot is held.
 
 OpenCode plugins live inside the native runtime, so they use the host's
 authenticated API. The aivi plugin hardcodes no tools: it registers whatever
@@ -160,11 +161,10 @@ in fresh sessions and report to a configured destination. Conversation turns
 run in order within one thread, continue that thread's session, reply into the
 thread, and must start within seconds. Folding them into the job table would
 teach the scheduler what a conversation is. What the two share is capacity:
-every turn takes a resource lease from the same pools as jobs
-(`Store.acquireLease`), so the `local-model` limit holds across both. These
-pools are what jobs and channel turns still draw; **ticket work** draws the
-dispatcher's `dispatcher.pools` — the two systems coexist, and folding one
-into the other is tracked deliberately-later
+every turn that calls the model holds a dispatcher lease from the same
+`dispatcher.pools` as jobs, so one pool's slots hold across turns and runs
+alike. One ledger serves every service — ticket work, voice rooms, jobs,
+dreaming and chat turns all ask the dispatcher
 ([orchestrator](orchestrator.md)).
 
 Linear workers are conversations of the same machinery, one per

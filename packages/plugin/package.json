@@ -9,7 +9,9 @@
     "./module": { "development": "./src/module.ts", "default": "./dist/module.js" },
     "./run": { "development": "./src/run.ts", "default": "./dist/run.js" },
     "./tracker": { "development": "./src/tracker.ts", "default": "./dist/tracker.js" },
-    "./forge": { "development": "./src/forge.ts", "default": "./dist/forge.js" }
+    "./forge": { "development": "./src/forge.ts", "default": "./dist/forge.js" },
+    "./dispatcher": { "development": "./src/dispatcher.ts", "default": "./dist/dispatcher.js" },
+    "./voice": { "development": "./src/voice.ts", "default": "./dist/voice.js" }
   },
   "files": [
     "dist"

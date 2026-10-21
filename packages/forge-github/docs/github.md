@@ -1,17 +1,17 @@
 # GitHub forge — the forge's configuration
 
-`plugins.forge-github` is the GitHub forge's whole setup, and it is one
-number: the app's id — the `App ID` on the app's settings page, not its name.
-The module runs when `@aivi/forge-github` stands in the `aivi-plugins` list.
+`plugins.forge-github` is the GitHub forge's whole setup, and it is **empty**
+(ruled 2026-10-07): `{ "plugins": { "forge-github": {} } }`. The block stands
+as the mark that the forge is configured — core offers the forge role to a
+project only when it is written — and holds no facts. The module runs when
+`@aivi/forge-github` stands in the `aivi-plugins` list.
 
-```json
-{ "plugins": { "forge-github": { "app": 12345 } } }
-```
-
-The private key is a secret and so is not here: `GITHUB_APP_PRIVATE_KEY` in
-`<home>/.env`, the PEM file GitHub handed out when the app was created.
-`aivi add` asks for that file once: it reads the .pem, copies the key into
-`.env`, and remembers no path.
+The app's identity is a **home** fact, not a block's: `GITHUB_APP_ID` (the
+`App ID` number on the app's settings page) and `GITHUB_APP_PRIVATE_KEY` (the
+PEM GitHub handed out when the app was created) both live in `<home>/.env`,
+because the forge and the tracker are **one app** and a plugin block cannot be
+the shared source for two plugins. `aivi add` asks for the id and the .pem
+once: it copies the key into `.env`, and remembers no path.
 The app must also be **installed** — an installation is the grant from the account
 holding the repositories to the app — and aivi speaks through exactly one:
 none is an error carrying the install link, several is an error naming the

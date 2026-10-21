@@ -1,6 +1,7 @@
-import type { Config, Logger } from '@aivi/core';
+import type { Logger } from '@aivi/core';
 import { errorMessage, getLogger } from '@aivi/core';
 import type { ChannelDelivery, EngineNotices, Turn } from '@aivi/plugin/channel';
+import type { Dispatcher, DispatcherLeaseRef } from '@aivi/plugin/dispatcher';
 import { TurnNotStarted } from '../session.ts';
 import { type ProgressOptions, ProgressReporter } from './reporter.ts';
 import type { ConversationStore } from './store.ts';
@@ -21,15 +22,17 @@ export function splitReply(text: string, limit: number): string[] {
   return chunks;
 }
 
-export type Ask = (turn: Turn, signal: AbortSignal, ready: () => void) => Promise<string>;
+/** Ask one turn of its native session and return the answer. `lease` is the
+ *  dispatcher slot the turn runs in: the runner provides it with the
+ *  conversation's session (the pool decides the model) before prompting. */
+export type Ask = (turn: Turn, signal: AbortSignal, ready: () => void, lease?: DispatcherLeaseRef) => Promise<string>;
 export type Send = ChannelDelivery['send'];
 export interface EngineLimits {
-  resource: string;
-  maxConcurrent: number;
+  pool: string;
 }
 export interface EngineOptions {
   log?: Logger;
-  /** A turn released shared capacity; the host may have queued jobs waiting for it. */
+  /** A turn paid its slot back; the host may have queued jobs waiting for it. */
   onRelease?: () => void;
   /** The store failed underneath a turn; the engine has stopped itself and the host should know. */
   onFailure?: (error: unknown) => void;
@@ -45,24 +48,28 @@ export class ChannelEngine {
   private readonly log: Logger;
   private readonly store: ConversationStore;
   private readonly limits: EngineLimits;
-  private readonly scheduler: Config['scheduler'];
+  private readonly dispatcher: Dispatcher;
   private readonly ask: Ask;
   private readonly delivery: ChannelDelivery;
   private readonly progress: ProgressOptions | undefined;
   private readonly onRelease: () => void;
   private readonly onFailure: (error: unknown) => void;
   private readonly notices: EngineNotices;
+  /** The dispatcher queue place this module holds: one place per pool, and the turn it waits for. */
+  private seat: { id: string; turnId: string } | undefined;
+  private readonly warned = new Set<string>();
+
   constructor(
     store: ConversationStore,
     limits: EngineLimits,
-    scheduler: Config['scheduler'],
+    dispatcher: Dispatcher,
     ask: Ask,
     delivery: ChannelDelivery,
     options: EngineOptions = {},
   ) {
     this.store = store;
     this.limits = limits;
-    this.scheduler = scheduler;
+    this.dispatcher = dispatcher;
     this.ask = ask;
     this.delivery = delivery;
     this.progress = options.progress;
@@ -70,13 +77,80 @@ export class ChannelEngine {
     this.onRelease = options.onRelease ?? (() => {});
     this.onFailure = options.onFailure ?? (() => {});
     this.notices = { ...CHAT_NOTICES, ...store.platform.notices };
+    dispatcher.registerCallback(store.platform.id, (requestId, lease) => {
+      const seat = this.seat;
+      if (!seat || seat.id !== requestId) {
+        void this.release(lease.id); // a grant for a place we no longer hold: pay it straight back
+        return;
+      }
+      this.seat = undefined;
+      const turn = this.store.claimTurn(seat.turnId);
+      if (!turn) {
+        void this.release(lease.id);
+        this.tick();
+        return;
+      }
+      this.launch(turn, lease);
+      this.tick(); // a granted place can free room for more than one waiting turn
+    });
   }
 
   tick(): void {
-    while (!this.abort.signal.aborted && this.active.size < this.limits.maxConcurrent) {
-      const turn = this.store.claim(this.scheduler, this.limits.resource);
-      if (!turn) break;
-      this.launch(turn);
+    // Capacity is the dispatcher's: the pool decides how many turns run at
+    // once, and the module asks for a lease per turn. One queue place per pool
+    // (the seat) is all a module holds while it waits.
+    while (!this.abort.signal.aborted && !this.seat) {
+      const candidate = this.store.nextTurn();
+      if (!candidate) break;
+      let grant: ReturnType<Dispatcher['request']>;
+      try {
+        grant = this.dispatcher.request({
+          service: this.store.platform.id,
+          pool: this.limits.pool,
+          ...(candidate.ready ? { resume: candidate.session } : {}),
+        });
+      } catch (error) {
+        this.warnPool(this.limits.pool, error);
+        break;
+      }
+      if ('lease' in grant) {
+        const turn = this.store.claimTurn(candidate.id);
+        if (!turn) {
+          void this.release(grant.lease.id);
+          continue;
+        }
+        this.launch(turn, grant.lease);
+        continue;
+      }
+      if ('queued' in grant) {
+        this.seat = { id: grant.queued, turnId: candidate.id };
+        break;
+      }
+      if (grant.refused === 'pool-gone') this.warnPool(grant.pool);
+      // `waiting` means the place is held and its grant is coming; `full` means
+      // no callback — registering in the constructor is what makes a pool waitable.
+      break;
+    }
+  }
+
+  private warnPool(pool: string, error?: unknown): void {
+    if (this.warned.has(pool)) return;
+    this.warned.add(pool);
+    this.log.warn('pool.unknown', {
+      pool,
+      hint: 'Queued turns wait until this pool is configured or they are cancelled.',
+      ...(error !== undefined ? { error: errorMessage(error) } : {}),
+    });
+  }
+
+  /** Pay a slot back; an unconfirmed kill keeps it held — the monitor is still watching. */
+  private async release(leaseId: string): Promise<void> {
+    try {
+      const outcome = await this.dispatcher.release(leaseId);
+      if ('pending' in outcome)
+        this.log.warn('lease.expire.pending', { lease: leaseId, hint: 'the dispatcher keeps trying to confirm' });
+    } catch (error) {
+      this.log.warn('lease.release.failed', { lease: leaseId, error });
     }
   }
 
@@ -93,22 +167,25 @@ export class ChannelEngine {
     );
   }
 
-  private launch(turn: Turn): void {
-    const log = this.log.with({ turn: turn.id, channel: turn.channel });
+  private launch(turn: Turn, lease: DispatcherLeaseRef): void {
+    const log = this.log.with({ turn: turn.id, channel: turn.channel, lease: lease.id });
     const startedAt = Date.now();
-    log.info('turn.started', { newSession: !turn.ready });
+    log.info('turn.started', { newSession: !turn.ready, pool: lease.pool });
     const reporter = this.reporter(turn, log);
     const notice = this.delivery.notice ?? ((c: string, t: string) => this.delivery.send(c, t).then(() => {}));
     const tell = (text: string) =>
       (reporter ? reporter.fail(text) : notice(turn.channel, text)).catch(error =>
         log.warn('notify.failed', { error }),
       );
-    const state = { delivering: false };
+    // `stop` says whether this turn's ending proved its session stopped. Only
+    // a proven ending pays its slot back at once; a blocked worker keeps the
+    // slot until the dispatcher's monitor proves the session silent.
+    const state = { delivering: false, stop: true };
     const own = new AbortController();
     const work = Promise.resolve()
       .then(async () => {
         try {
-          await this.runTurn(turn, own, state, reporter, log, startedAt);
+          await this.runTurn(turn, lease, own, state, reporter, log, startedAt);
         } catch (error) {
           await this.settleTurn(turn, error, state, own.signal.aborted, tell, log);
         }
@@ -121,6 +198,11 @@ export class ChannelEngine {
       })
       .finally(() => {
         this.active.delete(turn.id);
+        if (state.stop) void this.release(lease.id);
+        else
+          log.warn('lease.held', {
+            hint: 'A blocked turn keeps its slot; the dispatcher monitor reclaims it when the session proves silent.',
+          });
         this.tick(); // capacity was just released; do not wait for the next poll
         this.onRelease();
       });
@@ -130,19 +212,15 @@ export class ChannelEngine {
   /** Answer the turn and deliver the reply in order; anything thrown here is an early end. */
   private async runTurn(
     turn: Turn,
+    lease: DispatcherLeaseRef,
     own: AbortController,
-    state: { delivering: boolean },
+    state: { delivering: boolean; stop: boolean },
     reporter: ProgressReporter | undefined,
     log: Logger,
     startedAt: number,
   ): Promise<void> {
-    // No turn bound here (2026-10-03): the platform `turnTimeoutMs` options
-    // bounded chat turns only and lied about worker turns, so they are gone —
-    // the bound's right home is the dispatcher, which watches every session
-    // (docs/plans/orchestrator.md). Until it grows one, a turn ends when it
-    // ends, bounded by its own abort and the engine's shutdown.
     const signal = AbortSignal.any([this.abort.signal, own.signal]);
-    const text = await this.ask(turn, signal, () => this.store.ready(turn.channel));
+    const text = await this.ask(turn, signal, () => this.store.ready(turn.channel), lease);
     const answeredMs = Date.now() - startedAt;
     this.store.result(turn.id, text);
     state.delivering = true;
@@ -158,7 +236,7 @@ export class ChannelEngine {
   private async settleTurn(
     turn: Turn,
     error: unknown,
-    state: { delivering: boolean },
+    state: { delivering: boolean; stop: boolean },
     stoppedByRequest: boolean,
     tell: (text: string) => Promise<void>,
     log: Logger,
@@ -171,7 +249,7 @@ export class ChannelEngine {
       return;
     }
     if (error instanceof TurnNotStarted) {
-      // Nothing reached the agent: release capacity and let the person try again.
+      // Nothing reached the agent: pay the slot back and let the person try again.
       log.warn('turn.not_started', { error });
       this.store.fail(turn.id);
       await tell(this.notices.notStarted);
@@ -186,12 +264,13 @@ export class ChannelEngine {
       return;
     }
     // A chat turn's only effect is its reply, so a known end (provider/auth error,
-    // delivery failure) is just a failure: release capacity and say why.
+    // delivery failure) is just a failure: pay the slot back and say why.
     // Only a worker (`effects: 'work'`) blocks, because its checkout may still be moving.
     const reason = shortReason(error);
     if (this.store.platform.effects === 'work') {
       log.warn('turn.blocked', { error });
       this.store.block(turn.id);
+      state.stop = false; // the slot stays with the doubt: the dispatcher's monitor is the reclaim
       await tell(this.notices.blocked);
     } else {
       log.warn('turn.failed', { error });
@@ -215,6 +294,7 @@ export class ChannelEngine {
 
   stop(): void {
     this.abort.abort();
+    if (this.seat) this.dispatcher.cancel(this.seat.id); // a queue place outlives nobody: give it back
   }
   get stopped(): boolean {
     return this.abort.signal.aborted;

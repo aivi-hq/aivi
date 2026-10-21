@@ -38,7 +38,7 @@ function harness(blockRemoved = true): Harness {
   const io: RemoveIo = {
     removeBlock: async name => {
       calls.blocks.push(name);
-      return { moduleId: name.split('/').pop()!, blockRemoved };
+      return { moduleId: name.split('/').pop()!, blockRemoved, sectionsRemoved: 0 };
     },
     uninstall: name => {
       calls.uninstalls.push(name);

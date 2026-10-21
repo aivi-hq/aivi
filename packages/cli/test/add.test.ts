@@ -152,6 +152,22 @@ test('add without a server home refuses before anything runs', async () => {
   assert.deepEqual(calls.setups, []);
 });
 
+test('a config-only plugin joins on its ./config export alone, no setup to run', async () => {
+  const { io, calls } = harness(RUNNING);
+  io.setupPlugin = async spec => {
+    calls.setups.push(spec);
+    return null; // the plugin exports no ./setup: pluginSetup answers null
+  };
+  await add(['discord'], options(), io);
+  assert.deepEqual(calls.installs, ['@aivi/channel-discord']);
+  assert.deepEqual(calls.setups, ['@aivi/channel-discord']);
+  assert.deepEqual(pluginNames(appDir), ['@aivi/channel-discord'], 'nothing waits on a flow that does not exist');
+  assert.equal(calls.rebuilds, 1, 'the editor schema is composed from ./config, so it still rebuilds');
+  assert.equal(calls.restarts, 1);
+  assert.match(calls.logs.at(-1)!, /aivi is back and healthy/, 'with no flow, the host health is the last word');
+  assert.equal(process.exitCode, undefined, 'no flow is no failure');
+});
+
 test('a failed setup stops before the list, the cache and the restart', async () => {
   const { io, calls } = harness(RUNNING);
   io.setupPlugin = async spec => {

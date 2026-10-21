@@ -243,25 +243,15 @@ test('runTurn creates, pins permissions, prompts, and returns the verified answe
   assert.ok(!mock.requests.some(r => r.path.endsWith('/model')), 'a session created with the model needs no switch');
 });
 
-test('runTurn keeps the session on the agent file’s model, or on the pinned one', async t => {
-  // An existing session that drifted (or predates this) is switched back before the prompt.
+test('the model is chosen at session birth; only a /model pin moves an existing session', async t => {
+  // A session that drifted from the agent file is left alone: a lease-born session
+  // keeps the model its pool gave it, and the agent file is read at create only.
   const drifted = mockOpenCode({ sessionModel: { id: 'gpt-5.2', providerID: 'github-copilot' } });
   await withServer(t, drifted, client =>
     runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events: quiet }),
   );
-  const switched = drifted.requests.find(r => r.path.endsWith('/model'));
-  assert.deepEqual(switched?.body, { model: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } });
-  assert.ok(
-    drifted.requests.findIndex(r => r.path.endsWith('/model')) <
-      drifted.requests.findIndex(r => r.path.endsWith('/prompt')),
-  );
-  // One already on it is left alone.
-  const same = mockOpenCode({ sessionModel: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } });
-  await withServer(t, same, client =>
-    runTurn(client, { ...input, create: false }, { signal: AbortSignal.timeout(5000), events: quiet }),
-  );
-  assert.ok(!same.requests.some(r => r.path.endsWith('/model')));
-  // A pinned model (a conversation's /model) wins over the agent file, and skips the agent lookup.
+  assert.ok(!drifted.requests.some(r => r.path.endsWith('/model')), 'no pin, no switch: the birth model stands');
+  // A pinned model (a conversation's /model) wins over whatever the session runs, and skips the agent lookup.
   const pinned = mockOpenCode({ sessionModel: { id: 'gemini-3.8-flash', providerID: 'github-copilot' } });
   await withServer(t, pinned, client =>
     runTurn(

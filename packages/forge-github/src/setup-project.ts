@@ -12,9 +12,8 @@
 import { mkdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getLogger, PROJECT_ID } from '@aivi/core';
+import { type GitHubApp, gitCredential, githubApp, runGit } from '@aivi/github';
 import { PluginSetupCancelled, type ProjectContributor, type ProjectSetupContext } from '@aivi/plugin';
-import { forgeGithubSchema } from './config.ts';
-import { GitHubApp, gitCredential, runGit } from './github.ts';
 import { httpsRemote, isGitHub, parseRemote } from './remote.ts';
 
 /** The project name a repository suggests: GitHub's `My-Repo` becomes aivi's
@@ -83,8 +82,9 @@ export const contributor: ProjectContributor = {
   role: 'forge',
   async setup(ctx: ProjectSetupContext) {
     const log = getLogger(['aivi', 'forge-github']);
-    const config = forgeGithubSchema.parse(ctx.config);
-    const app = await GitHubApp.connect(config, { log });
+    // The app is the home's: the credential comes from <home>/.env, the same
+    // one the forge module and the tracker speak through (ruled 2026-10-07).
+    const app = await githubApp({ log });
     const remote = await askRepository(ctx, app);
     if (!remote) throw new Error('no repository named');
     const id = `${remote.owner}/${remote.repo}`;
@@ -100,22 +100,26 @@ export const contributor: ProjectContributor = {
     await ctx.prompts.log.message(`The app reads ${id} (default branch ${seen.defaultBranch}).`);
 
     const suggestion = suggestedProjectId(remote.repo);
-    const projectId = ctx.projectId
-      ? String(ctx.projectId)
-      : String(
-          await settled(
-            ctx,
-            ctx.prompts.text({
-              message: 'Project name',
-              placeholder: suggestion,
-              defaultValue: suggestion,
-              validate: value =>
-                value !== undefined && PROJECT_ID.test(value)
-                  ? undefined
-                  : 'lowercase letters, digits, dashes and underscores, starting with a letter',
-            }),
-          ),
-        );
+    // Enter takes the suggested name. clack 1.x runs `validate` on the raw
+    // input **before** `finalize` applies `defaultValue`, so a validate
+    // that refuses '' makes the default dead code. '' passes validation
+    // here; the default is folded in below, where it takes effect.
+    let projectId = ctx.projectId ? String(ctx.projectId) : '';
+    if (!projectId) {
+      const answer = await settled(
+        ctx,
+        ctx.prompts.text({
+          message: 'Project name',
+          placeholder: suggestion,
+          defaultValue: suggestion,
+          validate: value =>
+            value === undefined || !value.trim() || PROJECT_ID.test(value.trim())
+              ? undefined
+              : 'lowercase letters, digits, dashes and underscores, starting with a letter',
+        }),
+      );
+      projectId = String(answer).trim() || suggestion;
+    }
     const source = join(ctx.home, 'projects', projectId, 'source');
 
     // A checkout already there belongs to its owner. The same repository means
@@ -127,7 +131,7 @@ export const contributor: ProjectContributor = {
       const found = origin.ok ? parseRemote(origin.stdout) : undefined;
       if (found && `${found.owner}/${found.repo}` === id) {
         await ctx.prompts.log.message(`projects/${projectId}/source is already a checkout of ${id}; left as it is.`);
-        return { id: projectId, cloned: true };
+        return { id: projectId, cloned: true, repository: id };
       }
       throw new Error(
         `projects/${projectId}/source is a checkout of ${found ? `${found.owner}/${found.repo}` : 'something that is not a GitHub repository'}. Move it aside, or choose a project name that has no checkout yet.`,
@@ -149,6 +153,6 @@ export const contributor: ProjectContributor = {
       throw new Error(`clone of ${id} failed: ${cloned.message}`);
     }
     spinner.stop(`Cloned ${id} into projects/${projectId}/source.`);
-    return { id: projectId, cloned: true };
+    return { id: projectId, cloned: true, repository: id };
   },
 };

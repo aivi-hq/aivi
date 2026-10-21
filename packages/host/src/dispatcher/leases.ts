@@ -7,8 +7,8 @@ import type { Store } from '../store.ts';
  * memory, is the truth (docs/orchestrator.md: "Active work survives
  * restarts. Claims and leases are persisted and can be reconciled").
  *
- * What a lease is **not** here: no prompt text (a turn lease's prompt lives
- * in OpenCode's inbox, which OpenCode owns), no queue position (the queue is
+ * What a lease is **not** here: no prompt text (a prompt lives in OpenCode's
+ * inbox, which OpenCode owns), no queue position (the queue is
  * deliberately ephemeral — the dispatcher's memory, never this table), and
  * no claim (the orchestrator's mirror of a ticket's lease is the
  * orchestrator's own record; the dispatcher never knows tickets).
@@ -17,10 +17,10 @@ import type { Store } from '../store.ts';
  * killed or consulted here. The state machine is the dispatcher's.
  */
 
-/** The two lease types (docs/orchestrator.md): a **turn** lease asks the
- *  dispatcher to run a prompt; a **session** lease gives the caller direct
- *  use of one slot (the orchestrator, for ticket work). */
-export type LeaseKind = 'turn' | 'session';
+/** What a lease is: one slot of a pool, held by one service, watching one
+ *  session. Granting capacity and sending a prompt are different acts — the
+ *  caller prompts, the dispatcher moderates — so a lease never carries one. */
+export type LeaseKind = 'session';
 
 /** `preparing`: granted, no session yet (the prepare timeout watches it).
  *  `active`: a session is attached (the idle timeout times its silence).

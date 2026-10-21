@@ -37,6 +37,14 @@ export function registerGettingStarted(program: Command): void {
     .action(async spec => {
       if (!spec) throw new Error('plugin setup needs the installed package.');
       const { loaded } = await context();
-      await pluginSetup(spec, { home: home(), configPath: configPath(), identityName: loaded.config.identity.name });
+      const answered = await pluginSetup(spec, {
+        home: home(),
+        configPath: configPath(),
+        identityName: loaded.config.identity.name,
+      });
+      if (answered === null)
+        throw new Error(
+          `${spec} has no setup command (no ./setup export); its package says how to configure it by hand.`,
+        );
     });
 }

@@ -95,8 +95,15 @@ export const dreamingArgsSchema = z.strictObject({
     .array(z.string().min(1))
     .default([])
     .describe(
-      'Which aivi session origins to review (metadata.aivi.origin). Empty — the default — means every channel module registered when the run starts; a home with no channel module must name origins itself or the run says so.',
-    ),
+      'Which aivi session origins to review (metadata.aivi.origin). Empty — the default — means every door a person speaks through: the channel modules and the room platforms registered when the run starts; a home with neither must name origins itself or the run says so. `dreaming` is never reviewable: a dreamer reading its own dreams would invent memory.',
+    )
+    .superRefine((origins, ctx) => {
+      if (origins.includes('dreaming'))
+        ctx.addIssue({
+          code: 'custom',
+          message: 'origins may never include "dreaming": dreaming reviews conversations, never its own runs',
+        });
+    }),
   maxSessions: z
     .number()
     .int()
@@ -147,7 +154,7 @@ export const jobSchema = z
     timezone: z.string().default('UTC'),
     /** One-off: fires once at this ISO 8601 instant. Exactly one of `cron` or `at`. */
     at: z.string().regex(ISO_INSTANT).optional(),
-    resource: id.default('local-model'),
+    resource: id.default('default').describe('Dispatcher pool this job draws capacity from.'),
     enabled: z.boolean().default(true),
     /** What the job executes. A bare operation name is shorthand for an `invocation` of it: `"dreaming"` is `{ kind: 'invocation', name: 'dreaming' }`. */
     task: z.preprocess(value => (typeof value === 'string' ? { kind: 'invocation', name: value } : value), taskSchema),
@@ -174,6 +181,8 @@ export const jobSchema = z
 export type Job = z.infer<typeof jobSchema>;
 /** The id every memory source carries: `<home>/memory` for the org, `<home>/memory/<project>` per project. */
 export const MEMORY_SOURCE_ID = 'memory';
+/** The id of each memory home's archive: `<memory>/archive.md`, superseded facts kept as history. */
+export const ARCHIVE_SOURCE_ID = 'archive';
 /**
  * The company-wide convention for what a repository's `docs/` holds. A file
  * belongs to the most specific source that contains it, so `docs/adr/*` is
@@ -188,8 +197,9 @@ export const DEFAULT_PROJECT_KNOWLEDGE = [
  * the orchestrator decides moves from the order, and no tracker is asked
  * where a ticket goes next; the tracker only performs a move in its
  * platform's words. The names are the tracker platform's own state names.
- * Closed states (Linear's Done, Canceled, Duplicate) are **never written**:
- * the tracker recognizes them by type, they are not places in the workflow.
+ * Every board option may be a lane: the setup wizard asks what each one is
+ * — agent, human, or none. An option answered none is simply absent from
+ * the array: aivi never reads it and never moves a ticket into it.
  */
 export const projectLaneSchema = z.strictObject({
   name: z.string().min(1).describe('The lane, spelled as the tracker platform spells its workflow state.'),
@@ -344,7 +354,7 @@ export const projectSchema = z.strictObject({
   lanes: projectLanesSchema
     .optional()
     .describe(
-      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to the `next` lane, failure to the `previous` one — neighbours by default, overridden per lane; a stop moves nothing. `queue: true` marks the workflow’s one queue lane, waiting fresh work for the worker lane it feeds; `pool` names the dispatcher pool the lane draws from. Closed states are never written: the tracker recognizes them by type.',
+      'The project’s tracker workflow, in order: the array IS the workflow. A lane with an `agent` is worked by that OpenCode agent; one without is worked by humans; a state named nowhere in the array is ignored — nothing is picked up there and a ticket moved there goes silent. Success moves the ticket to the `next` lane, failure to the `previous` one — neighbours by default, overridden per lane; a stop moves nothing. `queue: true` marks the workflow’s one queue lane, waiting fresh work for the worker lane it feeds; `pool` names the dispatcher pool the lane draws from. Every board option may be a lane; the setup wizard asks, and an option answered “none” is written nowhere.',
     ),
 });
 /**
@@ -738,10 +748,30 @@ const configShape = z.strictObject({
       z.strictObject({
         provider: z.literal('qmd'),
         indexOnStart: z.boolean().default(true),
-        maxPending: z.number().int().min(1).max(100).default(32),
+        models: z
+          .strictObject({
+            embed: z
+              .string()
+              .optional()
+              .describe(
+                'HuggingFace GGUF URI (`hf:<user>/<repo>/<file>.gguf`) embedding documents with; absent: the qmd built-in default.',
+              ),
+            rerank: z
+              .string()
+              .optional()
+              .describe('HuggingFace GGUF URI re-scoring candidates with; absent: the qmd built-in default.'),
+            generate: z
+              .string()
+              .optional()
+              .describe('HuggingFace GGUF URI expanding queries with; absent: the qmd built-in default.'),
+          })
+          .optional()
+          .describe(
+            'The local models qmd runs. Every role absent means qmd resolves its own default. Switching the embed URI re-embeds the corpus: vectors are not cross-model. `aivi knowledge warm` downloads and warms what the config names.',
+          ),
       }),
     ])
-    .default({ provider: 'qmd', indexOnStart: true, maxPending: 32 })
+    .default({ provider: 'qmd', indexOnStart: true })
     .describe(
       'On by default: knowledge search runs on qmd and indexes at boot. `false` is the only off switch — a missing block means enabled, never a silent no-search install.',
     ),
@@ -761,14 +791,16 @@ const configShape = z.strictObject({
     .describe('Who aivi is: the persona every platform shows, and who a worker it launched commits as.'),
   scheduler: z
     .strictObject({
-      maxConcurrent: z.number().int().min(1).max(64).default(1),
       /** Host-wide default for derived schedules; a job's own `timezone` wins over it. */
       timezone: z.string().optional().describe('IANA timezone for derived system schedules; default the host’s.'),
-      resources: z.record(id, z.number().int().min(1).max(64)).default({ 'local-model': 1 }),
       agentSchedules: z
         .union([
           z.strictObject({
-            resource: id.default('local-model').describe('Pool that agent-created jobs run in.'),
+            resource: id
+              .optional()
+              .describe(
+                'Dispatcher pool that agent-created jobs run in; default the dispatcher’s `default` pool, or its first pool when that does not exist.',
+              ),
             max: z
               .number()
               .int()
@@ -779,7 +811,7 @@ const configShape = z.strictObject({
           }),
           z.literal(false),
         ])
-        .default({ resource: 'local-model', max: 50 })
+        .default({ max: 50 })
         .describe(
           'OpenCode agents create jobs through the aivi_jobs tool; whoever may talk to an agent may schedule. `false` disables the tool.',
         ),
@@ -798,7 +830,7 @@ const configShape = z.strictObject({
             resource: id
               .optional()
               .describe(
-                'Pool the prune run takes a slot in; default local-model, or the first pool when that does not exist.',
+                'Pool the prune run takes a slot in; default the dispatcher’s `default` pool, or its first pool when that does not exist.',
               ),
           }),
           z.literal(false),
@@ -815,7 +847,7 @@ const configShape = z.strictObject({
             resource: id
               .optional()
               .describe(
-                'Pool the sync run takes a slot in; default local-model, or the first pool when that does not exist.',
+                'Pool the sync run takes a slot in; default the dispatcher’s `default` pool, or its first pool when that does not exist.',
               ),
           }),
           z.literal(false),
@@ -826,9 +858,7 @@ const configShape = z.strictObject({
         ),
     })
     .default({
-      maxConcurrent: 1,
-      resources: { 'local-model': 1 },
-      agentSchedules: { resource: 'local-model', max: 50 },
+      agentSchedules: { max: 50 },
       misfire: { graceSeconds: 60 },
       retention: { cron: '0 4 * * *', olderThanDays: 30 },
       projectsSync: { cron: '0 * * * *' },
@@ -878,32 +908,43 @@ function idsAreUnique(config: Config, report: AddIssue): void {
   }
 }
 
-/** The id `memory` belongs to the automatically registered memory source, at every level. */
+/** The ids `memory` and `archive` belong to the automatically registered sources, at every level. */
 function memoryIsReserved(config: Config, report: AddIssue): void {
   for (const [path, values] of sourceLists(config))
-    for (const [i, value] of values.entries())
+    for (const [i, value] of values.entries()) {
       if (value.id === MEMORY_SOURCE_ID)
         report([...path, i, 'id'], 'Reserved: <home>/memory and <home>/memory/<project> are registered automatically');
+      if (value.id === ARCHIVE_SOURCE_ID)
+        report([...path, i, 'id'], 'Reserved: each memory home’s archive.md is registered automatically');
+    }
 }
 
-/** A plugin block that names a capacity pool must name one that exists. Generic on
- *  purpose: core never learns what a module is, only that a block may carry `resource`. */
+/** A plugin block that names a capacity pool must name a dispatcher pool that
+ *  exists. Generic on purpose: core never learns what a module is, only that a
+ *  block may carry `resource` or `pool`. While capacity is unmoderated (no
+ *  pools) any name is idle, so nothing is reported. */
 function pluginPoolsAreNamed(config: Config, report: AddIssue): void {
-  const resources = config.scheduler.resources;
+  const pools = config.dispatcher.pools;
+  if (!pools || Object.keys(pools).length === 0) return;
+  const named = Object.keys(pools).join(', ');
   for (const [moduleId, block] of Object.entries(config.plugins)) {
-    const resource = (block as { resource?: unknown } | undefined)?.resource;
-    if (typeof resource === 'string' && !(resource in resources))
-      report(
-        ['plugins', moduleId, 'resource'],
-        `Unknown resource pool; name one of scheduler.resources or remove the plugins.${moduleId} block`,
-      );
+    for (const key of ['resource', 'pool'] as const) {
+      const pool = (block as Record<string, unknown> | undefined)?.[key];
+      if (typeof pool === 'string' && !(pool in pools))
+        report(
+          ['plugins', moduleId, key],
+          `Unknown dispatcher pool; name one of ${named} or remove the ${key} from the plugins.${moduleId} block`,
+        );
+    }
   }
 }
 
 /** A job's pool must exist, and no job may take a system job's reserved id. */
 function jobsObeyTheirPools(config: Config, report: AddIssue): void {
+  const pools = config.dispatcher.pools ?? {};
+  const moderated = Object.keys(pools).length > 0;
   for (const [i, job] of config.jobs.entries()) {
-    if (!(job.resource in config.scheduler.resources)) report(['jobs', i, 'resource'], 'Unknown resource pool');
+    if (moderated && !(job.resource in pools)) report(['jobs', i, 'resource'], 'Unknown dispatcher pool');
     if (job.id === RETENTION_JOB_ID && config.scheduler.retention)
       report(
         ['jobs', i, 'id'],
@@ -919,21 +960,27 @@ function jobsObeyTheirPools(config: Config, report: AddIssue): void {
 
 /** The scheduler's own knobs name real pools, and their crons parse. */
 function schedulerKnobsAreSound(config: Config, report: AddIssue): void {
-  const resources = config.scheduler.resources;
-  if (config.scheduler.agentSchedules && !(config.scheduler.agentSchedules.resource in resources))
+  const pools = config.dispatcher.pools ?? {};
+  const moderated = Object.keys(pools).length > 0;
+  if (
+    moderated &&
+    config.scheduler.agentSchedules &&
+    config.scheduler.agentSchedules.resource !== undefined &&
+    !(config.scheduler.agentSchedules.resource in pools)
+  )
     report(
       ['scheduler', 'agentSchedules', 'resource'],
-      'Unknown resource pool; name one of scheduler.resources or set agentSchedules to false',
+      `Unknown dispatcher pool; name one of ${Object.keys(pools).join(', ')} or set agentSchedules to false`,
     );
   for (const [name, system] of [
     ['retention', config.scheduler.retention],
     ['projectsSync', config.scheduler.projectsSync],
   ] as const) {
     if (!system) continue;
-    if (system.resource !== undefined && !(system.resource in resources))
+    if (moderated && system.resource !== undefined && !(system.resource in pools))
       report(
         ['scheduler', name, 'resource'],
-        `Unknown resource pool; name one of scheduler.resources or set ${name} to false`,
+        `Unknown dispatcher pool; name one of ${Object.keys(pools).join(', ')} or set ${name} to false`,
       );
     if (
       !jobSchema.safeParse({
@@ -1041,10 +1088,12 @@ export const RETENTION_JOB_ID = 'retention';
 /** Id of the job the host seeds from `scheduler.projectsSync`. */
 export const PROJECTS_SYNC_JOB_ID = 'projects-sync';
 
-const systemPool = (config: Config, resource: string | undefined) => {
-  const pools = Object.keys(config.scheduler.resources);
-  return resource ?? (pools.includes('local-model') ? 'local-model' : pools[0]);
-};
+/** The pool a system schedule runs in when it names none: the dispatcher’s
+ *  `default` pool, or its first pool; undefined when capacity is unmoderated. */
+export function systemPool(config: Config, resource: string | undefined) {
+  const pools = Object.keys(config.dispatcher.pools ?? {});
+  return resource ?? (pools.includes('default') ? 'default' : pools[0]);
+}
 
 /** The system job `scheduler.retention` describes, or null when retention is off. */
 export function retentionJob(
@@ -1245,6 +1294,7 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
   const sources: KnowledgeSource[] = [
     ...config.knowledge.map((s): KnowledgeSource => ({ ...s, path: absolute(base, s.path), scope: 'core' })),
     { id: MEMORY_SOURCE_ID, path: resolve(base, 'memory'), kind: 'memory', scope: 'core' },
+    { id: ARCHIVE_SOURCE_ID, path: resolve(base, 'memory/archive.md'), kind: 'archive', scope: 'core' },
     ...(await manualSources(base)),
   ];
   const projects: Project[] = [];
@@ -1258,6 +1308,13 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
       for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
         sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
     sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
+    sources.push({
+      id: ARCHIVE_SOURCE_ID,
+      path: join(layout.memory, 'archive.md'),
+      kind: 'archive',
+      scope: 'project',
+      projectId,
+    });
     projects.push({
       id: projectId,
       directory: layout.source,

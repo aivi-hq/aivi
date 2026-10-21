@@ -20,11 +20,13 @@ import { RunLedger } from './orchestrator/ledger.ts';
 import { Orchestrator } from './orchestrator/orchestrator.ts';
 import { globalGitConfig } from './orchestrator/worktree.ts';
 import { describeOutcome, reentryPrompt, reportTarget, shouldReport } from './reports.ts';
-import { createExecutor } from './runtime.ts';
+import { createExecutor, needsLlmCapacity } from './runtime.ts';
 import { Scheduler } from './scheduler.ts';
 import type { Store } from './store.ts';
 import { TaskRegistry } from './tasks.ts';
+import { createTicketDesk } from './ticket-desk.ts';
 import { ToolRegistry } from './tools.ts';
+import { Voice } from './voice.ts';
 
 /** Consecutive failed runs of a recurring job before its failure report asks for a look. */
 const FAILURE_NUDGE_AT = 3;
@@ -147,6 +149,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   // task asks who owns a remote before fetching it, and `aivi_pr` asks the
   // same question before pushing; the review gather will ask it too.
   const forges = new Forges();
+  // The voice seat: the voice module provides its adapter here; room-holding
+  // modules ask the same seat for a room and fail honestly when it is empty.
+  const voice = new Voice();
   // One OpenCode event stream for the host: opened by the first turn that watches a session, kept for
   // the host's lifetime. Turns take permission prompts and channels take progress from it.
   const events = new EventStream(opencode, abort.signal, log);
@@ -205,6 +210,19 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   });
   clearClaim = (lease, reason) => void orchestrator.leaseEnded(lease, reason);
   for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);
+  // The ticket desk, claimed once for the whole home (ruled 2026-10-07): the
+  // host owns the aivi_ticket_* ids and routes each call to the desk of the
+  // tracker that works the calling run's ticket, so every tracker's workers
+  // get the same desk and no tracker claims the ids itself.
+  const deskTools = createTicketDesk(
+    {
+      runBySession: session => orchestrator.runBySession(session),
+      tracker: id => orchestrator.tracker(id),
+      wake: project => orchestrator.wake(project),
+    },
+    log.getChild('tickets'),
+  );
+  for (const tool of deskTools) tools.claim('host', tool.descriptor, tool.handler);
 
   const serve = async (scheduler: Scheduler, channels: Channels, knowledge: KnowledgeService) => {
     // With lifecycle "own", a running service is replaced now, before any module or job needs it:
@@ -225,6 +243,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         jobs: createJobHandler({ store, loaded, channels, opencode, wake: () => wake.notify() }),
         wake: () => wake.notify(),
         health: () => supervisor?.health() ?? [],
+        leases: () => dispatcher.held(),
         linkable: () => channels.linkable(),
         tools,
         context: async (sessionID, signal) => describeSession(await opencode(), sessionID, loaded, signal),
@@ -268,6 +287,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
       tasks: tasks.forModule('host'),
       tools: tools.forModule('host'),
       forges,
+      voice,
+      dispatcher,
       orchestrator,
       wake: () => wake.notify(),
       onWake: listener => wake.subscribe(listener),
@@ -322,6 +343,8 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     scheduler = new Scheduler(
       store,
       loaded.config.scheduler,
+      dispatcher,
+      needsLlmCapacity,
       createExecutor(loaded, {
         store,
         knowledge,
@@ -331,7 +354,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
         log,
         tasks,
         forges,
-        channelOrigins: () => channels.ids(),
+        channelOrigins: () => [...new Set([...channels.ids(), ...voice.origins()])],
       }),
       log,
       async (run, state, result, reason) => {

@@ -12,7 +12,6 @@ export type {
   ExecutionContext,
   ExecutionResult,
   JobEntry,
-  Lease,
   RunFilter,
 } from '@aivi/core';
 export type {
@@ -142,3 +141,4 @@ export {
 export { Store } from './store.ts';
 export { TaskRegistry } from './tasks.ts';
 export { ToolError, ToolRegistry } from './tools.ts';
+export { Voice } from './voice.ts';

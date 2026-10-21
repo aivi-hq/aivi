@@ -67,8 +67,10 @@ Each wake first materializes due job occurrences into runs. An occurrence
 found later than its misfire grace (`scheduler.misfire.graceSeconds`, per-job
 `misfire`) is recorded as one `missed` run for the whole gap and reported like
 a failure; nothing is executed for it and the job moves to its next future
-occurrence ([configuration](../packages/host/docs/configuration.md#jobs-runs-tasks)). Then it claims
-queued runs within capacity and executes them.
+occurrence ([configuration](../packages/host/docs/configuration.md#jobs-runs-tasks)). Then it asks the
+dispatcher for slots and executes the runs that get one: a prompt task or a
+dreaming invocation needs a lease, and the dispatcher's grant provides its
+session; a shell task or system invocation runs without one, never moderated.
 
 ## How runs end
 

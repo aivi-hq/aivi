@@ -2,15 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import { ChannelEngine, STOPPED_NOTICE, STOPPED_REASON, splitReply } from '../src/channel/engine.ts';
 import { ConversationStore } from '../src/channel/store.ts';
+import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
+import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { TurnNotStarted } from '../src/session.ts';
 import { Store } from '../src/store.ts';
+import { TestCapacity } from './support.ts';
 
 /** Discord's shape, so the ids and tables asserted here are the ones existing databases hold. */
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
-const limits = { resource: 'local-model', maxConcurrent: 1 };
-const scheduler = configSchema.parse({ version: 1 }).scheduler;
+const limits = { pool: 'local-model' };
 const message = (id: string, channel = 'dm-a') => ({
   id,
   channel,
@@ -18,6 +21,11 @@ const message = (id: string, channel = 'dm-a') => ({
   name: 'Speaker',
   text: `Question ${id}`,
 });
+/** The store's candidate and claim, as one step: capacity is the dispatcher's, not here. */
+const claimTurn = (store: ConversationStore) => {
+  const candidate = store.nextTurn();
+  return candidate ? store.claimTurn(candidate.id) : null;
+};
 
 test('deduplicated turns retain channel sessions; reset cannot evade pending work', t => {
   const core = new Store(':memory:');
@@ -31,10 +39,10 @@ test('deduplicated turns retain channel sessions; reset cannot evade pending wor
   assert.equal(rows[0]!.session, rows[1]!.session);
   assert.notEqual(rows[0]!.session, rows[2]!.session);
   assert.throws(() => store.reset('dm-a'), /unresolved/);
-  const first = store.claim(scheduler, limits.resource)!;
+  const first = claimTurn(store)!;
   store.ready(first.channel);
   store.sent(first.id);
-  const second = store.claim(scheduler, limits.resource)!;
+  const second = claimTurn(store)!;
   assert.equal(second.ready, true);
   store.sent(second.id);
   store.reset('dm-a');
@@ -47,7 +55,7 @@ test('deduplicated turns retain channel sessions; reset cannot evade pending wor
     /binding changed while 2 turn\(s\) are pending/,
   );
   for (const pending of store.list().filter(t => t.state === 'queued')) {
-    store.claim(scheduler, limits.resource);
+    claimTurn(store);
     store.sent(pending.id);
   }
   const before = new Map(store.list().map(t => [t.channel, t.session]));
@@ -77,18 +85,8 @@ test('the tables and ids follow the module id, so a second platform never collid
   assert.match(discord.list()[0]!.session, /^ses_discord_/);
   assert.equal(slack.list().length, 1);
   assert.equal(slack.channelOf(discord.list()[0]!.session), null);
-  slack.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, 'local-model');
-  discord.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, 'local-model');
-  assert.deepEqual(
-    core
-      .leases()
-      .map(l => [l.id, l.owner])
-      .sort(),
-    [
-      ['discord:one', 'discord'],
-      ['slack:C1:1.0', 'slack'],
-    ],
-  );
+  claimTurn(slack);
+  claimTurn(discord);
   assert.throws(() => slack.enqueue(message('C1:2.0', 'C1'), 1), /The Slack queue is full/);
 });
 
@@ -104,13 +102,8 @@ test('a platform id that is not a bare SQL identifier still gets its tables', t 
   const store = new ConversationStore(core, dashed, 'binding');
   store.enqueue(message('one', 'ENG-1'), 10);
   assert.match(store.list()[0]!.session, /^ses_tracker-linear_/, 'the session id carries the id as written');
-  const claimed = store.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, 'local-model');
+  const claimed = claimTurn(store);
   assert.equal(claimed!.id, 'one');
-  assert.deepEqual(
-    core.leases().map(lease => [lease.id, lease.owner]),
-    [['tracker-linear:one', 'tracker-linear']],
-    'the lease owner is the id as written too: a value, not an identifier',
-  );
   // The index names carry the id as well, and they are the ones that died first.
   assert.deepEqual(
     core.db
@@ -121,33 +114,61 @@ test('a platform id that is not a bare SQL identifier still gets its tables', t 
   );
 });
 
-test('conversation leases and scheduler claims enforce the same global capacity', t => {
+test('a channel turn and a job run draw from the same pool: one slot, the second waits', async t => {
+  // The real dispatcher, the real tables: capacity left the store's ledger and
+  // lives only here, so both services share the same slot through it.
   const core = new Store(':memory:');
   t.after(() => core.close());
-  const store = new ConversationStore(core, platform, 'binding');
-  core.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'scheduled');
-  const job = core.claim('host', 1, scheduler.resources)!;
-  store.enqueue(message('one'), 10);
-  assert.equal(store.claim(scheduler, limits.resource), null);
-  core.finish(job.id, 'host', 'succeeded', {}, 'done');
-  const turn = store.claim(scheduler, limits.resource)!;
-  core.enqueue({ kind: 'invocation', name: 'system.check' }, 'local-model', 'next');
-  assert.equal(core.claim('host', 1, scheduler.resources), null);
-  store.block(turn.id);
-  assert.equal(core.claim('host', 1, scheduler.resources), null);
-  store.resolve(turn.id, 'Inspected native session; all work stopped');
-  assert.ok(core.claim('host', 1, scheduler.resources));
+  const sessions = new Map<string, { agent: string; directory: string }>();
+  const client = {
+    agent: { list: async () => ({ data: [] }) },
+    session: {
+      create: async (body: { id: string; agent: string; location: { directory: string } }) => {
+        sessions.set(body.id, { agent: body.agent, directory: body.location.directory });
+      },
+      get: async ({ sessionID }: { sessionID: string }) => {
+        const session = sessions.get(sessionID);
+        if (!session) throw new Error(`session ${sessionID} not found`);
+        return { agent: session.agent, location: { directory: session.directory } };
+      },
+      active: async () => ({}),
+      interrupt: async () => {},
+    },
+  } as unknown as OpenCodeClient;
+  const dispatcher = new Dispatcher({
+    leases: new LeaseStore(core),
+    dispatcher: configSchema.parse({
+      version: 1,
+      dispatcher: { pools: { 'local-model': { capacity: 1 } } },
+    }).dispatcher,
+    opencode: async () => client,
+    idleMs: 600_000,
+    prepareMs: 600_000,
+    signal: AbortSignal.timeout(900),
+  });
+  const served: string[] = [];
+  dispatcher.registerCallback('discord', requestId => served.push(requestId));
+  const jobRun = dispatcher.request({ service: 'jobs', pool: 'local-model' });
+  assert.ok('lease' in jobRun);
+  const turnAsk = dispatcher.request({ service: 'discord', pool: 'local-model' });
+  assert.ok('queued' in turnAsk, 'the pool is full: the turn waits in its queue place');
+  const again = dispatcher.request({ service: 'discord', pool: 'local-model' });
+  assert.ok('refused' in again && again.refused === 'waiting', 'one queue place per service and pool');
+  const ended = await dispatcher.release(jobRun.lease.id);
+  assert.ok('ended' in ended);
+  assert.deepEqual(served, [turnAsk.queued], 'the waiting turn is handed the freed slot');
+  assert.equal(dispatcher.held(), 1, 'the turn works inside it now');
 });
 
-test('restart discards interrupted turns, releases their capacity, reports who to tell; queued work survives', t => {
+test('restart discards interrupted turns, reports who to tell; queued work survives', t => {
   const core = new Store(':memory:');
   t.after(() => core.close());
   const store = new ConversationStore(core, platform, 'binding');
   store.enqueue(message('one'), 10);
   store.enqueue(message('two'), 10);
   store.enqueue(message('three', 'dm-b'), 10);
-  store.claim(scheduler, limits.resource);
-  const second = store.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, limits.resource)!;
+  claimTurn(store);
+  const second = claimTurn(store)!;
   store.result(second.id, 'half sent');
   assert.deepEqual(store.recover(), [
     { id: 'one', channel: 'dm-a', state: 'running' },
@@ -157,25 +178,10 @@ test('restart discards interrupted turns, releases their capacity, reports who t
   assert.equal(store.list()[0]!.error, 'Interrupted by a restart');
   assert.equal(store.list()[1]!.state, 'queued', 'the next message in the conversation is untouched');
   assert.equal(store.list()[2]!.state, 'discarded');
-  assert.equal(core.leases().length, 0, 'interrupted turns hold no capacity');
-  assert.ok(store.claim(scheduler, limits.resource), 'the queued message can start at once');
-  assert.equal(store.claim(scheduler, limits.resource), null, 'capacity is one');
+  assert.ok(claimTurn(store), 'the queued message can start at once');
   assert.throws(() => store.resolve('two', 'Not blocked'), /Only a blocked/);
   assert.equal(store.list('dm-a').length, 2);
   assert.equal(store.list('other').length, 0);
-});
-
-test('failed inbox transition rolls back the capacity reservation', t => {
-  const core = new Store(':memory:');
-  t.after(() => core.close());
-  assert.throws(
-    () =>
-      core.acquireLease('one', 'discord', 'local-model', 1, scheduler.resources, () => {
-        throw new Error('disk failure');
-      }),
-    /disk failure/,
-  );
-  assert.equal(core.leases().length, 0);
 });
 
 test('turns queue behind a slow answer; a delivery failure fails the turn (its answer stays recorded), never resends, never blocks a chat', async t => {
@@ -190,10 +196,11 @@ test('turns queue behind a slow answer; a delivery failure fails the turn (its a
   });
   let asks = 0;
   const sends: string[] = [];
+  const capacity = new TestCapacity(1);
   const engine = new ChannelEngine(
     store,
     limits,
-    scheduler,
+    capacity,
     async () => {
       asks++;
       await pending;
@@ -215,12 +222,13 @@ test('turns queue behind a slow answer; a delivery failure fails the turn (its a
   await Promise.resolve();
   engine.tick();
   assert.equal(asks, 1);
+  assert.equal(capacity.heldCount(), 1, 'one slot held by the running turn');
   release();
   await engine.drain();
   engine.tick();
   await engine.drain();
   // Both turns ran; each answer's send threw once and was never retried; each person got the
-  // failure notice; both turns failed with capacity released. No resend, no block.
+  // failure notice; both turns failed with their slots paid back. No resend, no block.
   assert.equal(sends.filter(x => x === 'Answer').length, 2, 'each answer was attempted exactly once');
   assert.equal(sends.filter(x => x.startsWith('Something went wrong')).length, 2, 'each person was told');
   assert.deepEqual(
@@ -231,7 +239,7 @@ test('turns queue behind a slow answer; a delivery failure fails the turn (its a
     store.list().map(x => x.result),
     ['Answer', 'Answer'],
   );
-  assert.equal(core.leases().length, 0, 'failed chat turns hold no capacity');
+  assert.equal(capacity.heldCount(), 0, 'failed chat turns hold no capacity');
 });
 
 test('a chat turn that never reached the agent, and one lost after its prompt, both fail with capacity released; only workers block', async t => {
@@ -241,10 +249,11 @@ test('a chat turn that never reached the agent, and one lost after its prompt, b
   store.enqueue(message('one', 'dm-a'), 10);
   store.enqueue(message('two', 'dm-b'), 10);
   const sent: string[] = [];
+  const capacity = new TestCapacity(2);
   const engine = new ChannelEngine(
     store,
-    { ...limits, maxConcurrent: 2 },
-    { ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
+    limits,
+    capacity,
     async turn => {
       if (turn.id === 'one') throw new TurnNotStarted(new Error('No running OpenCode v2 service found'));
       throw new Error('lost after prompt');
@@ -258,7 +267,7 @@ test('a chat turn that never reached the agent, and one lost after its prompt, b
   assert.match(one!.error ?? '', /^Not started/);
   assert.equal(two!.state, 'discarded', 'a post-prompt error is a known end for a chat, not a block');
   assert.match(two!.error ?? '', /lost after prompt/);
-  assert.equal(core.leases().length, 0, 'neither holds capacity');
+  assert.equal(capacity.heldCount(), 0, 'neither holds capacity');
   assert.equal(sent.length, 2);
   assert.match(sent[0]!, /send that again/);
   assert.match(sent[1]!, /Something went wrong \(lost after prompt\)/);
@@ -272,10 +281,11 @@ test('shutdown discards the running turn instead of blocking it, warns queued co
   store.enqueue(message('two', 'dm-b'), 10);
   store.enqueue(message('three', 'dm-b'), 10);
   const sent: [string, string][] = [];
+  const capacity = new TestCapacity(1);
   const engine = new ChannelEngine(
     store,
     limits, // one at a time: `one` runs, `two` and `three` wait
-    scheduler,
+    capacity,
     (_turn, signal) =>
       new Promise<string>((_resolve, reject) => {
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
@@ -294,7 +304,7 @@ test('shutdown discards the running turn instead of blocking it, warns queued co
   assert.match(one!.error ?? '', /shutdown/);
   assert.equal(two!.state, 'queued');
   assert.equal(three!.state, 'queued');
-  assert.deepEqual(core.leases(), [], 'nothing waits for an operator');
+  assert.equal(capacity.granted.size, 0, 'nothing waits for an operator');
   assert.deepEqual(
     sent.map(([channel]) => channel).sort(),
     ['dm-a', 'dm-b'],
@@ -305,7 +315,7 @@ test('shutdown discards the running turn instead of blocking it, warns queued co
   assert.deepEqual(store.recover(), [], 'nothing left for restart recovery to announce a second time');
 });
 
-test('/stop aborts one conversation’s running turn: discarded as stopped, lease released, the person told; queued messages follow', async t => {
+test('/stop aborts one conversation’s running turn: discarded as stopped, slot paid back, the person told; queued messages follow', async t => {
   const core = new Store(':memory:');
   t.after(() => core.close());
   const store = new ConversationStore(core, platform, 'binding');
@@ -314,10 +324,11 @@ test('/stop aborts one conversation’s running turn: discarded as stopped, leas
   store.enqueue(message('three', 'dm-b'), 10);
   const sent: [string, string][] = [];
   const asked: string[] = [];
+  const capacity = new TestCapacity(2);
   const engine = new ChannelEngine(
     store,
-    { ...limits, maxConcurrent: 2 },
-    { ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } },
+    limits,
+    capacity,
     (turn, signal) =>
       new Promise<string>((resolve, reject) => {
         asked.push(turn.id);
@@ -343,15 +354,38 @@ test('/stop aborts one conversation’s running turn: discarded as stopped, leas
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(store.list().find(t => t.id === 'two')!.state, 'sent');
   assert.equal(store.list().find(t => t.id === 'three')!.state, 'running', 'the other conversation is untouched');
-  assert.deepEqual(
-    core.leases().map(l => l.id),
-    ['discord:three'],
-    'only the still-running turn holds capacity',
-  );
+  assert.equal(capacity.heldCount(), 1, 'only the still-running turn holds a slot');
   assert.equal(engine.stopped, false, 'a per-turn stop is not the engine’s stop');
   engine.stop();
   await engine.drain();
   assert.match(sent.find(([c]) => c === 'dm-b')![1], /going offline/, 'a shutdown still reads as one');
+});
+
+test('a waiting turn takes its slot from the queue place: the grant arrives through the callback and starts the turn', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-b'), 10);
+  const asked: string[] = [];
+  const capacity = new TestCapacity(1);
+  const engine = new ChannelEngine(
+    store,
+    limits, // the pool says one
+    capacity,
+    async turn => {
+      asked.push(turn.id);
+      return `Answer ${turn.id}`;
+    },
+    { send: async (_channel, _text) => undefined },
+  );
+  engine.tick();
+  assert.equal(store.state('two'), 'queued', 'the waiting turn is not claimed before its slot arrives');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(asked, ['one', 'two'], 'the freed slot walked the queue place to the waiting turn');
+  assert.equal(store.state('two'), 'sent');
+  assert.equal(capacity.heldCount(), 0, 'and both slots were paid back');
+  await engine.drain();
 });
 
 test('a conversation’s model pin lives on its session row: read by every turn, cleared by /new, a rebind and a fresh adoption', t => {
@@ -363,13 +397,13 @@ test('a conversation’s model pin lives on its session row: read by every turn,
   assert.deepEqual(store.sessionOf('dm-a')?.model, { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' });
   assert.equal(store.sessionOf('dm-a')?.ready, false, 'pinning before the first message creates the binding');
   store.enqueue(message('one'), 10);
-  const one = store.claim(scheduler, limits.resource)!;
+  const one = claimTurn(store)!;
   assert.deepEqual(one.model, { providerID: 'openai', modelID: 'gpt-5.2', variant: 'high' });
   store.ready('dm-a');
   store.sent('one');
   store.setModel('dm-a', { providerID: 'anthropic', modelID: 'claude' });
   store.enqueue(message('two'), 10);
-  assert.deepEqual(store.claim(scheduler, limits.resource)!.model, { providerID: 'anthropic', modelID: 'claude' });
+  assert.deepEqual(claimTurn(store)!.model, { providerID: 'anthropic', modelID: 'claude' });
   store.sent('two');
   store.setModel('dm-a', null);
   assert.equal(store.sessionOf('dm-a')?.model, null, 'null returns to the agent’s default');
@@ -417,12 +451,12 @@ test('a job result re-enters the thread bound to its session as a turn of kind j
       ['run:j1', 'job', 'aivi'],
     ],
   );
-  const first = store.claim(scheduler, limits.resource)!;
+  const first = claimTurn(store)!;
   assert.equal(first.id, 'one', 'the person’s message goes first');
-  assert.equal(store.claim(scheduler, limits.resource), null, 'one turn per thread at a time');
+  assert.equal(claimTurn(store), null, 'one turn per thread at a time');
   store.ready(first.channel);
   store.sent(first.id);
-  const result = store.claim(scheduler, limits.resource)!;
+  const result = claimTurn(store)!;
   assert.equal(result.kind, 'job');
   assert.equal(result.session, session, 'the result continues the same session');
 });
@@ -439,13 +473,13 @@ test('a report thread adopts the job session (agent jobs) or seeds a fresh one (
 
   store.enqueue(message('reply-a', 'thread-agent'), 10);
   store.enqueue(message('reply-s', 'thread-script'), 10);
-  const a = store.claim({ ...scheduler, maxConcurrent: 2, resources: { 'local-model': 2 } }, limits.resource)!;
+  const a = claimTurn(store)!;
   assert.deepEqual(
     [a.session, a.ready, a.agent, a.directory, a.seed],
     ['ses_aivi_job1', true, 'coder', '/other', null],
   );
   store.sent(a.id);
-  const s = store.claim(scheduler, limits.resource)!;
+  const s = claimTurn(store)!;
   assert.deepEqual([s.ready, s.agent, s.seed], [false, null, 'exit 0\nremoved 3 logs']);
   assert.match(s.session, /^ses_discord_/);
   store.ready(s.channel);
@@ -468,7 +502,6 @@ test('bound workers: one turn per issue across conversations; a blocked worker k
   t.after(() => core.close());
   const workers: ChannelPlatform = { id: 'linear', label: 'Linear', replyLimit: 60_000, effects: 'work' };
   const store = new ConversationStore(core, workers, 'binding');
-  const wide = { ...scheduler, maxConcurrent: 4, resources: { 'local-model': 4 } };
   const bind = (channel: string, project: string, issue: string | null) =>
     store.bind(channel, {
       agent: 'developer',
@@ -484,7 +517,7 @@ test('bound workers: one turn per issue across conversations; a blocked worker k
   assert.throws(() => bind('as-1', 'website', 'ENG-1'), /already has a session/);
   for (const channel of ['as-1', 'as-2', 'as-3', 'as-4', 'as-5']) store.enqueue(message(`m-${channel}`, channel), 10);
 
-  const first = store.claim(wide, 'local-model')!;
+  const first = claimTurn(store)!;
   assert.equal(first.channel, 'as-1');
   assert.deepEqual([first.project, first.issue, first.agent], ['website', 'ENG-1', 'developer']);
   assert.equal(
@@ -492,20 +525,20 @@ test('bound workers: one turn per issue across conversations; a blocked worker k
     null,
     'a different issue in the same project no longer waits: worktrees isolate them',
   );
-  const second = store.claim(wide, 'local-model')!;
+  const second = claimTurn(store)!;
   assert.equal(second.channel, 'as-2', 'ENG-2 runs beside ENG-1');
-  const third = store.claim(wide, 'local-model')!;
+  const third = claimTurn(store)!;
   assert.equal(third.channel, 'as-3');
-  const assistant = store.claim(wide, 'local-model')!;
+  const assistant = claimTurn(store)!;
   assert.equal(assistant.channel, 'as-5', 'a conversation with no issue (the assistant) never waits');
   assert.deepEqual([assistant.project, assistant.issue, assistant.agent], ['website', null, 'developer']);
-  assert.equal(store.claim(wide, 'local-model'), null, 'as-4 waits: same issue as as-3');
+  assert.equal(claimTurn(store), null, 'as-4 waits: same issue as as-3');
   assert.deepEqual(store.waitingOn('as-4'), { channel: 'as-3', issue: 'API-1' });
 
   store.block(third.id);
-  assert.equal(store.claim(wide, 'local-model'), null, 'a blocked worker holds the issue');
+  assert.equal(claimTurn(store), null, 'a blocked worker holds the issue');
   store.resolve(third.id, 'Inspected; the worker had stopped');
-  const fourth = store.claim(wide, 'local-model')!;
+  const fourth = claimTurn(store)!;
   assert.equal(fourth.channel, 'as-4', 'released by resolve');
 
   // A restart with a worker mid-turn: nobody knows whether it stopped, so it is blocked, not discarded.
@@ -520,6 +553,5 @@ test('bound workers: one turn per issue across conversations; a blocked worker k
   );
   assert.equal(store.state('m-as-1'), 'blocked');
   assert.match(store.list('as-1')[0]!.error!, /restart while working/);
-  assert.equal(core.leases().filter(l => l.state === 'blocked').length, 4);
   assert.equal(store.sessionOf('as-3')!.project, 'api');
 });

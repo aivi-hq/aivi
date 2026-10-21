@@ -13,8 +13,8 @@ import { LINEAR } from '../src/module.ts';
 test('linear settings: defaults, secret names, the loopback MCP', () => {
   const linear = linearSchema.parse({ apps: { dev: {} } });
   assert.deepEqual(
-    [linear.humanLabel, linear.resource, linear.progress, linear.logMisroutes],
-    ['needs-human', 'local-model', 'tools', true],
+    [linear.humanLabel, linear.pool, linear.progress, linear.logMisroutes],
+    ['needs-human', 'default', 'tools', true],
   );
   assert.deepEqual(linear.mcp, { port: 4101 }, 'the Linear MCP is on by default on its loopback port');
   assert.deepEqual(linearSchema.parse({ apps: { dev: {} }, mcp: false }).mcp, false);

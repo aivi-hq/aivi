@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
+import { isAbsolute, join, relative } from 'node:path';
 import type { DreamingArgs, Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
 import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
@@ -11,6 +11,9 @@ export interface DreamingDeps {
   store: Store;
   client: OpenCodeClient;
   events: SessionEvents;
+  /** The session the run's dispatcher lease was provided with. The dreamer
+   *  turns it; it is never created here, so the pool decides the model. */
+  sessionId: string;
   stateDirectory: string;
   /** Each project's memory home (`<home>/projects/<id>/memory`); the dreamer may write there too. */
   projects?: { id: string; memory: string }[];
@@ -24,6 +27,9 @@ export interface DreamingResult {
   since: number;
   until: number;
   sessions: string[];
+  /** The convenience transcript's path — present only when the run could not
+   *  finish: a succeeded run deletes it (the OpenCode sessions are the record),
+   *  a failed one keeps it for the post-mortem. */
   transcript?: string;
   changed: string[];
   text?: string;
@@ -205,6 +211,9 @@ async function snapshot(directory: string): Promise<Map<string, string>> {
  * Dreaming: review conversations since the last run and let the dreamer agent
  * distil them into memory files. The host only moves data and enforces the
  * write boundary; what counts as memorable lives in the agent definition.
+ * One dreamer turn per session, oldest first: each turn reconciles against the
+ * facts.md it just read, and the cursor advances after each digested session,
+ * so a run that dies mid-backlog resumes where the dreamer actually got to.
  */
 export async function dream(
   task: DreamingArgs,
@@ -224,15 +233,51 @@ export async function dream(
   const until = Math.max(...sessions.map(s => s.updated));
 
   await mkdir(join(deps.stateDirectory, 'dreaming'), { recursive: true, mode: 0o700 });
-  // OpenCode matches permission resources against canonical paths; symlinked directories (macOS /tmp, /var) would otherwise be denied.
+  // Symlinked directories (macOS /tmp, /var) are named by their real path, so the
+  // dreamer and OpenCode mean the same file.
   const runDir = await realpath(join(deps.stateDirectory, 'dreaming'));
   const posix = (path: string) => path.replaceAll('\\', '/');
   // One memory home for the org and one per project. The dreamer decides where a fact
   // belongs; the host only makes each home exist and writable in the same two places.
   const homes: { id: string | null; memory: string }[] = [];
-  const permissions: { action: string; resource: string; effect: 'allow' }[] = [
-    { action: 'external_directory', resource: `${posix(runDir)}/**`, effect: 'allow' },
-  ];
+  const permissions: { action: string; resource: string; effect: 'allow' }[] = [];
+  // OpenCode judges a permission resource against the path RELATIVE to the session's
+  // directory for a file inside it, and the absolute path for a file outside it
+  // (OpenCode's file access: `path.relative(location.directory, absolute)`). The
+  // session's directory is the aivi home, so a memory home inside the home is named
+  // relative to it: an absolute resource matches nothing there, and the agent file's
+  // `edit: deny` is the rule that wins (proven live 2026-10-21).
+  const sessionDirectory = task.directory;
+  const allow = (action: string, resource: string) => {
+    if (!permissions.some(rule => rule.action === action && rule.resource === resource))
+      permissions.push({ action, resource, effect: 'allow' });
+  };
+  /** Whether a file is inside the session's directory — OpenCode names such a
+   *  file by its path relative to that directory. */
+  const insideSession = (file: string): boolean => {
+    const rel = relative(sessionDirectory, file);
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  };
+  /** How OpenCode names one file in a permission resource: relative to the
+   *  session's directory when the file is inside it, absolute when it is not. */
+  const resourceFor = (file: string): string => (insideSession(file) ? relative(sessionDirectory, file) : posix(file));
+  /** facts.md, archive.md and proposals/* of one memory home. `memory` is the
+   *  home's real path — the one the dreamer is told about; `lexical` is the path
+   *  aivi knows, which a symlinked home spells differently. */
+  const allowMemory = (memory: string, lexical: string) => {
+    // A home outside the session's directory also needs the directory's own
+    // allow, or OpenCode refuses the file before it judges the action.
+    if (!insideSession(memory)) allow('external_directory', `${posix(memory)}/*`);
+    for (const name of ['facts.md', 'archive.md', 'proposals/*']) {
+      allow('edit', resourceFor(join(memory, name)));
+      // A symlinked home spells one file two ways: the one inside the session's
+      // directory is named relatively, the other absolutely.
+      if (insideSession(lexical)) allow('edit', resourceFor(join(lexical, name)));
+    }
+  };
+  // The transcript the dreamer reads lives with the run's state. A state
+  // directory outside the session's directory needs the directory's allow.
+  if (!insideSession(runDir)) allow('external_directory', `${posix(runDir)}/*`);
   for (const home of [{ id: null, memory: task.memoryDirectory }, ...(deps.projects ?? [])]) {
     await mkdir(join(home.memory, 'proposals'), { recursive: true });
     const memory = await realpath(home.memory);
@@ -240,22 +285,25 @@ export async function dream(
     await stat(factsPath).catch(() =>
       writeFile(
         factsPath,
-        `# Facts${home.id ? `: ${home.id}` : ''}\n\nDurable facts and decisions${home.id ? ` about the ${home.id} project` : ''}, dated and attributed. Maintained by dreaming; humans may edit.\n`,
+        `# Facts${home.id ? `: ${home.id}` : ''}\n\nCurrent facts and decisions${home.id ? ` about the ${home.id} project` : ''}, dated and attributed. Maintained by dreaming; humans may edit.\n`,
+      ),
+    );
+    // The archive is where superseded facts go: facts.md carries only current
+    // truth, history moves here, dated, never edited again.
+    const archivePath = join(memory, 'archive.md');
+    await stat(archivePath).catch(() =>
+      writeFile(
+        archivePath,
+        `# Archive${home.id ? `: ${home.id}` : ''}\n\nRetired facts, dated and kept as history. Never authoritative for the present. Dreaming appends; nothing rewrites.\n`,
       ),
     );
     homes.push({ id: home.id, memory });
     // The agent file is the boundary; aivi adds only what it knows: where memory and the transcript
-    // are, and that facts.md and proposals/* may be written (appended last, so they win over an
+    // are, and that facts.md, archive.md and proposals/* may be written (appended last, so they win over an
     // `edit: deny` in the agent file). Everything else stays as the agent defines it.
-    permissions.push(
-      { action: 'external_directory', resource: `${posix(memory)}/**`, effect: 'allow' },
-      { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
-      { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
-    );
+    allowMemory(memory, home.memory);
   }
   const org = homes[0]!;
-  const transcript = join(runDir, `${runId}.md`);
-  await writeFile(transcript, renderTranscript(sessions, since), { mode: 0o600 });
 
   // Changed files are labelled relative to the org memory; a project home outside it (a custom
   // `memoryDirectory`) is labelled `<id>/…`, which is what the default layout yields anyway.
@@ -268,53 +316,67 @@ export async function dream(
     return files;
   };
   const before = await snapshotAll();
-  const { sessionId, messageId } = turnIdsFor(runId);
+  const { messageId } = turnIdsFor(runId);
+  const sessionId = deps.sessionId;
   const metadata = { aivi: { origin: 'dreaming', run: runId } };
   const projectLines = homes
     .filter(h => h.id)
     .map(h => `  - ${h.id}: ${h.memory} (facts about the ${h.id} project go here)`);
-  const turn = await runTurn(
-    client,
-    {
-      sessionId,
-      agent: task.agent,
-      directory: task.directory,
-      create: true,
-      title: `aivi dreaming ${new Date(now()).toISOString().slice(0, 10)}`,
-      sessionMetadata: metadata,
-      permissions,
-      messageId,
-      messageMetadata: metadata,
-      text: [
-        `Dreaming run. Review the conversations in ${transcript} (${sessions.length} session(s), ${since ? `since ${new Date(since).toISOString()}` : 'all history'}).`,
-        `Org memory directory: ${org.memory}`,
-        ...(projectLines.length ? ['Project memory directories:', ...projectLines] : []),
-        `- Read each facts.md you are about to change first and reconcile: update or date-supersede existing entries instead of duplicating them.`,
-        `- A fact about one project belongs in that project's facts.md; everything else in the org's. When unsure, the org's.`,
-        `- You may edit only facts.md and files under proposals/ in these directories. Do not touch anything else.`,
-        `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
-      ].join('\n'),
-    },
-    { signal: deps.signal, onPermission: 'reject', events: deps.events, log },
-  );
+  // One turn per session, oldest first. A failed turn leaves its transcript for
+  // the post-mortem and stops the run; the cursor stands at the last session
+  // that finished, so the next run resumes with this one.
+  let reviewed = 0;
+  const texts: string[] = [];
+  const rejected: { action: string; resources: string[] }[] = [];
+  for (const [index, session] of sessions.entries()) {
+    const transcript = join(runDir, `${runId}-${session.id}.md`);
+    await writeFile(transcript, renderTranscript([session], since), { mode: 0o600 });
+    const turn = await runTurn(
+      client,
+      {
+        sessionId,
+        agent: task.agent,
+        directory: task.directory,
+        create: false,
+        permissions,
+        messageId: `${messageId}-${index + 1}`,
+        messageMetadata: metadata,
+        text: [
+          `Dreaming run. Review the conversation in ${transcript}: session ${session.id} (${session.origin}${session.channel ? `, channel ${session.channel}` : ''}), ${session.lines.length} new message(s).`,
+          `Org memory directory: ${org.memory}`,
+          ...(projectLines.length ? ['Project memory directories:', ...projectLines] : []),
+          `- Read each facts.md you are about to change first and reconcile: update it in place, and move anything superseded into that directory's archive.md (dated, with what replaced it). facts.md carries current truth only — no struck-through bullets, no "used to be".`,
+          `- A fact about one project belongs in that project's facts.md; everything else in the org's. When unsure, the org's.`,
+          `- You may edit only facts.md, archive.md, and files under proposals/ in these directories. Do not touch anything else.`,
+          `- Finish with a short summary of what you recorded, proposed, and deliberately left out.`,
+        ].join('\n'),
+      },
+      { signal: deps.signal, onPermission: 'reject', events: deps.events, log },
+    );
+    // The transcript did its job: the conversation is OpenCode's own record, so
+    // the convenience copy leaves with the turn; then the cursor moves to it.
+    await unlink(transcript).catch(() => {});
+    writeCursor(deps.store, task.memoryDirectory, session.updated, now());
+    reviewed++;
+    if (turn.text) texts.push(turn.text);
+    rejected.push(...turn.rejected);
+  }
 
   const after = await snapshotAll();
   const changed = [...new Set([...before.keys(), ...after.keys()])]
     .filter(file => before.get(file) !== after.get(file))
     .sort();
-  writeCursor(deps.store, task.memoryDirectory, until, now());
-  log.info('dreamed', { reviewed: sessions.length, since, until, changed });
+  log.info('dreamed', { reviewed, since, until, changed });
   return {
     state: 'succeeded',
     result: {
-      reviewed: sessions.length,
+      reviewed,
       since,
       until,
       sessions: sessions.map(s => s.id),
-      transcript,
       changed,
-      text: turn.text,
-      rejectedPermissions: turn.rejected,
+      text: texts.join('\n\n'),
+      rejectedPermissions: rejected,
     },
   };
 }

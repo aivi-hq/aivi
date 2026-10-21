@@ -32,7 +32,7 @@ const CLIENT_PLUGINS = [AIVI_PLUGIN, ATTRIBUTION_PLUGIN];
  *  lane workers are the template's strong defaults (docs/plans/templates/
  *  scaffolding.md): written once, then plain files — editing them is the
  *  whole configuration, deleting them is the only uninstall. */
-const HOME_AGENTS = ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md'];
+const HOME_AGENTS = ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md', 'voice-assistant.md'];
 
 const SCRIPT_FORM =
   'setup needs an interactive terminal; in a script use: aivi setup --use this-machine|another --name TEXT, or aivi setup --connect --url URL --token TOKEN';
@@ -106,6 +106,17 @@ export interface SetupIo {
     reach(): Promise<Reach>;
     url(): Promise<string>;
     token(): Promise<string>;
+    /** Each semantic model role, one question; Enter keeps qmd's default, so
+     *  only named roles come back. */
+    models(defaults: { embed: string; rerank: string; generate: string }): Promise<{
+      embed?: string;
+      rerank?: string;
+      generate?: string;
+    }>;
+    /** Fetch the semantic models now? */
+    fetchModels(): Promise<boolean>;
+    /** How many model calls may run at once; undefined means no limit. */
+    capacity(): Promise<number | undefined>;
   };
   log(message: string): void;
   warn(message: string): void;
@@ -291,6 +302,83 @@ async function resolveReach(flags: SetupFlags, io: SetupIo): Promise<Reach> {
   return io.ask.reach();
 }
 
+/** Knowledge's setup: the semantic models are configured first, fetched after.
+ *  Enter keeps a role's qmd default, so answers that name nothing write
+ *  nothing — absent is the qmd default. Named roles land in `search.models`.
+ *  The fetch is `aivi knowledge warm`'s own code, imported from the installed
+ *  server the way the identity step imports its own. A failed fetch warns and
+ *  setup continues: keyword answers serve until the models arrive. A scripted
+ *  `--use` setup asks nothing and downloads nothing. */
+async function configureKnowledge(flags: SetupFlags, home: string, appDir: string, io: SetupIo): Promise<void> {
+  const path = join(home, 'config.json');
+  const config = JSON.parse(readFileSync(path, 'utf8')) as { search?: false | { [key: string]: unknown } };
+  if (config.search === false) return;
+  if (flags.use !== undefined) {
+    io.log(
+      'Knowledge: `aivi knowledge warm` fetches the local semantic models; searches answer with keywords until it has run once.',
+    );
+    return;
+  }
+  const { QMD_BUILTIN_MODELS, warmHome } = await importApp<{
+    QMD_BUILTIN_MODELS: { embed: string; rerank: string; generate: string };
+    warmHome: () => Promise<{ models: Record<string, string>; embedded: number; seconds: number }>;
+  }>(appDir, home, 'dist/cli/commands/knowledge.js');
+  const named = await io.ask.models(QMD_BUILTIN_MODELS);
+  if (Object.keys(named).length) {
+    config.search = { ...(typeof config.search === 'object' ? config.search : {}), models: named };
+    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+    io.log(`search.models written to ${path}.`);
+  }
+  if (!(await io.ask.fetchModels())) {
+    io.log(
+      'Knowledge: `aivi knowledge warm` fetches the local semantic models; searches answer with keywords until it has run once.',
+    );
+    return;
+  }
+  try {
+    const warm = await warmHome();
+    io.log(
+      `Semantic models in place (${warm.seconds}s); ${warm.embedded} chunks embedded. Open OpenCode — knowledge is there.`,
+    );
+  } catch (error) {
+    io.warn(
+      `the models were not fetched (${error instanceof Error ? error.message : String(error)}); searches answer with keywords until \`aivi knowledge warm\` succeeds.`,
+    );
+  }
+}
+
+/**
+ * The capacity pool, asked once: how many model calls may run at once. Enter
+ * means no limit — no pools, which is the dispatcher's default. A number
+ * writes the `default` pool every service draws from. A local model usually
+ * wants a small number; a hosted one can take more, and a limit also bounds
+ * what a misbehaving system can spend. A scripted setup asks nothing, and
+ * pools already in the config are left alone.
+ */
+async function configureCapacity(flags: SetupFlags, home: string, io: SetupIo): Promise<void> {
+  const path = join(home, 'config.json');
+  const config = JSON.parse(readFileSync(path, 'utf8')) as {
+    dispatcher?: { pools?: Record<string, { capacity?: number }> };
+  };
+  if (flags.use !== undefined) {
+    io.log('Capacity: no pools means no limit. Set `dispatcher.pools` in config.json to bound it.');
+    return;
+  }
+  const pools = config.dispatcher?.pools ?? {};
+  if (Object.keys(pools).length > 0) {
+    io.log('Capacity: the pools in config.json stand; setup leaves them alone.');
+    return;
+  }
+  const capacity = await io.ask.capacity();
+  if (capacity === undefined) {
+    io.log('Capacity: no limit (no pools). Set `dispatcher.pools` in config.json to bound it.');
+    return;
+  }
+  config.dispatcher = { ...(config.dispatcher ?? {}), pools: { ...pools, default: { capacity } } };
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  io.log(`dispatcher.pools.default.capacity = ${capacity} written to ${path}.`);
+}
+
 async function createFlow(flags: SetupFlags, home: string, nodePath: string, io: SetupIo): Promise<void> {
   const major = Number(process.versions.node.split('.')[0]);
   if (major !== 26) throw new Error(`aivi needs Node 26 (below 27); running ${process.versions.node}.`);
@@ -328,6 +416,10 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   if (use === 'another') return;
 
   await ensurePlugins(io);
+  // The semantic models are the app's own (qmd runs them locally): configure
+  // them first, fetch after.
+  await configureKnowledge(flags, home, appDir, io);
+  await configureCapacity(flags, home, io);
   const background = process.stdin.isTTY ? await io.ask.background() : false;
   if (!background) {
     saveClientConfig({ person: { token: identity.token, ...(identity.name ? { name: identity.name } : {}) } });
@@ -630,6 +722,44 @@ const defaultIo: SetupIo = {
           validate: value => (String(value ?? '').trim() ? undefined : 'Paste the token shown by `aivi people token`'),
         }),
       ).then(value => value.trim()),
+    async models(defaults) {
+      const named: { embed?: string; rerank?: string; generate?: string } = {};
+      for (const role of ['embed', 'rerank', 'generate'] as const) {
+        if (!process.stdin.isTTY) throw new Cancelled(SCRIPT_FORM);
+        const answer = await p.text({
+          message: `Semantic ${role} model — Enter keeps qmd's own default`,
+          placeholder: defaults[role],
+        });
+        if (p.isCancel(answer)) throw new Cancelled('an answer was cancelled');
+        const uri = typeof answer === 'string' ? answer.trim() : '';
+        if (uri) named[role] = uri;
+      }
+      return named;
+    },
+    fetchModels: () =>
+      guarded<boolean>(() =>
+        p.confirm({
+          message:
+            'Fetch the semantic models now (~2 GB, once)? Searches answer with keywords until they are in place.',
+          initialValue: true,
+        }),
+      ),
+    capacity: () =>
+      guarded<string>(() =>
+        p.text({
+          message: 'How many model calls may run at once? Enter means no limit.',
+          placeholder: '3',
+          validate: value => {
+            const v = String(value ?? '').trim();
+            if (!v) return undefined;
+            const n = Number(v);
+            return Number.isInteger(n) && n >= 1 && n <= 64 ? undefined : 'A whole number, 1 to 64.';
+          },
+        }),
+      ).then(value => {
+        const v = String(value ?? '').trim();
+        return v ? Number(v) : undefined;
+      }),
   },
   log: message => console.log(message),
   warn: message => console.warn(message),
