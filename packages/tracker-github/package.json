@@ -1,6 +1,6 @@
 {
   "name": "@aivi/tracker-github",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "The GitHub tracker for aivi: the projectsV2 board the walk reads, the issues a worker works, and the status comment that is the run's conversation.",
   "type": "module",
   "exports": {
@@ -45,17 +45,17 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.1",
-    "@aivi/github": "^0.0.0",
-    "@aivi/host": "^0.8.1",
-    "@aivi/plugin": "^0.1.0",
+    "@aivi/core": "^1.0.0",
+    "@aivi/github": "^1.0.0",
+    "@aivi/host": "^1.0.0",
+    "@aivi/plugin": "^1.0.0",
     "commander": "15.0.0",
     "zod": "4.1.13"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^1.0.0"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^1.0.0"
   }
 }

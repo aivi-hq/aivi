@@ -1,6 +1,6 @@
 {
   "name": "@aivi/core",
-  "version": "0.7.1",
+  "version": "1.0.0",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },
@@ -26,7 +26,7 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/chrome": "^0.1.0",
+    "@aivi/chrome": "^1.0.0",
     "@logtape/file": "2.3.6",
     "@logtape/logtape": "2.3.6",
     "@logtape/pretty": "2.3.6",

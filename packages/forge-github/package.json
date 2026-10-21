@@ -1,6 +1,6 @@
 {
   "name": "@aivi/forge-github",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "The GitHub forge for aivi: the remote a project came from, the pull requests over its branches, and the review conversation on them.",
   "type": "module",
   "exports": {
@@ -41,15 +41,15 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.1",
-    "@aivi/github": "^0.0.0",
-    "@aivi/plugin": "^0.1.0",
+    "@aivi/core": "^1.0.0",
+    "@aivi/github": "^1.0.0",
+    "@aivi/plugin": "^1.0.0",
     "zod": "4.1.13"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^1.0.0"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^1.0.0"
   }
 }
