@@ -241,7 +241,7 @@ test('dream runs one turn per session with its own transcript, allows facts/arch
   for (const dir of [canonical, `${canonical}/demo`])
     assert.ok(
       rules.body.permissions.some(
-        (p: { action: string; resource: string }) => p.action === 'external_directory' && p.resource === `${dir}/**`,
+        (p: { action: string; resource: string }) => p.action === 'external_directory' && p.resource === `${dir}/*`,
       ),
     );
   const prompt = mock.requests.find(r => r.path.endsWith('/prompt'))!;
@@ -258,6 +258,53 @@ test('dream runs one turn per session with its own transcript, allows facts/arch
     mock.requests.filter(r => r.path.endsWith('/prompt')).length,
     2,
     'no model call when there is nothing to review',
+  );
+});
+
+test('a memory home inside the session directory is named relative to it, the way OpenCode matches it', async t => {
+  // A home on a real path (macOS /tmp is a symlink), so one file has one spelling.
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'aivi-dream-home-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const memory = join(root, 'knowledge', 'memory');
+  const demo = join(root, 'projects', 'demo', 'memory');
+  const mock = mockOpenCode('dreamer', root);
+  const client = await start(t, mock);
+  const store = new Store(':memory:');
+  t.after(async () => store.close());
+  store.migrate('dreaming', [
+    'CREATE TABLE dreaming_cursor(key TEXT PRIMARY KEY, since INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
+  ]);
+  const task = dreamingArgsSchema.parse({ directory: root, memoryDirectory: memory, origins: ['discord'] });
+  const outcome = await dream(task, 'job-1', {
+    store,
+    client,
+    events: { watch: () => () => {} },
+    sessionId: 'ses_aivi_job1',
+    stateDirectory: join(root, 'state'),
+    projects: [{ id: 'demo', memory: demo }],
+    signal: AbortSignal.timeout(10000),
+    now: () => T0 + 10_000,
+  });
+  assert.equal(outcome.state, 'succeeded');
+  const rules = mock.requests.find(r => r.method === 'PATCH' && r.path.startsWith('/api/session/'))!;
+  const edits = rules.body.permissions
+    .filter((p: { action: string }) => p.action === 'edit')
+    .map((p: { resource: string }) => p.resource);
+  assert.deepEqual(
+    edits,
+    [
+      'knowledge/memory/facts.md',
+      'knowledge/memory/archive.md',
+      'knowledge/memory/proposals/*',
+      'projects/demo/memory/facts.md',
+      'projects/demo/memory/archive.md',
+      'projects/demo/memory/proposals/*',
+    ],
+    'OpenCode matches a file inside the session directory by its path relative to it',
+  );
+  assert.ok(
+    !edits.some(resource => resource.startsWith(root)),
+    'an absolute resource matches nothing inside the session directory: the agent file deny wins (live 2026-10-21)',
   );
 });
 

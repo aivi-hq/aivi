@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { DreamingArgs, Logger } from '@aivi/core';
 import { getLogger } from '@aivi/core';
 import type { OpenCodeClient, SessionEvents } from '@aivi/plugin/module';
@@ -233,15 +233,51 @@ export async function dream(
   const until = Math.max(...sessions.map(s => s.updated));
 
   await mkdir(join(deps.stateDirectory, 'dreaming'), { recursive: true, mode: 0o700 });
-  // OpenCode matches permission resources against canonical paths; symlinked directories (macOS /tmp, /var) would otherwise be denied.
+  // Symlinked directories (macOS /tmp, /var) are named by their real path, so the
+  // dreamer and OpenCode mean the same file.
   const runDir = await realpath(join(deps.stateDirectory, 'dreaming'));
   const posix = (path: string) => path.replaceAll('\\', '/');
   // One memory home for the org and one per project. The dreamer decides where a fact
   // belongs; the host only makes each home exist and writable in the same two places.
   const homes: { id: string | null; memory: string }[] = [];
-  const permissions: { action: string; resource: string; effect: 'allow' }[] = [
-    { action: 'external_directory', resource: `${posix(runDir)}/**`, effect: 'allow' },
-  ];
+  const permissions: { action: string; resource: string; effect: 'allow' }[] = [];
+  // OpenCode judges a permission resource against the path RELATIVE to the session's
+  // directory for a file inside it, and the absolute path for a file outside it
+  // (OpenCode's file access: `path.relative(location.directory, absolute)`). The
+  // session's directory is the aivi home, so a memory home inside the home is named
+  // relative to it: an absolute resource matches nothing there, and the agent file's
+  // `edit: deny` is the rule that wins (proven live 2026-10-21).
+  const sessionDirectory = task.directory;
+  const allow = (action: string, resource: string) => {
+    if (!permissions.some(rule => rule.action === action && rule.resource === resource))
+      permissions.push({ action, resource, effect: 'allow' });
+  };
+  /** Whether a file is inside the session's directory — OpenCode names such a
+   *  file by its path relative to that directory. */
+  const insideSession = (file: string): boolean => {
+    const rel = relative(sessionDirectory, file);
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  };
+  /** How OpenCode names one file in a permission resource: relative to the
+   *  session's directory when the file is inside it, absolute when it is not. */
+  const resourceFor = (file: string): string => (insideSession(file) ? relative(sessionDirectory, file) : posix(file));
+  /** facts.md, archive.md and proposals/* of one memory home. `memory` is the
+   *  home's real path — the one the dreamer is told about; `lexical` is the path
+   *  aivi knows, which a symlinked home spells differently. */
+  const allowMemory = (memory: string, lexical: string) => {
+    // A home outside the session's directory also needs the directory's own
+    // allow, or OpenCode refuses the file before it judges the action.
+    if (!insideSession(memory)) allow('external_directory', `${posix(memory)}/*`);
+    for (const name of ['facts.md', 'archive.md', 'proposals/*']) {
+      allow('edit', resourceFor(join(memory, name)));
+      // A symlinked home spells one file two ways: the one inside the session's
+      // directory is named relatively, the other absolutely.
+      if (insideSession(lexical)) allow('edit', resourceFor(join(lexical, name)));
+    }
+  };
+  // The transcript the dreamer reads lives with the run's state. A state
+  // directory outside the session's directory needs the directory's allow.
+  if (!insideSession(runDir)) allow('external_directory', `${posix(runDir)}/*`);
   for (const home of [{ id: null, memory: task.memoryDirectory }, ...(deps.projects ?? [])]) {
     await mkdir(join(home.memory, 'proposals'), { recursive: true });
     const memory = await realpath(home.memory);
@@ -265,12 +301,7 @@ export async function dream(
     // The agent file is the boundary; aivi adds only what it knows: where memory and the transcript
     // are, and that facts.md, archive.md and proposals/* may be written (appended last, so they win over an
     // `edit: deny` in the agent file). Everything else stays as the agent defines it.
-    permissions.push(
-      { action: 'external_directory', resource: `${posix(memory)}/**`, effect: 'allow' },
-      { action: 'edit', resource: `${posix(memory)}/facts.md`, effect: 'allow' },
-      { action: 'edit', resource: `${posix(memory)}/archive.md`, effect: 'allow' },
-      { action: 'edit', resource: `${posix(memory)}/proposals/*`, effect: 'allow' },
-    );
+    allowMemory(memory, home.memory);
   }
   const org = homes[0]!;
 
