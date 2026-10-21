@@ -24,7 +24,7 @@
  *  sessions in the same process and skip the ring tap: identity slicing is
  *  the mixed lane's job, the platform already knows who speaks here.
  */
-import { type ChildProcessByStdio, type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
 
 export type EngineEvent =
@@ -48,14 +48,27 @@ export interface EngineSpec {
    *  stay nameless. There is no per-room decision anymore (ruled 2026-10-14). */
   model?: string | undefined;
   diarModel?: string | undefined;
+  /** Where the audio comes from, when the caller has its own — Discord's
+   *  demuxed stream, a test's silence. Absent: the default, which is ffmpeg
+   *  for a file or a microphone and nothing for push (the caller writes PCM
+   *  itself through `write`). */
+  source?: (() => AudioStream) | undefined;
 }
 
 export interface AudioSource {
-  /** 'push': no ffmpeg — someone writes PCM in via write() (the Discord adapter). */
+  /** 'push': no source — someone writes PCM in via write() (the Discord adapter). */
   type: 'file' | 'mic' | 'push';
   path?: string | undefined;
   paced?: boolean | undefined;
   device?: string | undefined;
+}
+
+/** The audio feeding the engine: s16le 16 kHz mono PCM, as a stream. */
+export interface AudioStream {
+  /** The bytes, as they come. */
+  stream: Readable;
+  /** End the producer — kill the process behind it. */
+  stop: () => void;
 }
 
 const SR = 16000;
@@ -79,9 +92,32 @@ function micArgs(device?: string): string[] {
   return ['-f', 'alsa', '-i', device ?? 'default'];
 }
 
+/** The default source: ffmpeg turns a file or a microphone into raw PCM. It is
+ *  a decoder and nothing more — the engine speaks the protocol, the source
+ *  only supplies the bytes. A caller with its own audio hands its own
+ *  stream (Discord, a test). */
+function defaultSource(input: AudioSource, log: EngineLog): AudioStream | undefined {
+  if (input.type === 'push') return undefined;
+  // -re paces a file at native speed; a live capture device is already real time.
+  const args =
+    input.type === 'file' ? [...(input.paced === false ? [] : ['-re']), '-i', input.path!] : micArgs(input.device);
+  const child = spawn(
+    'ffmpeg',
+    ['-v', 'error', '-nostats', ...args, '-ar', String(SR), '-ac', '1', '-f', 's16le', '-'],
+    {
+      stdio: ['ignore', 'pipe', 'inherit'],
+    },
+  );
+  child.on('exit', code => {
+    if (code !== 0) log.warn('voice.source.exited', { code });
+  });
+  child.on('error', err => log.warn('voice.source.spawn-failed', { error: String(err) }));
+  return { stream: child.stdout, stop: () => child.kill('SIGKILL') };
+}
+
 export class EngineRun {
   private engine: ChildProcessWithoutNullStreams | null = null;
-  private source: ChildProcessByStdio<null, Readable, null> | null = null;
+  private source: AudioStream | null = null;
   private ring = new Float32Array(RING_SECONDS * SR);
   private ringEnd = 0; // absolute sample index one past the last written
   private stopped = false;
@@ -132,7 +168,10 @@ export class EngineRun {
         stderrBuf = (stderrBuf + d).slice(-8192);
         if (!ready && stderrBuf.includes(this.spec.readyMarker)) {
           ready = true;
-          if (this.input.type !== 'push') this.startSource(); // push: the bridge feeds
+          // A source, if there is one: the caller's own stream, or the default
+          // (ffmpeg for a file or a microphone). Push without a source: the
+          // caller writes the PCM itself.
+          this.startSource();
           resolve();
         }
       });
@@ -191,36 +230,31 @@ export class EngineRun {
 
   private startSource(): void {
     if (this.stopped || !this.engine) return;
-    // -re paces a file at native speed; a live capture device is already real time.
-    const args =
-      this.input.type === 'file'
-        ? [...(this.input.paced === false ? [] : ['-re']), '-i', this.input.path!]
-        : micArgs(this.input.device);
-    const source = spawn(
-      'ffmpeg',
-      ['-v', 'error', '-nostats', ...args, '-ar', String(SR), '-ac', '1', '-f', 's16le', '-'],
-      {
-        stdio: ['ignore', 'pipe', 'inherit'],
-      },
-    );
+    const source = this.spec.source ? this.spec.source() : defaultSource(this.input, this.log);
+    if (!source) return;
     this.source = source;
-    source.stdout.on('data', (buf: Buffer) => {
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      this.source = null;
+      this.engine?.stdin.end();
+    };
+    source.stream.on('data', (buf: Buffer) => {
       const f32 = new Float32Array(buf.length / 2);
       for (let i = 0; i < f32.length; i++) f32[i] = buf.readInt16LE(i * 2) / 32768;
       const written = this.writeFrame(buf);
       if (!written && this.engine) {
-        source.stdout.pause();
-        this.engine.stdin.once('drain', () => source.stdout.resume());
+        source.stream.pause();
+        this.engine.stdin.once('drain', () => source.stream.resume());
       }
       this.tap(f32);
     });
-    source.on('exit', code => {
-      this.source = null;
-      if (this.stopped) return;
-      this.engine?.stdin.end();
-      if (code !== 0) this.log.warn('voice.source.exited', { code });
-    });
-    source.on('error', err => this.log.warn('voice.source.spawn-failed', { error: String(err) }));
+    // The audio is over: the file ran out, the capture ended, the source died.
+    // Either way the engine's stdin ends, and the engine answers with its eof.
+    source.stream.on('end', end);
+    source.stream.on('close', end);
+    source.stream.on('error', err => this.log.warn('voice.source-failed', { error: String(err) }));
   }
 
   /** One JSONL frame per event: two frames sharing one TCP/pipe segment would
@@ -288,7 +322,7 @@ export class EngineRun {
 
   async stop(): Promise<void> {
     this.stopped = true;
-    this.source?.kill('SIGKILL');
+    this.source?.stop();
     this.source = null;
     for (const waiter of this.pending.values()) waiter(null);
     this.pending.clear();

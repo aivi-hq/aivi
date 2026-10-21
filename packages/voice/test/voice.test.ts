@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { Store } from '@aivi/host';
 import { BatchEngineRun, samplesToBase64 } from '../src/batch.ts';
@@ -146,26 +147,12 @@ test('voices survive a restart: same file, same people, same session', () => {
   for (const suffix of ['', '-wal', '-shm']) rmSync(file + suffix, { force: true });
 });
 
-// Engine wiring against a stub that speaks the protocol — no models, no MLX.
+// Engine wiring against a stub that speaks the protocol — no models, no MLX,
+// and no ffmpeg: the audio is a stream the test hands over, so the unit under
+// test is the engine protocol, not a decoder.
 test('EngineRun: ready on marker, events parsed, ring slices the feed', async () => {
   const dir = join(tmpdir(), `aivi-voice-test-${process.pid}`);
   mkdirSync(dir, { recursive: true });
-  // 2 s of 16 kHz s16le silence as a wav, header written by hand.
-  const n = 32000;
-  const wav = Buffer.alloc(44 + n * 2);
-  wav.write('RIFF', 0);
-  wav.writeUInt32LE(36 + n * 2, 4);
-  wav.write('WAVEfmt ', 8);
-  wav.writeUInt32LE(16, 16);
-  wav.writeUInt16LE(1, 20);
-  wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(16000, 24);
-  wav.writeUInt32LE(32000, 28);
-  wav.writeUInt16LE(2, 32);
-  wav.writeUInt16LE(16, 34);
-  wav.write('data', 36);
-  wav.writeUInt32LE(n * 2, 40);
-  writeFileSync(join(dir, 'silence.wav'), wav);
 
   // The stub reads the whole feed, then replays a protocol session — events
   // arrive only after the audio has fully flowed, so the ring is provably
@@ -187,6 +174,16 @@ test('EngineRun: ready on marker, events parsed, ring slices the feed', async ()
      process.stdin.resume();`,
   );
 
+  // 2 s of 16 kHz s16le silence: the audio, without a file to decode.
+  const pcm = Buffer.alloc(32000 * 2);
+  const silence = () =>
+    new Readable({
+      read() {
+        this.push(pcm);
+        this.push(null);
+      },
+    });
+
   const seen: import('../src/engine.ts').EngineEvent[] = [];
   let exitCode: number | null = null;
   let settle: (() => void) | undefined;
@@ -194,8 +191,13 @@ test('EngineRun: ready on marker, events parsed, ring slices the feed', async ()
     settle = res;
   });
   const run = new EngineRun(
-    { command: process.execPath, args: [stub], readyMarker: 'stub engine ready' },
-    { type: 'file', path: join(dir, 'silence.wav'), paced: false },
+    {
+      command: process.execPath,
+      args: [stub],
+      readyMarker: 'stub engine ready',
+      source: () => ({ stream: silence(), stop: () => {} }),
+    },
+    { type: 'push', paced: false },
     {
       onEvent: e => {
         seen.push(e);
