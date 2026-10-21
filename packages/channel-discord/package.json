@@ -1,6 +1,6 @@
 {
   "name": "@aivi/channel-discord",
-  "version": "0.5.3",
+  "version": "1.0.0",
   "type": "module",
   "exports": {
     ".": {
@@ -39,8 +39,8 @@
     "prepack": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@aivi/core": "^0.7.1",
-    "@aivi/plugin": "^0.1.0",
+    "@aivi/core": "^1.0.0",
+    "@aivi/plugin": "^1.0.0",
     "@discordjs/opus": "0.10.0",
     "@discordjs/voice": "0.19.2",
     "commander": "15.0.0",
@@ -49,10 +49,10 @@
     "zod": "4.1.13"
   },
   "peerDependencies": {
-    "@aivi/host": "^0.8.1"
+    "@aivi/host": "^1.0.0"
   },
   "devDependencies": {
-    "@aivi/host": "^0.8.1",
+    "@aivi/host": "^1.0.0",
     "@clack/prompts": "1.8.1"
   }
 }
