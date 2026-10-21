@@ -1,7 +1,7 @@
 {
   "name": "@aivi/google-meet",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "description": "aivi in a Google Meet: the aivi face as the camera, the waiting room clicked through, the call held until a human hangs up",
   "type": "module",
   "exports": {

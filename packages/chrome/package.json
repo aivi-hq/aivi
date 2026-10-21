@@ -1,7 +1,7 @@
 {
   "name": "@aivi/chrome",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "description": "a puppeteer-shaped driver for an installed Chrome: a dozen page verbs over the DevTools Protocol, with the full protocol left reachable",
   "type": "module",
   "exports": {

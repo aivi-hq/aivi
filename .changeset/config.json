@@ -4,5 +4,5 @@
   "access": "public",
   "baseBranch": "main",
   "fixed": [["@aivi/cli", "@aivi/host", "@aivi/plugin"]],
-  "ignore": []
+  "ignore": ["@aivi/voice", "@aivi/google-meet"]
 }
