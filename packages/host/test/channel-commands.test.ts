@@ -35,7 +35,7 @@ const claimTurn = (store: ConversationStore) => {
   const candidate = store.nextTurn();
   return candidate ? store.claimTurn(candidate.id) : null;
 };
-const limits = { pool: 'local-model', maxConcurrent: 1 };
+const limits = { pool: 'local-model' };
 const binding = { agent: 'assistant', directory: '/home' };
 const message = (id: string, channel = 'dm-a') => ({
   id,

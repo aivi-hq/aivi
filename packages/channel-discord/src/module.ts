@@ -215,7 +215,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
     };
     engine = new ChannelEngine(
       store,
-      config,
+      { pool: config.pool },
       services.dispatcher,
       askWithTyping,
       {

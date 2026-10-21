@@ -13,7 +13,7 @@ import { TestCapacity } from './support.ts';
 
 /** Discord's shape, so the ids and tables asserted here are the ones existing databases hold. */
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
-const limits = { pool: 'local-model', maxConcurrent: 1 };
+const limits = { pool: 'local-model' };
 const message = (id: string, channel = 'dm-a') => ({
   id,
   channel,
@@ -252,7 +252,7 @@ test('a chat turn that never reached the agent, and one lost after its prompt, b
   const capacity = new TestCapacity(2);
   const engine = new ChannelEngine(
     store,
-    { ...limits, maxConcurrent: 2 },
+    limits,
     capacity,
     async turn => {
       if (turn.id === 'one') throw new TurnNotStarted(new Error('No running OpenCode v2 service found'));
@@ -327,7 +327,7 @@ test('/stop aborts one conversation’s running turn: discarded as stopped, slot
   const capacity = new TestCapacity(2);
   const engine = new ChannelEngine(
     store,
-    { ...limits, maxConcurrent: 2 },
+    limits,
     capacity,
     (turn, signal) =>
       new Promise<string>((resolve, reject) => {
@@ -371,7 +371,7 @@ test('a waiting turn takes its slot from the queue place: the grant arrives thro
   const capacity = new TestCapacity(1);
   const engine = new ChannelEngine(
     store,
-    { ...limits, maxConcurrent: 2 }, // two at a time by module; the pool says one
+    limits, // the pool says one
     capacity,
     async turn => {
       asked.push(turn.id);

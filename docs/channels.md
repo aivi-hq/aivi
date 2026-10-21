@@ -78,10 +78,10 @@ conversation-binding names — travel to plugin authors as
   `sessionOf`, and the binding rotation: constructing the store with a
   different binding (agent, directory, application) acts as `/new` for every
   conversation, refused while any turn is queued or blocked.
-- **`ChannelEngine`**: takes queued turns within `maxConcurrent`, asking the
-  dispatcher for a lease on the module's pool (the platform id is the
-  service; one queue place per pool; the grant arrives through the registered
-  callback), calls the turn runner — which lets the lease provide the
+- **`ChannelEngine`**: takes queued turns, asking the dispatcher for a lease on
+  the module's pool per turn (the platform id is the service; one queue place
+  per pool; the grant arrives through the registered callback), calls the turn
+  runner — which lets the lease provide the
   conversation's session — splits the reply at
   `replyLimit` (UTF-16 units, surrogate pairs intact) and sends it, records
   `sent`; `TurnNotStarted` → the turn is discarded and the person asked to

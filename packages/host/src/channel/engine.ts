@@ -29,7 +29,6 @@ export type Ask = (turn: Turn, signal: AbortSignal, ready: () => void, lease?: D
 export type Send = ChannelDelivery['send'];
 export interface EngineLimits {
   pool: string;
-  maxConcurrent: number;
 }
 export interface EngineOptions {
   log?: Logger;
@@ -97,7 +96,10 @@ export class ChannelEngine {
   }
 
   tick(): void {
-    while (!this.abort.signal.aborted && this.active.size < this.limits.maxConcurrent && !this.seat) {
+    // Capacity is the dispatcher's: the pool decides how many turns run at
+    // once, and the module asks for a lease per turn. One queue place per pool
+    // (the seat) is all a module holds while it waits.
+    while (!this.abort.signal.aborted && !this.seat) {
       const candidate = this.store.nextTurn();
       if (!candidate) break;
       let grant: ReturnType<Dispatcher['request']>;

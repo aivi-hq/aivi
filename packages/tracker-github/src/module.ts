@@ -228,7 +228,7 @@ async function startGithub(
         await tracker.comment(conversation, text, 'outcome');
       },
     };
-    engine = new ChannelEngine(store, { pool: config.pool, maxConcurrent: 8 }, services.dispatcher, ask, delivery, {
+    engine = new ChannelEngine(store, { pool: config.pool }, services.dispatcher, ask, delivery, {
       log, // the module's own child, so engine records carry the module category
       onRelease: services.wake,
       onFailure: services.fail,

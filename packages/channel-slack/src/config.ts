@@ -47,7 +47,6 @@ export const slackConfigSchema = z
     reportChannels: z.array(channelId).default([]),
     /** What a placeholder message shows while a turn runs: nothing, one status line, or the status plus the tool calls. */
     progress: z.enum(['silent', 'status', 'tools']).default('status'),
-    maxConcurrent: z.number().int().min(1).max(32).default(1),
     maxPending: z.number().int().min(1).max(1000).default(100),
   })
   .superRefine((config, ctx) => {

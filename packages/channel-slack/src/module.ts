@@ -283,7 +283,7 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
     };
     engine = new ChannelEngine(
       store,
-      config,
+      { pool: config.pool },
       services.dispatcher,
       async (turn, signal, ready, lease) => {
         void working(turn);

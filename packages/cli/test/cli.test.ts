@@ -83,6 +83,7 @@ function fakeIo(overrides: Partial<SetupIo> = {}): {
       token: async () => TOKEN,
       models: async () => ({}),
       fetchModels: async () => false,
+      capacity: async () => undefined,
     },
     log: message => calls.logs.push(message),
     warn: () => {},

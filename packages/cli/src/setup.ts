@@ -115,6 +115,8 @@ export interface SetupIo {
     }>;
     /** Fetch the semantic models now? */
     fetchModels(): Promise<boolean>;
+    /** How many model calls may run at once; undefined means no limit. */
+    capacity(): Promise<number | undefined>;
   };
   log(message: string): void;
   warn(message: string): void;
@@ -345,6 +347,38 @@ async function configureKnowledge(flags: SetupFlags, home: string, appDir: strin
   }
 }
 
+/**
+ * The capacity pool, asked once: how many model calls may run at once. Enter
+ * means no limit — no pools, which is the dispatcher's default. A number
+ * writes the `default` pool every service draws from. A local model usually
+ * wants a small number; a hosted one can take more, and a limit also bounds
+ * what a misbehaving system can spend. A scripted setup asks nothing, and
+ * pools already in the config are left alone.
+ */
+async function configureCapacity(flags: SetupFlags, home: string, io: SetupIo): Promise<void> {
+  const path = join(home, 'config.json');
+  const config = JSON.parse(readFileSync(path, 'utf8')) as {
+    dispatcher?: { pools?: Record<string, { capacity?: number }> };
+  };
+  if (flags.use !== undefined) {
+    io.log('Capacity: no pools means no limit. Set `dispatcher.pools` in config.json to bound it.');
+    return;
+  }
+  const pools = config.dispatcher?.pools ?? {};
+  if (Object.keys(pools).length > 0) {
+    io.log('Capacity: the pools in config.json stand; setup leaves them alone.');
+    return;
+  }
+  const capacity = await io.ask.capacity();
+  if (capacity === undefined) {
+    io.log('Capacity: no limit (no pools). Set `dispatcher.pools` in config.json to bound it.');
+    return;
+  }
+  config.dispatcher = { ...(config.dispatcher ?? {}), pools: { ...pools, default: { capacity } } };
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  io.log(`dispatcher.pools.default.capacity = ${capacity} written to ${path}.`);
+}
+
 async function createFlow(flags: SetupFlags, home: string, nodePath: string, io: SetupIo): Promise<void> {
   const major = Number(process.versions.node.split('.')[0]);
   if (major !== 26) throw new Error(`aivi needs Node 26 (below 27); running ${process.versions.node}.`);
@@ -385,6 +419,7 @@ async function createFlow(flags: SetupFlags, home: string, nodePath: string, io:
   // The semantic models are the app's own (qmd runs them locally): configure
   // them first, fetch after.
   await configureKnowledge(flags, home, appDir, io);
+  await configureCapacity(flags, home, io);
   const background = process.stdin.isTTY ? await io.ask.background() : false;
   if (!background) {
     saveClientConfig({ person: { token: identity.token, ...(identity.name ? { name: identity.name } : {}) } });
@@ -709,6 +744,22 @@ const defaultIo: SetupIo = {
           initialValue: true,
         }),
       ),
+    capacity: () =>
+      guarded<string>(() =>
+        p.text({
+          message: 'How many model calls may run at once? Enter means no limit.',
+          placeholder: '3',
+          validate: value => {
+            const v = String(value ?? '').trim();
+            if (!v) return undefined;
+            const n = Number(v);
+            return Number.isInteger(n) && n >= 1 && n <= 64 ? undefined : 'A whole number, 1 to 64.';
+          },
+        }),
+      ).then(value => {
+        const v = String(value ?? '').trim();
+        return v ? Number(v) : undefined;
+      }),
   },
   log: message => console.log(message),
   warn: message => console.warn(message),

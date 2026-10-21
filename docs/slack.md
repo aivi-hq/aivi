@@ -188,7 +188,6 @@ whole setup:
       "reportChannels": ["C0000000001"],
       "progress": "status",
       "pool": "default",
-      "maxConcurrent": 1,
       "maxPending": 100
     }
   }
