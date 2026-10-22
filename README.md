@@ -10,12 +10,9 @@
 
 An always-on teammate built around OpenCode v2. OpenCode stays the runtime for
 agents, sessions, providers, tools, skills, and permissions. aivi adds what a
-team needs around it: a shared knowledge server, scheduled work, and channels
+team needs around it: a shared knowledge server, scheduled work, trackers, forges, and channels
 such as Discord and Slack, all started by one **`aivi serve`**. Ordinary OpenCode
 installs reach the knowledge server through a small native plugin.
-
-> [!WARNING]
-> This project is under active development and it will be at least until OpenCode v2 is released. Don't use it. Or do, and suffer lol. Also this project is being used to build itself using exclusively local models because I am insane.
 
 ## Quick start
 
