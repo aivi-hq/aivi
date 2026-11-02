@@ -415,11 +415,28 @@ test('a module whose start fails is retried with backoff while the host serves; 
     async close() {},
   };
   let attempts = 0;
+  // The recovery is the test's to release, never the clock's to arrive: the
+  // third start waits on a gate this test holds, so `flaky` stays `degraded`
+  // — whatever the backoff and however slow the machine — until the degraded
+  // status has been read. `recovered` fires inside the still-resolving start;
+  // the supervisor writes `running` synchronously right after that start
+  // settles, and the `/status` fetch below needs a full socket round trip,
+  // so the next read lands after the write. No timer decides an assertion.
+  let openGate!: () => void;
+  const gate = new Promise<void>(resolve => {
+    openGate = resolve;
+  });
+  let signalRecovered!: () => void;
+  const recovered = new Promise<void>(resolve => {
+    signalRecovered = resolve;
+  });
   const flaky: AiviModule = {
     id: 'flaky',
     async start() {
       attempts++;
       if (attempts < 3) throw new Error(`Unexpected server response: 503 (attempt ${attempts})`);
+      await gate;
+      signalRecovered();
       return { async stop() {} };
     },
   };
@@ -430,7 +447,10 @@ test('a module whose start fails is retried with backoff while the host serves; 
     },
   };
   const abort = new AbortController();
-  let address: { port: number } | undefined;
+  let resolveReady!: (address: { port: number }) => void;
+  const ready = new Promise<{ port: number }>(resolve => {
+    resolveReady = resolve;
+  });
   const host = runHost({
     loaded: loaded(),
     store,
@@ -439,19 +459,20 @@ test('a module whose start fails is retried with backoff while the host serves; 
     opencode: noOpenCode,
     signal: abort.signal,
     moduleRetry: { baseMs: 20, maxMs: 100 },
-    onReady: a => {
-      address = a as { port: number };
-    },
+    onReady: a => resolveReady(a as { port: number }),
   });
+  const address = await Promise.race([
+    ready,
+    host.then(() => {
+      throw new Error('the host ended before it was ready');
+    }),
+  ]);
   const fetchStatus = async () =>
     (await (
-      await fetch(`http://127.0.0.1:${address!.port}/status`, { headers: { 'x-aivi-client': hostVersion } })
+      await fetch(`http://127.0.0.1:${address.port}/status`, { headers: { 'x-aivi-client': hostVersion } })
     ).json()) as {
       modules: { id: string; state: string; attempts: number; lastError: string | null }[];
     };
-  const started = Date.now();
-  while (!address && Date.now() - started < 5000) await new Promise(r => setTimeout(r, 10));
-  assert.ok(address, 'the host is ready although a module failed to start');
   const first = await fetchStatus();
   assert.deepEqual(
     first.modules.map(m => [m.id, m.state]),
@@ -462,10 +483,10 @@ test('a module whose start fails is retried with backoff while the host serves; 
     'readiness never waits for retries; later modules still start',
   );
   assert.match(first.modules[0]!.lastError ?? '', /503/);
-  while (attempts < 3 && Date.now() - started < 5000) await new Promise(r => setTimeout(r, 10));
-  await new Promise(r => setTimeout(r, 30));
+  openGate();
+  await recovered;
   const later = await fetchStatus();
-  assert.deepEqual(later.modules.find(m => m.id === 'flaky')!.state, 'running');
+  assert.equal(later.modules.find(m => m.id === 'flaky')!.state, 'running');
   assert.equal(later.modules.find(m => m.id === 'flaky')!.attempts, 3);
   abort.abort();
   await host;
