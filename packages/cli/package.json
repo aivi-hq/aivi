@@ -1,6 +1,6 @@
 {
   "name": "@aivi/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "bin": {
     "aivi": "dist/main.js"
@@ -33,6 +33,6 @@
     "zod": "4.1.13"
   },
   "devDependencies": {
-    "@aivi/plugin": "^1.0.0"
+    "@aivi/plugin": "^1.0.1"
   }
 }

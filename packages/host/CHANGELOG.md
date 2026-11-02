@@ -1,5 +1,13 @@
 # @aivi/host
 
+## 1.0.1
+
+### Patch Changes
+
+- [#69](https://github.com/aivi-hq/aivi/pull/69) [`634be4e`](https://github.com/aivi-hq/aivi/commit/634be4ea49afb09ac32033eb00f78ac45ba7b3cd) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The pinned `@opencode/*` family moved to 2.2.5. Nothing in aivi changed: the same endpoints under the same discovery rules — the releases between added routes (the `server.worktree` group, among others), none moved — a server that answers HTTP on its registered endpoint is alive whatever its version, and version skew is logged, never fatal.
+- Updated dependencies [[`634be4e`](https://github.com/aivi-hq/aivi/commit/634be4ea49afb09ac32033eb00f78ac45ba7b3cd)]:
+  - @aivi/plugin@1.0.1
+
 ## 1.0.0
 
 ### Major Changes
