@@ -203,15 +203,19 @@ const connect = async (port: number, bearer: string, start: Record<string, unkno
   const ws = new WebSocket(`ws://127.0.0.1:${port}/exec`, { headers: headers(bearer) });
   const events: Record<string, unknown>[] = [];
   let stdout = '';
-  ws.on('message', (data: Buffer, isBinary: boolean) => {
-    if (isBinary) stdout += data.toString('utf8');
-    else {
-      try {
-        events.push(JSON.parse(data.toString('utf8')) as Record<string, unknown>);
-      } catch {
-        stdout += data.toString('utf8'); // PTY bytes ride as text frames: they are output, not events
+  const ready = new Promise<Record<string, unknown>>(resolve => {
+    ws.on('message', (data: Buffer, isBinary: boolean) => {
+      if (isBinary) stdout += data.toString('utf8');
+      else {
+        try {
+          const event = JSON.parse(data.toString('utf8')) as Record<string, unknown>;
+          events.push(event);
+          if (event.t === 'ready') resolve(event);
+        } catch {
+          stdout += data.toString('utf8'); // PTY bytes ride as text frames: they are output, not events
+        }
       }
-    }
+    });
   });
   ws.on('error', () => {}); // after the open, a dropped socket is the child's answer
   await new Promise<void>((resolve, reject) => {
@@ -223,6 +227,7 @@ const connect = async (port: number, bearer: string, start: Record<string, unkno
   return {
     ws,
     events,
+    ready,
     get stdout() {
       return stdout;
     },
@@ -276,7 +281,9 @@ test('a piped session runs aivi with the bearer in its closed env and keeps stde
   });
   const { store, home, port, secret, children } = await harness(t);
   const done = await connect(port, secret, { t: 'start', argv: ['status'], pty: false });
-  await until(() => children.length === 1, 'the door built the pipe child');
+  // Child creation does not prove the client has received the ready frame.
+  const ready = await done.ready;
+  assert.equal(children.length, 1, 'the door built the pipe child');
   const child = children[0]!;
   assert.equal(child.command, 'aivi', 'the door execs the aivi command, not a shell');
   assert.deepEqual(child.argv, ['status']);
@@ -286,10 +293,7 @@ test('a piped session runs aivi with the bearer in its closed env and keeps stde
   assert.equal(child.env.TERM, 'xterm-256color');
   assert.equal(child.env.AIVI_EXEC_SESSION, '1', 'the machine fact rides so the child answers its guard lines');
   assert.ok(!('DISCORD_BOT_TOKEN' in child.env), 'the host secrets stayed out of the child env');
-  assert.ok(
-    done.events.some(event => event.t === 'ready' && event.pid === 4242),
-    'ready names the pid',
-  );
+  assert.equal(ready.pid, 4242, 'ready names the pid');
   child.says('the answer\n');
   child.complains('ooh\n');
   child.died(3);
