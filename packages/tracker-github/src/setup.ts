@@ -35,6 +35,7 @@ import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, sett
 import type { GithubConfig } from './config.ts';
 import { MODULE_ID } from './config.ts';
 import {
+  type Diaried,
   gateHost,
   hostIsUp,
   INSTALLATION_EVENTS,
@@ -274,31 +275,37 @@ async function probeInstallation(
     // below decides, because waiting out the window on a refused replay only
     // re-asks a question GitHub already answered.
     let refused: string | undefined;
-    const posted = await ctx.withStore(async store => {
-      // The cursor is taken **before** the trigger: a replay that lands in the
-      // seconds before the store opens must still be ahead of the mark, and
-      // whatever the diary already held is nobody's business.
-      const cursor = latestId(store);
-      try {
-        await app.redeliverWebhook(replay.id);
-        spinner.message('Re-asked GitHub for its own installation delivery — waiting for the replay to land…');
-      } catch (error) {
-        refused = errorMessage(error);
-        return undefined;
-      }
-      return waitDiary(
-        store,
-        {
-          path: GITHUB_WEBHOOK_PATH,
-          secret: webhookSecret,
-          windowMs,
-          accepts: installationDelivery,
-          about: installationDelivery, // other verified events prove reach and secret too, without claiming an installation
-        },
-        cursor,
-        line => spinner.message(line),
-      );
-    });
+    let posted: Diaried | undefined;
+    try {
+      posted = await ctx.withStore(async store => {
+        // The cursor is taken **before** the trigger: a replay that lands in the
+        // seconds before the store opens must still be ahead of the mark, and
+        // whatever the diary already held is nobody's business.
+        const cursor = latestId(store);
+        try {
+          await app.redeliverWebhook(replay.id);
+          spinner.message('Re-asked GitHub for its own installation delivery — waiting for the replay to land…');
+        } catch (error) {
+          refused = errorMessage(error);
+          return undefined;
+        }
+        return waitDiary(
+          store,
+          {
+            path: GITHUB_WEBHOOK_PATH,
+            secret: webhookSecret,
+            windowMs,
+            accepts: installationDelivery,
+            about: installationDelivery, // other verified events prove reach and secret too, without claiming an installation
+          },
+          cursor,
+          line => spinner.message(line),
+        );
+      });
+    } catch (error) {
+      spinner.cancel('webhooks — verification stopped before a delivery could be proved');
+      throw error;
+    }
     if (posted === undefined) {
       spinner.cancel(`webhooks — the replay was refused (${refused})`);
       const choice = await forkWebhook(ctx, `GitHub refused to replay its installation delivery (${refused}).`);
