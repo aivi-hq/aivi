@@ -216,37 +216,7 @@ export class EngineRun {
           const line = stdoutBuf.slice(0, i).trim();
           stdoutBuf = stdoutBuf.slice(i + 1);
           if (!line) continue;
-          let msg: Record<string, unknown>;
-          try {
-            msg = objectMessage(line);
-          } catch {
-            this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
-            continue;
-          }
-          if (typeof msg.id === 'string') {
-            const waiter = this.pending.get(msg.id);
-            this.pending.delete(msg.id);
-            if (!waiter) continue; // a late answer to a dead request: nothing waits
-            const text = msg.text;
-            const error = msg.error;
-            if (
-              (text !== undefined && typeof text !== 'string') ||
-              (error !== undefined && typeof error !== 'string')
-            ) {
-              this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
-              waiter(null);
-              continue;
-            }
-            if (error) this.log.warn('voice.engine.batch-error', { error });
-            waiter(error ? null : text?.trim() || null);
-            continue;
-          }
-          if (!engineEvent(msg)) {
-            this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
-            continue;
-          }
-          if (msg.ev === 'eof') this.eofSeen = true;
-          this.handlers.onEvent(msg);
+          this.receive(line);
         }
       });
       engine.on('exit', code => {
@@ -271,6 +241,47 @@ export class EngineRun {
         }
       });
     });
+  }
+
+  /** Framing, protocol validation and request settlement have separate
+   *  boundaries; a malformed reply must still settle its waiting request. */
+  private receive(line: string): void {
+    let msg: Record<string, unknown>;
+    try {
+      msg = objectMessage(line);
+    } catch {
+      this.badLine(line);
+      return;
+    }
+    if (typeof msg.id === 'string') {
+      this.reply(msg.id, msg, line);
+      return;
+    }
+    if (!engineEvent(msg)) {
+      this.badLine(line);
+      return;
+    }
+    if (msg.ev === 'eof') this.eofSeen = true;
+    this.handlers.onEvent(msg);
+  }
+
+  private reply(id: string, msg: Record<string, unknown>, line: string): void {
+    const waiter = this.pending.get(id);
+    this.pending.delete(id);
+    if (!waiter) return; // an abandoned request has nobody left to answer
+    const text = msg.text;
+    const error = msg.error;
+    if ((text !== undefined && typeof text !== 'string') || (error !== undefined && typeof error !== 'string')) {
+      this.badLine(line);
+      waiter(null);
+      return;
+    }
+    if (error) this.log.warn('voice.engine.batch-error', { error });
+    waiter(error ? null : text?.trim() || null);
+  }
+
+  private badLine(line: string): void {
+    this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
   }
 
   private startSource(): void {

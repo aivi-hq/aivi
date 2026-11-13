@@ -51,7 +51,6 @@ export class MixedFusion {
   private slot = -1;
   private lineStart = 0;
   private lineText = '';
-  private wakePhrase: string | null = null;
   private lastPos = 0;
   // The diarizer's truth, from the engine's first `diar` event: without it
   // there are no slots, only "someone / quiet", and no names.
@@ -72,67 +71,70 @@ export class MixedFusion {
   /** One mixed-audio engine event; lane-tagged events never reach here — the
    *  room routes those to the lanes. */
   event(e: EngineEvent): void {
-    if (e.ev === 'diar') {
-      this.diarOn = e.on;
+    switch (e.ev) {
+      case 'diar':
+        this.diarOn = e.on;
+        return;
+      case 'delta':
+        this.deps.emit(e as unknown as Record<string, unknown>);
+        this.delta(e);
+        return;
+      case 'session_reset':
+        this.deps.emit(e as unknown as Record<string, unknown>);
+        return;
+      case 'act':
+        this.activity(e);
+        return;
+      case 'eof':
+        this.finish();
+        return;
+      case 'lane_end':
+        return; // the room routes named lanes elsewhere
+    }
+  }
+
+  private delta(e: Extract<EngineEvent, { ev: 'delta' }>): void {
+    // Words, not a bare act or formatting token, are the interruption.
+    const word = /[\p{L}\p{N}]/u.test(e.text);
+    if (word && this.deps.mode === 'call' && this.deps.speaking()) this.deps.barge();
+    this.lastPos = e.pos;
+    this.lineText += e.text;
+    if (this.deps.mode === 'meeting') {
+      const hit = scanWake(this.lineText, this.deps.wakePhrases);
+      if (hit) this.closeLine(e.pos, hit);
+    }
+  }
+
+  private activity(e: Extract<EngineEvent, { ev: 'act' }>): void {
+    if (e.slot === this.slot) return;
+    // The diarizer can label text that has already arrived. Adopt that
+    // pending line instead of closing it nameless and starting it over.
+    if (this.slot === -1 && e.slot >= 0 && this.lineText.trim() && e.t <= this.lastPos) {
+      this.slot = e.slot;
+      this.slotStart = e.t;
       return;
     }
-    if (e.ev === 'delta' || e.ev === 'session_reset') this.deps.emit(e as unknown as Record<string, unknown>);
-    if (e.ev === 'delta') {
-      // A word recognized while aivi is speaking IS the interruption: it
-      // falls silent and listens. A bare act (someone started, no words yet)
-      // does not — that is how a sniffle used to silence a whole answer for
-      // nothing. The words still land as a line and the session reconsiders.
-      const word = /[\p{L}\p{N}]/u.test(e.text);
-      if (word && this.deps.mode === 'call' && this.deps.speaking()) this.deps.barge();
-      this.lastPos = e.pos;
-      this.lineText += e.text;
-      if (this.deps.mode === 'meeting' && !this.wakePhrase) {
-        const hit = scanWake(this.lineText, this.deps.wakePhrases);
-        if (hit) {
-          this.wakePhrase = hit;
-          this.closeLine(e.pos, true); // the addressed sentence, cut where it was said
-        }
-      }
-    } else if (e.ev === 'act') {
-      if (e.slot === this.slot) return;
-      // A LATE LABEL: the diarizer decides about a second behind the audio.
-      // When the backstop closed the line and a slot now opens whose start
-      // lies inside the pending buffer, those buffered words ARE the turn
-      // this label describes — adopt them, do not commit them nameless and
-      // start the turn's text over behind the label.
-      if (this.slot === -1 && e.slot >= 0 && this.lineText.trim() && e.t <= this.lastPos) {
-        this.slot = e.slot;
-        this.slotStart = e.t;
-        return; // the line stays open; its name arrives when it ends
-      }
-      // The slot that just finished speaking: keep its longest stretch for
-      // the one good hash, and bind it to a person before the line it owns
-      // closes — so the first line it spoke can already carry its name.
-      if (this.slot >= 0) {
-        this.noteStretch(this.slot, this.slotStart, e.t);
-        this.bind(this.slot);
-      }
-      // Close pending text even when the slot is already -1 (a wake cut
-      // closed the addressed sentence mid-utterance; what the speaker said
-      // after it belongs to a line of its own).
-      if (this.slot >= 0 || this.lineText.trim()) this.closeLine(e.t, false);
-      // The diarizer says who speaks NOW: the slot changes here, nowhere
-      // else. A wake cut is not a speaker change — it keeps its slot so
-      // the rest of the addressed utterance stays named.
-      this.slot = e.slot;
-      if (e.slot >= 0) {
-        this.lineStart = e.t;
-        this.slotStart = e.t;
-      }
-    } else if (e.ev === 'eof') {
-      const end = this.lastPos || this.lineStart;
-      if (this.slot >= 0) {
-        this.noteStretch(this.slot, this.slotStart, end);
-        this.bind(this.slot);
-      }
-      if (this.slot >= 0 || this.lineText.trim()) this.closeLine(end, false);
-      this.deps.log.info('voice.engine.eof', { room: this.deps.label });
+    if (this.slot >= 0) {
+      this.noteStretch(this.slot, this.slotStart, e.t);
+      this.bind(this.slot);
     }
+    if (this.slot >= 0 || this.lineText.trim()) this.closeLine(e.t);
+    // A wake cut keeps its speaker; only an act changes the current slot.
+    this.slot = e.slot;
+    if (e.slot >= 0) {
+      this.lineStart = e.t;
+      this.slotStart = e.t;
+    }
+  }
+
+  private finish(): void {
+    const end = this.lastPos || this.lineStart;
+    if (this.slot >= 0) {
+      this.noteStretch(this.slot, this.slotStart, end);
+      this.bind(this.slot);
+    }
+    if (this.slot >= 0 || this.lineText.trim()) this.closeLine(end);
+    this.deps.log.info('voice.engine.eof', { room: this.deps.label });
   }
 
   /** The longest stretch is the one hashed: a slot's brief overlap at a
@@ -147,8 +149,10 @@ export class MixedFusion {
    *  padding is what keeps a neighbor's voice out of the hash. */
   private bind(slot: number): void {
     if (!this.diarOn || this.names.has(slot)) return;
-    const held = this.longest.get(slot);
-    if (held === undefined || held[1] - held[0] < MIN_BIND_S) return;
+    // Both callers just recorded this slot's stretch. These guards leave
+    // only an unbound diarized slot, which noteStretch always records.
+    const held = this.longest.get(slot)!;
+    if (held[1] - held[0] < MIN_BIND_S) return;
     const pad = (held[1] - held[0]) / 4;
     const name = this.deps.identify(held[0] + pad, held[1] - pad);
     if (name === null) return; // the speaker-id model had nothing to say: try again at the next stretch
@@ -156,7 +160,7 @@ export class MixedFusion {
     this.deps.log.info('voice.slot-bound', { room: this.deps.label, slot, name });
   }
 
-  private closeLine(t1: number, viaWake: boolean): void {
+  private closeLine(t1: number, wake: string | null = null): void {
     const t0 = this.lineStart;
     // Voxtral's realtime stream sprinkles newlines mid-sentence: the
     // transcript line is one clean row, whitespace collapsed at the source.
@@ -168,9 +172,7 @@ export class MixedFusion {
     const end = Math.max(t1, this.lastPos);
     this.lineStart = end; // the line moves on; the SPEAKER does not (that is the act's word)
     this.lineText = '';
-    const wake = this.wakePhrase;
-    this.wakePhrase = null;
     if (!text || end - t0 < MIN_LINE_S) return;
-    this.deps.commit(t0, end, speaker, text, viaWake ? wake : null);
+    this.deps.commit(t0, end, speaker, text, wake);
   }
 }
