@@ -35,6 +35,9 @@ test('install copies once, never overwrites; delete restores the built-in', asyn
     await writeFile(join(home, 'face', 'index.html'), operatorFace);
     assert.equal(await readFaceHtml(home), operatorFace);
 
+    await writeFile(join(home, 'face', 'index.html'), '');
+    assert.equal(await readFaceHtml(home), await defaultFaceHtml(), 'an emptied face restores the built-in');
+
     // delete: instant restoration
     await rm(join(home, 'face', 'index.html'));
     assert.equal(await readFaceHtml(home), await defaultFaceHtml());
@@ -50,6 +53,13 @@ test('the script extraction finds the face and says so when there is none', asyn
   assert.ok(script.includes('aiviFace.canvas') || script.includes('canvas: view'));
   assert.throws(() => faceScriptSource('<html><body>no face here</body></html>'), /no inline <script>/);
   assert.throws(() => faceScriptSource('<html><script src="elsewhere.js"></script></html>'), /no inline <script>/);
+  assert.throws(() => faceScriptSource('<script> \n\t </script>'), /no inline <script>/);
+  assert.equal(
+    faceScriptSource(
+      '<script src="external.js"></script><SCRIPT type="text/javascript"> window.aiviFace = {}; </SCRIPT>',
+    ),
+    'window.aiviFace = {};',
+  );
 
   const home = await tempHome();
   try {

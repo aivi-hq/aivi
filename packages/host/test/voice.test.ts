@@ -33,3 +33,33 @@ test('the seat fails honestly until the voice module provides an adapter', () =>
   off();
   assert.throws(() => voice.room({ id: 'discord', label: 'a guild' }), VoiceNotLoaded, 'unprovide closes the seat');
 });
+
+test('room origins are unique and retained after an adapter leaves', () => {
+  const voice = new Voice();
+  assert.deepEqual(voice.origins(), []);
+  assert.throws(() => voice.room({ id: 'unopened', label: 'no adapter' }), VoiceNotLoaded);
+  assert.deepEqual(voice.origins(), [], 'a failed open is not an origin');
+  const off = voice.provide(adapter);
+  voice.room({ id: 'discord', label: 'one guild' });
+  voice.room({ id: 'discord', label: 'another guild' });
+  voice.room({ id: 'meet', label: 'a meeting' });
+  off();
+  assert.deepEqual(voice.origins(), ['discord', 'meet']);
+});
+
+test('a stale unprovide cannot remove a replacement adapter, and room options pass through unchanged', () => {
+  const voice = new Voice();
+  const staleOff = voice.provide(adapter);
+  staleOff();
+  const options = { id: 'meet', label: 'a meeting', mode: 'meeting' as const };
+  const off = voice.provide({
+    room: received => {
+      assert.equal(received, options);
+      return fakeRoom as VoiceRoom;
+    },
+  });
+  staleOff();
+  assert.equal(voice.room(options), fakeRoom);
+  off();
+  assert.throws(() => voice.room(options), VoiceNotLoaded);
+});

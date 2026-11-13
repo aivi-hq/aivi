@@ -53,9 +53,10 @@ interface InstallListener {
  * the app and the install link is accepted first try.
  */
 const catchInstall = (): InstallListener => {
-  let ok: (code: string) => void = () => {};
-  let fail: (error: Error) => void = () => {};
-  let bindFailed: (error: Error) => void = () => {};
+  // Promise executors assign these before any server event can use them.
+  let ok!: (code: string) => void;
+  let fail!: (error: Error) => void;
+  let bindFailed!: (error: Error) => void;
   const code = new Promise<string>((resolvePromise, rejectPromise) => {
     ok = resolvePromise;
     fail = rejectPromise;

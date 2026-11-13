@@ -23,7 +23,7 @@ function installListener(t: TestContext) {
     listen: t.mock.fn((_port: number, _host: string, ready: () => void) => {
       ready();
     }),
-    address: t.mock.fn(() => ({ port: 4321, address: '127.0.0.1', family: 'IPv4' })),
+    address: t.mock.fn<Server['address']>(() => ({ port: 4321, address: '127.0.0.1', family: 'IPv4' })),
     close: t.mock.fn(),
     closeAllConnections: t.mock.fn(),
   });
