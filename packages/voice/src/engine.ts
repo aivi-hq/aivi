@@ -85,6 +85,38 @@ export interface EngineHandlers {
   onExit(code: number | null): void;
 }
 
+function objectMessage(line: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(line);
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('an engine message must be an object');
+  return value as Record<string, unknown>;
+}
+
+const finiteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const validLane = (value: Record<string, unknown>): boolean =>
+  value.lane === undefined || typeof value.lane === 'string';
+
+/** Validate the fields the room consumes. Unknown metadata may pass through,
+ *  but malformed text or timestamps must never become transcript facts. */
+function engineEvent(value: Record<string, unknown>): value is EngineEvent {
+  switch (value.ev) {
+    case 'delta':
+      return typeof value.text === 'string' && finiteNumber(value.pos) && validLane(value);
+    case 'act':
+      return finiteNumber(value.t) && finiteNumber(value.slot);
+    case 'session_reset':
+      return finiteNumber(value.pos) && validLane(value);
+    case 'lane_end':
+      return typeof value.lane === 'string';
+    case 'diar':
+      return typeof value.on === 'boolean';
+    case 'eof':
+      return true;
+    default:
+      return false;
+  }
+}
+
 function micArgs(device?: string): string[] {
   if (process.platform === 'darwin') {
     return ['-f', 'avfoundation', '-i', `:${device ?? 'none:default'}`];
@@ -184,9 +216,9 @@ export class EngineRun {
           const line = stdoutBuf.slice(0, i).trim();
           stdoutBuf = stdoutBuf.slice(i + 1);
           if (!line) continue;
-          let msg: { ev?: string; id?: string; text?: string; error?: string };
+          let msg: Record<string, unknown>;
           try {
-            msg = JSON.parse(line);
+            msg = objectMessage(line);
           } catch {
             this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
             continue;
@@ -195,13 +227,26 @@ export class EngineRun {
             const waiter = this.pending.get(msg.id);
             this.pending.delete(msg.id);
             if (!waiter) continue; // a late answer to a dead request: nothing waits
-            if (msg.error) this.log.warn('voice.engine.batch-error', { error: msg.error });
-            waiter(msg.text?.trim() || null);
+            const text = msg.text;
+            const error = msg.error;
+            if (
+              (text !== undefined && typeof text !== 'string') ||
+              (error !== undefined && typeof error !== 'string')
+            ) {
+              this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
+              waiter(null);
+              continue;
+            }
+            if (error) this.log.warn('voice.engine.batch-error', { error });
+            waiter(error ? null : text?.trim() || null);
             continue;
           }
-          const e = msg as EngineEvent;
-          if (e.ev === 'eof') this.eofSeen = true;
-          this.handlers.onEvent(e);
+          if (!engineEvent(msg)) {
+            this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
+            continue;
+          }
+          if (msg.ev === 'eof') this.eofSeen = true;
+          this.handlers.onEvent(msg);
         }
       });
       engine.on('exit', code => {

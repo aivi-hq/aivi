@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import type { TestContext } from 'node:test';
+import { type AudioSource, type EngineEvent, EngineRun, type EngineSpec } from '../src/engine.ts';
 
 function child(t: TestContext) {
   const stdin = new PassThrough();
@@ -80,3 +81,19 @@ export function voiceProcesses(t: TestContext) {
 }
 
 export const engineSpec = { command: 'fake-engine', args: [], readyMarker: 'engine ready' };
+
+export function engineFixture(t: TestContext, spec: EngineSpec = engineSpec, input: AudioSource = { type: 'push' }) {
+  const h = voiceProcesses(t);
+  const info = t.mock.fn();
+  const warn = t.mock.fn();
+  const events = t.mock.fn<(event: EngineEvent) => void>();
+  const exited = t.mock.fn<(code: number | null) => void>();
+  const run = new EngineRun(spec, input, { onEvent: events, onExit: exited }, { info, warn });
+  t.after(() => run.stop());
+  const start = async () => {
+    const pending = run.start();
+    h.children[0]!.ready();
+    await pending;
+  };
+  return { ...h, info, warn, events, exited, run, start };
+}
