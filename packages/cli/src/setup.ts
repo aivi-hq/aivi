@@ -83,6 +83,11 @@ export interface WhoamiResult {
   roles: string[];
 }
 
+export interface SetupKnowledge {
+  QMD_BUILTIN_MODELS: { embed: string; rerank: string; generate: string };
+  warmHome(): Promise<{ models: Record<string, string>; embedded: number; seconds: number }>;
+}
+
 export interface SetupIo {
   install(specs: string[], appDir: string): void;
   /** Rebuild `<state>/cache/schema.json` and config.json's `$schema` line, in
@@ -93,6 +98,7 @@ export interface SetupIo {
    *  person and token are minted in its store, the answer is the object, no
    *  stdout carries it. */
   createIdentity(step: IdentityStep, home: string, appDir: string): Promise<Identity>;
+  loadKnowledge(home: string, appDir: string): Promise<SetupKnowledge>;
   opencodeOnPath(): boolean;
   pluginAdd(pkg: string): void;
   health(url: string): Promise<boolean>;
@@ -120,6 +126,7 @@ export interface SetupIo {
   };
   log(message: string): void;
   warn(message: string): void;
+  cancel(message: string): void;
 }
 
 export interface SetupOptions {
@@ -221,7 +228,7 @@ export async function setup(args: string[], options: SetupOptions, io: SetupIo =
     await routeSetup(flags, loadClientConfig(), home, nodePath, io);
   } catch (error) {
     if (error instanceof Cancelled) {
-      p.cancel('Setup stopped. Nothing further was written.');
+      io.cancel('Setup stopped. Nothing further was written.');
       process.exitCode = 1;
       return;
     }
@@ -318,10 +325,7 @@ async function configureKnowledge(flags: SetupFlags, home: string, appDir: strin
     );
     return;
   }
-  const { QMD_BUILTIN_MODELS, warmHome } = await importApp<{
-    QMD_BUILTIN_MODELS: { embed: string; rerank: string; generate: string };
-    warmHome: () => Promise<{ models: Record<string, string>; embedded: number; seconds: number }>;
-  }>(appDir, home, 'dist/cli/commands/knowledge.js');
+  const { QMD_BUILTIN_MODELS, warmHome } = await io.loadKnowledge(home, appDir);
   const named = await io.ask.models(QMD_BUILTIN_MODELS);
   if (Object.keys(named).length) {
     config.search = { ...(typeof config.search === 'object' ? config.search : {}), models: named };
@@ -548,14 +552,16 @@ async function waitHealthy(url: string, io: SetupIo): Promise<boolean> {
   }
 }
 
+export type SetupPrompts = Pick<typeof p, 'text' | 'select' | 'confirm' | 'isCancel' | 'cancel'>;
+
 /** One prompt with the two universal rules: a script without a TTY gets the
  *  script form, and a cancel stops the flow before the next thing is written.
  *  The target type is given by the caller: a clack prompt's return type mixes
  *  in its cancel symbol, and inference would drag that union out here. */
-function guarded<T = string>(ask: () => Promise<unknown>): Promise<T> {
+function guarded<T = string>(prompts: SetupPrompts, ask: () => Promise<unknown>): Promise<T> {
   if (!process.stdin.isTTY) return Promise.reject(new Error(SCRIPT_FORM));
   return ask().then(answer => {
-    if (p.isCancel(answer)) throw new Cancelled('an answer was cancelled');
+    if (prompts.isCancel(answer)) throw new Cancelled('an answer was cancelled');
     if (answer === undefined) throw new Cancelled('an answer came back empty');
     return answer as T;
   });
@@ -565,7 +571,7 @@ function spawnPrintable(command: string, args: string[]): boolean {
   return spawnSync(command, args, { stdio: 'ignore' }).status === 0;
 }
 
-const defaultIo: SetupIo = {
+const systemIo: Omit<SetupIo, 'ask' | 'cancel'> = {
   install(specs, appDir) {
     const result = spawnSync('npm', ['install', '--save-exact', '--no-fund', ...specs], {
       cwd: appDir,
@@ -603,6 +609,7 @@ const defaultIo: SetupIo = {
     }>(appDir, home, 'dist/cli/identity.js');
     return serverCreate({ home, configPath: join(home, 'config.json'), ...step });
   },
+  loadKnowledge: (home, appDir) => importApp<SetupKnowledge>(appDir, home, 'dist/cli/commands/knowledge.js'),
   opencodeOnPath: () => spawnPrintable('opencode', ['--version']),
   pluginAdd(pkg) {
     console.log(`Adding the ${pkg} plugin to OpenCode…`);
@@ -628,10 +635,15 @@ const defaultIo: SetupIo = {
     return (await response.json()) as WhoamiResult;
   },
   serviceInstall,
-  ask: {
+  log: message => console.log(message),
+  warn: message => console.warn(message),
+};
+
+function setupQuestions(prompts: SetupPrompts): SetupIo['ask'] {
+  return {
     branch: () =>
-      guarded<'connect' | 'create'>(() =>
-        p.select({
+      guarded<'connect' | 'create'>(prompts, () =>
+        prompts.select({
           message: 'What should this machine be?',
           options: [
             { value: 'connect', label: 'Connect to an existing aivi host' },
@@ -640,8 +652,8 @@ const defaultIo: SetupIo = {
         }),
       ),
     machine: () =>
-      guarded<'this-machine' | 'another'>(() =>
-        p.select({
+      guarded<'this-machine' | 'another'>(prompts, () =>
+        prompts.select({
           message: 'Will you use aivi on this machine, or is this a headless server?',
           options: [
             { value: 'this-machine', label: 'This machine — sign me in here too' },
@@ -650,62 +662,20 @@ const defaultIo: SetupIo = {
         }),
       ),
     background: () =>
-      guarded<boolean>(() =>
-        p.confirm({
+      guarded<boolean>(prompts, () =>
+        prompts.confirm({
           message: 'Run aivi in the background (it starts at login and survives logouts)?',
           initialValue: true,
         }),
       ),
     name: () =>
-      guarded(() => p.text({ message: 'Your name — aivi associates records with it', placeholder: 'Operator' })).then(
-        value => value.trim() || 'Operator',
-      ),
-    reach: () =>
-      guarded<'none' | 'lan' | 'url'>(() =>
-        p.select({
-          message: 'How will others reach this machine?',
-          options: [
-            { value: 'none', label: 'Only this machine (nothing outside can reach it)' },
-            { value: 'lan', label: 'My network — anyone on the LAN or tailnet reaches aivi directly' },
-            {
-              value: 'url',
-              label: 'A URL in front of it — a tunnel or proxy reaches loopback (Tailscale Funnel, cloudflared…)',
-            },
-          ],
-        }),
-      ).then(async kind => {
-        if (kind === 'url') {
-          const url = await guarded<string>(() =>
-            p.text({
-              message: 'The URL others reach this machine at',
-              placeholder: 'https://you.tailscale.ts.net',
-              validate: value => {
-                const v = String(value ?? '').trim();
-                if (!v) return 'A URL, or cancel back to "only this machine".';
-                if (!/^https?:\/\/\S+$/.test(v)) return 'An http(s) URL, like https://you.tailscale.ts.net';
-                if (v.endsWith('/')) return 'Drop the trailing slash.';
-                return undefined;
-              },
-            }),
-          );
-          return { kind: 'url', url: url.trim() } as const;
-        }
-        if (kind === 'lan') {
-          const binds = lanBinds();
-          if (binds.length === 0) throw new Cancelled('no LAN or tailnet address was found on this machine');
-          const bind = await guarded<string>(() =>
-            p.select({
-              message: 'Which address should aivi listen on?',
-              options: binds.map(b => ({ value: b.addr, label: `${b.name} — ${b.addr}` })),
-            }),
-          );
-          return { kind: 'lan', bind } as const;
-        }
-        return { kind: 'none' } as const;
-      }),
+      guarded(prompts, () =>
+        prompts.text({ message: 'Your name — aivi associates records with it', placeholder: 'Operator' }),
+      ).then(value => value.trim() || 'Operator'),
+    reach: () => askReach(prompts),
     url: () =>
-      guarded(() =>
-        p.text({
+      guarded(prompts, () =>
+        prompts.text({
           message: 'Host URL — where aivi answers',
           placeholder: 'http://127.0.0.1:4100',
           validate: value =>
@@ -715,51 +685,110 @@ const defaultIo: SetupIo = {
         }),
       ).then(value => value.trim()),
     token: () =>
-      guarded(() =>
-        p.text({
+      guarded(prompts, () =>
+        prompts.text({
           message: 'Person token — shown once at mint',
           validate: value => (String(value ?? '').trim() ? undefined : 'Paste the token shown by `aivi people token`'),
         }),
       ).then(value => value.trim()),
-    async models(defaults) {
-      const named: { embed?: string; rerank?: string; generate?: string } = {};
-      for (const role of ['embed', 'rerank', 'generate'] as const) {
-        if (!process.stdin.isTTY) throw new Error(SCRIPT_FORM);
-        const answer = await p.text({
-          message: `Semantic ${role} model — Enter keeps qmd's own default`,
-          placeholder: defaults[role],
-        });
-        if (p.isCancel(answer)) throw new Cancelled('an answer was cancelled');
-        const uri = typeof answer === 'string' ? answer.trim() : '';
-        if (uri) named[role] = uri;
-      }
-      return named;
-    },
+    models: defaults => askModels(prompts, defaults),
     fetchModels: () =>
-      guarded<boolean>(() =>
-        p.confirm({
+      guarded<boolean>(prompts, () =>
+        prompts.confirm({
           message:
             'Fetch the semantic models now (~2 GB, once)? Searches answer with keywords until they are in place.',
           initialValue: true,
         }),
       ),
-    capacity: () =>
-      guarded<string>(() =>
-        p.text({
-          message: 'How many model calls may run at once? Enter means no limit.',
-          placeholder: '3',
-          validate: value => {
-            const v = String(value ?? '').trim();
-            if (!v) return undefined;
-            const n = Number(v);
-            return Number.isInteger(n) && n >= 1 && n <= 64 ? undefined : 'A whole number, 1 to 64.';
-          },
-        }),
-      ).then(value => {
-        const v = String(value ?? '').trim();
-        return v ? Number(v) : undefined;
+    capacity: () => askCapacity(prompts),
+  };
+}
+
+async function askReach(prompts: SetupPrompts): Promise<Reach> {
+  const kind = await guarded<'none' | 'lan' | 'url'>(prompts, () =>
+    prompts.select({
+      message: 'How will others reach this machine?',
+      options: [
+        { value: 'none', label: 'Only this machine (nothing outside can reach it)' },
+        { value: 'lan', label: 'My network — anyone on the LAN or tailnet reaches aivi directly' },
+        {
+          value: 'url',
+          label: 'A URL in front of it — a tunnel or proxy reaches loopback (Tailscale Funnel, cloudflared…)',
+        },
+      ],
+    }),
+  );
+  if (kind === 'url') {
+    const url = await guarded<string>(prompts, () =>
+      prompts.text({
+        message: 'The URL others reach this machine at',
+        placeholder: 'https://you.tailscale.ts.net',
+        validate: value => {
+          const v = String(value ?? '').trim();
+          if (!v) return 'A URL, or cancel back to "only this machine".';
+          if (!/^https?:\/\/\S+$/.test(v)) return 'An http(s) URL, like https://you.tailscale.ts.net';
+          if (v.endsWith('/')) return 'Drop the trailing slash.';
+          return undefined;
+        },
       }),
-  },
-  log: message => console.log(message),
-  warn: message => console.warn(message),
-};
+    );
+    return { kind: 'url', url: url.trim() };
+  }
+  if (kind === 'lan') {
+    const binds = lanBinds();
+    if (binds.length === 0) throw new Cancelled('no LAN or tailnet address was found on this machine');
+    const bind = await guarded<string>(prompts, () =>
+      prompts.select({
+        message: 'Which address should aivi listen on?',
+        options: binds.map(b => ({ value: b.addr, label: `${b.name} — ${b.addr}` })),
+      }),
+    );
+    return { kind: 'lan', bind };
+  }
+  return { kind: 'none' };
+}
+
+async function askModels(
+  prompts: SetupPrompts,
+  defaults: Parameters<SetupIo['ask']['models']>[0],
+): ReturnType<SetupIo['ask']['models']> {
+  const named: Awaited<ReturnType<SetupIo['ask']['models']>> = {};
+  for (const role of ['embed', 'rerank', 'generate'] as const) {
+    if (!process.stdin.isTTY) throw new Error(SCRIPT_FORM);
+    const answer = await prompts.text({
+      message: `Semantic ${role} model — Enter keeps qmd's own default`,
+      placeholder: defaults[role],
+    });
+    if (prompts.isCancel(answer)) throw new Cancelled('an answer was cancelled');
+    // Clack returns a string or its cancel symbol; the symbol was handled above.
+    const uri = answer.trim();
+    if (uri) named[role] = uri;
+  }
+  return named;
+}
+
+function askCapacity(prompts: SetupPrompts): ReturnType<SetupIo['ask']['capacity']> {
+  return guarded<string>(prompts, () =>
+    prompts.text({
+      message: 'How many model calls may run at once? Enter means no limit.',
+      placeholder: '3',
+      validate: value => {
+        const v = String(value ?? '').trim();
+        if (!v) return undefined;
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 1 && n <= 64 ? undefined : 'A whole number, 1 to 64.';
+      },
+    }),
+  ).then(value => {
+    const v = value.trim();
+    return v ? Number(v) : undefined;
+  });
+}
+
+/** Prompt I/O is injectable; the installed-server, process and HTTP adapters
+ *  stay the same whether setup uses a terminal or scripted unit answers. */
+export function createSetupIo(prompts: SetupPrompts = p): SetupIo {
+  return { ...systemIo, ask: setupQuestions(prompts), cancel: message => prompts.cancel(message) };
+}
+
+const defaultIo = createSetupIo();

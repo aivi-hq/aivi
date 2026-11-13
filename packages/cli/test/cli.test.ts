@@ -5,11 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { TICKET_TOOL_ACTIONS } from '@aivi/plugin';
 import { clientConfigSchema, loadClientConfig, saveClientConfig } from '../src/client-config.ts';
 import { extractLinkArgs, link } from '../src/link.ts';
-import type { IdentityStep, SetupIo } from '../src/setup.ts';
-import { extractSetupFlags, seedHomeOpenCode, setup } from '../src/setup.ts';
 
 let directory: string;
 let savedEnv: Record<string, string | undefined> = {};
@@ -40,57 +37,6 @@ function mkdtemp(): string {
 }
 
 const TOKEN = `aivi-${'a'.repeat(32)}`;
-
-/** Deterministic answers instead of prompts, so a test runs the same on a TTY
- *  and in a pipe; every ask throws until a test needs it. */
-function fakeIo(overrides: Partial<SetupIo> = {}): {
-  io: SetupIo;
-  calls: {
-    installs: string[][];
-    plugins: string[];
-    identity: IdentityStep[][];
-    logs: string[];
-  };
-} {
-  const calls = {
-    installs: [] as string[][],
-    plugins: [] as string[],
-    identity: [] as IdentityStep[][],
-    logs: [] as string[],
-  };
-  const io: SetupIo = {
-    install: specs => calls.installs.push(specs),
-    rebuildSchema: async () => {},
-    npmView: async () => '9.9.9',
-    createIdentity: async (step, home) => {
-      calls.identity.push([step]);
-      return { home, url: 'http://127.0.0.1:4100', person: 'person-1234abcd', name: 'Ada', token: TOKEN };
-    },
-    opencodeOnPath: () => true,
-    pluginAdd: pkg => calls.plugins.push(pkg),
-    health: async () => true,
-    whoami: async () => ({ person: { id: 'person-1234abcd', name: 'Ada' }, roles: ['operator'] }),
-    serviceInstall: () => {
-      throw new Error('service install must not run in these tests');
-    },
-    ask: {
-      branch: async () => 'connect',
-      machine: async () => 'this-machine',
-      background: async () => false,
-      name: async () => 'Ada',
-      reach: async () => ({ kind: 'none' as const }),
-      url: async () => 'http://127.0.0.1:4100',
-      token: async () => TOKEN,
-      models: async () => ({}),
-      fetchModels: async () => false,
-      capacity: async () => undefined,
-    },
-    log: message => calls.logs.push(message),
-    warn: () => {},
-    ...overrides,
-  };
-  return { io, calls };
-}
 
 test('the published bin starts with a shebang, or the global command cannot execute', () => {
   const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
@@ -126,163 +72,6 @@ test('unknown fields survive a save', () => {
   writeFileSync(path, `${JSON.stringify({ configVersion: 1, future: { deep: true } }, null, 2)}\n`);
   saveClientConfig({ home: '/h' });
   assert.deepEqual(clientConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8'))).future, { deep: true });
-});
-
-test('setup flags are pulled out; unknown flags are refused', () => {
-  const flags = extractSetupFlags(['--host-package', '@aivi/host@0.2.0', '--use', 'this-machine', '--name', 'Ada']);
-  assert.equal(flags.hostPackage, '@aivi/host@0.2.0');
-  assert.equal(flags.use, 'this-machine');
-  assert.equal(flags.name, 'Ada');
-  assert.equal(flags.connect, false);
-  const equals = extractSetupFlags(['--connect', '--url=http://h:1', '--token=t']);
-  assert.equal(equals.connect, true);
-  assert.equal(equals.url, 'http://h:1');
-  assert.equal(equals.token, 't');
-  assert.throws(() => extractSetupFlags(['--wat']), /Unknown setup flag/);
-  assert.throws(() => extractSetupFlags(['--url']), /wants a value/);
-});
-
-test('setup --connect verifies before writing and caches the person', async () => {
-  const { io, calls } = fakeIo();
-  await setup(['--connect', '--url', 'http://127.0.0.1:4100', '--token', TOKEN], { home: join(directory, 'home') }, io);
-  const record = loadClientConfig()!;
-  assert.equal(record.url, 'http://127.0.0.1:4100');
-  assert.deepEqual(record.person, { token: TOKEN, id: 'person-1234abcd', name: 'Ada', roles: ['operator'] });
-  assert.deepEqual(calls.plugins, ['@aivi/opencode', 'opencode-attribution']);
-  assert.deepEqual(calls.installs, [], 'connecting installs nothing');
-  assert.match(calls.logs.at(-1)!, /Signed in as Ada/);
-});
-
-test('setup --connect refuses an unreachable host and persists nothing', async () => {
-  const { io, calls } = fakeIo({ health: async () => false });
-  await assert.rejects(
-    setup(['--connect', '--url', 'http://127.0.0.1:1', '--token', TOKEN], { home: join(directory, 'home') }, io),
-    /No answer from/,
-  );
-  assert.equal(loadClientConfig(), undefined, 'nothing was written');
-  assert.deepEqual(calls.plugins, []);
-});
-
-test('setup creates the home, seeds OpenCode and signs this machine in', async () => {
-  const home = join(directory, 'home');
-  const { io, calls } = fakeIo();
-  await setup(['--use', 'this-machine', '--name', 'Ada'], { home }, io);
-  assert.deepEqual(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')), { version: 1 });
-  assert.equal(existsSync(join(home, '.env')), true);
-  assert.equal(existsSync(join(home, 'app', '.npmrc')), true);
-  assert.deepEqual(
-    JSON.parse(readFileSync(join(home, 'app', 'package.json'), 'utf8')),
-    { name: 'aivi-server', private: true },
-    'the manifest npm installs against, so the app dir anchors the install',
-  );
-  assert.deepEqual(calls.installs, [['@aivi/host']]);
-  assert.deepEqual(calls.identity, [[{ use: 'this-machine', name: 'Ada' }]]);
-  const jsonc = readFileSync(join(home, 'opencode.jsonc'), 'utf8');
-  assert.match(jsonc, /"@aivi\/opencode@9\.9\.9"/);
-  // The seeded config hides the whole ticket desk with one wildcard deny —
-  // the CLI treats modules as opaque and imports nothing from them at
-  // runtime. This test is the loop that keeps the wildcard honest: it must
-  // be seeded, and it must actually cover every id the kit names.
-  assert.match(
-    jsonc,
-    /"action": "aivi_ticket_\*", "resource": "\*", "effect": "deny"/,
-    'the desk is denied to every agent by one line',
-  );
-  for (const action of TICKET_TOOL_ACTIONS)
-    assert.ok(action.startsWith('aivi_ticket_'), `${action} falls under the wildcard`);
-  for (const agent of ['assistant.md', 'dreamer.md', 'product.md', 'dev.md', 'review.md'])
-    assert.equal(existsSync(join(home, '.opencode', 'agents', agent)), true, agent);
-  const assistant = readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8');
-  assert.match(
-    assistant,
-    /you do not perform\nproject work/,
-    'the do-not-do-the-work rule lives in the agent file, not in module code',
-  );
-  const dev = readFileSync(join(home, '.opencode', 'agents', 'dev.md'), 'utf8');
-  assert.match(dev, /both use aivi_respond_feedback/, 'the returning-work posture line ships with the worker');
-  const review = readFileSync(join(home, '.opencode', 'agents', 'review.md'), 'utf8');
-  assert.match(review, /Request changes for problems\.\s+Comments for nits\./, 'the review posture ships');
-  const record = loadClientConfig()!;
-  assert.equal(record.home, home);
-  assert.equal(record.appDir, join(home, 'app'));
-  assert.equal(record.installMethod, 'npm');
-  assert.equal(record.person?.token, TOKEN, 'the non-background path still signs this machine in');
-  assert.deepEqual(calls.plugins, ['@aivi/opencode', 'opencode-attribution']);
-  assert.equal(calls.logs.filter(line => line.includes('`aivi serve`')).length, 1, 'the next step is said once');
-});
-
-test('setup preserves the existing npm configuration in a populated home', async () => {
-  const home = join(directory, 'home');
-  const appDir = join(home, 'app');
-  mkdirSync(appDir, { recursive: true });
-  const npmrc = 'registry=https://registry.example/\nsave-exact=true\n';
-  writeFileSync(join(appDir, '.npmrc'), npmrc);
-  const { io } = fakeIo();
-
-  await setup(['--use', 'this-machine', '--name', 'Ada'], { home }, io);
-
-  assert.equal(readFileSync(join(appDir, '.npmrc'), 'utf8'), npmrc);
-});
-
-test('setup for a headless server prints the handoff and signs nobody in', async () => {
-  const home = join(directory, 'home');
-  const { io, calls } = fakeIo();
-  await setup(['--use', 'another', '--name', 'Ada'], { home }, io);
-  const handoff = calls.logs.join('\n');
-  assert.match(handoff, /http:\/\/127\.0\.0\.1:4100/);
-  assert.match(handoff, new RegExp(TOKEN));
-  assert.match(handoff, /Connect to a host/);
-  assert.deepEqual(calls.plugins, [], 'nothing is installed on the server for a remote client');
-  assert.equal(loadClientConfig()!.person, undefined, 'no person signs in here');
-});
-
-test('a server on this machine without a sign-in connects to its own host', async () => {
-  const home = join(directory, 'home');
-  mkdirSync(join(home, 'app', 'node_modules', '@aivi', 'app'), { recursive: true });
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1 }));
-  const { io, calls } = fakeIo();
-  await setup([], { home }, io);
-  const record = loadClientConfig()!;
-  assert.equal(record.url, 'http://127.0.0.1:4100', 'the url comes from the home, only the token is asked');
-  assert.equal(record.home, undefined, 'the installation record is not rewritten');
-  assert.deepEqual(calls.installs, [], 'an installed server is not installed again');
-  assert.match(calls.logs.at(-1)!, /Signed in as Ada/);
-});
-
-test('a signed-in machine is verified and the person cache is refreshed', async () => {
-  saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: TOKEN } });
-  const { io, calls } = fakeIo();
-  await setup([], { home: join(directory, 'home') }, io);
-  const record = loadClientConfig()!;
-  assert.deepEqual(record.person, { token: TOKEN, id: 'person-1234abcd', name: 'Ada', roles: ['operator'] });
-  assert.match(calls.logs.at(-1)!, /Signed in as Ada/);
-});
-
-test('--connect and --use choose different branches; giving both is refused', async () => {
-  const { io } = fakeIo();
-  await assert.rejects(
-    setup(['--connect', '--use', 'this-machine'], { home: join(directory, 'home') }, io),
-    /different branches/,
-  );
-});
-
-test('setup without a terminal explains the scripted forms before writing anything', async t => {
-  const home = join(directory, 'home');
-  const tty = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
-  Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
-  t.after(() => {
-    if (tty) Object.defineProperty(process.stdin, 'isTTY', tty);
-    else Reflect.deleteProperty(process.stdin, 'isTTY');
-  });
-  t.mock.method(process.stdout, 'write', () => true);
-
-  await assert.rejects(
-    setup([], { home }),
-    /setup needs an interactive terminal; in a script use: aivi setup --use .*aivi setup --connect --url URL --token TOKEN/,
-  );
-
-  assert.equal(existsSync(home), false);
-  assert.equal(loadClientConfig(), undefined);
 });
 
 test('aivi link mints a code over HTTP and says exactly where to spend it', async () => {
@@ -402,19 +191,6 @@ test('aivi link without a sign-in says what to run first', async () => {
     /aivi setup/,
   );
   assert.throws(() => extractLinkArgs(['a', 'b']), /Usage/);
-});
-
-test('seeding the home keeps what exists and fills only the gaps', () => {
-  const home = join(directory, 'home');
-  mkdirSync(join(home, '.opencode', 'agents'), { recursive: true });
-  writeFileSync(join(home, 'opencode.jsonc'), '{"kept":true}');
-  writeFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'custom');
-  seedHomeOpenCode(home, '@aivi/opencode@1.0.0');
-  assert.equal(readFileSync(join(home, 'opencode.jsonc'), 'utf8'), '{"kept":true}');
-  assert.equal(readFileSync(join(home, '.opencode', 'agents', 'assistant.md'), 'utf8'), 'custom');
-  assert.equal(existsSync(join(home, '.opencode', 'agents', 'dreamer.md')), true, 'missing agents are added');
-  for (const worker of ['product.md', 'dev.md', 'review.md'])
-    assert.equal(existsSync(join(home, '.opencode', 'agents', worker)), true, `${worker} is added too`);
 });
 
 /** A fake installed server: an ESM `dist/cli.js` the CLI can import. */

@@ -8,8 +8,6 @@ stale. Keep this note as an open-work list, not a completion log.
 
 Useful starting points:
 
-- `packages/cli/src/setup.ts`: substantial untested branches and an existing
-  `SetupIo` seam. Keep the next tests at that unit boundary.
 - `packages/channel-discord/src/module.ts`, `packages/voice/src/module.ts`
   and `packages/tracker-github/src/module.ts`: the largest remaining module
   gaps. Fake services and platform adapters for lifecycle tests.
@@ -22,6 +20,7 @@ Useful starting points:
 
 ## Test approach the operator wants
 
+- Test production behavior. Do not add tests of tests or coverage configuration.
 - Direct unit calls with fake I/O. Existing integration tests are not the
   convention to copy; do not start an application to test one function.
 - Use deferred promises to observe the boundary under test. Advance mock
@@ -30,6 +29,10 @@ Useful starting points:
 - `packages/plugin/test/setup-fixture.ts` provides scripted prompts and
   recorded writers; `packages/tracker-linear/test/setup-fixture.ts` shows
   an OAuth listener faked without binding a socket.
+- `packages/cli/test/setup-fixture.ts` records setup I/O and observes the
+  actual timeout scheduling before advancing mock time. The identity fake
+  writes the bearer and URL, like the installed server; only whoami adds
+  the verified display cache.
 - When mocking a built-in used through named ESM imports, call
   `syncBuiltinESMExports()` after replacing it and after restoring it.
 - Check coverage in isolation, using a separate report directory so the
@@ -38,13 +41,14 @@ Useful starting points:
   ```sh
   NODE_OPTIONS=--conditions=development node_modules/.bin/c8 \
     '--include=packages/cli/src/setup.ts' --reports-dir=coverage/targeted \
-    node --test --conditions=development packages/cli/test/cli.test.ts
+    node --test --conditions=development \
+      packages/cli/test/setup.test.ts packages/cli/test/setup-io.test.ts
   ```
 
 - Fix clear bugs exposed by tests. Commit each bug fix clearly with a
   specific patch changeset. Bring ambiguous behavior to the operator.
 - Use exclusions or suppressions only when necessary, not to make a score
-  green. Keep the type-only exclusion guard effective.
+  green.
 
 ## Coverage contracts to review
 
@@ -84,6 +88,32 @@ Duplicate groups to revisit:
   the two trackers' `runprogress.ts` files.
 - Repeated status-comment reads in `tracker-github/src/tracker.ts`.
 
+Remaining complexity findings:
+
+- CLI: `packages/cli/src/remove.ts` (`remove`).
+- Core: `packages/core/src/config.ts` (`loadConfig`).
+- Discord: `packages/channel-discord/src/voice.ts` (`reconcileNow`).
+- Host: `dispatcher/dispatcher.ts` (`provide`), `scheduler.ts`
+  (`dispatchQueued`), `channel/engine.ts` (`tick`), `channel/turns.ts`
+  (the turn-runner callback) and `cli/commands/jobs.ts` (the add callback),
+  all under `packages/host/src/`; also
+  `packages/host/test/dreaming.test.ts` (`respond`).
+- Knowledge: `packages/knowledge/src/index.ts` (`search`, `surveySources`).
+- GitHub tracker: `tracker.ts` (`dispatch`), `module.ts` (`onIssue`),
+  `probe.ts` (the agent-event `read`), `setup.ts` (`setup`) and
+  `setup-project.ts` (`askLanes`), under `packages/tracker-github/src/`.
+- Linear tracker: `packages/tracker-linear/src/setup-project.ts` (`askLanes`).
+- Voice: `fusion.ts` (`event`), `turns.ts` (`run`), `setup.ts` (`setup`),
+  `store.ts` (`identify`), `speech.ts` (`cutClauses`) and the stdout callbacks
+  in `batch.ts` and `engine.ts`, under `packages/voice/src/`.
+- Meet: `packages/google-meet/src/meeting.ts` (`driveJoin`).
+
+Fallow also recommends splitting `jobs.ts`, `reports.ts`,
+`channel/{router,progress,context}.ts` under `packages/host/src/` based on
+coupling and complexity density. Review whether a split helps the design;
+do not split a small file just to improve a metric. Hotspot suggestions to
+"add tests" to test files are not evidence of production coverage gaps.
+
 High-risk health work includes `driveJoin` in
 `packages/google-meet/src/meeting.ts`: its CRAP score uses actual zero
 coverage. By contrast, the reported CRAP for the anonymous callback in
@@ -99,9 +129,9 @@ reason are documented in `.fallowrc.jsonc`.
 - Fallow reports architecture boundaries and rule packs as unconfigured.
   Ask which policies should be measured; do not disable those checks just
   to silence the diagnostics.
-- `packages/cli/test/coverage-config.test.ts` emits a Node ExperimentalWarning
-  from `stripTypeScriptTypes`. A stable replacement must preserve the check
-  that excluded files contain no runtime code, rather than silence the warning.
 - `packages/host/test/events.test.ts` still uses a polling `until` helper
   and real sleeps. Replace them with observed events and controlled time
   when working on that area.
+- `packages/cli/test/cli.test.ts` still has three CLI-entry subprocess cases.
+  Move those to direct `run` calls with fake machine I/O when working on
+  command routing; keep the package smoke gate separate.
