@@ -102,7 +102,10 @@ the app's own JWT reads the permissions (Issues and Organization projects,
 both write), the subscribed events, and where the webhook points. Then one
 wait proves the secret against a live delivery: the installer re-asks GitHub
 for the newest `installation` delivery in its last 25 and watches the replay
-land at this aivi's route with a seal that verifies. When the history holds
+land at this aivi's route with a seal that verifies. Any correctly signed
+delivery to that route proves reachability and the secret, so it ends the
+wait immediately. The summary distinguishes the installation replay from
+other verified events. When the history holds
 none — the app was installed before this webhook pointed here — or GitHub
 refuses the replay, **no wait runs**: a trigger that cannot come is never sat
 out. The person reinstalls the app and retries, or skips webhook

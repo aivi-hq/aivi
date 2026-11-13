@@ -34,7 +34,15 @@ import { appIdentity, GITHUB_WEBHOOK_SECRET_ENV, GitHubApp } from '@aivi/github'
 import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, settled } from '@aivi/plugin';
 import type { GithubConfig } from './config.ts';
 import { MODULE_ID } from './config.ts';
-import { gateHost, hostIsUp, INSTALLATION_EVENTS, latestId, probeWindowMs, waitDiary } from './probe.ts';
+import {
+  gateHost,
+  hostIsUp,
+  INSTALLATION_EVENTS,
+  latestId,
+  type ProbePayload,
+  probeWindowMs,
+  waitDiary,
+} from './probe.ts';
 import { GITHUB_WEBHOOK_PATH } from './tracker.ts';
 
 /** What the app's webhook must subscribe to, each with what the tracker would
@@ -248,6 +256,8 @@ async function probeInstallation(
   history: { id: string; event: string }[],
 ): Promise<{ name: string; pass: boolean; detail: string } | undefined> {
   const windowMs = probeWindowMs();
+  const installationDelivery = (event: string, payload: ProbePayload) =>
+    INSTALLATION_EVENTS.has(event) && payload?.action !== 'deleted';
   let deliveries = history;
   for (;;) {
     const replay = deliveries.find(delivery => INSTALLATION_EVENTS.has(delivery.event));
@@ -282,8 +292,8 @@ async function probeInstallation(
           path: GITHUB_WEBHOOK_PATH,
           secret: webhookSecret,
           windowMs,
-          accepts: (event, payload) => INSTALLATION_EVENTS.has(event) && payload?.action !== 'deleted',
-          about: () => true, // every delivery about this URL proves reach and secret; names are for the live line
+          accepts: installationDelivery,
+          about: installationDelivery, // other verified events prove reach and secret too, without claiming an installation
         },
         cursor,
         line => spinner.message(line),
