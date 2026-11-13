@@ -187,7 +187,7 @@ export class LaneBook {
         this.deps.log.debug('voice.lane.firstword', {
           room: this.deps.label,
           speaker: lane.speaker,
-          ms: Math.round(Date.now() / 1000 - lane.openedAt),
+          ms: Math.round(Date.now() - lane.openedAt * 1000),
           hint: 'words this late into the utterance; a barge can only be this fast',
         });
       }
