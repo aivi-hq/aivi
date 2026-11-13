@@ -34,7 +34,16 @@ import { appIdentity, GITHUB_WEBHOOK_SECRET_ENV, GitHubApp } from '@aivi/github'
 import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, settled } from '@aivi/plugin';
 import type { GithubConfig } from './config.ts';
 import { MODULE_ID } from './config.ts';
-import { gateHost, hostIsUp, INSTALLATION_EVENTS, latestId, probeWindowMs, waitDiary } from './probe.ts';
+import {
+  type Diaried,
+  gateHost,
+  hostIsUp,
+  INSTALLATION_EVENTS,
+  latestId,
+  type ProbePayload,
+  probeWindowMs,
+  waitDiary,
+} from './probe.ts';
 import { GITHUB_WEBHOOK_PATH } from './tracker.ts';
 
 /** What the app's webhook must subscribe to, each with what the tracker would
@@ -248,6 +257,8 @@ async function probeInstallation(
   history: { id: string; event: string }[],
 ): Promise<{ name: string; pass: boolean; detail: string } | undefined> {
   const windowMs = probeWindowMs();
+  const installationDelivery = (event: string, payload: ProbePayload) =>
+    INSTALLATION_EVENTS.has(event) && payload?.action !== 'deleted';
   let deliveries = history;
   for (;;) {
     const replay = deliveries.find(delivery => INSTALLATION_EVENTS.has(delivery.event));
@@ -264,31 +275,37 @@ async function probeInstallation(
     // below decides, because waiting out the window on a refused replay only
     // re-asks a question GitHub already answered.
     let refused: string | undefined;
-    const posted = await ctx.withStore(async store => {
-      // The cursor is taken **before** the trigger: a replay that lands in the
-      // seconds before the store opens must still be ahead of the mark, and
-      // whatever the diary already held is nobody's business.
-      const cursor = latestId(store);
-      try {
-        await app.redeliverWebhook(replay.id);
-        spinner.message('Re-asked GitHub for its own installation delivery — waiting for the replay to land…');
-      } catch (error) {
-        refused = errorMessage(error);
-        return undefined;
-      }
-      return waitDiary(
-        store,
-        {
-          path: GITHUB_WEBHOOK_PATH,
-          secret: webhookSecret,
-          windowMs,
-          accepts: (event, payload) => INSTALLATION_EVENTS.has(event) && payload?.action !== 'deleted',
-          about: () => true, // every delivery about this URL proves reach and secret; names are for the live line
-        },
-        cursor,
-        line => spinner.message(line),
-      );
-    });
+    let posted: Diaried | undefined;
+    try {
+      posted = await ctx.withStore(async store => {
+        // The cursor is taken **before** the trigger: a replay that lands in the
+        // seconds before the store opens must still be ahead of the mark, and
+        // whatever the diary already held is nobody's business.
+        const cursor = latestId(store);
+        try {
+          await app.redeliverWebhook(replay.id);
+          spinner.message('Re-asked GitHub for its own installation delivery — waiting for the replay to land…');
+        } catch (error) {
+          refused = errorMessage(error);
+          return undefined;
+        }
+        return waitDiary(
+          store,
+          {
+            path: GITHUB_WEBHOOK_PATH,
+            secret: webhookSecret,
+            windowMs,
+            accepts: installationDelivery,
+            about: installationDelivery, // other verified events prove reach and secret too, without claiming an installation
+          },
+          cursor,
+          line => spinner.message(line),
+        );
+      });
+    } catch (error) {
+      spinner.cancel('webhooks — verification stopped before a delivery could be proved');
+      throw error;
+    }
     if (posted === undefined) {
       spinner.cancel(`webhooks — the replay was refused (${refused})`);
       const choice = await forkWebhook(ctx, `GitHub refused to replay its installation delivery (${refused}).`);
@@ -296,21 +313,25 @@ async function probeInstallation(
       deliveries = await app.webhookDeliveries(WEBHOOK_HISTORY);
       continue;
     }
-    if (posted.mine) {
-      const detail = 'the installation delivery arrived and verified';
-      spinner.stop(`webhooks — ${detail}`);
-      return { name: 'webhooks', pass: true, detail };
-    }
-    if (posted.others) {
-      const detail =
-        'deliveries arrived and verified — the URL and the secret are proved, though no installation event among them';
-      spinner.stop(`webhooks — ${detail}`);
-      return { name: 'webhooks', pass: true, detail };
-    }
-    const detail = `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not ${webhookUrl}, the events are off, or GitHub cannot reach this machine`;
-    spinner.cancel(`webhooks — ${detail}`);
-    return { name: 'webhooks', pass: false, detail };
+    const verdict = installationVerdict(posted, webhookUrl, windowMs);
+    spinner[verdict.pass ? 'stop' : 'cancel'](`webhooks — ${verdict.detail}`);
+    return { name: 'webhooks', ...verdict };
   }
+}
+
+/** What the observed deliveries prove, separate from the replay/retry flow. */
+function installationVerdict(posted: Diaried, webhookUrl: string, windowMs: number): { pass: boolean; detail: string } {
+  if (posted.mine) return { pass: true, detail: 'the installation delivery arrived and verified' };
+  if (posted.others)
+    return {
+      pass: true,
+      detail:
+        'deliveries arrived and verified — the URL and the secret are proved, though no installation event among them',
+    };
+  return {
+    pass: false,
+    detail: `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not ${webhookUrl}, the events are off, or GitHub cannot reach this machine`,
+  };
 }
 
 export default setup;

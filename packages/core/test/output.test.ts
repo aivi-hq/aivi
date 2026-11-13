@@ -52,6 +52,25 @@ test('a table without columns is rows only, an empty one renders nothing', () =>
   assert.equal(render([{ type: 'table', rows: [] }]), '');
 });
 
+test('ragged tables pad missing cells without printing undefined or trailing whitespace', () => {
+  assert.equal(
+    render([{ type: 'table', columns: ['ID'], rows: [['a', 'active'], ['long-id']] }]),
+    'ID\na        active\nlong-id',
+  );
+});
+
+test('empty tables do not consume pending dividers and blank log lines are not indented', () => {
+  assert.equal(
+    render([
+      { type: 'log', text: 'first' },
+      { type: 'divider' },
+      { type: 'table', rows: [] },
+      { type: 'log', text: 'next\n\nlast', indent: 1 },
+    ]),
+    'first\n\n  next\n\n  last',
+  );
+});
+
 test('headings and table headers are bold only when colors are on', () => {
   assert.equal(render([{ type: 'heading', text: 'Jobs' }]), 'Jobs');
   assert.ok(renderOutput([{ type: 'heading', text: 'Jobs' }], { colors: true }).includes('\u001b[1m'));
@@ -60,6 +79,7 @@ test('headings and table headers are bold only when colors are on', () => {
 test('json is raw JSON, the same bytes a pipe gets, and never colored', () => {
   const value = { a: [1, 2], b: 'x' };
   assert.equal(renderOutput([{ type: 'json', value }], { colors: true }), JSON.stringify(value, null, 2));
+  assert.equal(render([{ type: 'json', value: undefined }]), 'null');
 });
 
 test('pretty is inspect output, colored only when colors are on', () => {
@@ -122,6 +142,28 @@ test('on a terminal an absent output falls back: pretty for an object, log for a
     capture.print('hello');
     capture.print(1, 'from a string output');
     assert.deepEqual(capture.lines, ['{ a: 1 }', 'hello', 'from a string output']);
+  } finally {
+    capture.restore();
+  }
+});
+
+test('a terminal without hasColors still renders explicit blocks and suppresses empty output', () => {
+  const capture = capturePrint(true, false);
+  try {
+    capture.print({ ignored: true }, [{ type: 'heading', text: 'Result' }]);
+    capture.print('not shown', []);
+    capture.print('not shown', '');
+    assert.deepEqual(capture.lines, ['Result']);
+  } finally {
+    capture.restore();
+  }
+});
+
+test('print uses a terminal’s color support for explicit output', () => {
+  const capture = capturePrint(true, true);
+  try {
+    capture.print(null, [{ type: 'heading', text: 'Result' }]);
+    assert.deepEqual(capture.lines, ['\u001b[1mResult\u001b[22m']);
   } finally {
     capture.restore();
   }

@@ -6,8 +6,10 @@ import { test } from 'node:test';
 import { z } from 'zod';
 import { nextOccurrence } from '../src/clock.ts';
 import {
+  absolutePath,
   composeConfigSchema,
   configSchema,
+  dreamingArgsSchema,
   gitIdentity,
   hostUrl,
   jobSchema,
@@ -17,6 +19,7 @@ import {
   retentionJob,
   selectSources,
   systemJobs,
+  systemPool,
   taskLabel,
   taskSchema,
   userTaskSchema,
@@ -599,6 +602,10 @@ test('host.public: the reach address, validated and preferred when printed', () 
   assert.equal(host.public, undefined, 'unset by default: asked, never guessed');
   assert.equal(hostUrl(host), 'http://127.0.0.1:4100', 'a wildcard-free loopback bind');
   assert.equal(hostUrl({ bind: '0.0.0.0', port: 8080 }), 'http://127.0.0.1:8080', 'a wildcard bind collapses');
+  assert.equal(hostUrl({ bind: '::', port: 8080 }), 'http://127.0.0.1:8080');
+  assert.equal(hostUrl({ bind: '[::]', port: 8080 }), 'http://127.0.0.1:8080');
+  assert.equal(hostUrl({ bind: '::1', port: 8080 }), 'http://[::1]:8080', 'IPv6 literals are bracketed exactly once');
+  assert.equal(hostUrl({ bind: '[::1]', port: 8080 }), 'http://[::1]:8080');
   const base = 'https://you.tailscale.ts.net/aivi';
   assert.equal(configSchema.parse({ version: 1, host: { public: base } }).host.public, base, 'a path is allowed');
   for (const bad of ['https://a.test/', 'ftp://a.test', 'a.test', 'https://a.test/sub/']) {
@@ -624,12 +631,14 @@ test('the install record seeds manual sources, in place, disabled plugins includ
   const app = join(root, 'app');
   await mkdir(join(app, 'node_modules', '@aivi', 'host', 'docs'), { recursive: true });
   await mkdir(join(app, 'node_modules', '@aivi', 'dead', 'docs'), { recursive: true });
+  await mkdir(join(app, 'node_modules', 'file-not-docs'), { recursive: true });
+  await writeFile(join(app, 'node_modules', 'file-not-docs', 'docs'), 'not a directory');
   await writeFile(join(app, 'node_modules', '@aivi', 'host', 'docs', 'configuration.md'), '# Configuration\n');
   await writeFile(
     join(app, 'package.json'),
     JSON.stringify({
       name: 'aivi-server',
-      'aivi-plugins': ['@aivi/host', ['@aivi/dead', false], 'plain-no-docs'],
+      'aivi-plugins': ['@aivi/host', ['@aivi/dead', false], 'plain-no-docs', 'file-not-docs', null, 7, []],
     }),
   );
   const loaded = await loadConfig(configPath);
@@ -653,4 +662,135 @@ test('the install record seeds manual sources, in place, disabled plugins includ
     [],
     'no install record, no manual sources',
   );
+});
+
+test('dreaming may review channel origins but never its own runs', () => {
+  assert.deepEqual(dreamingArgsSchema.parse({}).origins, []);
+  assert.deepEqual(dreamingArgsSchema.parse({ origins: ['discord', 'meet'] }).origins, ['discord', 'meet']);
+  const result = dreamingArgsSchema.safeParse({ origins: ['discord', 'dreaming'] });
+  assert.equal(result.success, false);
+  assert.deepEqual(
+    result.error!.issues.map(issue => issue.path),
+    [['origins']],
+  );
+  assert.match(result.error!.issues[0]!.message, /never include "dreaming"/);
+});
+
+test('duplicate source and job ids report the exact repeated entry', () => {
+  const sources = [
+    { id: 'docs', path: 'one' },
+    { id: 'docs', path: 'two' },
+  ];
+  const job = { id: 'check', cron: '* * * * *', task: { kind: 'invocation', name: 'system.check' } };
+  const result = configSchema.safeParse({
+    version: 1,
+    knowledge: sources,
+    projectDefaults: { knowledge: sources },
+    projects: { site: { knowledge: sources } },
+    jobs: [job, job],
+  });
+  assert.equal(result.success, false);
+  assert.deepEqual(
+    result.error!.issues.map(issue => ({ path: issue.path, message: issue.message })),
+    [
+      { path: ['knowledge', 1, 'id'], message: 'Duplicate identifier' },
+      { path: ['projectDefaults', 'knowledge', 1, 'id'], message: 'Duplicate identifier' },
+      { path: ['projects', 'site', 'knowledge', 1, 'id'], message: 'Duplicate identifier' },
+      { path: ['jobs', 1, 'id'], message: 'Duplicate identifier' },
+    ],
+  );
+});
+
+test('archive source ids are reserved at core, project-default and project scope', () => {
+  const knowledge = [{ id: 'archive', path: 'elsewhere' }];
+  const result = configSchema.safeParse({
+    version: 1,
+    knowledge,
+    projectDefaults: { knowledge },
+    projects: { site: { knowledge } },
+  });
+  assert.equal(result.success, false);
+  assert.deepEqual(
+    result.error!.issues.map(issue => issue.path),
+    [
+      ['knowledge', 0, 'id'],
+      ['projectDefaults', 'knowledge', 0, 'id'],
+      ['projects', 'site', 'knowledge', 0, 'id'],
+    ],
+  );
+  for (const issue of result.error!.issues) assert.match(issue.message, /archive.md is registered automatically/);
+});
+
+test('invalid system crons report the scheduler setting that must be repaired', () => {
+  for (const name of ['retention', 'projectsSync']) {
+    const result = configSchema.safeParse({ version: 1, scheduler: { [name]: { cron: 'not a cron' } } });
+    assert.equal(result.success, false);
+    assert.deepEqual(
+      result.error!.issues.map(issue => issue.path),
+      [['scheduler', name, 'cron']],
+    );
+    assert.equal(result.error!.issues[0]!.message, 'Invalid cron expression or timezone');
+  }
+});
+
+test('system schedules prefer an explicit pool, then default, then the first configured pool', () => {
+  const config = configSchema.parse({
+    version: 1,
+    dispatcher: { pools: { gpu: { capacity: 1 }, default: { capacity: 2 } } },
+  });
+  assert.equal(systemPool(config, 'gpu'), 'gpu');
+  assert.equal(systemPool(config, undefined), 'default');
+  const noDefault = configSchema.parse({ version: 1, dispatcher: { pools: { gpu: { capacity: 1 } } } });
+  assert.equal(systemPool(noDefault, undefined), 'gpu');
+  assert.equal(systemPool(configSchema.parse({ version: 1 }), undefined), undefined);
+});
+
+test('loading makes task paths absolute while preserving absolute paths and an omitted shell cwd', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-task-paths-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, 'config.json');
+  await writeFile(
+    path,
+    JSON.stringify({
+      version: 1,
+      jobs: [
+        {
+          id: 'prompt',
+          cron: '* * * * *',
+          task: { kind: 'prompt', agent: 'assistant', directory: 'work', prompt: 'check' },
+        },
+        { id: 'shell', cron: '* * * * *', task: { kind: 'shell', command: ['pwd'], cwd: 'scripts' } },
+        { id: 'inherited', cron: '* * * * *', task: { kind: 'shell', command: ['pwd'] } },
+      ],
+    }),
+  );
+  const { config } = await loadConfig(path);
+  assert.equal((config.jobs[0]!.task as { directory: string }).directory, join(root, 'work'));
+  assert.equal((config.jobs[1]!.task as { cwd: string }).cwd, join(root, 'scripts'));
+  assert.equal('cwd' in config.jobs[2]!.task, false);
+  assert.equal(absolutePath(root, '/already/absolute'), '/already/absolute');
+  assert.equal(absolutePath(root, 'relative'), join(root, 'relative'));
+});
+
+test('a corrupt install record fails by path instead of silently removing manual knowledge', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-broken-manifest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, 'config.json');
+  const manifest = join(root, 'app', 'package.json');
+  await mkdir(join(root, 'app'));
+  await writeFile(config, '{"version":1}');
+  await writeFile(manifest, '{broken');
+  await assert.rejects(
+    loadConfig(config),
+    error => error instanceof Error && error.message.startsWith(`${manifest} is not valid JSON:`),
+  );
+
+  for (const text of ['{}', '{"aivi-plugins":false}']) {
+    await writeFile(manifest, text);
+    const loaded = await loadConfig(config);
+    assert.deepEqual(
+      loaded.sources.filter(source => source.kind === 'manual'),
+      [],
+    );
+  }
 });

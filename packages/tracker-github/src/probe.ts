@@ -147,10 +147,9 @@ function verifiedRow(
 }
 
 /**
- * Watch the diary until one verified delivery `accepts` lands, `about` names
- * the thing under test, or `ms` has passed. A wait that passes is not made to
- * sit out its window; the window is what a failure needs. Every verified
- * delivery is said the moment it lands, whatever it names.
+ * Watch until a verified matching or other delivery arrives, or the window
+ * passes. Both prove reach and secret; `mine` and `others` keep the result
+ * honest about what arrived. Every verified delivery is said immediately.
  */
 export async function waitDiary(
   store: Store,
@@ -187,7 +186,8 @@ export async function waitDiary(
         say(`Heard: ${describeDelivery(event, payload)}`); // every delivery, the moment it lands
         if (!about(event, payload)) {
           others++;
-          continue;
+          stop();
+          return;
         }
         // The proof is in: a passed wait is nobody's waiting room, and the
         // stop's own read finishes nothing this loop has left to say.

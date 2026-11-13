@@ -3,7 +3,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import { createApp, Store, serveApp } from '@aivi/host';
 import { reset as resetLogging } from '@logtape/logtape';
@@ -116,6 +116,27 @@ const listPlugins = async (home: string, names: unknown[]) => {
     join(home, 'app', 'package.json'),
     JSON.stringify({ name: 'aivi-server', private: true, dependencies: {}, 'aivi-plugins': names }),
   );
+};
+
+/** Real config and SQLite, fixed time, and an immediate host acknowledgement.
+ *  No job execution or network wait is part of an operator command. */
+const jobHome = async (t: TestContext, config: Record<string, unknown> = {}) => {
+  const { home, env, cleanup } = await scratch();
+  t.after(cleanup);
+  await writeFile(join(home, 'config.json'), JSON.stringify({ version: 1, ...config }));
+  const time = { now: Date.parse('2026-09-15T07:00:00Z') };
+  t.mock.method(Date, 'now', () => time.now);
+  const wake = t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    assert.equal(String(input), 'http://127.0.0.1:4100/wake');
+    assert.equal(init?.method, 'POST');
+    return Response.json({ woken: true });
+  });
+  const command = async (argv: string[]) => {
+    const done = await run(argv, env);
+    assert.equal(done.status, 0, done.stderr);
+    return JSON.parse(done.stdout);
+  };
+  return { home, env, time, wake, command };
 };
 
 test('server create initializes the home, mints the operator, and signs this machine in', async t => {
@@ -474,4 +495,185 @@ test('the prompts set rides with the home and answers list, install and show', a
   const unknown = await run(['prompts', 'show', 'dayjob'], env);
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /Unknown prompt: dayjob/);
+});
+
+test('job and run commands persist their lifecycle and poke only after dispatch-affecting changes', async t => {
+  const { home, env, time, wake, command } = await jobHome(t);
+  const file = join(home, 'task.json');
+  await writeFile(file, JSON.stringify({ task: 'system.check' }));
+  const added = await command([
+    'jobs',
+    'add',
+    file,
+    '--cron',
+    '0 9 * * *',
+    '--timezone',
+    'UTC',
+    '--title',
+    'Daily check',
+  ]);
+  const id = added.job.spec.id;
+  const listed = await command(['jobs', 'list']);
+  assert.deepEqual(listed, [
+    {
+      id,
+      title: 'Daily check',
+      source: 'operator',
+      state: 'active',
+      when: 'cron 0 9 * * * (UTC)',
+      nextAt: '2026-09-15T09:00:00.000Z',
+      kind: 'system.check',
+      resource: 'default',
+      lastRun: null,
+    },
+  ]);
+  const queued = await command(['jobs', 'run', id]);
+  assert.equal(queued.jobId, id);
+  assert.equal(queued.state, 'queued');
+  assert.deepEqual(await command(['runs', 'list', '--job', id, '--state', 'queued', '--limit', '1']), [queued]);
+  assert.deepEqual(await command(['runs', 'list']), [queued]);
+  const shown = await command(['runs', 'show', queued.id]);
+  assert.deepEqual(shown.run, queued);
+  assert.equal(shown.history[0].action, 'enqueued');
+  assert.equal((await command(['runs', 'cancel', queued.id])).state, 'cancelled');
+  assert.equal((await command(['jobs', 'pause', id])).state, 'paused');
+  assert.equal((await command(['jobs', 'resume', id])).state, 'active');
+
+  time.now += 1000;
+  const running = await command(['jobs', 'run', id]);
+  const store = new Store(join(home, 'state', 'aivi.sqlite'));
+  try {
+    store.claimRun(running.id, 'host', time.now);
+    assert.equal((await command(['runs', 'abort', running.id])).state, 'running');
+    assert.deepEqual(store.cancelRequested('host'), [running.id]);
+    store.finish(running.id, 'host', 'blocked', null, 'external stop unverified', time.now);
+    const bad = await run(
+      ['runs', 'resolve', running.id, '--outcome', 'running', '--reason', 'checked', '--confirm-stopped'],
+      env,
+    );
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /--outcome is succeeded or failed/);
+    assert.equal(store.run(running.id).state, 'blocked');
+    const resolved = await command([
+      'runs',
+      'resolve',
+      running.id,
+      '--outcome',
+      'succeeded',
+      '--reason',
+      'confirmed stopped',
+      '--confirm-stopped',
+    ]);
+    assert.equal(resolved.state, 'succeeded');
+    assert.equal(store.history(running.id).at(-1)!.reason, 'confirmed stopped');
+    assert.equal((await command(['jobs', 'show', id])).runs.length, 2);
+    assert.equal((await command(['jobs', 'list']))[0].lastRun, 'succeeded');
+    assert.deepEqual(await command(['jobs', 'remove', id]), { removed: id });
+    assert.deepEqual(store.jobs(), []);
+  } finally {
+    store.close();
+  }
+  const invalidState = await run(['runs', 'list', '--state', 'invented'], env);
+  assert.equal(invalidState.status, 1);
+  assert.match(invalidState.stderr, /Unknown run state: invented/);
+  assert.equal(wake.mock.callCount(), 7, 'add, run twice, pause, resume, abort and resolve wake the host');
+});
+
+test('job files resolve paths against the home and preserve reports, resources, schedules and idempotence', async t => {
+  const { home, env, time, wake, command } = await jobHome(t, {
+    dispatcher: { pools: { default: { capacity: 1 }, fast: { capacity: 1 } } },
+  });
+  const promptFile = join(home, 'prompt.json');
+  await writeFile(
+    promptFile,
+    JSON.stringify({ kind: 'prompt', agent: 'assistant', directory: 'work', prompt: 'check' }),
+  );
+  const prompt = await command(['jobs', 'add', promptFile, '--at', '30m', '--resource', 'fast']);
+  assert.equal(prompt.job.spec.task.directory, join(home, 'work'));
+  assert.equal(prompt.job.spec.at, new Date(time.now + 1_800_000).toISOString());
+  assert.equal(prompt.job.spec.resource, 'fast');
+  assert.deepEqual(prompt.runs, []);
+
+  const shellFile = join(home, 'shell.json');
+  await writeFile(
+    shellFile,
+    JSON.stringify({
+      task: { kind: 'shell', command: ['pwd'], cwd: 'scripts' },
+      resource: 'fast',
+      report: { to: 'session', session: 'ses_x' },
+    }),
+  );
+  const recurring = ['jobs', 'add', shellFile, '--cron', '0 9 * * *', '--timezone', 'UTC', '--key', 'same'];
+  const shell = await command(recurring);
+  assert.equal(shell.job.spec.task.cwd, join(home, 'scripts'));
+  assert.equal(shell.job.spec.resource, 'fast');
+  assert.deepEqual(shell.job.spec.report, { to: 'session', session: 'ses_x', on: 'always' });
+  assert.equal(
+    (await command(recurring)).job.spec.id,
+    shell.job.spec.id,
+    'an identical key does not create another definition',
+  );
+
+  const local = await command(['jobs', 'add', promptFile, '--cron', '* * * * *', '--resource', 'fast']);
+  assert.equal(local.job.spec.timezone, Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+  await writeFile(shellFile, JSON.stringify({ kind: 'shell', command: ['pwd'] }));
+  wake.mock.mockImplementation(async () => {
+    throw new Error('host is down');
+  });
+  const immediate = await run(['jobs', 'add', shellFile], env);
+  assert.equal(immediate.status, 0, immediate.stderr);
+  assert.match(immediate.stderr, /could not wake the host.*Saved; it takes effect when the host next dispatches/);
+  const added = JSON.parse(immediate.stdout);
+  assert.equal(added.job.spec.at, new Date(time.now).toISOString());
+  assert.equal(added.job.spec.resource, 'default');
+  assert.equal(added.job.spec.task.cwd, undefined);
+  assert.equal(added.runs[0].state, 'queued');
+  const row = (await command(['jobs', 'list'])).find((job: { id: string }) => job.id === added.job.spec.id);
+  assert.equal(row.when, `at ${new Date(time.now).toISOString()}`);
+  assert.equal(row.title, null);
+  assert.equal(row.nextAt, null);
+});
+
+test('invalid job requests fail before writing a definition or waking the host', async t => {
+  const { home, env, wake, command } = await jobHome(t, { dispatcher: { pools: { default: { capacity: 1 } } } });
+  const file = join(home, 'task.json');
+  await writeFile(file, JSON.stringify({ kind: 'shell', command: ['true'] }));
+  for (const [flags, message] of [
+    [['--resource', 'missing'], /Unknown dispatcher pool: missing/],
+    [['--at', '30m', '--cron', '* * * * *'], /Choose --at .* or --cron/],
+    [['--at', 'tomorrow'], /Not a time/],
+  ] as const) {
+    const done = await run(['jobs', 'add', file, ...flags], env);
+    assert.equal(done.status, 1);
+    assert.match(done.stderr, message);
+  }
+  await writeFile(file, '{broken');
+  assert.equal((await run(['jobs', 'add', file], env)).status, 1);
+  assert.deepEqual(await command(['jobs', 'list']), []);
+  assert.equal(wake.mock.callCount(), 0);
+});
+
+test('face commands install once, show edits, and restore the built-in after emptying or deleting the copy', async t => {
+  const { home, env, cleanup } = await scratch();
+  t.after(cleanup);
+  const initial = await run(['face', 'show'], env);
+  assert.equal(initial.status, 0, initial.stderr);
+  const builtIn = JSON.parse(initial.stdout);
+  assert.equal(builtIn.source, 'built-in');
+  assert.match(builtIn.text, /window.aiviFace/);
+  const path = join(home, 'face', 'index.html');
+  const status = await run(['face'], env);
+  assert.deepEqual(JSON.parse(status.stdout), { path, source: 'built-in', preview: 'npx serve in its directory' });
+  assert.deepEqual(JSON.parse((await run(['face', 'install'], env)).stdout), { written: true, kept: false });
+  const edited = '<script>window.aiviFace = {custom: true};</script>';
+  await writeFile(path, edited);
+  const kept = await run(['face', 'install'], env);
+  assert.deepEqual(JSON.parse(kept.stdout), { written: false, kept: true });
+  assert.equal(await readFile(path, 'utf8'), edited);
+  assert.deepEqual(JSON.parse((await run(['face', 'show'], env)).stdout), { path, source: 'file', text: edited });
+  await writeFile(path, '');
+  assert.equal(JSON.parse((await run(['face'], env)).stdout).source, 'built-in');
+  await rm(path);
+  assert.deepEqual(JSON.parse((await run(['face', 'show'], env)).stdout), builtIn);
 });

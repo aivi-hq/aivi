@@ -53,9 +53,10 @@ interface InstallListener {
  * the app and the install link is accepted first try.
  */
 const catchInstall = (): InstallListener => {
-  let ok: (code: string) => void = () => {};
-  let fail: (error: Error) => void = () => {};
-  let bindFailed: (error: Error) => void = () => {};
+  // Promise executors assign these before any server event can use them.
+  let ok!: (code: string) => void;
+  let fail!: (error: Error) => void;
+  let bindFailed!: (error: Error) => void;
   const code = new Promise<string>((resolvePromise, rejectPromise) => {
     ok = resolvePromise;
     fail = rejectPromise;
@@ -327,20 +328,22 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
         title: 'aivi add test — safe to delete',
         description: `Created by \`aivi add linear\` to test the webhook at ${webhookUrl}. The installer archives it when the test ends.`,
       });
-      await ctx.prompts.log.message(`Created ${issue.identifier}.`);
-      const probe = { ctx, client, viewer, windowMs, webhookPath, webhookSecret, checks };
-      const posted = await checkWebhookDeliveries(probe, store, issue, cursor);
-      await checkAgentSessionEvents(probe, store, issue, posted);
-      // The installer made the ticket, so the installer tidies it — Linear's
-      // delete archives it, off the board. A delete that fails is said, not
-      // swallowed, so a ticket is never left without the operator knowing.
       try {
-        await client.deleteIssue(issue.id);
-        await ctx.prompts.log.message(`${issue.identifier} archived.`);
-      } catch (error) {
-        await ctx.prompts.log.message(
-          `Could not archive ${issue.identifier} — delete it by hand (${errorMessage(error)}).`,
-        );
+        await ctx.prompts.log.message(`Created ${issue.identifier}.`);
+        const probe = { ctx, client, viewer, windowMs, webhookPath, webhookSecret, checks };
+        const posted = await checkWebhookDeliveries(probe, store, issue, cursor);
+        await checkAgentSessionEvents(probe, store, issue, posted);
+      } finally {
+        // The installer owns the ticket even when verification throws. An
+        // archive failure is said without replacing the original failure.
+        try {
+          await client.deleteIssue(issue.id);
+          await ctx.prompts.log.message(`${issue.identifier} archived.`);
+        } catch (error) {
+          await ctx.prompts.log.message(
+            `Could not archive ${issue.identifier} — delete it by hand (${errorMessage(error)}).`,
+          );
+        }
       }
     });
   }

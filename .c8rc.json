@@ -1,0 +1,14 @@
+{
+  "all": true,
+  "reporter": ["json", "text"],
+  "include": ["packages/*/src/**"],
+  "exclude": [
+    "coverage/**",
+    "node_modules/**",
+    "packages/host/src/api/env.ts",
+    "packages/plugin/src/channel.ts",
+    "packages/plugin/src/dispatcher.ts",
+    "packages/plugin/src/forge.ts",
+    "packages/plugin/src/plugin.ts"
+  ]
+}
