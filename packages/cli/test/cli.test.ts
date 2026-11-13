@@ -211,6 +211,19 @@ test('setup creates the home, seeds OpenCode and signs this machine in', async (
   assert.equal(calls.logs.filter(line => line.includes('`aivi serve`')).length, 1, 'the next step is said once');
 });
 
+test('setup preserves the existing npm configuration in a populated home', async () => {
+  const home = join(directory, 'home');
+  const appDir = join(home, 'app');
+  mkdirSync(appDir, { recursive: true });
+  const npmrc = 'registry=https://registry.example/\nsave-exact=true\n';
+  writeFileSync(join(appDir, '.npmrc'), npmrc);
+  const { io } = fakeIo();
+
+  await setup(['--use', 'this-machine', '--name', 'Ada'], { home }, io);
+
+  assert.equal(readFileSync(join(appDir, '.npmrc'), 'utf8'), npmrc);
+});
+
 test('setup for a headless server prints the handoff and signs nobody in', async () => {
   const home = join(directory, 'home');
   const { io, calls } = fakeIo();

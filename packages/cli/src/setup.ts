@@ -265,10 +265,9 @@ function writeHomeSkeleton(home: string): string {
     writeFileSync(envPath, '# aivi secrets; this file stays local. fnox exec works too.\n', { mode: 0o600 });
   const appDir = join(home, 'app');
   mkdirSync(appDir, { recursive: true });
-  writeFileSync(
-    join(appDir, '.npmrc'),
-    '# npm lifecycle scripts aivi allow-lists; empty until one proves necessary.\n',
-  );
+  const npmrcPath = join(appDir, '.npmrc');
+  if (!existsSync(npmrcPath))
+    writeFileSync(npmrcPath, '# npm lifecycle scripts aivi allow-lists; empty until one proves necessary.\n');
   // The manifest npm installs against, written and not left to npm's guess of
   // the project root: a home that lives inside another package (a repository
   // checkout, a dotfiles home) must never anchor the install at that ancestor.
