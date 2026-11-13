@@ -1,5 +1,14 @@
 # @aivi/linear
 
+## 1.0.1
+
+### Patch Changes
+
+- [#74](https://github.com/aivi-hq/aivi/pull/74) [`89329e1`](https://github.com/aivi-hq/aivi/commit/89329e1c11ab79416b0b4a6188f6829a1761d0f7) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Always archive the temporary issue created by Linear setup, including when webhook verification, delegation or diary reads fail. If archiving also fails, report the leftover issue without replacing the original setup error.
+- Updated dependencies [[`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d)]:
+  - @aivi/host@1.0.2
+  - @aivi/plugin@1.0.2
+
 ## 1.0.0
 
 ### Major Changes

@@ -1,5 +1,11 @@
 # @aivi/plugin
 
+## 1.0.2
+
+### Patch Changes
+
+- [#72](https://github.com/aivi-hq/aivi/pull/72) [`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Update the pinned OpenCode package family to 2.2.7.
+
 ## 1.0.1
 
 ### Patch Changes
