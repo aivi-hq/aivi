@@ -124,7 +124,12 @@ export class MixedFusion {
         this.slotStart = e.t;
       }
     } else if (e.ev === 'eof') {
-      if (this.slot >= 0 || this.lineText.trim()) this.closeLine(this.lastPos || this.lineStart, false);
+      const end = this.lastPos || this.lineStart;
+      if (this.slot >= 0) {
+        this.noteStretch(this.slot, this.slotStart, end);
+        this.bind(this.slot);
+      }
+      if (this.slot >= 0 || this.lineText.trim()) this.closeLine(end, false);
       this.deps.log.info('voice.engine.eof', { room: this.deps.label });
     }
   }
