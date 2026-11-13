@@ -313,21 +313,25 @@ async function probeInstallation(
       deliveries = await app.webhookDeliveries(WEBHOOK_HISTORY);
       continue;
     }
-    if (posted.mine) {
-      const detail = 'the installation delivery arrived and verified';
-      spinner.stop(`webhooks — ${detail}`);
-      return { name: 'webhooks', pass: true, detail };
-    }
-    if (posted.others) {
-      const detail =
-        'deliveries arrived and verified — the URL and the secret are proved, though no installation event among them';
-      spinner.stop(`webhooks — ${detail}`);
-      return { name: 'webhooks', pass: true, detail };
-    }
-    const detail = `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not ${webhookUrl}, the events are off, or GitHub cannot reach this machine`;
-    spinner.cancel(`webhooks — ${detail}`);
-    return { name: 'webhooks', pass: false, detail };
+    const verdict = installationVerdict(posted, webhookUrl, windowMs);
+    spinner[verdict.pass ? 'stop' : 'cancel'](`webhooks — ${verdict.detail}`);
+    return { name: 'webhooks', ...verdict };
   }
+}
+
+/** What the observed deliveries prove, separate from the replay/retry flow. */
+function installationVerdict(posted: Diaried, webhookUrl: string, windowMs: number): { pass: boolean; detail: string } {
+  if (posted.mine) return { pass: true, detail: 'the installation delivery arrived and verified' };
+  if (posted.others)
+    return {
+      pass: true,
+      detail:
+        'deliveries arrived and verified — the URL and the secret are proved, though no installation event among them',
+    };
+  return {
+    pass: false,
+    detail: `nothing arrived in ${windowMs / 1000} s — the Webhook URL on the app is not ${webhookUrl}, the events are off, or GitHub cannot reach this machine`,
+  };
 }
 
 export default setup;
