@@ -1,6 +1,6 @@
 {
   "name": "@aivi/plugin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "exports": {
     ".": { "development": "./src/index.ts", "default": "./dist/index.js" },

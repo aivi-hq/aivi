@@ -1,5 +1,16 @@
 # @aivi/tracker-github
 
+## 1.0.1
+
+### Patch Changes
+
+- [#74](https://github.com/aivi-hq/aivi/pull/74) [`423feaf`](https://github.com/aivi-hq/aivi/commit/423feaf096b5e99c6dfc2737bf886e18596a55f9) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Stop GitHub setup's progress spinner when webhook verification or the request-diary store fails. The original error still propagates and no configuration is written, but the installer no longer leaves its progress animation running after the failure.
+
+- [#74](https://github.com/aivi-hq/aivi/pull/74) [`2199c40`](https://github.com/aivi-hq/aivi/commit/2199c40e2f94e50f798e237be587e83922ecc5c0) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Fix GitHub setup's webhook check so any correctly signed delivery to the configured endpoint counts as proof and completes the check immediately. Previously, non-installation events were logged but ignored by the result, so setup could falsely report that nothing arrived.
+- Updated dependencies [[`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d)]:
+  - @aivi/host@1.0.2
+  - @aivi/plugin@1.0.2
+
 ## 1.0.0
 
 ### Major Changes
