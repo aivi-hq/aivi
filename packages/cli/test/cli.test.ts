@@ -266,6 +266,25 @@ test('--connect and --use choose different branches; giving both is refused', as
   );
 });
 
+test('setup without a terminal explains the scripted forms before writing anything', async t => {
+  const home = join(directory, 'home');
+  const tty = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+  Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+  t.after(() => {
+    if (tty) Object.defineProperty(process.stdin, 'isTTY', tty);
+    else Reflect.deleteProperty(process.stdin, 'isTTY');
+  });
+  t.mock.method(process.stdout, 'write', () => true);
+
+  await assert.rejects(
+    setup([], { home }),
+    /setup needs an interactive terminal; in a script use: aivi setup --use .*aivi setup --connect --url URL --token TOKEN/,
+  );
+
+  assert.equal(existsSync(home), false);
+  assert.equal(loadClientConfig(), undefined);
+});
+
 test('aivi link mints a code over HTTP and says exactly where to spend it', async () => {
   saveClientConfig({ url: 'http://127.0.0.1:4100', person: { token: TOKEN } });
   const mints: [string, string, string][] = [];

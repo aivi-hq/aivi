@@ -553,7 +553,7 @@ async function waitHealthy(url: string, io: SetupIo): Promise<boolean> {
  *  The target type is given by the caller: a clack prompt's return type mixes
  *  in its cancel symbol, and inference would drag that union out here. */
 function guarded<T = string>(ask: () => Promise<unknown>): Promise<T> {
-  if (!process.stdin.isTTY) return Promise.reject(new Cancelled(SCRIPT_FORM));
+  if (!process.stdin.isTTY) return Promise.reject(new Error(SCRIPT_FORM));
   return ask().then(answer => {
     if (p.isCancel(answer)) throw new Cancelled('an answer was cancelled');
     if (answer === undefined) throw new Cancelled('an answer came back empty');
@@ -724,7 +724,7 @@ const defaultIo: SetupIo = {
     async models(defaults) {
       const named: { embed?: string; rerank?: string; generate?: string } = {};
       for (const role of ['embed', 'rerank', 'generate'] as const) {
-        if (!process.stdin.isTTY) throw new Cancelled(SCRIPT_FORM);
+        if (!process.stdin.isTTY) throw new Error(SCRIPT_FORM);
         const answer = await p.text({
           message: `Semantic ${role} model — Enter keeps qmd's own default`,
           placeholder: defaults[role],
