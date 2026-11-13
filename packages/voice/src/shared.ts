@@ -94,11 +94,14 @@ export class SharedEngine {
 
   private async start(): Promise<EngineRun | null> {
     this.setState('loading');
+    if (this.stopped) return null; // a state listener can close the owner synchronously
+    let ended = false;
     const run = new EngineRun(
       this.spec,
       { type: 'push' }, // every room feeds through push; ffmpeg lanes own their process
       {
         onEvent: e => {
+          if (this.stopped) return; // pipe data may arrive after the child was killed
           if (e.ev === 'diar') this.diar = e;
           for (const sink of this.sinks) {
             try {
@@ -109,31 +112,48 @@ export class SharedEngine {
           }
         },
         onExit: code => {
-          // An engine that died mid-room is not cached: the next audio loads
-          // again. Said once loudly — silent model loss is the old crime.
-          if (this.stopped || run.eof) return;
-          this.log.warn('voice.engine.exited', { code });
-          this.run = null;
-          this.diar = null; // the next engine gets a fresh say on the diarizer
-          this.setState('failed');
+          ended = true;
+          this.engineExited(run, code);
         },
       },
       this.log,
     );
+    // The loading process is already ours: stop must not wait for readiness
+    // before it can close the child that is loading the models.
+    this.run = run;
     try {
       await run.start();
-      this.run = run;
+      if (this.stopped || ended) return null;
       this.setState('ready');
+      if (this.stopped || ended) return null; // listeners may close it at readiness too
       const queued = this.buffered;
       this.buffered = [];
       this.bufferedBytes = 0;
       for (const buf of queued) run.write(buf); // audio that arrived first goes in order
       return run;
     } catch (error) {
-      this.log.warn('voice.engine.start-failed', { error: String(error) });
-      this.setState('failed');
+      if (this.run === run) this.run = null;
+      await run.stop();
+      if (!this.stopped) {
+        this.log.warn('voice.engine.start-failed', { error: String(error) });
+        this.setState('failed');
+      }
       return null;
     }
+  }
+
+  /** Forget the process and its model answer before publishing its ending.
+   *  A listener asking for the next engine must never get the dead one. */
+  private engineExited(run: EngineRun, code: number | null): void {
+    // EngineRun calls this only for an exit that was not requested by stop().
+    this.run = null;
+    this.diar = null;
+    if (run.eof) {
+      this.setState('idle');
+      return;
+    }
+    this.log.warn('voice.engine.exited', { code });
+    this.setState('failed');
   }
 
   private setState(state: EngineState): void {
@@ -153,6 +173,9 @@ export class SharedEngine {
     this.stopped = true;
     const run = this.run;
     this.run = null;
+    this.diar = null;
+    this.buffered = [];
+    this.bufferedBytes = 0;
     this.setState('idle');
     if (run) await run.stop();
   }
