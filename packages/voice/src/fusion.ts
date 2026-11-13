@@ -82,7 +82,8 @@ export class MixedFusion {
       // falls silent and listens. A bare act (someone started, no words yet)
       // does not — that is how a sniffle used to silence a whole answer for
       // nothing. The words still land as a line and the session reconsiders.
-      if (this.deps.mode === 'call' && this.deps.speaking()) this.deps.barge();
+      const word = /[\p{L}\p{N}]/u.test(e.text);
+      if (word && this.deps.mode === 'call' && this.deps.speaking()) this.deps.barge();
       this.lastPos = e.pos;
       this.lineText += e.text;
       if (this.deps.mode === 'meeting' && !this.wakePhrase) {

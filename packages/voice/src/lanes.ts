@@ -179,7 +179,8 @@ export class LaneBook {
 
   private onLaneEvent(lane: LaneState, e: EngineEvent): void {
     if (e.ev === 'delta') {
-      if (lane.text === '') {
+      const word = /[\p{L}\p{N}]/u.test(e.text);
+      if (word && !/[\p{L}\p{N}]/u.test(lane.text)) {
         // The number barge-in speed lives and dies by: wall latency from the
         // person's first pushed packet to the first recognized word. Live
         // proof for the logs without reading event timestamps off a page.
@@ -194,7 +195,7 @@ export class LaneBook {
       // A recognized word from a LINKED person while aivi speaks is the
       // interruption — the whole point of the live lane: barge-in verified
       // on the first word, not on a speaking start or a finished clip.
-      if (this.deps.mode === 'call' && lane.person && this.deps.speaking()) this.deps.barge();
+      if (word && this.deps.mode === 'call' && lane.person && this.deps.speaking()) this.deps.barge();
     } else if (e.ev === 'lane_end') {
       lane.gotEnd = true;
       lane.endWait?.();
