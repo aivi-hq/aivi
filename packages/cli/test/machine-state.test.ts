@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import childProcess, { type SpawnSyncReturns } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
@@ -231,6 +233,25 @@ test('the relay signs with the record, so a broken one fails it by name', async 
 });
 
 test('a broken record does not block the exit ramp', async t => {
+  const probes = new Map([
+    ['opencode --version', '2.2.7'],
+    ['opencode plugin list', '@aivi/opencode'],
+    ['npm list -g @aivi/cli --depth=0', '@aivi/cli@1.0.0'],
+  ]);
+  const spawn = t.mock.method(
+    childProcess,
+    'spawnSync',
+    (command: string, args: readonly string[]): SpawnSyncReturns<string> => {
+      const stdout = probes.get([command, ...args].join(' '));
+      assert.ok(stdout !== undefined, `Unexpected subprocess: ${command} ${args.join(' ')}`);
+      return { pid: 0, output: [null, stdout, ''], stdout, stderr: '', status: 0, signal: null };
+    },
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    spawn.mock.restore();
+    syncBuiltinESMExports();
+  });
   const directory = await machine(t, undefined);
   await writeFile(process.env.AIVI_CONFIG!, 'not json at all');
   // A home uninstall will accept: refuseWrongHome wants a config.json there,
@@ -240,4 +261,19 @@ test('a broken record does not block the exit ramp', async t => {
   const { out } = await run(['uninstall']);
   assert.match(out, /aivi\.json/, 'the listing names the record it would delete');
   assert.doesNotMatch(out, /not json/, 'the broken bytes are not the answer; the listing is');
+  assert.match(out, /aivi's OpenCode plugin/);
+  assert.match(out, /this CLI, installed with npm/);
+  assert.deepEqual(
+    spawn.mock.calls.map(call => call.arguments.slice(0, 2)),
+    [
+      ['opencode', ['--version']],
+      ['opencode', ['plugin', 'list']],
+      ['npm', ['list', '-g', '@aivi/cli', '--depth=0']],
+    ],
+  );
+  assert.equal(
+    await readFile(process.env.AIVI_CONFIG!, 'utf8'),
+    'not json at all',
+    'a preview leaves the record intact',
+  );
 });
