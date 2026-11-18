@@ -40,6 +40,10 @@ orchestration around it, all started by one `aivi serve`.
 - Test lifecycle, persistence, and configuration changes at the actual
   boundaries they affect. Live OpenCode, Discord and macOS Chrome
   verification are separate gates; mock tests do not establish those.
+- A unit test mocks what the unit reaches: prompts, clients, git, the
+  config. Before adding a `mock.module`, read
+  [docs/testing.md](docs/testing.md): it holds the rules and the register
+  that every use goes in.
 - Before finishing work, run `npm run agentic:verify`. The exit code is the
   verdict: 0 passed, anything else did not. Its output is one JSON blob —
   read it once and fix what it names. Do not run it again just to re-read

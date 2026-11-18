@@ -1,20 +1,75 @@
-/** What the clone contributor decides from a person's answers, with no
- *  network and no git: the name a repository suggests, which repository the
- *  person is asked for, and what stops the flow before a directory is made.
- *  A checkout that is already there and the clone itself are not proved
- *  here: the contributor calls git directly.
+/** What the clone contributor decides from a person's answers: the name a
+ *  repository suggests, which repository the person is asked for, what stops
+ *  the flow before a directory is made, what it does with a checkout that is
+ *  already there, and how it asks for the clone. GitHub and git are answered
+ *  here — `@aivi/github` is a module mock, registered before the contributor
+ *  is imported — so no test reaches the network or spawns git.
  */
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type TestContext, test } from 'node:test';
+import { mock, type TestContext, test } from 'node:test';
 import { PROJECT_ID } from '@aivi/core';
-import { GitHubApp } from '@aivi/github';
+import * as github from '@aivi/github';
 import { PluginSetupCancelled, type ProjectSetupContext } from '@aivi/plugin';
 import { cancelSetup, setupFixture } from '../../plugin/test/setup-fixture.ts';
-import { contributor, suggestedProjectId } from '../src/setup-project.ts';
+
+type GitAnswer = Awaited<ReturnType<typeof github.runGit>>;
+
+/** What GitHub and git answer in one run, and what git was asked. Each test
+ *  sets it; the mocks answer from it. */
+const scene = {
+  granted: [] as string[] | Error,
+  reads: true,
+  git: [] as GitAnswer[],
+  ran: [] as { directory: string; args: string[]; env?: Record<string, string> }[],
+};
+const app = {
+  appSlug: 'aivi-app',
+  installationId: 42,
+  repositories: async () => {
+    if (scene.granted instanceof Error) throw scene.granted;
+    return scene.granted.map(id => ({ id }));
+  },
+  repository: async () => (scene.reads ? { defaultBranch: 'main' } : undefined),
+  gitToken: async () => 'installation-token',
+};
+const runGit: typeof github.runGit = async (directory, args, options = {}) => {
+  scene.ran.push({ directory, args, ...(options.env ? { env: options.env } : {}) });
+  const answer = scene.git.shift();
+  assert.ok(answer, `Unscripted git: ${args.join(' ')}`);
+  return answer;
+};
+mock.module('@aivi/github', { exports: { ...github, githubApp: async () => app, runGit } });
+
+const { contributor, suggestedProjectId } = await import('../src/setup-project.ts');
+
+/** A home, the person's scripted answers, and the context the runner hands
+ *  the forge; `projectId` is the name an earlier role settled. */
+async function wizard(
+  t: TestContext,
+  given: { answers: unknown[]; granted: string[] | Error; reads?: boolean; git?: GitAnswer[]; projectId?: string },
+) {
+  const home = await mkdtemp(join(tmpdir(), 'aivi-forge-project-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  Object.assign(scene, { granted: given.granted, reads: given.reads ?? true, git: given.git ?? [], ran: [] });
+  const h = setupFixture(t, given.answers);
+  const ctx: ProjectSetupContext = {
+    home,
+    configPath: join(home, 'config.json'),
+    config: {},
+    forgeConfigured: true,
+    print: h.print,
+    fetch: h.fetch,
+    withStore: h.withStore,
+    agents: async () => [],
+    prompts: { ...h.ctx.prompts, autocomplete: h.ask } as unknown as ProjectSetupContext['prompts'],
+    ...(given.projectId ? { projectId: given.projectId } : {}),
+  };
+  return { ...h, ctx, home };
+}
 
 test('a repository name becomes the project name a directory can take', () => {
   assert.equal(suggestedProjectId('widget'), 'widget');
@@ -33,51 +88,13 @@ test('and the suggestion is always a name aivi accepts, never one to be fixed la
   );
 });
 
-/** What GitHub says of the app's grant. The forge keeps one app connection
- *  for the whole process, so one app answers every test here and each test
- *  sets what it says. The token is always refused: the flow stops there,
- *  one step before the forge reaches git. */
-const github: { granted: string[] | Error; reads: boolean } = { granted: [], reads: true };
-const app = {
-  appSlug: 'aivi-app',
-  installationId: 42,
-  repositories: async () => {
-    if (github.granted instanceof Error) throw github.granted;
-    return github.granted.map(id => ({ id }));
-  },
-  repository: async () => (github.reads ? { defaultBranch: 'main' } : undefined),
-  gitToken: async (): Promise<string> => {
-    throw new Error('GitHub refused the installation token');
-  },
-};
-
-/** A home, the person's scripted answers, and the context the runner hands
- *  the forge; `projectId` is the name an earlier role settled. */
-async function wizard(t: TestContext, answers: unknown[], projectId?: string) {
-  const home = await mkdtemp(join(tmpdir(), 'aivi-forge-project-'));
-  t.after(() => rm(home, { recursive: true, force: true }));
-  t.mock.method(GitHubApp, 'connect', async () => app as unknown as GitHubApp);
-  const h = setupFixture(t, answers);
-  const ctx: ProjectSetupContext = {
-    home,
-    configPath: join(home, 'config.json'),
-    config: {},
-    forgeConfigured: true,
-    print: h.print,
-    fetch: h.fetch,
-    withStore: h.withStore,
-    agents: async () => [],
-    prompts: { ...h.ctx.prompts, autocomplete: h.ask } as unknown as ProjectSetupContext['prompts'],
-    ...(projectId ? { projectId } : {}),
-  };
-  return { ...h, ctx, home };
-}
-
-test('the forge offers the granted repositories, proves the pick, and asks for the project name', async t => {
-  github.granted = ['acme/site', 'acme/docs'];
-  github.reads = true;
-  const h = await wizard(t, ['acme/site', 'my-site']);
-  await assert.rejects(contributor.setup(h.ctx), /GitHub refused the installation token/);
+test('the forge offers the granted repositories, proves the pick, asks the project name, and clones as the app', async t => {
+  const h = await wizard(t, {
+    answers: ['acme/site', ' '],
+    granted: ['acme/site', 'acme/docs'],
+    git: [{ ok: true, stdout: '' }],
+  });
+  assert.deepEqual(await contributor.setup(h.ctx), { id: 'site', cloned: true, repository: 'acme/site' });
 
   assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, ['The app can see 2 repositories']);
   assert.deepEqual(h.questions[0]!.options, [
@@ -94,25 +111,79 @@ test('the forge offers the granted repositories, proves the pick, and asks for t
   assert.equal(name.validate!(undefined), undefined);
   assert.equal(name.validate!('my-site'), undefined);
   assert.match(name.validate!('My Site')!, /lowercase letters, digits, dashes and underscores/);
-  assert.equal(existsSync(join(h.home, 'projects')), false, 'nothing is made before the token is in hand');
+
+  const project = join(h.home, 'projects', 'site');
+  assert.deepEqual(scene.ran, [
+    {
+      directory: project,
+      args: ['clone', '--quiet', 'https://github.com/acme/site.git', join(project, 'source')],
+      env: github.gitCredential('installation-token'),
+    },
+  ]);
+  assert.equal(existsSync(project), true, 'the place for the clone is made first');
+  assert.deepEqual(h.spinners[1]!.start.mock.calls[0]!.arguments, ['cloning acme/site…']);
+  assert.deepEqual(h.spinners[1]!.stop.mock.calls[0]!.arguments, ['Cloned acme/site into projects/site/source.']);
 });
 
-test('a name an earlier role settled is not asked again', async t => {
-  github.granted = ['acme/site'];
-  github.reads = true;
-  const h = await wizard(t, ['acme/site'], 'site');
-  await assert.rejects(contributor.setup(h.ctx), /GitHub refused the installation token/);
+test('a clone that git refuses stops the forge and says why', async t => {
+  const h = await wizard(t, {
+    answers: ['acme/site', 'my-site'],
+    granted: ['acme/site'],
+    git: [{ ok: false, message: 'Repository not found' }],
+  });
+  await assert.rejects(contributor.setup(h.ctx), /clone of acme\/site failed: Repository not found/);
+  assert.deepEqual(h.spinners[1]!.stop.mock.calls[0]!.arguments, ['could not clone acme/site: Repository not found']);
+  assert.equal(
+    scene.ran[0]!.directory,
+    join(h.home, 'projects', 'my-site'),
+    'the name the person typed is the project',
+  );
+});
+
+test('a checkout already there is taken as it stands when it is this repository, and never taken over when it is not', async t => {
+  const h = await wizard(t, {
+    answers: ['acme/site', 'acme/site', 'acme/site'],
+    granted: ['acme/site'],
+    git: [
+      { ok: true, stdout: 'https://github.com/acme/site.git\n' },
+      { ok: true, stdout: 'https://github.com/other/thing.git\n' },
+      { ok: false, message: "error: No such remote 'origin'" },
+    ],
+    projectId: 'site',
+  });
+  const source = join(h.home, 'projects', 'site', 'source');
+  await mkdir(join(source, '.git'), { recursive: true });
+
+  assert.deepEqual(await contributor.setup(h.ctx), { id: 'site', cloned: true, repository: 'acme/site' });
+  assert.equal(
+    h.log.mock.calls.at(-1)!.arguments[0],
+    'projects/site/source is already a checkout of acme/site; left as it is.',
+  );
+  await assert.rejects(
+    contributor.setup(h.ctx),
+    /projects\/site\/source is a checkout of other\/thing\. Move it aside, or choose a project name/,
+  );
+  await assert.rejects(contributor.setup(h.ctx), /is a checkout of something that is not a GitHub repository/);
+
+  assert.deepEqual(
+    scene.ran,
+    Array.from({ length: 3 }, () => ({ directory: source, args: ['remote', 'get-url', 'origin'] })),
+    'git is only asked what the checkout is: nothing is cloned over it',
+  );
   assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, ['The app can see 1 repository']);
   assert.deepEqual(
     h.questions.map(question => question.message),
-    ['Which GitHub repository is this project?'],
+    Array.from({ length: 3 }, () => 'Which GitHub repository is this project?'),
+    'the name an earlier role settled is not asked again',
   );
 });
 
 test('a grant that cannot be listed leaves the typed question, and its answer is still refereed', async t => {
-  github.granted = new Error('Bad credentials');
-  github.reads = false;
-  const h = await wizard(t, ['https://gitlab.com/acme/site', 'acme/site']);
+  const h = await wizard(t, {
+    answers: ['https://gitlab.com/acme/site', 'acme/site'],
+    granted: new Error('Bad credentials'),
+    reads: false,
+  });
   await assert.rejects(contributor.setup(h.ctx), /gitlab\.com is not github\.com, and this forge speaks github\.com/);
   assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, [
     "Could not list the app's repositories: Bad credentials",
@@ -128,13 +199,13 @@ test('a grant that cannot be listed leaves the typed question, and its answer is
     /the app aivi-app cannot see acme\/site through installation #42\. Grant it that repository/,
   );
   assert.equal(existsSync(join(h.home, 'projects')), false, 'nothing is made for a repository the app cannot read');
+  assert.deepEqual(scene.ran, [], 'and git is never asked');
 });
 
 test('a cancelled question stops the forge before anything is made', async t => {
-  github.granted = ['acme/site'];
-  github.reads = true;
-  const h = await wizard(t, [cancelSetup, 'acme/site', cancelSetup]);
+  const h = await wizard(t, { answers: [cancelSetup, 'acme/site', cancelSetup], granted: ['acme/site'] });
   await assert.rejects(contributor.setup(h.ctx), PluginSetupCancelled, 'which repository');
   await assert.rejects(contributor.setup(h.ctx), PluginSetupCancelled, 'the project name');
   assert.equal(existsSync(join(h.home, 'projects')), false);
+  assert.deepEqual(scene.ran, []);
 });

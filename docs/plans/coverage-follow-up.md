@@ -5,19 +5,43 @@ coverage and zero feedback from every tool. This note holds only what
 serves that goal. Everything else is a ticket in `docs/backlog/` (see
 "Off-goal findings").
 
+## Where this stops (operator, 2026-11-18)
+
+"Make this the last change and we're moving to a new code architecture,
+and vitest in a new session. That should help make the test suite more
+manageable."
+
+- No further coverage batch in the current form. The next session moves
+  the suite to vitest, with a new code architecture. The operator has not
+  said more about the architecture: ask, do not guess.
+- The operator's reasons, in their words: "Using mocks is the go-to
+  solution when writing unit tests in basically every single programming
+  language." A recording object that a test file keeps by hand "reads like
+  a custom mock"; jest's `toHaveBeenCalled` is the example to follow.
+- Until the move: the test scripts pass `--experimental-test-module-mocks`
+  ("go with the flag for now"), and "every use of it must be accounted
+  for". The rules and the register are in `docs/testing.md`.
+- Two test files use module mocks and still keep a `scene` object by
+  hand: `packages/host/test/project-wizard.test.ts` and
+  `packages/forge-github/test/setup-project.test.ts`. Rewrite them with
+  the framework's mock functions in the move.
+- The rest of this note is still the map: what is uncovered, what Fallow
+  reports, the test rules, the gotchas.
+
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` (2026-11-18, after the plugin
-command pass) exited 0: 1,222 tests passed. Production coverage is 90.44%
-lines, 89.15% branches and 85.24% functions. Fallow still reports 2 check
+The latest full `npm run agentic:verify` (2026-11-18, the last change of
+the session) exited 0: 1,229 tests passed. Production coverage is 90.84%
+lines, 89.24% branches and 85.62% functions. Fallow still reports 2 check
 findings, 6 duplicate groups, 15 health findings (2 critical, 2 high, 11
 moderate), 7 refactoring targets and 2 unconfigured-policy diagnostics.
-This run printed no Fallow warning. The run before it printed the
-graph-cache warning ("Graph cache decoded but not reused: resolver, entry
-points, or plugins changed"), so look for it again. This is not zero tool
+This run printed the Fallow graph-cache warning ("Graph cache decoded but
+not reused: resolver, entry points, or plugins changed"); it comes and
+goes between runs. The test run prints one `ExperimentalWarning` for each
+of the two test files that use module mocks. This is not zero tool
 feedback.
 
-The full output is `coverage/agentic-verify-units.log`; exact coverage is
+The full output is `coverage/agentic-verify-mocks.log`; exact coverage is
 `coverage/coverage-final.json`. Both are generated/ignored artifacts:
 regenerate them if absent or stale. No checks or suppressions were
 weakened.
@@ -28,8 +52,9 @@ At 100% lines, branches and functions, with no Fallow finding:
 is at 100% lines and functions with one branch open (see "Next batch").
 
 At 100% lines since the plugin command pass (branches not checked):
-`google-meet/src/cli.ts`, `tracker-github/src/cli.ts` and `index.ts`, and
-`tracker-linear/src/cli.ts`, `client.ts` and `index.ts`.
+`google-meet/src/cli.ts`, `tracker-github/src/cli.ts` and `index.ts`,
+`tracker-linear/src/cli.ts`, `client.ts` and `index.ts`,
+`host/src/cli/project-setup.ts` and `forge-github/src/setup-project.ts`.
 
 ## How the operator wants to work
 
@@ -98,8 +123,16 @@ engine; 2026-11-18):
 
 Left open by the plugin command pass (2026-11-18):
 
-- The project wizard and the forge's git steps: see "Code to refactor
-  before it can be unit-tested".
+- `packages/host/src/cli/project-setup.ts`: every line is covered. Four
+  small functions are never called: the default `connect` and `sleep` of
+  `listLaneAgents`, and the `print` and `agents` that the wizard hands a
+  contributor. `connect` and `agents` need a module mock of
+  `../opencode.ts`; `print` writes to the terminal through `@aivi/core`.
+- `packages/forge-github/src/setup-project.ts`: every line is covered.
+  Open branches: line 53 (a listing error that is not an `Error`) and
+  lines 73 and 89 (an answer that names no repository). The prompt's own
+  `validate` refuses such an answer first, so 73 and 89 look unreachable:
+  decide whether to remove them.
 - `packages/channel-slack/src/cli.ts`, lines 36-49: the `manifest` prompt
   for an unconfigured home. `cliFixture` passes the real prompts: give it
   a `prompts` option and set `process.stdin.isTTY` to reach these 13
@@ -114,33 +147,18 @@ written down here, and the work moves on. It is refactored later to make
 it testable. Do not cover it through a real setup. A refactor is a batch
 like any other: say what it is and wait for the go.
 
-- `packages/host/src/cli/project-setup.ts` (139 lines): `runProjectSetup`
-  and its private steps (`writeProjectSections`, `runContributor`,
-  `pickForRole`, `askProjectName`, `outroFor`, `sayStopped`,
-  `ensureUntrackedSource`).
-  - Why not now: it imports `@clack/prompts` itself, loads the config and
-    the plugin registry itself, and prints to the terminal. The registry
-    resolves contributors from the real packages only.
-  - To make it testable: hand in the prompts, the loaded config with its
-    schema, and the contributors. Scripted answers and fake contributors
-    then drive every branch.
-  - Lines 81-84 also wait for
-    `docs/backlog/projects-add-takes-any-name.md`.
-- `packages/forge-github/src/setup-project.ts`, lines 130-139 and 142-156
-  (25 lines): a checkout that is already there, and the clone.
-  - Why not now: the contributor calls `runGit` itself.
-  - To make it testable: hand in the git runner, as the forge module does
-    (`GitRunner` in `forge.ts`).
-  - In the tests the fake app refuses the git token. The flow stops one
-    step before git.
 - `packages/channel-discord/src/module.ts` (643 lines): it constructs
   `new Client(...)` itself.
   - To make it testable: a connection handed in, like Slack's
-    `SlackConnection`.
+    `SlackConnection`. A module mock of `discord.js` may reach it without
+    that; nobody has checked how much of the client a fake needs.
+
+The project wizard and the forge's git steps were on this list. Module
+mocks reached them without a refactor (see `docs/testing.md`).
 
 ## Where the uncovered lines are
 
-From `coverage/coverage-final.json` at the baseline: 3,960 of 41,453
+From `coverage/coverage-final.json` at the baseline: 3,797 of 41,453
 lines are uncovered. The largest files, under `packages/`:
 
 | Uncovered lines | File |
@@ -151,7 +169,6 @@ lines are uncovered. The largest files, under `packages/`:
 | 180 | `google-meet/src/meeting.ts` |
 | 171 | `google-meet/src/module.ts` |
 | 150 | `chrome/src/chrome.ts` |
-| 139 | `host/src/cli/project-setup.ts` |
 | 136 | `chrome/src/connection.ts` |
 | 126 | `channel-slack/src/connection.ts` |
 | 116 | `host/src/orchestrator/orchestrator.ts` |
@@ -165,6 +182,7 @@ lines are uncovered. The largest files, under `packages/`:
 | 59 | `host/src/api/host-tools.ts` |
 | 58 | `cli/src/add.ts` |
 | 58 | `tracker-linear/src/tracker.ts` |
+| 53 | `cli/src/main.ts` |
 
 Notes for these:
 
@@ -176,8 +194,6 @@ Notes for these:
   and stop, `onBrought`, `onStopSignal`, `followUp`.
 - `chrome` and `google-meet`: use fake CDP, tabs and processes; keep live
   browser/platform gates separate.
-- `host/src/cli/project-setup.ts` and the forge's git steps: see "Code to
-  refactor before it can be unit-tested".
 
 ## Test approach the operator wants
 
@@ -196,6 +212,9 @@ Notes for these:
   move on and refactor them later to make them more testable." Such code
   goes in "Code to refactor before it can be unit-tested". Do not reach it
   through a real setup instead.
+- A module that a unit imports itself (`@clack/prompts`, `runGit`,
+  `context.ts`) is replaced with `mock.module`. Read `docs/testing.md`
+  first: the rules, the Node version facts and the register of every use.
 - Use deferred promises to observe the boundary under test. Advance mock
   time only after the operation is waiting. Avoid sleeps, polling helpers
   and guessed microtask-flush counts.
@@ -265,7 +284,7 @@ Notes for these:
   ```sh
   NODE_OPTIONS=--conditions=development node_modules/.bin/c8 \
     '--include=packages/voice/src/engine.ts' --reports-dir=coverage/targeted \
-    node --test --conditions=development \
+    node --test --experimental-test-module-mocks --conditions=development \
       packages/voice/test/engine.test.ts
   ```
 
@@ -295,13 +314,10 @@ Fixtures and gotchas from the plugin command pass (2026-11-18):
   over the same pipe, and one test's result was lost that way. Code that
   prints straight to the terminal is not ready for a unit test: list it
   for a refactor.
-- Node 26.13.1 has no `t.mock.module` without
-  `--experimental-test-module-mocks`, and the test scripts do not pass it
-  (checked 2026-11-18). So a module that a unit imports itself
-  (`@clack/prompts`, `runGit`) cannot be replaced from a test. The unit
-  must take it as an argument.
-- `githubApp()` keeps one connection for the whole process. Mock
-  `GitHubApp.connect` and let one fake app answer every test in the file
+- `mock.module` exists only with `--experimental-test-module-mocks`. The
+  `test` and `test:cov` scripts pass it; a targeted run must pass it too.
+- `githubApp()` keeps one connection for the whole process. Replace it
+  through the `@aivi/github` module mock
   (`forge-github/test/setup-project.test.ts`).
 - `LinearClient` takes `options.fetch`: script it with a function, no
   socket (`scripted()` in `tracker-linear/test/client.test.ts`).
