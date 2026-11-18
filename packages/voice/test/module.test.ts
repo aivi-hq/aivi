@@ -18,6 +18,7 @@ test('voice startup releases persisted room leases before providing a fresh voic
   await h.start();
 
   assert.equal(h.release.mock.callCount(), 1);
+  assert.deepEqual(h.store.roomLeases(), [], 'a returned lease leaves no note behind');
   assert.equal(h.registerCallback.mock.callCount(), 1);
   assert.equal(h.provide.mock.callCount(), 1);
   assert.equal(h.batchStart.mock.callCount(), 0);

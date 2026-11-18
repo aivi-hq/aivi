@@ -117,6 +117,7 @@ export class VoiceTurns {
   static async recover(
     leases: Array<{ label: string; leaseId: string }>,
     release: Dispatcher['release'],
+    forget: (label: string) => void,
     log: Logger,
   ): Promise<void> {
     for (const { label, leaseId } of leases) {
@@ -128,6 +129,9 @@ export class VoiceTurns {
       } catch {
         // The lease already ended (a clean shutdown raced here): nothing to return.
       }
+      // The dispatcher was told. Whatever is left of the lease is its own to
+      // end; the note has done its work and is not replayed at every start.
+      forget(label);
     }
   }
 

@@ -148,7 +148,12 @@ export function createVoiceModule(
       // Leases voice held across a restart are unverified: their turns died
       // with the process, so the slots go straight back (a voice turn has no
       // ticket to block, unlike a channel turn).
-      await VoiceTurns.recover(store.roomLeases(), id => services.dispatcher.release(id), log);
+      await VoiceTurns.recover(
+        store.roomLeases(),
+        id => services.dispatcher.release(id),
+        label => store.setRoomLease(label, null),
+        log,
+      );
 
       const embedder = config.identity
         ? new sherpa.SpeakerEmbeddingExtractor({
