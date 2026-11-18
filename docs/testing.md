@@ -35,17 +35,6 @@ A use follows these rules:
   `{ exports: { ...real, runGit } }`.
 - Add the use to the register in the same commit.
 
-What comes next (operator, 2026-11-18):
-
-- The suite moves to vitest, together with a new code architecture, in a
-  new session. This page holds until then.
-- Use the framework's own mock functions and matchers (jest's
-  `toHaveBeenCalled` is the operator's example). A recording object that
-  the test file keeps by hand is a custom mock, and the operator does not
-  want it.
-- The two files in the register still keep such an object (`scene`).
-  Rewrite them in the move.
-
 Node version:
 
 - The floor is `engines` in `package.json`: `>=26.1.0 <27`.
