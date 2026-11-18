@@ -78,8 +78,10 @@ const transcriptTool: ToolDescriptor = {
 };
 
 /** Own a speech process from construction, not only after its ready marker.
- *  Shutdown and a late ready answer transfer that ownership exactly once. */
-function lazySpeechEngine<T extends { start(): Promise<void>; stop(): Promise<void> }>(
+ *  Shutdown and a late ready answer transfer that ownership exactly once.
+ *  A loaded process that died is not kept as a permanent no: like a failed
+ *  load, the next request starts a fresh one. */
+function lazySpeechEngine<T extends { start(): Promise<void>; stop(): Promise<void>; readonly alive: boolean }>(
   create: () => T,
   failed: (error: unknown) => void,
 ) {
@@ -102,6 +104,12 @@ function lazySpeechEngine<T extends { start(): Promise<void>; stop(): Promise<vo
         // stop() already took the process; readiness cannot return it to a caller.
         return null;
       }
+      if (!run.alive) {
+        // Ready and gone in one breath: the client said it exited, and a
+        // dead process is nothing to hand out.
+        take();
+        return null;
+      }
       ready = true;
       return run;
     } catch (error) {
@@ -113,7 +121,9 @@ function lazySpeechEngine<T extends { start(): Promise<void>; stop(): Promise<vo
   return {
     get(): Promise<T | null> {
       if (stopped) return Promise.resolve(null);
-      if (ready) return Promise.resolve(active);
+      const loaded = ready ? active : null;
+      if (loaded?.alive) return Promise.resolve(loaded);
+      if (loaded) take(); // it died after loading: this request loads its replacement
       starting ??= load().finally(() => {
         starting = null;
       });

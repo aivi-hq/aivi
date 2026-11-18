@@ -121,6 +121,12 @@ export class BatchEngineRun {
     });
   }
 
+  /** The process is running. A dead endpoint answers every request with a
+   *  loss, so whoever keeps one warm asks before handing it out again. */
+  get alive(): boolean {
+    return this.child !== null;
+  }
+
   /** Transcribe one utterance; null means lost (engine error or timeout). */
   transcribe(samples: Float32Array): Promise<string | null> {
     const child = this.child;

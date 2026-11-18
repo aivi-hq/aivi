@@ -131,6 +131,12 @@ export class TtsRun {
     });
   }
 
+  /** The process is running. A dead voice speaks nothing, so whoever keeps
+   *  one warm asks before handing it out again. */
+  get alive(): boolean {
+    return this.child !== null;
+  }
+
   /** Speak one sentence: wav chunks out in order, the first one the moment
    *  it exists. The request holds the model until the generator ends; an
    *  abandoned generator (barge-in) drops the rest of its speech and lets

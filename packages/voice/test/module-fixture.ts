@@ -79,10 +79,13 @@ export function voiceModule(t: TestContext, input: Record<string, unknown> = {})
   const batchStop = t.mock.method(BatchEngineRun.prototype, 'stop', async () => {
     order.push('batch');
   });
+  // A stubbed start spawns nothing; the stub stands in for a running process.
+  const batchAlive = t.mock.getter(BatchEngineRun.prototype, 'alive', () => true);
   const ttsStart = t.mock.method(TtsRun.prototype, 'start', async () => {});
   const ttsStop = t.mock.method(TtsRun.prototype, 'stop', async () => {
     order.push('tts');
   });
+  const ttsAlive = t.mock.getter(TtsRun.prototype, 'alive', () => true);
   const sharedStop = t.mock.method(SharedEngine.prototype, 'stop', async () => {
     order.push('shared');
   });
@@ -128,8 +131,10 @@ export function voiceModule(t: TestContext, input: Record<string, unknown> = {})
     createRoom,
     batchStart,
     batchStop,
+    batchAlive,
     ttsStart,
     ttsStop,
+    ttsAlive,
     sharedStop,
     order,
     start,
