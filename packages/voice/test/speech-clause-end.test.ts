@@ -27,3 +27,17 @@ test('a sentence that closes the answer is spoken when the answer ends', async t
 
   assert.equal(last.text, 'Klaar.', 'nothing waits on a timer: the end of the answer speaks what is left');
 });
+
+test('a typographic closing quote stays with the sentence it closes', async t => {
+  const h = speechOut(t);
+  h.mouth();
+
+  h.out.text(delta('Hij zei “stop.” En ‘ga!’ Daarna niets. '));
+  const [first] = await h.sentences.next();
+  h.out.finish('unused: the answer streamed');
+  first.end();
+  const [rest] = await h.sentences.next();
+
+  assert.equal(first.text, 'Hij zei “stop.”');
+  assert.equal(rest.text, 'En ‘ga!’ Daarna niets.');
+});

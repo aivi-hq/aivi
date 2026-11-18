@@ -47,7 +47,7 @@ function scanClause(src: string, at: number): { next: number; clause: boolean } 
   if (c === '\n') return { next: at + 1, clause: true };
   if (!'.,;:!?…'.includes(c)) return { next: at + 1, clause: false };
   let end = at + 1;
-  while (end < src.length && '"\'")」』'.includes(src.charAt(end))) end++;
+  while (end < src.length && '"\'”’)」』'.includes(src.charAt(end))) end++;
   return { next: end, clause: end < src.length && ' \n\t'.includes(src.charAt(end)) };
 }
 
