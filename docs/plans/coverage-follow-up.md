@@ -71,29 +71,45 @@ is "harmless" by default):
   once recovery returned the lease. Capacity is counted from
   `dispatcher_leases`, never from that note; `turns-recover.test.ts` proves
   with the real host dispatcher that the slot is free after recovery.
-- Ask the operator: recovery releases the slot at once and does not stop
-  the old session. `aivi serve` restarts OpenCode at start only with
-  `opencode.lifecycle: own` (the default). With `discover`, `ensure` or
-  `opencode.url`, OpenCode outlives aivi: an old turn may still generate
-  while its slot is granted again. Boot order: modules start (voice
-  recovery) before `dispatcher.reconcile()`. Should recovery interrupt the
-  room's session first?
+- A graceful shutdown already ends voice's active turns: `VoiceTurns.stop`
+  interrupts the session, cuts the wait and returns the slot (see
+  `turns.test.ts`). Only a crash leaves a turn behind. Then recovery
+  returns the slot at once and does not stop the old session. `aivi serve`
+  restarts OpenCode at start only with `opencode.lifecycle: own` (the
+  default); with `discover`, `ensure` or `opencode.url` the old turn may
+  still generate while its slot is granted again. The operator: "active
+  turns on a restart should probably be ended", unsure if it matters. Not
+  built. Proposal to confirm: recovery stops the room's session before it
+  returns the slot. Boot order to mind: modules start (voice recovery)
+  before `dispatcher.reconcile()`.
 
-Open, ask the operator before building:
+Next batch, ruled by the operator (2026-11-18), not started. It is host
+code: wait for the operator's word before building.
 
-- Removed pool. Ruling: when a session resumes and its pool is no longer
-  configured, warn and continue on the configured pool with the same
-  session; a configured pool that does not exist is a hard error (config
-  load already rejects an unknown `plugins.<id>.pool`). Not built. Two
-  things to confirm first:
-  1. Scope. Channels and tickets resume sessions too and wait today
-     (`pool-gone` in `packages/host/src/dispatcher/dispatcher.ts`, handled
-     in `channel/engine.ts`; the scheduler branch is unreachable because
-     jobs never resume). Build it in the dispatcher for every service
-     (recommended: the dispatcher owns the session-to-pool record), or in
-     voice only?
-  2. Model. A resumed session keeps the model it was created with. Is
-     that right when its pool, and maybe that model's endpoint, is gone?
+- Removed pool: the dispatcher owns pools, so the rule lives there, for
+  every service. A resume whose session's recorded pool is no longer
+  configured: log a warning and try the configured (asked) pool, if it is
+  a different one. That pool is not configured either: an error.
+  - Today `Dispatcher.request` answers `{ refused: 'pool-gone' }`
+    (`packages/host/src/dispatcher/dispatcher.ts`). `LeaseStore.record` is
+    `INSERT OR IGNORE`: moving a session needs an update of
+    `dispatcher_sessions`.
+  - Callers that handle `pool-gone` today: `host/src/channel/engine.ts`
+    (waits and warns), `host/src/scheduler.ts` (unreachable: jobs never
+    resume), `voice/src/turns.ts` (logs `turns.refused` with a hint that
+    fits only `waiting`). The kit type is in `packages/plugin/src/dispatcher.ts`.
+  - An unknown asked pool already throws in `request`, and config load
+    rejects an unknown `plugins.<id>.pool`.
+- Removed model, same rule: a session's model that is no longer there:
+  log a warning and try the configured model, if different. No model
+  either: an error. Open design point to raise first: how the dispatcher
+  learns that a resumed session's model is gone (OpenCode's model list at
+  resume, or the failed turn), and where the model is switched (today the
+  pool decides only at session create in `provide`; voice may pin one per
+  prompt).
+
+Reviewed, no change:
+
 - `module.ts`: a room `stop()` that rejects would skip the other rooms and
   the engines. The shipped room cannot reject; nothing changed.
 - `engine.ts`: a caller-supplied `source()` that throws escapes from the
