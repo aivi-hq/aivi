@@ -218,6 +218,11 @@ export class VoiceTurns {
 
   private async run(p: TurnPrompt, lease: DispatcherLeaseRef): Promise<void> {
     let leaseId = lease.id;
+    // Our own cut cord, tied beside the host's before anything is awaited:
+    // leaving a room does not stand and wait for an answer nobody is left
+    // to hear, whichever step of the turn the leaving lands in.
+    const cut = new AbortController();
+    this.turnCut = cut;
     try {
       if (lease.state === 'preparing') {
         // The pool decides the model at session create (the dispatcher's
@@ -230,6 +235,11 @@ export class VoiceTurns {
         if (attached.sessionId) this.deps.rememberSession(attached.sessionId);
         leaseId = attached.id;
       }
+      if (cut.signal.aborted) {
+        // The session is kept for the next join; the model is never asked.
+        this.deps.log.info('turns.cut', { hint: 'the room left while its session was being prepared' });
+        return;
+      }
       this.deps.rememberLease(leaseId);
       // The turn is on: say so, with the session. A room that says nothing
       // here looks like it is only transcribing while the model is already
@@ -239,10 +249,6 @@ export class VoiceTurns {
         ...(this.sessionId === undefined ? {} : { session: this.sessionId }),
         chars: p.text.length,
       });
-      // Our own cut cord, tied beside the host's: leaving a room does not
-      // stand and wait for an answer nobody is left to hear.
-      const cut = new AbortController();
-      this.turnCut = cut;
       const client = await this.deps.opencode();
       const input: Record<string, unknown> = {
         sessionId: this.sessionId,
