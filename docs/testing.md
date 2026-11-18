@@ -144,7 +144,7 @@ code is not wrong; the report is:
 - The honest overall figure is the sum over the rows of
   `file length × (100 − line %) / 100`, with the rows of mocked files taken
   from a run without the mocking test. At the end of 2026-11-18 it was about
-  94.7%; the `all files` line read 89.82%.
+  95.0%; the `all files` line read 89.81%.
 - To read the true number of a file in the register: run the tests of its
   package with `--test-coverage-include=<that file>`, once with and once
   without the test file that mocks it. The run without it is the number to
