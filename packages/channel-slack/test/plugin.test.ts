@@ -1,8 +1,6 @@
 /** How the Slack plugin builds its module from a block: the directory is
  *  resolved against the home. `./module.ts` is a module mock (it is the
- *  Slack SDKs' door), registered before the plugin's config is imported.
- *  One test, one import: the report holds a phantom copy of the mocked file
- *  for every import of it (`docs/testing.md`). */
+ *  Slack SDKs' door), registered before the plugin's config is imported. */
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 

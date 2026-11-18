@@ -1,8 +1,6 @@
 /** How the Discord plugin builds its module from a block, with the directory
  *  resolved against the home. `./module.ts` is a module mock (it is
- *  discord.js's door), registered before the plugin's config is imported.
- *  One test, one import: the report holds a phantom copy of the mocked file
- *  for every import of it (`docs/testing.md`). */
+ *  discord.js's door), registered before the plugin's config is imported. */
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
