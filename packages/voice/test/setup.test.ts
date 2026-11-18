@@ -78,6 +78,11 @@ test('declining everything still writes an engine block that points at the homeâ
   assert.equal('agent' in written, false, 'the opener names the agent its rooms speak as');
   assert.deepEqual(h.ran(), [], 'no tool is probed and nothing is downloaded');
   assert.match(result.summary, /no runtime yet â€” create that runtime before first audio/);
+  assert.match(
+    result.summary,
+    /transcription on, downloads on first use/,
+    'a no to the download is not a no to transcription: the engine block stands',
+  );
   assert.match(result.summary, /diarizer off: mixed lines stay nameless/);
   assert.match(result.summary, /voice nl_female off: aivi stays mute/);
   assert.match(result.summary, /no voiceprint: nobody gets named, meeting rooms refused/);

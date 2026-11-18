@@ -230,7 +230,8 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     : `runtime ${made ? 'created' : 'already in place'}`;
   const parts = [
     runtime,
-    said(asr, 'transcription'),
+    // Transcription is the plugin itself: its question is only about the download.
+    said({ on: true, here: asr.here }, 'transcription'),
     `${said(diar, 'diarizer')}${diar.on ? '' : ': mixed lines stay nameless'}`,
     `${said(tts, `voice ${VOICE}`)}${tts.on ? '' : ': aivi stays mute'}`,
     identity ? 'voiceprint on' : 'no voiceprint: nobody gets named, meeting rooms refused',
