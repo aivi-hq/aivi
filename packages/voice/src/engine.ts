@@ -194,7 +194,9 @@ export class EngineRun {
   slice(from: number, to: number): Float32Array | null {
     const i0 = Math.round(from * SR),
       i1 = Math.round(to * SR);
-    if (i1 <= i0 || i0 < this.ringEnd - this.ring.length || i1 > this.ringEnd) return null;
+    // The ring holds what was heard, from the start of the stream at the
+    // earliest: nothing before it, nothing older than its length.
+    if (i1 <= i0 || i0 < Math.max(0, this.ringEnd - this.ring.length) || i1 > this.ringEnd) return null;
     const out = new Float32Array(i1 - i0);
     for (let i = 0; i < out.length; i++) out[i] = this.ring[(i0 + i) % this.ring.length]!;
     return out;
