@@ -15,6 +15,7 @@
  *  raw page audio, while the admission wait below saw nothing and said
  *  nothing — and nothing after it could start: no ears, no session). */
 import { sleep, type Tab } from '@aivi/chrome';
+import { leaveGone, lookAtScreen, muteSays, type Screen, titleOfPage } from './page.ts';
 
 export type MeetLog = (msg: string, extra?: Record<string, unknown>) => void;
 
@@ -37,24 +38,7 @@ export interface Joined {
   viaWaitingRoom: boolean;
 }
 
-/** What the screen shows, in ONE look: the address, the words, and every
- *  button's name with whether it can take a click. The state machine
- *  decides over this plain data; the locators below are for acting. */
-interface Screen {
-  url: string;
-  words: string;
-  buttons: Array<{ name: string; enabled: boolean }>;
-}
-
-const readScreen = (tab: Tab): Promise<Screen> =>
-  tab.call((): Screen => {
-    const words = document.body ? document.body.innerText || document.body.textContent || '' : '';
-    const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).map(el => ({
-      name: (el.getAttribute('aria-label') || el.textContent || '').trim(),
-      enabled: !(el as HTMLButtonElement).disabled && el.getAttribute('aria-disabled') !== 'true',
-    }));
-    return { url: location.href, words, buttons };
-  });
+const readScreen = (tab: Tab): Promise<Screen> => tab.call(lookAtScreen);
 
 const inCallOn = (screen: Screen): boolean =>
   screen.buttons.some(b => LEAVE.test(b.name) && b.enabled) && !LOBBY.test(screen.words);
@@ -110,15 +94,7 @@ export async function driveLeave(tab: Tab, log: MeetLog): Promise<boolean> {
   }
   log('meet.leave-clicked', { button });
   try {
-    await tab.waitFor(
-      () =>
-        !Array.from(document.querySelectorAll('button, [role="button"]')).some(
-          el =>
-            /leave call|leave meeting|hang up/i.test((el.getAttribute('aria-label') || el.textContent || '').trim()) &&
-            !(el as HTMLButtonElement).disabled,
-        ),
-      { timeoutMs: 5_000, intervalMs: 250 },
-    );
+    await tab.waitFor(leaveGone, { timeoutMs: 5_000, intervalMs: 250 });
     return true;
   } catch {
     return false; // the page kept the button; the tab close follows anyway
@@ -139,7 +115,7 @@ export async function driveJoin(tab: Tab, options: JoinOptions): Promise<Joined>
   const step = async (label: string): Promise<void> => {
     if (options.onStep !== undefined) await options.onStep(label);
   };
-  const title = () => tab.call((): string => document.title);
+  const title = () => tab.call(titleOfPage);
   /** What the page offers, in the words the debug lines carry. */
   const said = (screen: Screen): string[] =>
     screen.buttons
@@ -157,14 +133,7 @@ export async function driveJoin(tab: Tab, options: JoinOptions): Promise<Joined>
     options.log('meet.mic-live', { button });
     await step('mic-live');
     try {
-      await tab.waitFor(
-        (value: string) => {
-          const el = document.querySelector('button[data-is-muted]');
-          return el !== null && el.getAttribute('data-is-muted') === value;
-        },
-        { timeoutMs: 3_000, intervalMs: 200 },
-        want,
-      );
+      await tab.waitFor(muteSays, { timeoutMs: 3_000, intervalMs: 200 }, want);
     } catch {
       // the attribute never flipped: said, and the loop re-reads the
       // screen — the next pass decides whether there is still work to do
