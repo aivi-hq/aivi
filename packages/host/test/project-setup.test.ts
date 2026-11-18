@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ProjectContributor } from '@aivi/plugin';
-import { listLaneAgents, projectSetupPlan } from '../src/cli/project-setup.ts';
+import { listLaneAgents, projectSetupPlan, runProjectSetup } from '../src/cli/project-setup.ts';
 import type { ProjectContributorEntry } from '../src/cli/registry.ts';
 
 /** A contributor entry carrying only what the plan reads; the setup body is
@@ -177,4 +177,41 @@ test('two empty asks answer empty: the wizard says its own error, and no third w
   rmSync(home, { recursive: true, force: true });
   assert.deepEqual(service.calls, ['load', 'list', 'gap:1000', 'list'], 'two asks, one gap, then the answer');
   assert.deepEqual(agents, [], 'empty stands as the genuine zero the wizard reports');
+});
+
+test('a named project in a home without a forge is set up untracked, and only at a terminal', async t => {
+  const home = mkdtempSync(join(tmpdir(), 'aivi-project-setup-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const configPath = join(home, 'config.json');
+  writeFileSync(configPath, JSON.stringify({ version: 1 }));
+  t.mock.property(process, 'env', { ...process.env, AIVI_HOME: home });
+  const attached = process.stdin.isTTY;
+  const terminal = (value: boolean | undefined) =>
+    Object.defineProperty(process.stdin, 'isTTY', { value, configurable: true });
+  t.after(() => terminal(attached));
+
+  terminal(false);
+  await assert.rejects(
+    runProjectSetup({ home, configPath, name: 'research' }),
+    /projects add needs an interactive terminal; to set a project up without one, write its block in config\.json/,
+  );
+  assert.equal(existsSync(join(home, 'projects')), false, 'a refusal makes nothing');
+
+  terminal(true);
+  // The wizard's last line goes straight to the terminal. It is watched on its
+  // way through and never held back: the test runner reports over the same pipe.
+  const said = t.mock.method(process.stdout, 'write');
+  const settled = await runProjectSetup({ home, configPath, name: 'research' });
+  said.mock.restore();
+  assert.equal(settled, 'research', 'the name given is the project, and nobody is asked for it');
+  assert.match(
+    said.mock.calls.map(call => String(call.arguments[0])).join(''),
+    /research has no source host \(no forge configured\); its directory is untracked and holds a note\. Restart `aivi serve` to index it\./,
+  );
+  assert.deepEqual(
+    JSON.parse(readFileSync(configPath, 'utf8')),
+    { version: 1, projects: { research: { sync: false } } },
+    'the project is named in the config, and the sync is told it has no business there',
+  );
+  assert.match(readFileSync(join(home, 'projects', 'research', 'source', 'AGENTS.md'), 'utf8'), /^# No source/);
 });

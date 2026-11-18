@@ -7,15 +7,16 @@ serves that goal. Everything else is a ticket in `docs/backlog/` (see
 
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` (2026-11-18) exited 0: 1,203
-tests passed. Production coverage is 88.88% lines, 88.92% branches and
-83.6% functions. Fallow still reports 2 check findings, 6 duplicate groups,
-15 health findings (2 critical, 2 high, 11 moderate), 7 refactoring targets
-and 2 unconfigured-policy diagnostics. This run printed no Fallow warning;
-the run before it printed the graph-cache warning ("decoded but not
-reused"), so look for it again. This is not zero tool feedback.
+The latest full `npm run agentic:verify` (2026-11-18, after the plugin
+command pass) exited 0: 1,224 tests passed. Production coverage is 90.66%
+lines, 89.06% branches and 85.54% functions. Fallow still reports 2 check
+findings, 6 duplicate groups, 15 health findings (2 critical, 2 high, 11
+moderate), 7 refactoring targets and 2 unconfigured-policy diagnostics.
+This run printed the Fallow graph-cache warning again ("Graph cache
+decoded but not reused: resolver, entry points, or plugins changed"); the
+run before it did not. This is not zero tool feedback.
 
-The full output is `coverage/agentic-verify-capacity.log`; exact coverage
+The full output is `coverage/agentic-verify-commands.log`; exact coverage
 is `coverage/coverage-final.json`. Both are generated/ignored artifacts:
 regenerate them if absent or stale. No checks or suppressions were
 weakened.
@@ -24,6 +25,10 @@ At 100% lines, branches and functions, with no Fallow finding:
 `packages/voice`, and in `packages/host/src/`: `scheduler.ts`,
 `channel/engine.ts` and `dispatcher/leases.ts`. `dispatcher/dispatcher.ts`
 is at 100% lines and functions with one branch open (see "Next batch").
+
+At 100% lines since the plugin command pass (branches not checked):
+`google-meet/src/cli.ts`, `tracker-github/src/cli.ts` and `index.ts`, and
+`tracker-linear/src/cli.ts`, `client.ts` and `index.ts`.
 
 ## How the operator wants to work
 
@@ -74,8 +79,8 @@ is at 100% lines and functions with one branch open (see "Next batch").
 Not agreed yet. Say what it is and wait for the go.
 
 The largest gap that needs no decision first is
-`packages/tracker-github/src/module.ts`: 270 uncovered lines and 21
-functions that no test calls. It has one Fallow complexity finding
+`packages/tracker-github/src/module.ts`: 255 uncovered lines, in functions
+that no test calls (listed under the table below). It has one Fallow complexity finding
 (`onIssue`). `tracker.ts` in the same package has another (`dispatch`) and
 the repeated status-comment reads.
 
@@ -90,46 +95,67 @@ engine; 2026-11-18):
   `docs/backlog/orchestrator-release-rejection-is-unhandled.md` before a
   test can reach them.
 
+Left open by the plugin command pass (2026-11-18):
+
+- `packages/forge-github/src/setup-project.ts`, lines 142-156: the clone
+  itself. The contributor calls `runGit` directly, so a test would clone
+  from github.com. It needs a git seam (the forge module already takes a
+  `GitRunner`); ask before adding one. In the tests the fake app refuses
+  the git token, so no test reaches the clone.
+- `packages/host/src/cli/project-setup.ts`, 64 lines: `runContributor`,
+  `pickForRole` with two candidates, `askProjectName` and the stop line.
+  The wizard imports `@clack/prompts` directly, and the registry resolves
+  contributors from the real packages only. So a test can give it no fake
+  prompt and no fake contributor. It needs a prompts seam; ask before
+  adding one. Lines 81-84 wait for
+  `docs/backlog/projects-add-takes-any-name.md`.
+- `packages/channel-slack/src/cli.ts`, lines 36-49: the `manifest` prompt
+  for an unconfigured home. `cliFixture` passes the real prompts: give it
+  a `prompts` option and set `process.stdin.isTTY` to reach these 13
+  lines.
+- `packages/channel-discord/src/cli.ts`, lines 25-27: `register` calls
+  Discord. Not for a unit test.
+
 ## Where the uncovered lines are
 
-From `coverage/coverage-final.json` at the baseline: 4,608 of 41,453
+From `coverage/coverage-final.json` at the baseline: 3,868 of 41,453
 lines are uncovered. The largest files, under `packages/`:
 
 | Uncovered lines | File |
 | ---: | --- |
-| 647 | `channel-discord/src/module.ts` |
-| 270 | `tracker-github/src/module.ts` |
+| 643 | `channel-discord/src/module.ts` |
+| 255 | `tracker-github/src/module.ts` |
 | 233 | `chrome/src/tab.ts` |
-| 180 | `google-meet/src/cli.ts` |
 | 180 | `google-meet/src/meeting.ts` |
 | 171 | `google-meet/src/module.ts` |
 | 150 | `chrome/src/chrome.ts` |
-| 143 | `tracker-linear/src/client.ts` |
-| 139 | `host/src/cli/project-setup.ts` |
-| 138 | `chrome/src/connection.ts` |
+| 136 | `chrome/src/connection.ts` |
 | 126 | `channel-slack/src/connection.ts` |
-| 116 | `host/src/orchestrator/orchestrator.ts` (and 105 branches) |
-| 113 | `forge-github/src/setup-project.ts` |
-| 111 | `tracker-linear/src/module.ts` |
+| 116 | `host/src/orchestrator/orchestrator.ts` |
 | 105 | `channel-discord/src/voice.ts` |
 | 96 | `knowledge/src/index.ts` |
+| 96 | `tracker-linear/src/module.ts` |
 | 91 | `cli/src/service.ts` |
 | 90 | `core/src/face-tab.ts` |
 | 69 | `host/src/server.ts` |
+| 64 | `host/src/cli/project-setup.ts` |
 | 60 | `host/src/application.ts` |
+| 59 | `host/src/api/host-tools.ts` |
+| 58 | `cli/src/add.ts` |
+| 58 | `tracker-linear/src/tracker.ts` |
 
 Notes for these:
 
 - `channel-discord/src/module.ts` constructs `new Client(...)` itself: it
   has no seam like Slack's `SlackConnection`. Ask before adding one.
 - `tracker-github/src/module.ts`: fake services and platform adapters for
-  lifecycle tests. 21 functions are never called by a test: the delivery
+  lifecycle tests. Never called by a test: the delivery
   (`send`, `edit`, `notice`, …), `question`, `plan`, the assistant start
   and stop, `onBrought`, `onStopSignal`, `followUp`.
 - `chrome` and `google-meet`: use fake CDP, tabs and processes; keep live
   browser/platform gates separate.
-- `tracker-linear/src/client.ts`, `forge-github/src/setup-project.ts` and
-  `host/src/cli/project-setup.ts`: further API and prompt-flow units.
+- `host/src/cli/project-setup.ts`: what is left needs a prompts seam (see
+  "Next batch").
 
 ## Test approach the operator wants
 
@@ -218,6 +244,34 @@ Notes for these:
 - No exclusion or suppression to make a score green, and none at all
   without the operator's approval (see the hard rule in "How the operator
   wants to work").
+
+Fixtures and gotchas from the plugin command pass (2026-11-18):
+
+- `packages/plugin/test/cli-fixture.ts`: `cliFixture(factory, home)` plays
+  a plugin's commands against a recorded context. `home` is
+  `{ plugins, stateDirectory, store, onPoke }`. It returns
+  `{ printed, said, pokes(), run(...line) }`. An action that rejects makes
+  `run` reject.
+- Fallow reports a duplicate group at 3 occurrences. Three similar test
+  files make a new finding. Write one table-driven test instead; that is
+  why the inbox test sits in the kit's tests (`plugin/test/cli.test.ts`)
+  and finds each adapter by name.
+- The kit cannot import its dependents statically. Its tests reach them
+  with `await import(spec)` where `spec` is a string value.
+- Fixtures cross packages by relative path: `../../plugin/test/…`.
+- Never replace `process.stdout.write` with a function that holds the
+  bytes back. The test runner reports over the same pipe, and one test's
+  result was lost that way. Watch it with a spy that calls through
+  (`t.mock.method(process.stdout, 'write')`); the words then also show in
+  the test output.
+- `githubApp()` keeps one connection for the whole process. Mock
+  `GitHubApp.connect` and let one fake app answer every test in the file
+  (`forge-github/test/setup-project.test.ts`).
+- `LinearClient` takes `options.fetch`: script it with a function, no
+  socket (`scripted()` in `tracker-linear/test/client.test.ts`).
+- A wait loop on `sleep`: enable mock `Date` and `setTimeout`, settle a
+  promise when the sleep is scheduled, then tick past the deadline
+  (`clock()` in `google-meet/test/cli.test.ts`).
 
 ## Coverage contracts to review
 

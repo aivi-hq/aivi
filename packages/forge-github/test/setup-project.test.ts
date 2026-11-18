@@ -1,13 +1,21 @@
-/** What the clone contributor decides without asking a person or a network. The
- *  flow itself — the prompts, the clone landing on disk — is the live gate's;
- *  what is proved here is the name a repository suggests and the transport the
- *  clone goes through, both of which a wrong answer would put in a place a
- *  person has to clean up by hand.
+/** What the clone contributor decides without a network: the name a
+ *  repository suggests, which repository the person is asked for, what stops
+ *  the flow before a directory is made, and what it does with a checkout that
+ *  is already there. The clone landing on disk is the live gate's: a wrong
+ *  answer in any of these would put something in a place a person has to
+ *  clean up by hand.
  */
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { type TestContext, test } from 'node:test';
 import { PROJECT_ID } from '@aivi/core';
-import { suggestedProjectId } from '../src/setup-project.ts';
+import { GitHubApp, runGit } from '@aivi/github';
+import { PluginSetupCancelled, type ProjectSetupContext } from '@aivi/plugin';
+import { cancelSetup, setupFixture } from '../../plugin/test/setup-fixture.ts';
+import { contributor, suggestedProjectId } from '../src/setup-project.ts';
 
 test('a repository name becomes the project name a directory can take', () => {
   assert.equal(suggestedProjectId('widget'), 'widget');
@@ -24,4 +32,136 @@ test('and the suggestion is always a name aivi accepts, never one to be fixed la
     'p-123-numbers',
     'a name that no longer starts with a letter keeps one',
   );
+});
+
+/** What GitHub says of the app's grant. The forge keeps one app connection
+ *  for the whole process, so one app answers every test here and each test
+ *  sets what it says. No test clones: the token is refused, which stops the
+ *  flow before git reaches the network. */
+const github: { granted: string[] | Error; reads: boolean } = { granted: [], reads: true };
+const app = {
+  appSlug: 'aivi-app',
+  installationId: 42,
+  repositories: async () => {
+    if (github.granted instanceof Error) throw github.granted;
+    return github.granted.map(id => ({ id }));
+  },
+  repository: async () => (github.reads ? { defaultBranch: 'main' } : undefined),
+  gitToken: async (): Promise<string> => {
+    throw new Error('GitHub refused the installation token');
+  },
+};
+
+/** A home, the person's scripted answers, and the context the runner hands
+ *  the forge; `projectId` is the name an earlier role settled. */
+async function wizard(t: TestContext, answers: unknown[], projectId?: string) {
+  const home = await mkdtemp(join(tmpdir(), 'aivi-forge-project-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  t.mock.method(GitHubApp, 'connect', async () => app as unknown as GitHubApp);
+  const h = setupFixture(t, answers);
+  const ctx: ProjectSetupContext = {
+    home,
+    configPath: join(home, 'config.json'),
+    config: {},
+    forgeConfigured: true,
+    print: h.print,
+    fetch: h.fetch,
+    withStore: h.withStore,
+    agents: async () => [],
+    prompts: { ...h.ctx.prompts, autocomplete: h.ask } as unknown as ProjectSetupContext['prompts'],
+    ...(projectId ? { projectId } : {}),
+  };
+  return { ...h, ctx, home };
+}
+
+/** A checkout already in the project's place, its `origin` pointing at `url`. */
+async function checkout(home: string, projectId: string, url: string) {
+  const source = join(home, 'projects', projectId, 'source');
+  await mkdir(source, { recursive: true });
+  for (const args of [
+    ['init', '-q'],
+    ['remote', 'add', 'origin', url],
+  ])
+    assert.equal((await runGit(source, args)).ok, true, `git ${args.join(' ')}`);
+  return source;
+}
+
+test('the forge offers the granted repositories, proves the pick, and takes a checkout that is already there', async t => {
+  github.granted = ['acme/site', 'acme/docs'];
+  github.reads = true;
+  const h = await wizard(t, ['acme/site', ' ']);
+  await checkout(h.home, 'site', 'https://github.com/acme/site.git');
+
+  assert.deepEqual(await contributor.setup(h.ctx), { id: 'site', cloned: true, repository: 'acme/site' });
+  assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, ['The app can see 2 repositories']);
+  assert.deepEqual(h.questions[0]!.options, [
+    { value: 'acme/site', label: 'acme/site' },
+    { value: 'acme/docs', label: 'acme/docs' },
+  ]);
+  assert.deepEqual(
+    h.log.mock.calls.map(call => call.arguments[0]),
+    [
+      'The app reads acme/site (default branch main).',
+      'projects/site/source is already a checkout of acme/site; left as it is.',
+    ],
+  );
+  const name = h.questions[1]!;
+  assert.equal(name.message, 'Project name');
+  assert.equal(name.validate!(''), undefined, 'enter takes the name the repository suggests');
+  assert.equal(name.validate!(undefined), undefined);
+  assert.equal(name.validate!('my-site'), undefined);
+  assert.match(name.validate!('My Site')!, /lowercase letters, digits, dashes and underscores/);
+});
+
+test('a checkout of another repository, or of none, is never taken over', async t => {
+  github.granted = ['acme/site'];
+  github.reads = true;
+  const h = await wizard(t, ['acme/site', 'acme/site'], 'site');
+  const source = await checkout(h.home, 'site', 'https://github.com/other/thing.git');
+  await assert.rejects(
+    contributor.setup(h.ctx),
+    /projects\/site\/source is a checkout of other\/thing\. Move it aside, or choose a project name/,
+  );
+  assert.equal((await runGit(source, ['remote', 'remove', 'origin'])).ok, true);
+  await assert.rejects(contributor.setup(h.ctx), /is a checkout of something that is not a GitHub repository/);
+  assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, ['The app can see 1 repository']);
+  assert.equal(h.questions.length, 2, 'the name an earlier role settled is not asked again');
+});
+
+test('a grant that cannot be listed leaves the typed question, and its answer is still refereed', async t => {
+  github.granted = new Error('Bad credentials');
+  github.reads = false;
+  const h = await wizard(t, ['https://gitlab.com/acme/site', 'acme/site']);
+  await assert.rejects(contributor.setup(h.ctx), /gitlab\.com is not github\.com, and this forge speaks github\.com/);
+  assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, [
+    "Could not list the app's repositories: Bad credentials",
+  ]);
+  const typed = h.questions[0]!;
+  assert.equal(typed.options, undefined, 'there is no list to pick from');
+  assert.equal(typed.validate!('acme/site'), undefined);
+  assert.match(typed.validate!('not a repository')!, /owner\/repo, or as a github\.com URL/);
+  assert.match(typed.validate!(undefined)!, /owner\/repo, or as a github\.com URL/);
+
+  await assert.rejects(
+    contributor.setup(h.ctx),
+    /the app aivi-app cannot see acme\/site through installation #42\. Grant it that repository/,
+  );
+  assert.equal(existsSync(join(h.home, 'projects')), false, 'nothing is made for a repository the app cannot read');
+});
+
+test('a cancelled question stops the forge before anything is made', async t => {
+  github.granted = ['acme/site'];
+  github.reads = true;
+  const h = await wizard(t, [cancelSetup, 'acme/site', cancelSetup]);
+  await assert.rejects(contributor.setup(h.ctx), PluginSetupCancelled, 'which repository');
+  await assert.rejects(contributor.setup(h.ctx), PluginSetupCancelled, 'the project name');
+  assert.equal(existsSync(join(h.home, 'projects')), false);
+});
+
+test('a token GitHub refuses stops the clone before a directory is made', async t => {
+  github.granted = ['acme/site'];
+  github.reads = true;
+  const h = await wizard(t, ['acme/site', 'my-site']);
+  await assert.rejects(contributor.setup(h.ctx), /GitHub refused the installation token/);
+  assert.equal(existsSync(join(h.home, 'projects')), false);
 });

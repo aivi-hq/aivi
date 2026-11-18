@@ -210,3 +210,217 @@ test('resolveTeams takes ids and keys alike; an unknown token lists what the app
     /SEC is not a team this app can see \(visible: PEC \(Peck Track\), WEB \(Web & Docs\)\)/,
   );
 });
+
+/** Linear answered by a function, with no socket: the token is handed out,
+ *  and every GraphQL call gets the data of the moment. */
+function scripted() {
+  const calls: { query: string; variables: Record<string, unknown> }[] = [];
+  const now: { data: unknown } = { data: {} };
+  const client = new LinearClient(
+    { clientId: 'cid', clientSecret: 'sec' },
+    {
+      fetch: async (url, init) => {
+        if (url.endsWith('/oauth/token')) return Response.json({ access_token: 'token', expires_in: 86_399 });
+        calls.push(JSON.parse(String(init?.body)));
+        return Response.json({ data: now.data });
+      },
+    },
+  );
+  return {
+    client,
+    answer: (data: unknown) => {
+      now.data = data;
+    },
+    sent: () => calls.at(-1)?.variables,
+  };
+}
+
+/** An issue as Linear's connections spell it. */
+const rawIssue = (id: string, priority: number, createdAt: string) => ({
+  id,
+  identifier: id.toUpperCase(),
+  title: `Ticket ${id}`,
+  priority,
+  createdAt,
+  labels: { nodes: [] },
+  inverseRelations: { nodes: [] },
+});
+
+test('each mutation sends its variables and refuses an answer that is not a success', async () => {
+  const linear = scripted();
+  const { client } = linear;
+  const plan = [{ content: 'Read the ticket', status: 'completed' }];
+  for (const { field, call, variables, refusal } of [
+    {
+      field: 'issueUpdate',
+      call: () => client.transitionIssue('i1', 'state-doing'),
+      variables: { id: 'i1', input: { stateId: 'state-doing' } },
+      refusal: /issueUpdate was not successful/,
+    },
+    {
+      field: 'issueAddLabel',
+      call: () => client.addLabel('i1', 'label-1'),
+      variables: { id: 'i1', labelId: 'label-1' },
+      refusal: /issueAddLabel was not successful/,
+    },
+    {
+      field: 'issueRemoveLabel',
+      call: () => client.removeLabel('i1', 'label-1'),
+      variables: { id: 'i1', labelId: 'label-1' },
+      refusal: /issueRemoveLabel was not successful/,
+    },
+    {
+      field: 'commentCreate',
+      call: () => client.createComment('i1', 'Done.'),
+      variables: { input: { issueId: 'i1', body: 'Done.' } },
+      refusal: /commentCreate was not successful/,
+    },
+    {
+      field: 'agentSessionUpdate',
+      call: () => client.setPlan('as-1', plan),
+      variables: { id: 'as-1', input: { plan } },
+      refusal: /agentSessionUpdate was not successful/,
+    },
+    {
+      field: 'issueDelete',
+      call: () => client.deleteIssue('i1'),
+      variables: { id: 'i1' },
+      refusal: /issueDelete failed/,
+    },
+  ]) {
+    linear.answer({ [field]: { success: true } });
+    await call();
+    assert.deepEqual(linear.sent(), variables, field);
+    linear.answer({ [field]: { success: false } });
+    await assert.rejects(call(), refusal);
+  }
+});
+
+test('operations that answer with an issue or a session return it, and refuse a failure', async () => {
+  const linear = scripted();
+  const { client } = linear;
+  const { inverseRelations: _, ...fields } = rawIssue('i1', 2, '2026-01-02T00:00:00Z');
+  const flat = { ...fields, labels: [], blockedBy: [] };
+
+  linear.answer({ issueUpdate: { success: true, issue: rawIssue('i1', 2, '2026-01-02T00:00:00Z') } });
+  assert.deepEqual(await client.issueUpdate('i1', { title: 'New words' }), flat);
+  assert.deepEqual(linear.sent(), { id: 'i1', input: { title: 'New words' } });
+  linear.answer({ issueUpdate: { success: true, issue: null } });
+  await assert.rejects(client.issueUpdate('i1', { title: 'x' }), /issueUpdate was not successful/);
+  linear.answer({ issueUpdate: { success: false, issue: null } });
+  await assert.rejects(client.issueUpdate('i1', { title: 'x' }), /issueUpdate was not successful/);
+
+  linear.answer({ issueCreate: { success: true, issue: rawIssue('i1', 2, '2026-01-02T00:00:00Z') } });
+  assert.deepEqual(await client.createIssue({ teamId: 't-1', title: 'Throwaway' }), flat);
+  assert.deepEqual(linear.sent(), { input: { teamId: 't-1', title: 'Throwaway' } });
+  linear.answer({ issueCreate: { success: false } });
+  await assert.rejects(client.createIssue({ teamId: 't-1', title: 'Throwaway' }), /issueCreate failed/);
+
+  const delegated = {
+    success: true,
+    issue: { identifier: 'ENG-1', agentSessions: { nodes: [{ id: 'as-1', status: 'pending', startedAt: null }] } },
+  };
+  linear.answer({ issueUpdate: delegated });
+  assert.deepEqual(await client.setDelegate('i1', 'app-1'), delegated, 'the answer carries the agent session');
+  assert.deepEqual(linear.sent(), { id: 'i1', input: { delegateId: 'app-1' } });
+  linear.answer({ issueUpdate: { success: false } });
+  await assert.rejects(client.setDelegate('i1', null), /issueUpdate\(delegateId\) failed/);
+
+  linear.answer({ agentActivityCreate: { success: true, agentActivity: { id: 'activity-1' } } });
+  assert.equal(
+    await client.createActivity({ agentSessionId: 'as-1', content: { type: 'thought', body: 'hi' } }),
+    'activity-1',
+  );
+});
+
+test('reads return Linear’s facts in the order a person expects, and say when the thing is gone', async () => {
+  const linear = scripted();
+  const { client } = linear;
+
+  linear.answer({
+    issue: {
+      comments: {
+        nodes: [
+          { body: 'second', createdAt: '2026-01-02T00:00:00Z', user: null },
+          { body: 'first', createdAt: '2026-01-01T00:00:00Z', user: { name: 'Robin' } },
+        ],
+      },
+      agentSessions: { nodes: [{ id: 'as-1', url: 'https://linear.app/s/as-1' }] },
+    },
+  });
+  assert.deepEqual(await client.issueComments('i1'), [
+    { author: 'Robin', body: 'first', at: '2026-01-01T00:00:00Z' },
+    { author: null, body: 'second', at: '2026-01-02T00:00:00Z' },
+  ]);
+  const facts = await client.closingNoteFacts('i1');
+  assert.deepEqual(facts.sessions, [{ id: 'as-1', url: 'https://linear.app/s/as-1' }]);
+  assert.equal(facts.comments.length, 2);
+  linear.answer({ issue: null });
+  await assert.rejects(client.issueComments('i1'), /Entity not found: Issue/);
+  await assert.rejects(client.closingNoteFacts('i1'), /issue i1 not found/);
+
+  linear.answer({ team: { labels: { nodes: [{ name: 'bug' }, { name: 'needs-human' }] } } });
+  assert.deepEqual(await client.teamLabelNames('t-1'), ['bug', 'needs-human']);
+  linear.answer({ team: null });
+  await assert.rejects(client.teamLabelNames('t-1'), /team t-1 not found/);
+
+  linear.answer({ agentSession: { endedAt: null } });
+  assert.equal(await client.agentSessionEnded('as-1'), false);
+  linear.answer({ agentSession: { endedAt: '2026-01-02T00:00:00Z' } });
+  assert.equal(await client.agentSessionEnded('as-1'), true);
+
+  linear.answer({
+    issues: {
+      nodes: [
+        rawIssue('unranked', 0, '2026-01-01T00:00:00Z'),
+        rawIssue('urgent', 1, '2026-01-03T00:00:00Z'),
+        rawIssue('high-newer', 2, '2026-01-02T00:00:00Z'),
+        rawIssue('high-older', 2, '2026-01-01T00:00:00Z'),
+      ],
+      pageInfo: { hasNextPage: true },
+    },
+  });
+  const lane = await client.issuesIn('t-1', 'state-todo');
+  assert.deepEqual(
+    lane.issues.map(issue => issue.id),
+    ['urgent', 'high-older', 'high-newer', 'unranked'],
+    'Linear’s priority order, oldest first within a rank, unranked last',
+  );
+  assert.equal(lane.truncated, true, 'more than a page sits in the lane, and the walk is told');
+  assert.deepEqual(linear.sent(), { teamId: 't-1', stateId: 'state-todo' });
+});
+
+test('a label name resolves to the team’s own label, then the workspace’s, and is created when nobody has it', async () => {
+  const linear = scripted();
+  const { client } = linear;
+  const workspace = { id: 'workspace-label', team: null };
+  const foreign = { id: 'other-team-label', team: { id: 't-2' } };
+
+  linear.answer({ issueLabels: { nodes: [workspace, foreign, { id: 'own-label', team: { id: 't-1' } }] } });
+  assert.equal(await client.labelIdForTeam('t-1', 'needs-human'), 'own-label');
+  linear.answer({ issueLabels: { nodes: [foreign, workspace] } });
+  assert.equal(await client.labelIdForTeam('t-1', 'needs-human'), 'workspace-label');
+
+  linear.answer({
+    issueLabels: { nodes: [foreign] },
+    issueLabelCreate: { success: true, issueLabel: { id: 'new-label' } },
+  });
+  assert.equal(await client.labelIdForTeam('t-1', 'needs-human'), 'new-label');
+  assert.deepEqual(linear.sent(), { input: { name: 'needs-human', teamId: 't-1' } }, 'created on the team');
+  linear.answer({ issueLabels: { nodes: [] }, issueLabelCreate: { success: false } });
+  await assert.rejects(client.labelIdForTeam('t-1', 'needs-human'), /label "needs-human" was not created/);
+});
+
+test('a token request Linear refuses is said with its status and its words', async () => {
+  const client = new LinearClient(
+    { clientId: 'cid', clientSecret: 'sec' },
+    { fetch: async () => new Response('upstream down', { status: 503 }) },
+  );
+  await assert.rejects(
+    client.viewerId(),
+    (error: unknown) =>
+      error instanceof LinearApiError &&
+      error.status === 503 &&
+      /Linear token request failed \(503\): upstream down/.test(error.message),
+  );
+});
