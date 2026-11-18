@@ -7,26 +7,35 @@ serves that goal. Everything else is a ticket in `docs/backlog/` (see
 
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` (2026-11-18, the tracker-github
-pass) exited 0: 1,317 tests passed. Production coverage is 91.42% lines,
-90.40% branches and 86.94% functions; 3,556 of 41,492 lines are
-uncovered. Fallow still reports 2 check findings, 5 duplicate groups, 13
-health findings (2 critical, 1 high, 10 moderate), 6 refactoring targets
-and 2 unconfigured-policy diagnostics. This is not zero tool feedback. The
-run printed these warnings:
+The latest full `npm run agentic:verify` (2026-11-18, after the move to
+Node's own coverage and Fallow 3.43.2) exited 0: 1,317 tests passed.
+Coverage, from Node's report: 90.93% lines, 90.43% branches and 86.04%
+functions. Node counts anonymous functions, which c8 did not, so the
+function figure is stricter than the one before. Fallow 3.43.2, with its
+type-aware companion, reads the V8 folder `coverage/v8` and reports 8 check
+findings, 5 duplicate groups, 13 health findings (1 critical, 1 high, 11
+moderate), 20 refactoring targets and 2 diagnostics (a Fallow-only run
+confirmed the 2 after the redundant `dev/**` ignore entry was removed from
+`.fallowrc.jsonc`; the full run had 3). It reports more than
+3.28.0 did; see "Remaining Fallow findings". This is not zero tool
+feedback. The run printed these warnings:
 
 - Fallow's graph-cache warning ("Graph cache decoded but not reused:
   resolver, entry points, or plugins changed"). It comes and goes between
   runs.
 - One `ExperimentalWarning` for each of the two test files that use module
   mocks.
+- One line after Fallow's JSON: "[W] Exit code 0: gates error-severity-findings
+  (2 at or above error), health-findings (13 at or above error) failed, but
+  bare fallow does not enforce them in --format json." It says what a gated
+  run would fail on.
 - `npm notice` lines: the pack listing that `pack-smoke` prints. That is its
   normal output.
 
-The full output is `coverage/agentic-verify-github2.log`; exact coverage is
-`coverage/coverage-final.json`. Both are generated/ignored artifacts:
-regenerate them if absent or stale. No checks or suppressions were
-weakened.
+The full output is `coverage/agentic-verify-node.log`. The raw coverage is
+`coverage/v8`, which Fallow reads; `npm run test:cov` clears and rewrites
+it. Both are generated/ignored artifacts: regenerate them if absent or
+stale. No checks or suppressions were weakened.
 
 At 100% lines, branches and functions, with no Fallow finding:
 `packages/voice`; in `packages/host/src/`: `scheduler.ts`,
@@ -35,9 +44,9 @@ At 100% lines, branches and functions, with no Fallow finding:
 `dispatcher/dispatcher.ts` is at 100% lines and functions with one branch
 open (see "Next batch"). 91 of 207 files are at 100% on all three.
 
-`packages/tracker-github/src/module.ts` is at 96.27% lines, 97.3% branches
-and 95.55% functions. What is open is stop handling that nothing can reach
-(see "Left open by the tracker-github pass").
+`packages/tracker-github/src/module.ts` is at 96.27% lines, 97.27%
+branches and 95.31% functions. What is open is stop handling that nothing
+can reach (see "Left open by the tracker-github pass").
 
 At 100% lines since the plugin command pass (branches not checked):
 `google-meet/src/cli.ts`, `tracker-github/src/cli.ts` and `index.ts`,
@@ -113,16 +122,19 @@ The largest gaps, by uncovered lines (the table below has the list):
   `docs/backlog/failed-module-start-leaves-its-registrations.md`.
 - The rest of `packages/tracker-github/src/`, in the same package and the
   same style: `runprogress.ts` (33 lines, no test file; three duplicate
-  groups run through it, see "Remaining Fallow findings"), `client.ts` (36
-  lines, 25 branches; `githubClient` is the default tracker's connection),
+  groups run through it, see "Remaining Fallow findings"), `client.ts` (34
+  lines, 23 branches; `githubClient` is the default tracker's connection),
   `setup-project.ts` (43 lines, 32 branches; `askLanes` is a Fallow
   finding), `probe.ts` (17 lines, 17 branches), and a few branches in
   `projects.ts` (4) and `work.ts` (3).
+- `packages/host/src/orchestrator/orchestrator.ts` (100 lines, 100
+  branches): lines 188-193 wait for a small, clear fix. Under the
+  operator's rule it is fixed with a test:
+  `docs/backlog/orchestrator-release-rejection-is-unhandled.md`. The
+  dispatcher's twin bug is
+  `docs/backlog/lease-callback-that-throws-escapes-the-drain.md`.
 - Needs a ruling first: `channel-discord/src/module.ts` (643 lines; see
-  "Code to refactor before it can be unit-tested") and
-  `host/src/orchestrator/orchestrator.ts` (116 lines, 105 branches; lines
-  188-193 wait for the fix in
-  `docs/backlog/orchestrator-release-rejection-is-unhandled.md`).
+  "Code to refactor before it can be unit-tested").
 
 Left open by the tracker-github pass (`module.ts` and `tracker.ts`;
 2026-11-18):
@@ -193,8 +205,9 @@ mocks reached them without a refactor (see `docs/testing.md`).
 
 ## Where the uncovered lines are
 
-From `coverage/coverage-final.json` at the baseline: 3,556 of 41,492
-lines are uncovered. The largest files, under `packages/`:
+From the table that `npm run test:cov` prints (its last column lists the
+uncovered lines of each file): 3,529 lines are uncovered, in 207 files. The
+largest files, under `packages/`:
 
 | Uncovered lines | File |
 | ---: | --- |
@@ -205,8 +218,8 @@ lines are uncovered. The largest files, under `packages/`:
 | 150 | `chrome/src/chrome.ts` |
 | 136 | `chrome/src/connection.ts` |
 | 126 | `channel-slack/src/connection.ts` |
-| 116 | `host/src/orchestrator/orchestrator.ts` |
 | 105 | `channel-discord/src/voice.ts` |
+| 100 | `host/src/orchestrator/orchestrator.ts` |
 | 96 | `knowledge/src/index.ts` |
 | 96 | `tracker-linear/src/module.ts` |
 | 91 | `cli/src/service.ts` |
@@ -250,15 +263,12 @@ Notes for these:
   pass `--experimental-test-module-mocks`: "go with the flag for now", and
   "every use of it must be accounted for". Read `docs/testing.md` first:
   the rules, the Node version facts and the register of every use.
-  - A mock of a file in `packages/*/src` leaves that file one phantom
-    uncovered branch, so it cannot reach 100% branches while the mock
-    stands. Verified on `host/src/index.ts`; the same mark is on
-    `host/src/cli/context.ts`, `host/src/cli/registry.ts` and
-    `github/src/index.ts`, the files the register replaces today. For a
-    module of ours, give the unit a parameter whose default is the real
-    thing (`githubTracker(config, connect)`). Details in
-    `docs/testing.md`. Those three files need a seam or the operator's
-    word.
+  - A mocked file can show a fake gap in the coverage report (not real
+    code): Node's generated mock script holds a never-run `if (…) throw`
+    that the report lays onto the real file's first lines. Under Node's
+    coverage it shows on `github/src/index.ts` only (a comment, plus one
+    branch). Mocks are fine to use; do not avoid one because of it. Details
+    in `docs/testing.md`.
 - The operator on a recording object that a test file keeps by hand
   (2026-11-18): it "reads like a custom mock. E.g. jest has
   .toHaveBeenCalled and you are maintaining a custom object." The
@@ -311,7 +321,7 @@ Notes for these:
   - `recorder()` is a logger that keeps its lines. `next(event)` settles
     with the first line of that event, said already or still to come.
 - Host gotchas:
-  - c8 counts V8 blocks. An `if` with no `else` whose body always runs
+  - Coverage counts V8 blocks. An `if` with no `else` whose body always runs
     shows no gap. A guard's `return`, the right side of `??` or `||`, a
     ternary arm and a `catch` body are blocks of their own.
   - `t.mock.timers.enable({ apis: ['setTimeout'] })` leaves `Date.now()`
@@ -329,14 +339,16 @@ Notes for these:
     the tests for those paths say so.
 - When mocking a built-in used through named ESM imports, call
   `syncBuiltinESMExports()` after replacing it and after restoring it.
-- Check coverage in isolation, using a separate report directory so the
-  full report remains useful. For example:
+- Check coverage in isolation: run one test file with Node's coverage,
+  limited to the file you work on. It prints the table for that file only.
+  For example:
 
   ```sh
-  NODE_OPTIONS=--conditions=development node_modules/.bin/c8 \
-    '--include=packages/voice/src/engine.ts' --reports-dir=coverage/targeted \
-    node --test --experimental-test-module-mocks --conditions=development \
-      packages/voice/test/engine.test.ts
+  NODE_OPTIONS=--conditions=development node --test \
+    --experimental-test-module-mocks --conditions=development \
+    --experimental-test-coverage --test-coverage-include-all \
+    '--test-coverage-include=packages/voice/src/engine.ts' \
+    packages/voice/test/engine.test.ts
   ```
 
 - A bug that a test exposes: if the fix is simple, write the test that
@@ -434,6 +446,26 @@ Verify actual callers and public contracts before removing these:
   `private constructor()` and contains no `VersionInfo`. Triage/report the
   analyzer defect; do not publish the private type just to silence it.
 
+New with Fallow 3.43.2 (2026-11-18). Each needs a look; none is changed yet:
+
+- Unused dev dependencies in the root `package.json`: `@opencode/client` and
+  `commander`. `scripts/` is ignored by Fallow (see `.fallowrc.jsonc`) and
+  may use them: check before removing. Do not hide them with
+  `ignoreDependencies` without the operator.
+- Unlisted dependency `@aivi/host`: imported by
+  `packages/plugin/test/cli.test.ts` (line 79), the kit's test that reaches
+  its dependents by `await import(spec)`.
+- Unlisted binary `opencode`: run by `packages/cli/src/setup.ts` and
+  `uninstall.ts`. It is an external program, not an npm dependency.
+- Duplicate export aliases: `contributor` and `default` are one value
+  exported twice in `packages/tracker-github/src/setup-project.ts` and
+  `packages/tracker-linear/src/setup-project.ts`.
+- 14 of the 20 refactoring targets are change coupling ("changes with X in N
+  commits without an import"), mostly a source file and its test. They are
+  suggestions, not defects.
+- The new `fallow-type-aware` dev dependency is required: without it Fallow
+  warns on every run and falls back to conservative findings.
+
 Duplicate groups to revisit:
 
 - GitHub API test fixtures repeated across `github`, `forge-github` and
@@ -471,11 +503,12 @@ branches instead of merging files to dilute the metric.
 
 High-risk health work includes `driveJoin` in
 `packages/google-meet/src/meeting.ts`: its CRAP score uses actual zero
-coverage. By contrast, the reported CRAP for the anonymous callback in
-`packages/host/src/channel/turns.ts` is estimated. Check `coverage_source`
-and the Istanbul function map before adding tests for an estimated score;
-c8 can omit anonymous function names. The temporary CRAP threshold and its
-reason are documented in `.fallowrc.jsonc`.
+coverage. Fallow reads the V8 folder `coverage/v8` that `npm run test:cov`
+writes, so every function is measured, anonymous callbacks included. The
+temporary CRAP threshold is 350 (`.fallowrc.jsonc`): at the default limit
+of 30 the same coverage gives 68 health findings instead of 13, most of
+them functions no test calls yet. It goes back to 30 when that gap is
+closed.
 
 ## Tool feedback that still needs attention
 

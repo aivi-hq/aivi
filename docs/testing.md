@@ -35,22 +35,20 @@ A use follows these rules:
   `{ exports: { ...real, runGit } }`.
 - Add the use to the register in the same commit.
 
-A mock of a file under `packages/*/src` costs that file its 100%:
+A mocked file can show a fake gap in the coverage report. It is not real code:
 
 - Node builds the mock from generated source. It holds an
-  `if (…) { throw … }` block that nothing enters. c8 maps that block onto
-  the real file by its URL, so the file shows one uncovered branch near its
-  first lines, in a comment or an import.
-- Isolated on `packages/host/src/index.ts` (2026-11-18): a test file that
-  mocks it shows the branch; the same code run by a test file that does not
-  mock it shows none. The full report shows the same mark on
-  `packages/host/src/cli/context.ts`, `packages/host/src/cli/registry.ts`
-  and `packages/github/src/index.ts`, the files the register replaces.
-- A module outside `packages/*/src` (`@clack/prompts`) has no such cost.
-- For a module of ours, give the unit a parameter whose default is the real
-  thing (`githubTracker(config, connect = githubClient)` in
-  `packages/tracker-github/src/module.ts`) and pass a fake. Use a mock only
-  when no seam can be made.
+  `if (…) { throw … }` block that nothing enters. The generated script has
+  the real file's path plus `?node-test-mock=N`, and the report can lay that
+  block onto the real file's first lines.
+- Under Node's coverage (`npm run test:cov`) it shows on
+  `packages/github/src/index.ts` — lines 3–4, a comment, and one branch at
+  line 2 — because `packages/forge-github/test/setup-project.test.ts` mocks
+  it. Isolated on 2026-11-18: with the mock, the gap; the same file loaded
+  by `packages/tracker-github/test/tracker.test.ts` without the mock, none.
+  The other mocked files show none.
+- Do not write a test for it, and do not avoid a mock because of it. Mocks
+  are the way to test a unit (the operator, 2026-11-18).
 
 Node version:
 
