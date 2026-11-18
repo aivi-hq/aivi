@@ -26,6 +26,7 @@
  */
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
+import { objectMessage } from './sidecar.ts';
 
 export type EngineEvent =
   | { ev: 'delta'; text: string; pos: number; lane?: string }
@@ -83,13 +84,6 @@ export interface EngineHandlers {
   onEvent(e: EngineEvent): void;
   /** Engine exited without being stopped (after the eof event it is normal). */
   onExit(code: number | null): void;
-}
-
-function objectMessage(line: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(line);
-  if (value === null || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('an engine message must be an object');
-  return value as Record<string, unknown>;
 }
 
 const finiteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);

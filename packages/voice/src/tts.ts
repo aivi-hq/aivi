@@ -16,6 +16,7 @@
  *  TTS, Dutch voices nl_male / nl_female).
  */
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { objectMessage } from './sidecar.ts';
 
 export interface TtsSpec {
   command: string;
@@ -84,28 +85,7 @@ export class TtsRun {
         for (let i = stdoutBuf.indexOf('\n'); i >= 0; i = stdoutBuf.indexOf('\n')) {
           const line = stdoutBuf.slice(0, i).trim();
           stdoutBuf = stdoutBuf.slice(i + 1);
-          if (!line) continue;
-          try {
-            const res = JSON.parse(line) as { id?: string; audio?: string; final?: boolean; error?: string };
-            if (!res.id) continue;
-            const waiter = this.pending.get(res.id);
-            if (!waiter) continue; // an abandoned request (barge-in): the rest of it goes unheard
-            if (res.error) {
-              this.log.warn('voice.tts.engine-error', { id: res.id, error: res.error });
-              this.pending.delete(res.id);
-              waiter.deliver(null);
-              continue;
-            }
-            if (res.audio) waiter.deliver(Buffer.from(res.audio, 'base64'));
-            if (res.final !== false) {
-              // The sentence is done (a non-streaming reply carries no flag
-              // and is its own final chunk — one path for the client).
-              this.pending.delete(res.id);
-              waiter.deliver(null);
-            }
-          } catch {
-            this.log.warn('voice.tts.bad-line', { line: line.slice(0, 120) });
-          }
+          if (line) this.receive(line);
         }
       });
       child.stdin.on('error', err => this.log.warn('voice.tts.stdin-error', { error: String(err) }));
@@ -129,6 +109,44 @@ export class TtsRun {
         }
       });
     });
+  }
+
+  /** One stdout line. Only a well-formed reply is spoken; a malformed one
+   *  ends its sentence now — left alone it would hold the voice until the
+   *  timeout. */
+  private receive(line: string): void {
+    let res: Record<string, unknown>;
+    try {
+      res = objectMessage(line);
+    } catch {
+      this.badLine(line);
+      return;
+    }
+    const { id, audio, error, final } = res;
+    if (typeof id !== 'string') {
+      this.badLine(line);
+      return;
+    }
+    const waiter = this.pending.get(id);
+    if (!waiter) return; // an abandoned request (barge-in): the rest of it goes unheard
+    const malformed =
+      (audio !== undefined && typeof audio !== 'string') ||
+      (error !== undefined && typeof error !== 'string') ||
+      (final !== undefined && typeof final !== 'boolean');
+    if (malformed) this.badLine(line);
+    else if (error) this.log.warn('voice.tts.engine-error', { id, error });
+    else if (audio) waiter.deliver(Buffer.from(audio, 'base64'));
+    // The sentence is done: a failed or malformed reply ends it unspoken, and
+    // a non-streaming reply carries no flag and is its own final chunk — one
+    // path for the client.
+    if (malformed || error || final !== false) {
+      this.pending.delete(id);
+      waiter.deliver(null);
+    }
+  }
+
+  private badLine(line: string): void {
+    this.log.warn('voice.tts.bad-line', { line: line.slice(0, 120) });
   }
 
   /** The process is running. A dead voice speaks nothing, so whoever keeps

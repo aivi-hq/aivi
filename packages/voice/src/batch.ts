@@ -14,6 +14,7 @@
  *  utterance must be visible, not silent.
  */
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { objectMessage } from './sidecar.ts';
 
 const SR = 16000;
 
@@ -84,18 +85,7 @@ export class BatchEngineRun {
         for (let i = stdoutBuf.indexOf('\n'); i >= 0; i = stdoutBuf.indexOf('\n')) {
           const line = stdoutBuf.slice(0, i).trim();
           stdoutBuf = stdoutBuf.slice(i + 1);
-          if (!line) continue;
-          try {
-            const res = JSON.parse(line) as { id?: string; text?: string; error?: string };
-            const settle = res.id ? this.pending.get(res.id) : undefined;
-            if (res.id && settle) {
-              this.pending.delete(res.id);
-              if (res.error) this.log.warn('voice.batch.engine-error', { id: res.id, error: res.error });
-              settle(res.error ? null : (res.text ?? null));
-            }
-          } catch {
-            this.log.warn('voice.batch.bad-line', { line: line.slice(0, 120) });
-          }
+          if (line) this.receive(line);
         }
       });
       child.stdin.on('error', err => this.log.warn('voice.batch.stdin-error', { error: String(err) }));
@@ -119,6 +109,37 @@ export class BatchEngineRun {
         }
       });
     });
+  }
+
+  /** One stdout line. Only a well-formed reply answers its request; a
+   *  malformed one still settles it — as lost, never as text. */
+  private receive(line: string): void {
+    let res: Record<string, unknown>;
+    try {
+      res = objectMessage(line);
+    } catch {
+      this.badLine(line);
+      return;
+    }
+    const { id, text, error } = res;
+    if (typeof id !== 'string') {
+      this.badLine(line);
+      return;
+    }
+    const settle = this.pending.get(id);
+    if (!settle) return; // a late answer to a request that already ended: nobody waits
+    this.pending.delete(id);
+    if ((text !== undefined && typeof text !== 'string') || (error !== undefined && typeof error !== 'string')) {
+      this.badLine(line);
+      settle(null);
+      return;
+    }
+    if (error) this.log.warn('voice.batch.engine-error', { id, error });
+    settle(error ? null : (text ?? null));
+  }
+
+  private badLine(line: string): void {
+    this.log.warn('voice.batch.bad-line', { line: line.slice(0, 120) });
   }
 
   /** The process is running. A dead endpoint answers every request with a
