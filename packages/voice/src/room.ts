@@ -235,12 +235,14 @@ export class HearingRoom implements VoiceRoom {
     this.engine = engine;
     try {
       await engine.start();
+      if (this.stopped) return; // the room closed while the models loaded
       this.engineReady = true;
       this.setEngineState('ready');
       for (const buf of this.buffered) engine.write(buf); // audio that arrived first goes in order
       this.buffered = [];
       this.bufferedBytes = 0;
     } catch (error) {
+      if (this.stopped) return; // closing the room ended the load: that is not a failed start
       // Failed like stt/tts fail: not cached as a permanent no, the next
       // audio tries the load again.
       this.engine = null;
