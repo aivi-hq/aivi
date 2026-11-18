@@ -41,10 +41,6 @@ export interface DispatcherLease {
    *  `unlimited` pool. */
   pool: string;
   sessionId?: string;
-  /** The ephemeral dispatcher-queue request this lease answers, when it does
-   *  (the dispatcher's memory; persisted so a boot can tell the service
-   *  which request landed while nobody was listening). */
-  requestId?: string;
   state: LeaseState;
   /** The last sign of activity the idle monitor times against. */
   activityAt: number;
@@ -67,13 +63,14 @@ const map = (r: Row): DispatcherLease => ({
   service: String(r.service),
   pool: String(r.pool),
   ...(r.session_id === null || r.session_id === undefined ? {} : { sessionId: String(r.session_id) }),
-  ...(r.request_id === null || r.request_id === undefined ? {} : { requestId: String(r.request_id) }),
   state: r.state as LeaseState,
   activityAt: Number(r.activity_at),
   createdAt: Number(r.created_at),
 });
 
 const migrations = [
+  // `request_id` is written by nothing: the dispatcher's queue is in memory
+  // only. The column stays because a migration is history.
   `CREATE TABLE dispatcher_leases(
      id TEXT PRIMARY KEY, kind TEXT NOT NULL, service TEXT NOT NULL, pool TEXT NOT NULL,
      session_id TEXT, request_id TEXT, state TEXT NOT NULL,
@@ -115,7 +112,6 @@ export class LeaseStore {
       pool: string;
       capacity?: number;
       sessionId?: string;
-      requestId?: string;
     },
     onAcquire: () => void = () => {},
     now = Date.now(),
@@ -125,8 +121,8 @@ export class LeaseStore {
       const id = `lease_${randomBytes(6).toString('hex')}`;
       this.core.db
         .prepare(
-          `INSERT INTO dispatcher_leases(id,kind,service,pool,session_id,request_id,state,activity_at,created_at)
-           VALUES(?,?,?,?,?,?,?, ?, ?)`,
+          `INSERT INTO dispatcher_leases(id,kind,service,pool,session_id,state,activity_at,created_at)
+           VALUES(?,?,?,?,?,?, ?, ?)`,
         )
         .run(
           id,
@@ -134,7 +130,6 @@ export class LeaseStore {
           input.service,
           input.pool,
           input.sessionId ?? null,
-          input.requestId ?? null,
           input.sessionId ? 'active' : 'preparing',
           now,
           now,
