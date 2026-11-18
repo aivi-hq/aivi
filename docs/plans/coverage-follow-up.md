@@ -113,10 +113,21 @@ B. Releasing a lease means making sure no turn is still running on its
      LLM is busy. So the elicitation keep-alive in `docs/orchestrator.md`
      ("a release, not an expiry: nobody is killed, the session keeps its
      open form") does not conflict: there is nothing to stop.
-   - Verify while building, do not assume: OpenCode's active set
-     (`client.session.active`, what `#spent` reads) must not list a
-     session that only waits on an elicitation. If it does, the check
-     needs a narrower signal than that set.
+   - HARD REQUIREMENT from the operator: a running turn may be ended; an
+     open elicitation must never be. It is reactivated by user input, an
+     external signal. This works today and must not break.
+   - So, before touching `release`:
+     1. Verify, do not assume, that OpenCode's active set
+        (`client.session.active`, what `#spent` reads) does not list a
+        session that only waits on an elicitation. If it does, the check
+        needs a narrower signal than that set. Do not build until this is
+        known.
+     2. Write the guard test first: an elicitation keep-alive that ends
+        with a release sends no interrupt and leaves the session able to
+        take the answer. The keep-alive lives in
+        `packages/host/src/orchestrator/orchestrator.ts`; its tests are in
+        `packages/host/test/orchestrator-walk.test.ts`. That test must
+        pass before and after the change.
    - Cost to mention: one read of OpenCode's active set per release.
    - Voice recovery keeps calling `release`; nothing changes in voice.
 
