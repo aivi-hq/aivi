@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import {
   type Config,
   composeConfigSchema,
+  errorMessage,
   type LoadedConfig,
   loadConfig,
   type PluginProjectSections,
@@ -51,7 +52,7 @@ function readList(appManifest: string): [string, boolean][] {
     const manifest = JSON.parse(readFileSync(appManifest, 'utf8')) as { 'aivi-plugins'?: unknown };
     listed = manifest['aivi-plugins'] ?? [];
   } catch (error) {
-    throw new Error(`${appManifest} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`${appManifest} is not valid JSON: ${errorMessage(error)}`);
   }
   const parsed = listSchema.safeParse(listed);
   if (!parsed.success)
@@ -77,6 +78,12 @@ async function declarationOf(name: string): Promise<AiviPlugin> {
       );
     throw error;
   }
+  return pluginDeclaration(name, declared);
+}
+
+/** What a package's `./config` exported, held to the contract: an id, the
+ *  config schema and the module factory. */
+export function pluginDeclaration(name: string, declared: unknown): AiviPlugin {
   const declaration = declared as Partial<AiviPlugin> | undefined;
   if (!declaration || typeof declaration.id !== 'string' || !declaration.configSchema || !declaration.createModule)
     throw new Error(`${name}/config exports no plugin declaration (id, configSchema, createModule are required).`);
@@ -155,6 +162,38 @@ export interface ProjectContributorEntry {
   contributor: ProjectContributor;
 }
 
+/** The package's `./setupProject` contributor, imported lazily. A package
+ *  without the subpath — or not installed at all — serves no project role
+ *  and answers `undefined`; a real import error is left to stand. */
+export async function importContributor(name: string): Promise<unknown | undefined> {
+  try {
+    return (await import(import.meta.resolve(`${name}/setupProject`))).contributor;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_MODULE_NOT_FOUND') return undefined;
+    throw error;
+  }
+}
+
+/** What a package's `./setupProject` exported, held to the contract: a
+ *  `{ role?, setup }` object whose role, when it names one, is a role core
+ *  knows. */
+export function contributorEntry(name: string, moduleId: string, declared: unknown): ProjectContributorEntry {
+  const contributor = declared as Partial<ProjectContributor> | undefined;
+  if (!contributor || typeof contributor.setup !== 'function')
+    throw new Error(`${name}/setupProject exports no contributor (a { role?, setup } object).`);
+  if (contributor.role !== undefined && !projectRoles.includes(contributor.role))
+    throw new Error(
+      `${name}/setupProject names a role core does not know (${contributor.role}); name one of ${projectRoles.join(', ')} or none.`,
+    );
+  return {
+    name,
+    moduleId,
+    ...(contributor.role === undefined ? {} : { role: contributor.role }),
+    contributor: contributor as ProjectContributor,
+  };
+}
+
 /**
  * The project-setup contributors the home lists: one lazy `./setupProject`
  * import per enabled package, kept out of the light registry path so the
@@ -165,38 +204,13 @@ export interface ProjectContributorEntry {
  * is the caller's to decide — it needs the loaded config, which this does not
  * read.
  */
-/** The package's `./setupProject` contributor, imported lazily. A package
- *  without the subpath — or not installed at all — serves no project role
- *  and answers `undefined`; a real import error is left to stand. */
-async function importContributor(name: string): Promise<unknown | undefined> {
-  try {
-    return (await import(import.meta.resolve(`${name}/setupProject`))).contributor;
-  } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_MODULE_NOT_FOUND') return undefined;
-    throw error;
-  }
-}
-
 export async function projectContributors(home: string): Promise<ProjectContributorEntry[]> {
   const found: ProjectContributorEntry[] = [];
   for (const entry of (await pluginRegistry(home)).entries) {
     if (!entry.enabled) continue;
     const declared = await importContributor(entry.name);
     if (declared === undefined) continue;
-    const contributor = declared as Partial<ProjectContributor> | undefined;
-    if (!contributor || typeof contributor.setup !== 'function')
-      throw new Error(`${entry.name}/setupProject exports no contributor (a { role?, setup } object).`);
-    if (contributor.role !== undefined && !projectRoles.includes(contributor.role))
-      throw new Error(
-        `${entry.name}/setupProject names a role core does not know (${contributor.role}); name one of ${projectRoles.join(', ')} or none.`,
-      );
-    found.push({
-      name: entry.name,
-      moduleId: entry.plugin.id,
-      ...(contributor.role === undefined ? {} : { role: contributor.role }),
-      contributor: contributor as ProjectContributor,
-    });
+    found.push(contributorEntry(entry.name, entry.plugin.id, declared));
   }
   return found;
 }
