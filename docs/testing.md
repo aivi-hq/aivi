@@ -128,6 +128,10 @@ wrong; the report is:
     mocks it.
   - `packages/host/src/cli/context.ts` and `registry.ts` matched a run
     without the mocking test.
+  - `packages/channel-slack/src/module.ts` reads 8.01% of its lines in a
+    package run that includes `plugin.test.ts`, which mocks it. The true
+    value is 93.59%. `browser/src/module.ts` and `channel-discord/src/module.ts`
+    read the same with and without their `plugin.test.ts`.
 - Do not write a test for it, and do not avoid a mock because of it. Mocks
   are the way to test a unit (the operator, 2026-11-18).
 - To read the true number of a file in the register: run the tests of its
@@ -156,6 +160,9 @@ Node version:
 | `packages/host/test/registry.test.ts` | `@aivi/tracker-linear/setupProject` | The tracker's project contributor: its role and its `setup` |
 | `packages/knowledge/test/default-sdk.test.ts` | `@tobilu/qmd`: `createStore` and `extractSnippet` | QMD's store and its snippet cutter, for a service that is handed no SDK |
 | `packages/forge-github/test/setup-project.test.ts` | `@aivi/github`: `githubApp` and `runGit`, the rest is the real module | The GitHub App's grant and token, and git |
+| `packages/browser/test/plugin.test.ts` | `packages/browser/src/module.ts` | The module's constructor, `createBrowserModule` |
+| `packages/channel-discord/test/plugin.test.ts` | `packages/channel-discord/src/module.ts` | The module's constructor, `createDiscordModule` |
+| `packages/channel-slack/test/plugin.test.ts` | `packages/channel-slack/src/module.ts` | The module's constructor, `createSlackModule` |
 | `packages/google-meet/test/module.test.ts` | `@aivi/core`: `openFaceTab`, the rest is the real module | The face tab the meeting opens: its tab, ears, mouth and close |
 | `packages/google-meet/test/module.test.ts` | `packages/google-meet/src/meeting.ts` | The button trail: `driveJoin` and `driveLeave` |
 | `packages/channel-slack/test/connection.test.ts` | `@slack/web-api`: `WebClient` | The Slack Web API: auth, chat, reactions and users |
