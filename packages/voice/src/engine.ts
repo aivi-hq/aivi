@@ -140,11 +140,20 @@ function defaultSource(input: AudioSource, log: EngineLog): AudioStream | undefi
       stdio: ['ignore', 'pipe', 'inherit'],
     },
   );
+  // An exit we asked for is not a failed source: only a decoder that ended
+  // on its own, badly, is worth a warning.
+  let stopped = false;
   child.on('exit', code => {
-    if (code !== 0) log.warn('voice.source.exited', { code });
+    if (code !== 0 && !stopped) log.warn('voice.source.exited', { code });
   });
   child.on('error', err => log.warn('voice.source.spawn-failed', { error: String(err) }));
-  return { stream: child.stdout, stop: () => child.kill('SIGKILL') };
+  return {
+    stream: child.stdout,
+    stop: () => {
+      stopped = true;
+      child.kill('SIGKILL');
+    },
+  };
 }
 
 export class EngineRun {

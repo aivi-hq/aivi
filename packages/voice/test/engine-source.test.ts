@@ -22,3 +22,40 @@ test('an engine that dies ends the audio source that was feeding it', async t =>
   await h.run.stop();
   assert.equal(stop.mock.callCount(), 1, 'the source is ended once');
 });
+
+test('ending the default decoder ourselves is not reported as a failed source', async t => {
+  const h = engineFixture(t, engineSpec, { type: 'mic' });
+  await h.start();
+  const decoder = h.children[1]!;
+
+  await h.run.stop();
+
+  assert.deepEqual(
+    decoder.process.kill.mock.calls.map(call => call.arguments),
+    [['SIGKILL']],
+  );
+  assert.deepEqual(
+    h.warn.mock.calls.map(call => call.arguments[0]),
+    [],
+    'a capture we stopped did not fail',
+  );
+});
+
+test('a decoder that ends on its own is reported only when it failed', async t => {
+  for (const [code, said] of [
+    [0, []],
+    [1, [['voice.source.exited', { code: 1 }]]],
+  ] as const) {
+    await t.test(`exit ${code}`, async t => {
+      const h = engineFixture(t, engineSpec, { type: 'file', path: '/meeting.wav' });
+      await h.start();
+
+      h.children[1]!.exit(code);
+
+      assert.deepEqual(
+        h.warn.mock.calls.map(call => call.arguments),
+        said,
+      );
+    });
+  }
+});

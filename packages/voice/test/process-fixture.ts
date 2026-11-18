@@ -1,4 +1,4 @@
-import childProcess, { type ChildProcessWithoutNullStreams } from 'node:child_process';
+import childProcess, { type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
@@ -59,7 +59,7 @@ export function voiceProcesses(t: TestContext) {
   const spawn = t.mock.method(
     childProcess,
     'spawn',
-    (_command: string, _args: readonly string[]): ChildProcessWithoutNullStreams => {
+    (_command: string, _args: readonly string[], _options?: SpawnOptions): ChildProcessWithoutNullStreams => {
       const next = child(t);
       children.push(next);
       created.resolve();
