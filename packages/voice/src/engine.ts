@@ -221,6 +221,10 @@ export class EngineRun {
       });
       engine.on('exit', code => {
         this.engine = null;
+        // Nothing is left to hear the audio: a producer still running (a
+        // capture device, a paced file) ends with the engine it was feeding.
+        this.source?.stop();
+        this.source = null;
         for (const waiter of this.pending.values()) waiter(null); // a dead engine answers nothing
         this.pending.clear();
         if (!ready) {
