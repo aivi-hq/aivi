@@ -84,6 +84,29 @@ and `test:cov` scripts enable it with `--experimental-test-module-mocks`.
 The operator allows it sparingly (2026-11-18): every use is in the register
 below.
 
+**Not for a file of ours.** Do not `mock.module` a file under
+`packages/*/src`, or a workspace package that resolves to one (`@aivi/core`,
+`@aivi/github`). The coverage report of that file stops being true, and how
+wrong it is changes from run to run:
+
+- Node builds the mock from generated source, under the real file's path plus
+  `?node-test-mock=N`. The report ends up with two entries for one path and
+  shows whichever it reads last, which depends on the order in which the test
+  processes end.
+- Measured on 2026-11-18, with the same tests: `packages/google-meet/src/meeting.ts`
+  read 100% of its lines with the default concurrency and 8.40% with
+  `--test-concurrency=1`. In the full run `meeting.ts` read 8.40% and
+  `packages/core/src/index.ts` fell from 100% to 73.33% of its lines, after two
+  tests mocked them. Fallow reads the same data.
+- Mock what the file reaches instead: a method on a class
+  (`t.mock.method(Chrome, 'launch', …)`), a global, a Node built-in or a
+  third-party package. The real collaborators then run on stubs at the
+  boundary: `packages/google-meet/test/module.test.ts` runs the real face tab
+  and the real button trail on a stub tab.
+
+A third-party package (`@slack/web-api`, `@clack/prompts`) is fine to mock: it
+has no file under `packages/`, so there is no coverage entry to overwrite.
+
 A use follows these rules:
 
 - Call `mock.module(specifier, { exports })`. `exports.default` is the
@@ -97,21 +120,6 @@ A use follows these rules:
 - To replace part of a module, spread the real one:
   `{ exports: { ...real, runGit } }`.
 - Add the use to the register in the same commit.
-
-A mocked file can show a fake gap in the coverage report. It is not real code:
-
-- Node builds the mock from generated source. It holds an
-  `if (…) { throw … }` block that nothing enters. The generated script has
-  the real file's path plus `?node-test-mock=N`, and the report can lay that
-  block onto the real file's first lines.
-- Under Node's coverage (`npm run test:cov`) it shows on
-  `packages/github/src/index.ts` — lines 3–4, a comment, and one branch at
-  line 2 — because `packages/forge-github/test/setup-project.test.ts` mocks
-  it. Isolated on 2026-11-18: with the mock, the gap; the same file loaded
-  by `packages/tracker-github/test/tracker.test.ts` without the mock, none.
-  The other mocked files show none.
-- Do not write a test for it, and do not avoid a mock because of it. Mocks
-  are the way to test a unit (the operator, 2026-11-18).
 
 Node version:
 
@@ -131,10 +139,13 @@ Node version:
 | `packages/host/test/project-wizard.test.ts` | `packages/host/src/cli/context.ts` | The loaded config, the composed schema, the home store |
 | `packages/host/test/project-wizard.test.ts` | `packages/host/src/cli/registry.ts` | The project contributors of the configured plugins |
 | `packages/forge-github/test/setup-project.test.ts` | `@aivi/github`: `githubApp` and `runGit`, the rest is the real module | The GitHub App's grant and token, and git |
-| `packages/google-meet/test/module.test.ts` | `@aivi/core`: `openFaceTab`, the rest is the real module | The face tab the meeting opens: its tab, ears, mouth and close |
-| `packages/google-meet/test/module.test.ts` | `packages/google-meet/src/meeting.ts` | The button trail: `driveJoin` and `driveLeave` |
 | `packages/channel-slack/test/connection.test.ts` | `@slack/web-api`: `WebClient` | The Slack Web API: auth, chat, reactions and users |
 | `packages/channel-slack/test/connection.test.ts` | `@slack/socket-mode`: `SocketModeClient`, with the real `LogLevel` | The Socket Mode client: its events, start and disconnect |
+
+The rows for `context.ts`, `registry.ts` and `@aivi/github` break the rule
+above: they mock a file of ours. The coverage numbers of `packages/host/src/cli/context.ts`,
+`packages/host/src/cli/registry.ts` and `packages/github/src/index.ts` are not
+to be trusted until those two test files stop mocking them (the plan lists it).
 
 The register is complete when it lists every match of
 `grep -rn "mock.module(" packages/*/test`.
