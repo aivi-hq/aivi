@@ -69,6 +69,10 @@ Done and committed:
   `voice.lane.partial` when the engine died mid-utterance; `7e5c6fe`
   `slice` before the stream began is null; `ba0b230` setup summary keeps
   transcription on.
+- `abf44b6` the wake phrase stays in the quoted sentence, `stripWake` is
+  gone; `8f13509` a held lease is noted before its session is prepared;
+  the commit after it forgets a room's lease note once recovery returned
+  it (proved against the real host dispatcher in `turns-recover.test.ts`).
 - Ruled "leave as it is": a room of its own after end of file.
 
 Todo, ruled otherwise:
