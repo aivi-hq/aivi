@@ -54,8 +54,7 @@ How the operator wants to work:
 Built, with a point to confirm:
 
 - Spoken clauses end at `. , ; : ! ? …` followed by a space or a line
-  break. The operator said "`.` followed by space or `\n`": ask whether
-  only `.` should cut, or all marks as built.
+  break. The operator confirmed: commas stay a cut.
 - `engine/mlx-tts.py` now always ends a streamed sentence. It passed
   `python3 -m py_compile` only: no python test exists and the live gate
   was not run.
@@ -73,40 +72,48 @@ is "harmless" by default):
   with the real host dispatcher that the slot is free after recovery.
 - A graceful shutdown already ends voice's active turns: `VoiceTurns.stop`
   interrupts the session, cuts the wait and returns the slot (see
-  `turns.test.ts`). Only a crash leaves a turn behind. Then recovery
-  returns the slot at once and does not stop the old session. `aivi serve`
-  restarts OpenCode at start only with `opencode.lifecycle: own` (the
-  default); with `discover`, `ensure` or `opencode.url` the old turn may
-  still generate while its slot is granted again. The operator: "active
-  turns on a restart should probably be ended", unsure if it matters. Not
-  built. Proposal to confirm: recovery stops the room's session before it
-  returns the slot. Boot order to mind: modules start (voice recovery)
-  before `dispatcher.reconcile()`.
+  `turns.test.ts`). Only a crash leaves a turn behind; then voice recovery
+  calls `dispatcher.release`, which frees an active lease at once and does
+  not stop its session. The operator ruled where that is fixed: see B.
 
-Next batch, ruled by the operator (2026-11-18), not started. It is host
-code: wait for the operator's word before building.
+Next batch: the dispatcher, ruled by the operator (2026-11-18). Not
+started. It is host code (`packages/host/src/dispatcher/`): a new area.
 
-- Removed pool: the dispatcher owns pools, so the rule lives there, for
-  every service. A resume whose session's recorded pool is no longer
-  configured: log a warning and try the configured (asked) pool, if it is
-  a different one. That pool is not configured either: an error.
-  - Today `Dispatcher.request` answers `{ refused: 'pool-gone' }`
-    (`packages/host/src/dispatcher/dispatcher.ts`). `LeaseStore.record` is
-    `INSERT OR IGNORE`: moving a session needs an update of
-    `dispatcher_sessions`.
-  - Callers that handle `pool-gone` today: `host/src/channel/engine.ts`
-    (waits and warns), `host/src/scheduler.ts` (unreachable: jobs never
-    resume), `voice/src/turns.ts` (logs `turns.refused` with a hint that
-    fits only `waiting`). The kit type is in `packages/plugin/src/dispatcher.ts`.
-  - An unknown asked pool already throws in `request`, and config load
-    rejects an unknown `plugins.<id>.pool`.
-- Removed model, same rule: a session's model that is no longer there:
-  log a warning and try the configured model, if different. No model
-  either: an error. Open design point to raise first: how the dispatcher
-  learns that a resumed session's model is gone (OpenCode's model list at
-  resume, or the failed turn), and where the model is switched (today the
-  pool decides only at session create in `provide`; voice may pin one per
-  prompt).
+A. Resuming a session after the config changed. The operator's rule, in
+   their words: try recovering the lease (pool and model) for the session;
+   if either fails, warn and try again with the current config; if that
+   also fails, it is an error. Do not check pool and model separately,
+   and do not look the model up first: just try the session, the error
+   says it is gone. A recent config change is the operator's
+   responsibility.
+   - Today `Dispatcher.request` answers `{ refused: 'pool-gone' }` when
+     the session's recorded pool is not configured, and a resumed session
+     keeps the model it was created with. `LeaseStore.record` is
+     `INSERT OR IGNORE`: moving a session to the configured pool needs an
+     update of `dispatcher_sessions`.
+   - Callers that handle `pool-gone` today: `host/src/channel/engine.ts`
+     (waits and warns), `host/src/scheduler.ts` (unreachable: jobs never
+     resume), `voice/src/turns.ts` (logs `turns.refused` with a hint that
+     fits only `waiting`). The kit type is in
+     `packages/plugin/src/dispatcher.ts`. After the change that refusal
+     and its handlers are dead code.
+   - An unknown configured pool already throws in `request`, and config
+     load rejects an unknown `plugins.<id>.pool`.
+   - To settle while building: the dispatcher grants slots but callers run
+     the turns, so a model that is gone shows up as the caller's failed
+     turn. Find where "try again with the current config" lives for the
+     model. `packages/host/src/channel/model.ts` (`switchModel`) already
+     changes a session's model.
+B. Releasing a lease means making sure its session is stopped. That is
+   the dispatcher's job: it guards capacity. Not voice's. Today
+   `Dispatcher.release` stops nothing unless the lease is already
+   `expiring`; `expire` has the stop-and-confirm path.
+   - Raise before building: `docs/orchestrator.md` says the elicitation
+     keep-alive ends with "a release, not an expiry: nobody is killed, the
+     session keeps its open form". A release that stops the session
+     changes that. Docs are not law; ask the operator which wins.
+   - Cost to mention: one read of OpenCode's active set per release.
+   - Voice recovery keeps calling `release`; nothing changes in voice.
 
 Reviewed, no change:
 
