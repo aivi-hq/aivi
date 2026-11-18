@@ -37,6 +37,10 @@ orchestration around it, all started by one `aivi serve`.
   `NODE_OPTIONS` so CLI children spawned by tests resolve sources too). Keep
   to erasable TypeScript syntax and `.ts` import specifiers — Node must run
   the sources directly.
+- Test-runner options live in `node.config.json`; the `test` scripts read it
+  with `--config-file`. Coverage has no include glob on purpose: with one,
+  Node counts a copy of every mocked file (see
+  [docs/testing.md](docs/testing.md), "Module mocks").
 - Test lifecycle, persistence, and configuration changes at the actual
   boundaries they affect. Live OpenCode, Discord and macOS Chrome
   verification are separate gates; mock tests do not establish those.

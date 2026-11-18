@@ -1,0 +1,19 @@
+{
+  "$schema": "https://nodejs.org/dist/latest-v26.x/docs/node-config-schema.json",
+  "test": {
+    "experimental-test-module-mocks": true,
+    "test-timeout": 5000,
+    "test-force-exit": true,
+    "test-coverage-include-all": true,
+    "test-coverage-exclude": [
+      "packages/*/dist/**",
+      "packages/*/test/**",
+      "scripts/**",
+      "packages/host/src/api/env.ts",
+      "packages/plugin/src/channel.ts",
+      "packages/plugin/src/dispatcher.ts",
+      "packages/plugin/src/forge.ts",
+      "packages/plugin/src/plugin.ts"
+    ]
+  }
+}

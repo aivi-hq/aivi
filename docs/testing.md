@@ -91,9 +91,10 @@ Checked on Node 26.13.1, with scratch test files:
 
 `mock.module` replaces a module that the unit imports itself. It is an
 experimental Node API ("Stability: 1.0 - Early development"). The `test`
-and `test:cov` scripts enable it with `--experimental-test-module-mocks`.
-The operator allows it sparingly (2026-11-18): every use is in the register
-below.
+and `test:cov` scripts enable it through `node.config.json`
+(`experimental-test-module-mocks`). A run that does not read that file, such
+as a bare `node --test`, has no `mock.module`. The operator allows it
+sparingly (2026-11-18): every use is in the register below.
 
 A use follows these rules:
 
@@ -109,48 +110,48 @@ A use follows these rules:
   `{ exports: { ...real, runGit } }`.
 - Add the use to the register in the same commit.
 
-A mocked first-party file does two kinds of damage to the coverage report. The
-code is not wrong; the report is:
+Coverage and mocks:
 
 - Node builds a mock from generated source. Its script has the real file's
-  path plus `?node-test-mock=N`, and **every dynamic `import()` of the
-  mocked module makes a new one** (checked in the raw V8 data of a full run:
-  `browser/src/module.ts` had four entries, one per test that built the
-  module). Node reads the real file for the line count, so each entry is a
-  copy of the whole real file, and nearly all of it counts as uncovered.
-- Damage to the `all files` line (the one `npm run test:cov` ends on): each
-  copy is added to the total. On 2026-11-18 a full run held 17 such entries
-  for first-party files, about 5,000 lines, and the line read 85.78% while
-  the rows of the table added up to 93.99%. A controlled change proved it:
-  the Slack and Discord plugin tests and the registry test imported their
-  mocked module 3, 2 and 2 times; with one import each, and the same
-  assertions, the line went from 85.78% to 89.82%.
-- Damage to a row: when a mock entry and the real entry share a path, the
-  report shows the one it reads last. That depends on the order in which the
-  test processes end, so it changes from run to run. In one full run
-  `google-meet/src/meeting.ts` read 8.40% (true 100%),
-  `channel-slack/src/module.ts` 8.01% (true 93.59%) and
-  `tracker-linear/src/setup-project.ts` 9.12% (true 97.19%); the next run
-  read them right and misread others (`host/src/cli/registry.ts` 8.80%,
-  `context.ts` 15.96%). A third-party package that is mocked costs nothing:
-  its files are not in the report.
-- What to do when you write a mock of a first-party file:
-  - Make the unit load it once. Table-driven cases that each import it again
-    add a copy each; one case is enough when the others only re-test a
-    helper that has its own tests.
-  - Prefer a mock of a small file.
-  - Do not avoid the mock because of this. Mocks are the way to test a unit
-    (the operator, 2026-11-18).
-- The honest overall figure is the sum over the rows of
-  `file length × (100 − line %) / 100`, with the rows of mocked files taken
-  from a run without the mocking test. At the end of 2026-11-18 it was about
-  95.0%; the `all files` line read 89.81%.
-- To read the true number of a file in the register: run the tests of its
-  package with `--test-coverage-include=<that file>`, once with and once
-  without the test file that mocks it. The run without it is the number to
-  trust, and the gap that remains in it is real.
-- The line cannot be made right from the tests. A change to how `test:cov`
-  reports needs the operator: see the ticket
+  path plus `?node-test-mock=N`, and every dynamic `import()` of the mocked
+  module makes a new one (the default is `cache: false`). Node reads the real
+  file for the line count, so each entry is a copy of the whole real file,
+  and nearly all of it is uncovered.
+- Node leaves these entries out of its report, but only when no
+  `--test-coverage-include` glob is given. It checks the include globs
+  first, and a path that matches one is kept before the mock marker is
+  looked at (Node 26.13.1 and `main`, read from the source on 2026-11-18).
+  **`node.config.json` has no include glob. Do not add one.** `test:cov` had
+  `packages/*/src/**`, and a full run held 17 phantom entries for first-party
+  files, about 5,000 lines: `all files` read 85.78% while the rows added up
+  to 93.99%, and a mocked file's row could show a phantom
+  (`channel-slack/src/module.ts` read 8.01%, true 93.59%). With the same
+  tests and no include glob, the line reads 94.96% and every row is true.
+- `test-coverage-exclude` says what stays out instead: `packages/*/dist/**`,
+  `packages/*/test/**`, `scripts/**` and the files named there. Node's glob
+  matcher has no negation, so the list names what to leave out. A new
+  top-level folder with code shows as a row at 0% until it is added to the
+  list. Any exclude glob replaces Node's default exclusion of test files,
+  which is why `packages/*/test/**` is in the list.
+- A mocked third-party package costs nothing: its files are not in the
+  report.
+- Fallow reads the raw V8 folder, which still holds the mock entries. With
+  and without them it reported the same health findings at the same scores
+  (checked 2026-11-18).
+- Mocks are the way to test a unit. The report is no reason to avoid one
+  (the operator, 2026-11-18).
+- To read one file's number, run the tests of its package with the config
+  and `--experimental-test-coverage`, and pick the row. The report lists
+  every file (`test-coverage-include-all`), so a file the run did not load
+  shows 0%:
+
+  ```sh
+  NODE_OPTIONS=--conditions=development node --config-file=node.config.json \
+    --test --conditions=development --experimental-test-coverage \
+    packages/chrome/test/tab.test.ts | grep ' tab.ts '
+  ```
+
+  Ticket with the full record:
   `docs/backlog/coverage-total-counts-copies-of-mocked-files.md`.
 
 Node version:
@@ -160,6 +161,10 @@ Node version:
   v26.1.0, v26.12.0, v26.13.0 and v26.13.1). The tests have run on 26.13.1
   only.
 - A test file that uses a module mock prints one `ExperimentalWarning`.
+- The scripts read `node.config.json` through `--config-file`, the stable
+  name from v26.12.0 (before that, `--experimental-config-file`, which stays
+  as an alias). The option `test-coverage-include-all` needs v26.7.0.
+  `engines` was not raised to match.
 - On a Node upgrade: read the `mock.module` entry in the test runner docs
   of the new version, then run the files in the register.
 
