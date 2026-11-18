@@ -257,3 +257,17 @@ test('every listener hears the browser going away, until it takes itself off', a
 
   assert.deepEqual(heard, ['one', 'two', 'one']);
 });
+
+test('a browser that fails to launch does not poison the next open', async t => {
+  const tab = tabStub(t);
+  const w = await world(t, tab);
+  w.launch.mock.mockImplementationOnce(async () => {
+    throw new Error('no Chrome binary found');
+  }, 0);
+
+  await assert.rejects(w.open(), new Error('no Chrome binary found'));
+  const face = await w.open();
+
+  assert.equal(w.launch.mock.callCount(), 2, 'the cause is fixed, so the next open launches again');
+  assert.equal(face.tab, tab as never);
+});

@@ -289,7 +289,15 @@ let chromeUsers = 0;
 async function sharedChrome(stateDir: string, headless: boolean): Promise<Chrome> {
   chromePromise ??= Chrome.launch({ profileDir: join(stateDir, 'face-chrome'), headless });
   chromeUsers++;
-  return chromePromise;
+  try {
+    return await chromePromise;
+  } catch (error) {
+    // A launch that failed leaves nothing to share: without this the failed
+    // promise stayed, and every later open met the same stale error.
+    chromeUsers--;
+    if (chromeUsers === 0) chromePromise = null;
+    throw error;
+  }
 }
 async function releaseChrome(): Promise<void> {
   chromeUsers--;
