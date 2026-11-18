@@ -3,13 +3,13 @@ import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
 import type { OpenCodeClient } from '@aivi/plugin/module';
-import { ChannelEngine, STOPPED_NOTICE, STOPPED_REASON, splitReply } from '../src/channel/engine.ts';
+import { ChannelEngine, OFFLINE_MID_REPLY, STOPPED_NOTICE, STOPPED_REASON, splitReply } from '../src/channel/engine.ts';
 import { ConversationStore } from '../src/channel/store.ts';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
 import { TurnNotStarted } from '../src/session.ts';
 import { Store } from '../src/store.ts';
-import { TestCapacity } from './support.ts';
+import { recorder, TestCapacity } from './support.ts';
 
 /** Discord's shape, so the ids and tables asserted here are the ones existing databases hold. */
 const platform: ChannelPlatform = { id: 'discord', label: 'Discord', replyLimit: 1900 };
@@ -554,4 +554,278 @@ test('bound workers: one turn per issue across conversations; a blocked worker k
   assert.equal(store.state('m-as-1'), 'blocked');
   assert.match(store.list('as-1')[0]!.error!, /restart while working/);
   assert.equal(store.sessionOf('as-3')!.project, 'api');
+});
+
+const quietly = { send: async () => undefined };
+
+test('a grant for a queue place this engine does not hold is paid straight back', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  const capacity = new TestCapacity(1);
+  const holder = capacity.request({ service: 'other', pool: limits.pool });
+  assert.ok('lease' in holder);
+  // An engine before this one left its queue place behind.
+  assert.ok('queued' in capacity.request({ service: platform.id, pool: limits.pool }));
+  new ChannelEngine(store, limits, capacity, async () => 'Answer', quietly);
+
+  await capacity.release(holder.lease.id);
+  assert.equal(capacity.released.length, 2, 'the slot nobody here waited for went straight back');
+  assert.equal(capacity.heldCount(), 0);
+});
+
+test('a queue place that lands after its turn was taken elsewhere pays the slot back and looks for other work', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-b'), 10);
+  store.enqueue(message('three', 'dm-c'), 10);
+  const capacity = new TestCapacity(1);
+  const asked: string[] = [];
+  const first = Promise.withResolvers<string>();
+  const third = Promise.withResolvers<void>();
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    capacity,
+    async turn => {
+      asked.push(turn.id);
+      return turn.id === 'one' ? first.promise : `Answer ${turn.id}`;
+    },
+    {
+      send: async (_channel, text) => {
+        if (text === 'Answer three') third.resolve();
+        return undefined;
+      },
+    },
+  );
+  engine.tick(); // `one` runs; `two` waits in the queue place
+  store.claimTurn('two'); // another engine on the same store takes the waiting turn
+
+  first.resolve('Answer one');
+  await third.promise;
+  await engine.drain();
+  assert.deepEqual(asked, ['one', 'three'], 'this engine never asked the turn it lost, and went on to the next');
+  assert.equal(store.state('two'), 'running', 'the turn is its taker’s');
+  assert.equal(capacity.heldCount(), 0, 'and the slot granted for it did not stay held');
+});
+
+test('a pool the dispatcher does not know is said once, and the turn waits for the configuration', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one'), 10);
+  const capacity = new TestCapacity(1);
+  capacity.throwing.add(limits.pool);
+  const { log, said } = recorder();
+  const engine = new ChannelEngine(store, limits, capacity, async () => 'Answer', quietly, { log });
+  engine.tick();
+  engine.tick();
+  assert.equal(store.state('one'), 'queued');
+  assert.deepEqual(
+    said('warn').map(line => [line.event, line.pool]),
+    [['pool.unknown', limits.pool]],
+    'said once, not on every pass',
+  );
+
+  capacity.throwing.clear(); // the operator configures the pool
+  engine.tick();
+  await engine.drain();
+  assert.equal(store.state('one'), 'sent');
+});
+
+/** The stand-in, running a hook before every ask: the gap between an
+ *  engine's read of a turn and its claim. */
+class Interleaved extends TestCapacity {
+  beforeAsk = () => {};
+  override request(input: { service: string; pool?: string; resume?: string }) {
+    this.beforeAsk();
+    return super.request(input);
+  }
+}
+
+test('a turn taken elsewhere between the read and the claim pays its slot straight back', t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one'), 10);
+  const capacity = new Interleaved(1);
+  // Another engine on the same store takes the turn in that gap.
+  capacity.beforeAsk = () => {
+    capacity.beforeAsk = () => {};
+    store.claimTurn('one');
+  };
+  const asked: string[] = [];
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    capacity,
+    async turn => {
+      asked.push(turn.id);
+      return 'Answer';
+    },
+    quietly,
+  );
+  engine.tick();
+  assert.equal(capacity.released.length, 1);
+  assert.equal(capacity.heldCount(), 0);
+  assert.deepEqual(asked, [], 'this engine never asked it');
+});
+
+/** The stand-in, answering a release as a dispatcher can when the slot does
+ *  not simply come back: the kill is still unconfirmed (`pending`), or the
+ *  lease is already gone (a rejection). */
+class Unsettled extends TestCapacity {
+  answer: 'pending' | 'gone' = 'pending';
+  override release(leaseId: string) {
+    return this.answer === 'pending'
+      ? Promise.resolve({ pending: { id: leaseId, pool: limits.pool, state: 'expiring' as const } })
+      : Promise.reject(new Error(`Lease ${leaseId} was already gone`));
+  }
+}
+
+test('a slot the dispatcher is still taking back, or already took, is said when a turn pays it back; the turn is done all the same', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-b'), 10);
+  const capacity = new Unsettled(2);
+  const { log, next } = recorder();
+  const second = Promise.withResolvers<string>();
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    capacity,
+    async turn => (turn.id === 'one' ? 'Answer one' : second.promise),
+    quietly,
+    { log },
+  );
+  engine.tick();
+  assert.equal((await next('lease.expire.pending')).level, 'warn');
+
+  capacity.answer = 'gone';
+  second.resolve('Answer two');
+  assert.equal((await next('lease.release.failed')).level, 'warn');
+  await engine.drain();
+  assert.deepEqual(
+    store.list().map(turn => turn.state),
+    ['sent', 'sent'],
+  );
+});
+
+test('a worker turn that ends without proof that it stopped blocks, and its slot stays for the dispatcher’s monitor', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const workers: ChannelPlatform = { id: 'linear', label: 'Linear', replyLimit: 60_000, effects: 'work' };
+  const store = new ConversationStore(core, workers, 'binding');
+  store.enqueue(message('one', 'as-1'), 10);
+  const capacity = new TestCapacity(1);
+  const { log, said } = recorder();
+  const sent: string[] = [];
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    capacity,
+    async () => {
+      throw new Error('lost after prompt');
+    },
+    { send: async (_channel, text) => void sent.push(text) },
+    { log },
+  );
+  engine.tick();
+  await engine.drain();
+  assert.equal(store.state('one'), 'blocked', 'its checkout may still be moving');
+  assert.deepEqual(capacity.released, [], 'the slot stays with the doubt');
+  assert.equal(capacity.heldCount(), 1);
+  assert.match(sent[0]!, /An operator has been notified/);
+  assert.deepEqual(
+    said('warn').map(line => line.event),
+    ['turn.blocked', 'lease.held'],
+  );
+});
+
+test('a store that fails under a turn stops the engine, tells the host, and drain says why', async () => {
+  const core = new Store(':memory:');
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one'), 10);
+  const capacity = new TestCapacity(1);
+  const answer = Promise.withResolvers<string>();
+  const failures: unknown[] = [];
+  const { log, said } = recorder();
+  const engine = new ChannelEngine(store, limits, capacity, () => answer.promise, quietly, {
+    log,
+    onFailure: error => failures.push(error),
+  });
+  engine.tick();
+  core.close(); // the turn's outcome has nowhere to go
+
+  answer.resolve('Answer');
+  await assert.rejects(engine.drain());
+  assert.equal(engine.stopped, true, 'an unreliable store ends the engine');
+  assert.equal(failures.length, 1, 'and the host hears it');
+  assert.deepEqual(
+    said('error').map(line => line.event),
+    ['engine.failed'],
+  );
+  assert.equal(capacity.heldCount(), 0, 'the slot is paid back all the same');
+});
+
+test('a shutdown that cuts a reply mid-delivery discards the turn and says the answer may be incomplete', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one'), 10);
+  const capacity = new TestCapacity(1);
+  const onTheWire = Promise.withResolvers<void>();
+  const cut = Promise.withResolvers<undefined>();
+  const sent: string[] = [];
+  const engine = new ChannelEngine(store, limits, capacity, async () => 'Answer', {
+    send: async (_channel, text) => {
+      if (text !== 'Answer') return void sent.push(text);
+      onTheWire.resolve();
+      return cut.promise;
+    },
+  });
+  engine.tick();
+  await onTheWire.promise;
+  engine.stop();
+  cut.reject(new Error('socket closed'));
+  await engine.drain();
+  assert.equal(store.state('one'), 'discarded');
+  assert.deepEqual(sent, [OFFLINE_MID_REPLY]);
+  assert.equal(capacity.heldCount(), 0);
+});
+
+test('a delivery with a notice channel uses it for everything that is not an answer', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-b'), 10);
+  const sent: string[] = [];
+  const noticed: [string, string][] = [];
+  const asked = Promise.withResolvers<void>();
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    new TestCapacity(1),
+    (_turn, signal) =>
+      new Promise<string>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        asked.resolve();
+      }),
+    {
+      send: async (_channel, text) => void sent.push(text),
+      notice: async (channel, text) => void noticed.push([channel, text]),
+    },
+  );
+  engine.tick();
+  await asked.promise;
+  await engine.shutdown();
+  assert.deepEqual(sent, [], 'nothing went out as an answer');
+  assert.deepEqual(noticed.map(([channel]) => channel).sort(), ['dm-a', 'dm-b']);
+  assert.match(noticed.find(([channel]) => channel === 'dm-a')![1], /going offline .* send it again/);
+  assert.match(noticed.find(([channel]) => channel === 'dm-b')![1], /stays queued/);
 });
