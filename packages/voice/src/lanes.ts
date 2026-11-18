@@ -146,7 +146,9 @@ export class LaneBook {
             this.deps.log.warn('voice.lane.lost', { room: this.deps.label, speaker: lane.speaker });
             return null;
           }
-        } else if (live && !lane.gotEnd) {
+        } else if (lane.run && !lane.gotEnd) {
+          // The lane was live and its tail never came: the engine died while
+          // the person spoke, or while this waited for the last words.
           this.deps.log.warn('voice.lane.partial', {
             room: this.deps.label,
             speaker: lane.speaker,
