@@ -212,13 +212,13 @@ export class Chrome {
 
   private constructor(
     connection: CdpConnection,
-    info: VersionInfo,
+    browser: string,
     port: number,
     child: ChildProcess | undefined,
     killAfterMs: number,
   ) {
     this.connection = connection;
-    this.browser = info.Browser ?? 'unknown';
+    this.browser = browser;
     this.port = port;
     this.#child = child;
     this.#killAfterMs = killAfterMs;
@@ -265,7 +265,7 @@ export class Chrome {
       const connection = await CdpConnection.open(info.webSocketDebuggerUrl, {
         ...(options.commandMaxTime === undefined ? {} : { commandMaxTime: options.commandMaxTime }),
       });
-      return new Chrome(connection, info, port, child, killAfterMs);
+      return new Chrome(connection, info.Browser ?? 'unknown', port, child, killAfterMs);
     } catch (error) {
       await killChild(child, killAfterMs);
       // why the browser never ran says more than the symptom it left
@@ -297,7 +297,7 @@ export class Chrome {
     const connection = await CdpConnection.open(wsUrl, {
       ...(options.commandMaxTime === undefined ? {} : { commandMaxTime: options.commandMaxTime }),
     });
-    return new Chrome(connection, info, port, undefined, DEFAULT_KILL_AFTER_MS);
+    return new Chrome(connection, info.Browser ?? 'unknown', port, undefined, DEFAULT_KILL_AFTER_MS);
   }
 
   /** True when this handle launched the browser and owns ending it. */
