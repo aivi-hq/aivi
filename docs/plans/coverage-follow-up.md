@@ -63,26 +63,13 @@ Done and committed:
   "`.` followed by space or `\n`" — tell them commas were kept and ask if
   only `.` is wanted.
 
-Todo, ruled "sure" (do as described):
-
-- `speech.ts` `scanClause`: closing quotes. The set holds `"` twice; add
-  `”` and `’`. Test: `Hij zei “stop.” En ging weg. ` cuts after `.”`.
-- `speech.ts` `speakOne`: do not call `flush` when the stretch was
-  interrupted (the kit contract says never on the barge path).
-- `room.ts` `startEngine`: a room stopped while its own engine loads stays
-  quiet: return when `this.stopped`, after `start()` resolves and in the
-  catch. No `voice.engine.start-failed`, no `failed` state.
-- `room.ts` `onEvent`: deliver the replayed engine state through the same
-  guard as `emit` (a throwing listener is logged, `onEvent` still returns
-  the unsubscribe).
-- `lanes.ts` `end()`: warn `voice.lane.partial` when the lane had joined
-  the engine and never got `lane_end`: test `lane.run && !lane.gotEnd`
-  instead of `live && !lane.gotEnd`.
-- `setup.ts`: transcription is always on. The summary says "transcription
-  downloaded" or "transcription on, downloads on first use", never "off".
-- `engine.ts` `slice`: a negative start returns null
-  (`i0 < Math.max(0, this.ringEnd - this.ring.length)`).
-- `room.ts`: a room of its own after end of file: leave as it is.
+- `3531412` typographic closing quotes; `01044dd` no `flush` after a
+  barge; `57566a5` a room closed while its engine loads stays quiet;
+  `6eb962c` the first event shown to a watcher is guarded; `13a377a`
+  `voice.lane.partial` when the engine died mid-utterance; `7e5c6fe`
+  `slice` before the stream began is null; `ba0b230` setup summary keeps
+  transcription on.
+- Ruled "leave as it is": a room of its own after end of file.
 
 Todo, ruled otherwise:
 
