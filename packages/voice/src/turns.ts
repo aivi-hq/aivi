@@ -110,16 +110,20 @@ export class VoiceTurns {
    *  Their sessions died with the process, and unlike channel turns a voice
    *  turn has no ticket to block — the slot goes straight back. The caller
    *  hands the persisted ids; the grant→persist window is the only orphan a
-   *  crash can hide, stated in the README. */
+   *  crash can hide, stated in the README. A release answered `pending`
+   *  keeps its slot until the kill is confirmed: the dispatcher keeps
+   *  watching, and that is said — it is not a recovery yet. */
   static async recover(
     leases: Array<{ label: string; leaseId: string }>,
-    release: (leaseId: string) => Promise<unknown>,
+    release: Dispatcher['release'],
     log: Logger,
   ): Promise<void> {
     for (const { label, leaseId } of leases) {
       try {
-        await release(leaseId);
-        log.info('turns.recovered', { room: label, lease: leaseId });
+        const result = await release(leaseId);
+        if ('pending' in result)
+          log.warn('turns.lease.pending-kill', { room: label, lease: leaseId, pool: result.pending.pool });
+        else log.info('turns.recovered', { room: label, lease: leaseId });
       } catch {
         // The lease already ended (a clean shutdown raced here): nothing to return.
       }
