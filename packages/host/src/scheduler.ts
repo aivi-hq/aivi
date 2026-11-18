@@ -180,14 +180,6 @@ export class Scheduler {
         this.requested.set(grant.queued, { runId: candidate.id, pool: candidate.resource });
         this.waitingRuns.add(candidate.id);
         this.poolsWaiting.add(candidate.resource);
-      } else if (grant.refused === 'pool-gone') {
-        if (!this.warned.has(grant.pool)) {
-          this.warned.add(grant.pool);
-          this.log.warn('pool.gone', {
-            resource: grant.pool,
-            hint: 'Queued runs wait until this pool is configured again or they are cancelled.',
-          });
-        }
       } else {
         // `waiting` means the place is held and a grant is coming; `full` means no
         // callback — registering in the constructor is what makes a pool waitable.

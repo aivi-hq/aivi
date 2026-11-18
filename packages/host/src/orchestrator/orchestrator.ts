@@ -717,7 +717,15 @@ export class Orchestrator implements OrchestratorApi {
         await this.#deliverAnswer(run, text, formId);
         return { resumed: true };
       }
-      const grant = this.deps.dispatcher.request({ service: 'orchestrator', resume: sessionId });
+      // The lane's pool as the config names it now: the session's own pool
+      // outranks it, and it is where the session continues when the config
+      // no longer names that one.
+      const lane = this.deps.lanes(run.projectId).find(l => l.name === run.lane);
+      const grant = this.deps.dispatcher.request({
+        service: 'orchestrator',
+        resume: sessionId,
+        ...(lane?.pool ? { pool: lane.pool } : {}),
+      });
       if ('refused' in grant) return { resumed: false, refused: grant.refused };
       if ('queued' in grant) {
         this.requested.set(grant.queued, {

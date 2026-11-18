@@ -122,13 +122,11 @@ export class ChannelEngine {
         this.launch(turn, grant.lease);
         continue;
       }
-      if ('queued' in grant) {
-        this.seat = { id: grant.queued, turnId: candidate.id };
-        break;
-      }
-      if (grant.refused === 'pool-gone') this.warnPool(grant.pool);
-      // `waiting` means the place is held and its grant is coming; `full` means
-      // no callback — registering in the constructor is what makes a pool waitable.
+      // No slot now. `queued` took the pool's one queue place: its grant comes
+      // through the callback. A refusal asks for nothing: `waiting` means the
+      // place is held and its grant is coming; `full` means no callback —
+      // registering in the constructor is what makes a pool waitable.
+      if ('queued' in grant) this.seat = { id: grant.queued, turnId: candidate.id };
       break;
     }
   }
@@ -139,7 +137,7 @@ export class ChannelEngine {
     this.log.warn('pool.unknown', {
       pool,
       hint: 'Queued turns wait until this pool is configured or they are cancelled.',
-      ...(error !== undefined ? { error: errorMessage(error) } : {}),
+      error: errorMessage(error),
     });
   }
 

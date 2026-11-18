@@ -27,9 +27,8 @@ export type { DispatcherLease };
 /** Why a request did not get a slot — and did not get a queue place
  *  either. `full` is ordinary pressure from a service nobody registered
  *  to hear (an un-waitable refusal); `waiting` says this service already
- *  holds the pool's one queue place; `pool-gone` is a config that outran
- *  reality and says so. */
-export type Refusal = 'full' | 'pool-gone' | 'waiting';
+ *  holds the pool's one queue place. */
+export type Refusal = 'full' | 'waiting';
 
 /** A lease request waiting in the pool's in-memory queue: not a lease,
  *  holding no capacity, deliberate to lose — a restart simply lets the
@@ -221,7 +220,8 @@ export class Dispatcher {
    * sessions only. A **resume** (the session is known here) must return to
    * the pool that session was created in: running it elsewhere would change
    * its model and lose its prefill cache, so a full original pool waits in
-   * that pool's queue even when a fallback has room.
+   * that pool's queue even when a fallback has room. Only a pool the config
+   * no longer names lets a session go: see `#ownPool`.
    *
    * A full pool **accepts** the request into its queue — `queued` with the
    * id that cancels it — because a queued request is the answer to
@@ -237,25 +237,49 @@ export class Dispatcher {
     now = Date.now(),
   ): { lease: DispatcherLease } | { queued: string } | { refused: Refusal; pool: string } {
     if (!this.moderated) return this.#grantUnlimited(input, now);
-    // A session's own pool outranks whatever the caller asks for; only when
-    // the session is unknown here does the asked-for pool decide, and an
-    // unknown *name* is a caller bug said as such, not pressure.
-    const recorded = input.resume ? this.leases.sessionPool(input.resume) : undefined;
-    if (recorded !== undefined && !(recorded in this.pools)) return { refused: 'pool-gone', pool: recorded };
     const asked = input.pool ?? 'default';
-    if (recorded === undefined && !(asked in this.pools))
-      throw new Error(
-        `pool "${asked}" is not configured; name one of ${Object.keys(this.pools).join(', ')} or configure a "default"`,
-      );
+    // A session's own pool outranks whatever the caller asks for; only when
+    // the session has none here does the asked-for pool decide, and an
+    // unknown *name* is a caller bug said as such, not pressure.
+    const own = input.resume ? this.#ownPool(input.resume, asked) : undefined;
+    if (own === undefined && !(asked in this.pools)) throw this.#unknownPool(asked);
     // A resume gets its session's own pool and nothing else; a new session
     // walks the fallback chain, which the config load proved cycle-free.
-    const targets = input.resume ? [recorded ?? asked] : this.#chain(asked);
+    const targets = input.resume ? [own ?? asked] : this.#chain(asked);
     const lease = this.#grantOnTargets(input, targets, now);
     if (lease) {
       if (input.resume) this.leases.record(input.resume, lease.pool, now);
       return { lease };
     }
-    return this.#queue(input.service, recorded ?? asked, input.resume);
+    return this.#queue(input.service, own ?? asked, input.resume);
+  }
+
+  /**
+   * The pool a resumed session returns to: the one it was created in, for
+   * as long as the config names it — that is what keeps its model and its
+   * prefill cache. A recorded pool the config dropped is the first try
+   * failing (ruled 2026-11-18): it is said, and the session belongs to the
+   * pool its caller asks for from here on. Its model is left as it was. An
+   * asked-for pool the config does not name either is the error.
+   */
+  #ownPool(sessionId: string, asked: string): string | undefined {
+    const recorded = this.leases.sessionPool(sessionId);
+    if (recorded === undefined || recorded in this.pools) return recorded;
+    if (!(asked in this.pools)) throw this.#unknownPool(asked);
+    this.log.warn('resume.pool-gone', {
+      session: sessionId,
+      pool: recorded,
+      moved: asked,
+      hint: 'The config no longer names the pool this session was created in; it continues in the pool its caller asks for.',
+    });
+    this.leases.move(sessionId, asked);
+    return asked;
+  }
+
+  #unknownPool(asked: string): Error {
+    return new Error(
+      `pool "${asked}" is not configured; name one of ${Object.keys(this.pools).join(', ')} or configure a "default"`,
+    );
   }
 
   /** The first pool on the targets that has a slot: grant it and arm the

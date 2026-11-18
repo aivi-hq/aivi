@@ -5,6 +5,7 @@ import type { OpenCodeClient } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore, UNLIMITED } from '../src/dispatcher/leases.ts';
 import { Store } from '../src/store.ts';
+import { recorder } from './support.ts';
 
 /** The dispatcher's whole client surface is create, get, active, interrupt
  *  and the agent file's model — so the fake is those five, honestly. */
@@ -73,18 +74,33 @@ interface Clocks {
   prepareMs?: number;
 }
 
-function harness(written: Record<string, unknown>, fake = fakeOpenCode(), clocks: Clocks = {}) {
-  const leases = new LeaseStore(new Store(':memory:'));
+function harness(
+  written: Record<string, unknown>,
+  fake = fakeOpenCode(),
+  clocks: Clocks = {},
+  leases = new LeaseStore(new Store(':memory:')),
+) {
   const ended: { id: string; reason: string; code?: string }[] = [];
+  const { log, said } = recorder();
+  let ending = Promise.withResolvers<void>();
   const dispatcher = new Dispatcher({
     leases,
     dispatcher: dispatcherConfig(written),
     idleMs: clocks.idleMs ?? 60_000,
     prepareMs: clocks.prepareMs ?? 300_000,
     opencode: async () => fake.client,
-    onEnded: (lease, reason, code) => ended.push({ id: lease.id, reason, ...(code ? { code } : {}) }),
+    log,
+    onEnded: (lease, reason, code) => {
+      ended.push({ id: lease.id, reason, ...(code ? { code } : {}) });
+      ending.resolve();
+      ending = Promise.withResolvers<void>();
+    },
   });
-  return { leases, dispatcher, ended, fake };
+  /** Settles when the dispatcher next tells an owner that a lease ended. Take it before the clock moves. */
+  const nextEnding = () => ending.promise;
+  /** Every warning the dispatcher said so far, with its fields. */
+  const warned = () => said('warn');
+  return { leases, dispatcher, ended, warned, nextEnding, fake };
 }
 
 test('unlimited mode grants everything, and the agent file alone decides the model', async () => {
@@ -189,18 +205,57 @@ test('a session keeps its pool for life: a resume returns to the original pool e
   assert.equal(leases.sessionPool(sessionId), 'home');
 });
 
-test('a resume recorded in a pool that no longer exists is refused by name, not re-homed', () => {
-  const born = harness({ dispatcher: { pools: { a: { capacity: 1 } } } });
-  const first = born.dispatcher.request({ service: 'orchestrator', pool: 'a' });
-  if (!('lease' in first)) throw assert.fail('granted');
-  const sessionId = 'ses_born';
-  born.leases.record(sessionId, 'a');
+test('a resume whose pool the config dropped is said, and the session continues in the pool its caller asks for', async () => {
+  // The session was created in pool "a". The operator renamed the pools since.
+  const { dispatcher, leases, warned } = harness({
+    dispatcher: { pools: { b: { capacity: 1 }, c: { capacity: 3 } } },
+  });
+  leases.record('ses_born', 'a');
 
-  // The operator renames the pools; the session's memory says "a".
-  const moved = harness({ dispatcher: { pools: { b: { capacity: 3 } } } }, born.fake);
-  moved.leases.record(sessionId, 'a');
-  const resume = moved.dispatcher.request({ service: 'orchestrator', resume: sessionId });
-  assert.deepEqual(resume, { refused: 'pool-gone', pool: 'a' });
+  const resumed = mustGrant(dispatcher.request({ service: 'orchestrator', pool: 'b', resume: 'ses_born' }));
+  assert.equal(resumed.pool, 'b', 'the first try failed on its pool: the second runs on the config as it is now');
+  assert.equal(resumed.state, 'active', 'still a resume: the session rides the grant');
+  assert.equal(resumed.sessionId, 'ses_born');
+  assert.equal(leases.sessionPool('ses_born'), 'b', 'the session belongs to that pool from here on');
+  assert.deepEqual(
+    warned().map(w => [w.event, w.session, w.pool, w.moved]),
+    [['resume.pool-gone', 'ses_born', 'a', 'b']],
+    'a config that outran a session is said',
+  );
+
+  // From here it is an ordinary resume: its own pool outranks what is asked, and nothing is said twice.
+  await dispatcher.release(resumed.id);
+  const again = mustGrant(dispatcher.request({ service: 'orchestrator', pool: 'c', resume: 'ses_born' }));
+  assert.equal(again.pool, 'b');
+  assert.equal(warned().length, 1);
+});
+
+test('a moved resume waits in the queue of its new pool like any other resume', async () => {
+  const { dispatcher, leases } = harness({ dispatcher: { pools: { b: { capacity: 1 } } } });
+  const told = registrar(dispatcher, 'orchestrator');
+  leases.record('ses_born', 'a');
+  const holder = mustGrant(dispatcher.request({ service: 'other', pool: 'b' }));
+
+  const waiting = dispatcher.request({ service: 'orchestrator', pool: 'b', resume: 'ses_born' });
+  assert.ok('queued' in waiting, 'the pool it moved to is full: it waits there');
+  await dispatcher.release(holder.id);
+  assert.deepEqual(
+    told.map(t => t.pool),
+    ['b'],
+  );
+  assert.equal(leases.sessionPool('ses_born'), 'b');
+});
+
+test('a resume whose pool is gone, asked into a pool the config does not name either, is an error', () => {
+  const { dispatcher, leases, warned } = harness({ dispatcher: { pools: { b: { capacity: 1 } } } });
+  leases.record('ses_born', 'a');
+  assert.throws(
+    () => dispatcher.request({ service: 'orchestrator', resume: 'ses_born' }),
+    /pool "default" is not configured; name one of b/,
+    'the second try fails too: that is the error',
+  );
+  assert.equal(leases.sessionPool('ses_born'), 'a', 'nothing moved');
+  assert.deepEqual(warned(), [], 'and no move is said that did not happen');
 });
 
 test('expire kills before it frees: an unconfirmed kill holds the slot, the confirmation releases it and tells the owner', async () => {

@@ -25,12 +25,14 @@ export type DispatcherGrant =
   /** The pool is full and took the request: the callback hears when it lands. */
   | { queued: string }
   /** `waiting`: the service already holds the pool's one queue place. */
-  | { refused: 'full' | 'pool-gone' | 'waiting'; pool: string };
+  | { refused: 'full' | 'waiting'; pool: string };
 
 export interface Dispatcher {
   /** Ask for a slot in a pool (absent: the `default` pool). A resume returns
    *  to the pool its session was created in — that is what keeps a room's
-   *  conversation on the endpoint that made it. */
+   *  conversation on the endpoint that made it. A pool the config no longer
+   *  names is the one exception: the session continues in the pool asked
+   *  for, and the dispatcher says so in its log. */
   request(input: { service: string; pool?: string; resume?: string }): DispatcherGrant;
   /** Provide a preparing lease with its session: created with the pool's
    *  model, or resumed with whatever it was born with. `create` says the

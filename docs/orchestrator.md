@@ -288,6 +288,14 @@ A session keeps the pool it was created in. A lease that resumes an existing ses
 
 If that pool has no free slot, the dispatcher cannot grant the lease, even if a fallback pool has room. Running the session in another pool would mean changing the model and losing the existing (prefill) cache. For orchestrator tickets, this requirement does not block the whole lane. The orchestrator skips that ticket and continues looking for other eligible tickets in the lane (until both the pool, and fallback pool, have been depleted).
 
+**Ruled 2026-11-18.** A pool the config no longer names is the one thing
+that lets a session go. A session keeps its pool and its model until one of
+them fails; a recorded pool that is gone is that failure. The dispatcher
+says so (`resume.pool-gone`) and the session continues in the pool its
+caller asks for now, with the model it has. A caller that asks for a pool
+the config does not name either gets the error it always got. A recent
+config change is the operator's responsibility.
+
 #### Default pool
 
 When no pool is configured, capacity is not moderated. No pool configuration is treated as unlimited capacity. This is the default behavior (ruled 2026-10-02).
