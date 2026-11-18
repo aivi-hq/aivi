@@ -336,7 +336,7 @@ export class HearingRoom implements VoiceRoom {
     this.listeners.push(listener);
     // A page that joins a warm host sees the truth now, not a stale spinner:
     // the current engine state is replayed to the new listener.
-    listener({ ev: 'engine', state: this.engineState });
+    this.show(listener, { ev: 'engine', state: this.engineState });
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
     };
@@ -474,12 +474,16 @@ export class HearingRoom implements VoiceRoom {
   }
 
   private emit(event: Record<string, unknown>): void {
-    for (const l of this.listeners) {
-      try {
-        l(event);
-      } catch (error) {
-        this.deps.log.warn('voice.listener.failed', { room: this.init.label, error: String(error) });
-      }
+    for (const l of this.listeners) this.show(l, event);
+  }
+
+  /** One event to one watcher: a watcher that fails is said and never
+   *  reaches the room, the other watchers or whoever registered it. */
+  private show(listener: (event: Record<string, unknown>) => void, event: Record<string, unknown>): void {
+    try {
+      listener(event);
+    } catch (error) {
+      this.deps.log.warn('voice.listener.failed', { room: this.init.label, error: String(error) });
     }
   }
 
