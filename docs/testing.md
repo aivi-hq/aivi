@@ -5,6 +5,13 @@ run them is in [AGENTS.md](../AGENTS.md#build-and-test).
 
 ## A unit test tests the unit
 
+- Unit tests only. No integration test and no end-to-end test: the
+  architecture does not lend itself to them, and the live gates (OpenCode,
+  Discord, Chrome) cover what a mock cannot (the operator, 2026-11-18).
+- Mock what the unit reaches. Do not run the real collaborator, a real home,
+  a real plugin or a real registry to get out of a mock. Do not change
+  `src` or the shape of a test to avoid a mock. When the unit imports its
+  collaborator itself, `mock.module` is the tool.
 - A test calls one unit and answers what the unit reaches: the prompts, a
   client, git, a process, files, the network, the loaded config, the plugin
   registry. A mock returns what the real thing would return.
@@ -98,20 +105,31 @@ A use follows these rules:
   `{ exports: { ...real, runGit } }`.
 - Add the use to the register in the same commit.
 
-A mocked file can show a fake gap in the coverage report. It is not real code:
+A mocked file can be misreported by the coverage report. The code is not
+wrong; the report is:
 
-- Node builds the mock from generated source. It holds an
-  `if (…) { throw … }` block that nothing enters. The generated script has
-  the real file's path plus `?node-test-mock=N`, and the report can lay that
-  block onto the real file's first lines.
-- Under Node's coverage (`npm run test:cov`) it shows on
-  `packages/github/src/index.ts` — lines 3–4, a comment, and one branch at
-  line 2 — because `packages/forge-github/test/setup-project.test.ts` mocks
-  it. Isolated on 2026-11-18: with the mock, the gap; the same file loaded
-  by `packages/tracker-github/test/tracker.test.ts` without the mock, none.
-  The other mocked files show none.
+- Node builds the mock from generated source. Its script has the real
+  file's path plus `?node-test-mock=N`. The report then holds two entries
+  for one path and shows the one it reads last. That depends on the order
+  in which the test processes end, so it changes from run to run.
+- Measured on 2026-11-18 (Node 26.13.1):
+  - `packages/google-meet/src/meeting.ts` shows 8.40% of its lines in a run
+    that includes `module.test.ts`, which mocks it. The true value is 100%.
+    With `--test-concurrency=1` or another file order the same tests gave
+    100%.
+  - `packages/core/src/index.ts` fell from 100% to 73.33% in the full run,
+    because `module.test.ts` mocks `@aivi/core`.
+  - `packages/github/src/index.ts` shows lines 3–4 (a comment) and one
+    branch, because `packages/forge-github/test/setup-project.test.ts`
+    mocks it.
+  - `packages/host/src/cli/context.ts` and `registry.ts` matched a run
+    without the mocking test.
 - Do not write a test for it, and do not avoid a mock because of it. Mocks
   are the way to test a unit (the operator, 2026-11-18).
+- To read the true number of a file in the register: run the tests of its
+  package with `--test-coverage-include=<that file>`, once with and once
+  without the test file that mocks it. The run without it is the number to
+  trust, and the gap that remains in it is real.
 
 Node version:
 
@@ -130,6 +148,8 @@ Node version:
 | `packages/host/test/project-wizard.test.ts` | `@clack/prompts` | The wizard's own questions and its last line: `text`, `select`, `isCancel`, `outro`, `cancel` |
 | `packages/host/test/project-wizard.test.ts` | `packages/host/src/cli/context.ts` | The loaded config, the composed schema, the home store |
 | `packages/host/test/project-wizard.test.ts` | `packages/host/src/cli/registry.ts` | The project contributors of the configured plugins |
+| `packages/host/test/registry.test.ts` | `@aivi/forge-github/setupProject` | The forge's project contributor: its role and its `setup` |
+| `packages/host/test/registry.test.ts` | `@aivi/tracker-linear/setupProject` | The tracker's project contributor: its role and its `setup` |
 | `packages/forge-github/test/setup-project.test.ts` | `@aivi/github`: `githubApp` and `runGit`, the rest is the real module | The GitHub App's grant and token, and git |
 | `packages/google-meet/test/module.test.ts` | `@aivi/core`: `openFaceTab`, the rest is the real module | The face tab the meeting opens: its tab, ears, mouth and close |
 | `packages/google-meet/test/module.test.ts` | `packages/google-meet/src/meeting.ts` | The button trail: `driveJoin` and `driveLeave` |
