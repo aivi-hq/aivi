@@ -104,14 +104,19 @@ A. Resuming a session after the config changed. The operator's rule, in
      turn. Find where "try again with the current config" lives for the
      model. `packages/host/src/channel/model.ts` (`switchModel`) already
      changes a session's model.
-B. Releasing a lease means making sure its session is stopped. That is
-   the dispatcher's job: it guards capacity. Not voice's. Today
-   `Dispatcher.release` stops nothing unless the lease is already
+B. Releasing a lease means making sure no turn is still running on its
+   session. That is the dispatcher's job: it guards capacity. Not voice's.
+   Today `Dispatcher.release` stops nothing unless the lease is already
    `expiring`; `expire` has the stop-and-confirm path.
-   - Raise before building: `docs/orchestrator.md` says the elicitation
-     keep-alive ends with "a release, not an expiry: nobody is killed, the
-     session keeps its open form". A release that stops the session
-     changes that. Docs are not law; ask the operator which wins.
+   - "Stopped" is about a turn, not about the session. The operator: an
+     open elicitation is not a running session; there is no turn and no
+     LLM is busy. So the elicitation keep-alive in `docs/orchestrator.md`
+     ("a release, not an expiry: nobody is killed, the session keeps its
+     open form") does not conflict: there is nothing to stop.
+   - Verify while building, do not assume: OpenCode's active set
+     (`client.session.active`, what `#spent` reads) must not list a
+     session that only waits on an elicitation. If it does, the check
+     needs a narrower signal than that set.
    - Cost to mention: one read of OpenCode's active set per release.
    - Voice recovery keeps calling `release`; nothing changes in voice.
 
