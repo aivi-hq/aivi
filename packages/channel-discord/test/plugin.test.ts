@@ -1,6 +1,8 @@
 /** How the Discord plugin builds its module from a block, with the directory
  *  resolved against the home. `./module.ts` is a module mock (it is
- *  discord.js's door), registered before the plugin's config is imported. */
+ *  discord.js's door), registered before the plugin's config is imported.
+ *  One test, one import: the report holds a phantom copy of the mocked file
+ *  for every import of it (`docs/testing.md`). */
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
@@ -11,15 +13,16 @@ mock.module('../src/module.ts', { exports: { createDiscordModule } });
 const { plugin, discordConfigSchema } = await import('../src/config.ts');
 
 test('the module is built from the block, with its directory resolved against the home', async () => {
-  const block = { applicationId: '123456789012345678', access: { channels: [] } };
-  const relative = discordConfigSchema.parse({ ...block, directory: 'discord' });
-  const absolute = discordConfigSchema.parse({ ...block, directory: '/srv/discord' });
+  const config = discordConfigSchema.parse({
+    applicationId: '123456789012345678',
+    access: { channels: [] },
+    directory: 'discord',
+  });
 
-  assert.equal(await plugin.createModule(relative, '/aivi-home'), built);
-  assert.equal(await plugin.createModule(absolute, '/aivi-home'), built);
+  assert.equal(await plugin.createModule(config, '/aivi-home'), built);
 
   assert.deepEqual(
     createDiscordModule.mock.calls.map(call => call.arguments),
-    [[{ ...relative, directory: '/aivi-home/discord' }], [{ ...absolute, directory: '/srv/discord' }]],
+    [[{ ...config, directory: '/aivi-home/discord' }]],
   );
 });

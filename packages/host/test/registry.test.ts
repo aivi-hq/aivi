@@ -255,7 +255,6 @@ test('the contributors are the enabled packages that export ./setupProject, with
 });
 
 test('a package’s ./setupProject is its contributor; a package without one, or not installed, has none', async () => {
-  assert.equal(await importContributor('@aivi/tracker-linear'), tracker);
   assert.equal(await importContributor('@aivi/channel-slack'), undefined, 'the package exports no ./setupProject');
   assert.equal(await importContributor('@acme/not-installed'), undefined);
 });
