@@ -218,6 +218,17 @@ export class SpeechOut {
     }
   }
 
+  /** Tell every mouth the answer is over; one that fails is said, not fatal. */
+  private closeAnswer(): void {
+    for (const m of this.mouths) {
+      try {
+        m.flush?.();
+      } catch (error) {
+        this.deps.log.warn('voice.mouth.flush-failed', { room: this.deps.label, error: String(error) });
+      }
+    }
+  }
+
   /** One stretch of text to the voice: the voice speaks WHILE it
    *  synthesizes — wav chunks land and play as they are generated — under
    *  the answer's generation. A barge that raised playGen kills the stretch
@@ -268,15 +279,9 @@ export class SpeechOut {
       }
       // Last chunk handed over: close the mouth's answer. A mouth that plays
       // one continuous band (Discord) needs the end of answer to drain its
-      // player back to Idle; the barge path never gets here — its stop
+      // player back to Idle. A barged stretch is not closed again: its stop
       // already killed the band.
-      for (const m of this.mouths) {
-        try {
-          m.flush?.();
-        } catch (error) {
-          this.deps.log.warn('voice.mouth.flush-failed', { room: this.deps.label, error: String(error) });
-        }
-      }
+      if (!interrupted) this.closeAnswer();
       await Promise.all(tails); // the answer is not over while its audio still plays
     } finally {
       this.speakingCount--;
