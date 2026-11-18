@@ -55,12 +55,18 @@ At 100% lines since the plugin command pass (branches not checked):
 
 ## How the operator wants to work
 
+- The operator is the product owner and a consultant, not the designer
+  (2026-11-18): "use what I say as advice". Make the choice yourself and say
+  what you chose and why. Do not hand a design question back to them. They
+  decide product direction; everything else is yours to answer for. When
+  they say go, go.
 - The goal comes first. Stay on it. Behavior work that does not serve it
   becomes a ticket, not a batch.
 - Short messages, lists, only what needs the operator's attention. Use
   plain words: no labels or section names from this note. The operator
-  does not read it.
-- Say what the next batch is and wait for the go.
+  does not read it. They do not always read your reasoning either: if it
+  matters, say it in the reply.
+- Say what the next batch is. The operator says go.
 - No question tool. Put questions in the message and stop.
 - Post one short status line per step.
 - Anything that gets to a clean `agentic:verify` has the operator's
@@ -276,9 +282,20 @@ Notes for these:
   `.mock.callCount()`. Two test files keep such an object (`scene`):
   `packages/host/test/project-wizard.test.ts` and
   `packages/forge-github/test/setup-project.test.ts`.
-- Use deferred promises to observe the boundary under test. Advance mock
-  time only after the operation is waiting. Avoid sleeps, polling helpers
-  and guessed microtask-flush counts.
+- Time: see "Time" in `docs/testing.md`. One test takes under 20 ms. Pass a
+  short duration as an option instead of faking a clock, and make a long
+  hardcoded one an option (the operator, 2026-11-18). Use mock time only when
+  the code gives no way to shorten the wait; then advance it only after the
+  operation is waiting. Use deferred promises to observe the boundary under
+  test. Avoid sleeps, polling helpers and guessed microtask-flush counts.
+- The operator on what a unit test is (2026-11-18): "You are testing a unit.
+  You are testing if it does what you expect it to do. You mock what the
+  underlying engine would return and then verify behavior. You do not need a
+  'fake document'. You need targeted mocks." Mock what is non-trivial; a
+  tiny utility stays real: a judgement call. "I am not a fan of test-only
+  code": code that is hard to reach moves to the file where it belongs, and
+  production code imports it. A pretend browser, DOM or clock is the
+  mistake: check what the unit sends or returns, with literal equality.
 - No test helper that is not needed.
 - `packages/plugin/test/setup-fixture.ts` provides scripted prompts
   (`confirm` included) and recorded writers;

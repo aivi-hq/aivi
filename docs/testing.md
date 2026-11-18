@@ -5,13 +5,52 @@ run them is in [AGENTS.md](../AGENTS.md#build-and-test).
 
 ## A unit test tests the unit
 
-- A test calls one unit and answers everything the unit reaches: the
-  prompts, a client, git, the loaded config, the plugin registry.
-- Its subject is what the unit does with a person's answers and with its
-  collaborators' answers. What clack draws, what git moves and what a real
-  home loads belong to other units or to the live gates.
+- A test calls one unit and answers what the unit reaches: the prompts, a
+  client, git, a process, files, the network, the loaded config, the plugin
+  registry. A mock returns what the real thing would return.
+- Its subject is what the unit does with those answers: what it sent, what
+  it returned, what it threw. Check it with literal equality (`deepEqual`)
+  where you can. What clack draws, what git moves and what a real home loads
+  belong to other units or to the live gates.
+- Mock what is not trivial. A tiny pure helper stays real. Which is which is
+  a judgement call (the operator, 2026-11-18).
+- Do not rebuild the engine. No pretend browser, no pretend DOM, no pretend
+  protocol server. A targeted mock is an object literal with only the
+  members the unit touches.
 - A unit that takes its collaborators as arguments gets fakes as
   arguments. A unit that imports them gets a module mock.
+- No code in `src` that only a test uses. When a test cannot reach a
+  function, move it to the file where it belongs by what it is, and let
+  production code import it from there. Example: the code that runs inside a
+  browser page is in `packages/chrome/src/page.ts`, the code that runs in
+  Node is in `tab.ts`.
+
+## Time
+
+- One test takes under 20 ms in total. It is a guideline: use judgement.
+- Prefer a short duration over a fake clock. When the code takes a duration
+  as an option, the test passes 1–5 ms and a real timer fires.
+- When a long duration is hardcoded (a grace period, a poll interval), make
+  it an option with the same default, so that a test can shorten it.
+- Use mock time only when the code gives no way to shorten the wait. A real
+  wait of more than a few milliseconds is the last resort.
+
+## What a mock can reach
+
+Checked on Node 26.13.1, with scratch test files:
+
+- Each test file runs in its own process (not a thread). A mock in one file
+  cannot touch another file.
+- The tests of one file share that process and run one after another.
+  `t.mock` is undone when its test ends.
+- Inside one file a mock can still leak, in three ways:
+  - A global set by hand. Remove it in `t.after`.
+  - A Node built-in imported by name (`spawn`, `readFile`, `existsSync`).
+    `t.mock` restores the property, but the named import keeps the mock
+    until `syncBuiltinESMExports()` runs again. Call it after replacing the
+    built-in and after restoring it, as `packages/voice/test/process-fixture.ts`
+    does.
+  - `mock.module` serves every test in the file, by design (see below).
 
 ## Module mocks
 
