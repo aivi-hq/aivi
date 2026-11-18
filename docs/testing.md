@@ -79,6 +79,10 @@ Checked on Node 26.13.1, with scratch test files:
   `WebSocket` costs about 25 ms, and the first `Response` about 15 ms. The
   first test of a file that touches them is that much slower. It is not the
   cost of the test.
+- A fake path under `/home` is a trap on macOS: `/home` is an automount
+  point, and every read of it stalls for about 30 ms (checked on
+  2026-11-18, a `faceInjection` read of `/home/...`). Put a fake path under
+  the temp directory, or keep it a plain string that the unit never reads.
 - Run a test file you are not sure of under a time limit
   (`perl -e 'alarm 60; exec @ARGV' node --test …`). A hang leaves nothing to
   read.

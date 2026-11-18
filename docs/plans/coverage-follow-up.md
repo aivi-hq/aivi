@@ -7,24 +7,36 @@ serves that goal. Everything else is a ticket in `docs/backlog/` (see
 
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` (2026-11-18, after the move to
-Node's own coverage and Fallow 3.43.2) exited 0: 1,317 tests passed.
-Coverage, from Node's report: 90.93% lines, 90.43% branches and 86.04%
-functions. Node counts anonymous functions, which c8 did not, so the
-function figure is stricter than the one before. Fallow 3.43.2, with its
-type-aware companion, reads the V8 folder `coverage/v8` and reports 8 check
-findings, 5 duplicate groups, 13 health findings (1 critical, 1 high, 11
-moderate), 20 refactoring targets and 2 diagnostics (a Fallow-only run
-confirmed the 2 after the redundant `dev/**` ignore entry was removed from
-`.fallowrc.jsonc`; the full run had 3). It reports more than
-3.28.0 did; see "Remaining Fallow findings". This is not zero tool
+The latest full `npm run agentic:verify` (2026-11-18, after the registry
+pass) exited 0: 1,550 tests passed. Coverage, from Node's report: 91.66%
+lines, 91.23% branches and 89.75% functions. 2,924 lines are uncovered, in
+210 files, and 100 files are at 100% on all three. Node counts anonymous
+functions, which c8 did not, so the function figure is stricter than the
+figures from before the move to Node's coverage.
+
+Five rows of that table are wrong, because a test mocks the file with
+`mock.module` (see "Module mocks" in `docs/testing.md`). The code under them
+is covered; the report is not. `host/src/cli/registry.ts` reads 8.80% (197
+lines; its own test file gives 100% of lines, branches and functions),
+`host/src/cli/context.ts` reads 15.96% (79 lines; 100% without the wizard
+test), `google-meet/src/meeting.ts` reads 229 uncovered lines (100% from its
+own test file), `core/src/index.ts` reads 73.33% (4 lines) and
+`github/src/index.ts` has 2 phantom lines. Without the three big ones the
+table has 2,419 uncovered lines. Which rows are wrong changes from run to
+run. Check a row of a mocked file as `docs/testing.md` says before you spend
+time on it.
+
+Fallow 3.43.2, with its type-aware companion, reads the V8 folder
+`coverage/v8` and reported 7 check findings, 5 duplicate groups, 13 health
+findings (1 critical, 1 high, 11 moderate), 22 refactoring targets and 2
+diagnostics. See "Remaining Fallow findings". This is not zero tool
 feedback. The run printed these warnings:
 
 - Fallow's graph-cache warning ("Graph cache decoded but not reused:
   resolver, entry points, or plugins changed"). It comes and goes between
   runs.
-- One `ExperimentalWarning` for each of the two test files that use module
-  mocks.
+- One `ExperimentalWarning` for each of the five test files that use module
+  mocks (the register in `docs/testing.md`).
 - One line after Fallow's JSON: "[W] Exit code 0: gates error-severity-findings
   (2 at or above error), health-findings (13 at or above error) failed, but
   bare fallow does not enforce them in --format json." It says what a gated
@@ -32,17 +44,19 @@ feedback. The run printed these warnings:
 - `npm notice` lines: the pack listing that `pack-smoke` prints. That is its
   normal output.
 
-The full output is `coverage/agentic-verify-node.log`. The raw coverage is
+The full output is `coverage/agentic-verify-units.log`. The raw coverage is
 `coverage/v8`, which Fallow reads; `npm run test:cov` clears and rewrites
 it. Both are generated/ignored artifacts: regenerate them if absent or
 stale. No checks or suppressions were weakened.
 
 At 100% lines, branches and functions, with no Fallow finding:
-`packages/voice`; in `packages/host/src/`: `scheduler.ts`,
-`channel/engine.ts` and `dispatcher/leases.ts`; in
-`packages/tracker-github/src/`: `tracker.ts` and `delivery.ts`.
-`dispatcher/dispatcher.ts` is at 100% lines and functions with one branch
-open (see "Next batch"). 91 of 207 files are at 100% on all three.
+`packages/voice`, `packages/chrome` and `packages/google-meet` (all
+files); in `packages/core/src/`: `face-tab.ts` and `face-page.ts`; in
+`packages/channel-slack/src/`: `connection.ts`; in `packages/host/src/`:
+`scheduler.ts`, `channel/engine.ts`, `dispatcher/leases.ts` and
+`cli/registry.ts`; in `packages/tracker-github/src/`: `tracker.ts` and
+`delivery.ts`. `dispatcher/dispatcher.ts` is at 100% lines and functions
+with one branch open (see "Next batch").
 
 `packages/tracker-github/src/module.ts` is at 96.27% lines, 97.27%
 branches and 95.31% functions. What is open is stop handling that nothing
@@ -62,6 +76,14 @@ At 100% lines since the plugin command pass (branches not checked):
   they say go, go.
 - The goal comes first. Stay on it. Behavior work that does not serve it
   becomes a ticket, not a batch.
+- Unit tests only. The operator has said it five times (2026-11-18): "We're
+  testing units, not e2e. e2e is a mess to do properly and the architecture
+  currently does not lend itself to it. Mock its dependencies and make sure
+  that the UNIT does what it should do." Never run a real home, config,
+  registry, plugin, shell, browser or service to reach a unit. Never change
+  `src`, or the shape of a test, to avoid a mock: mocks are fine, even when
+  they make the coverage report misread a file. Before a test, ask what the
+  unit reaches, and mock that.
 - Short messages, lists, only what needs the operator's attention. Use
   plain words: no labels or section names from this note. The operator
   does not read it. They do not always read your reasoning either: if it
@@ -111,36 +133,55 @@ At 100% lines since the plugin command pass (branches not checked):
 
 ## Next batch
 
-Not agreed yet. Say what it is and wait for the go.
+The operator's word (2026-11-18): keep going for coverage until nothing is
+left that needs their decision. Done so far: chrome, google-meet, the face
+tab and page, the Slack connection and the plugin registry. In this order:
 
-The largest gaps, by uncovered lines (the table below has the list):
-
-- `packages/chrome/src/{tab,chrome,connection}.ts`: 519 lines and 68
-  functions that no test calls. No decision is needed first: fake CDP, tabs
-  and processes. `@aivi/chrome` is published, so these tests also guard a
-  public surface.
+- `packages/knowledge/src/index.ts` (96 lines, 24 branches): a fake QMD SDK
+  through `createKnowledgeService(loaded, loader, log)`, and `warmKnowledge`.
+  Two existing tests there run the real `@tobilu/qmd` (`knowledge.test.ts`,
+  tests 2 and 3). They are integration tests; leave them, and add the unit
+  tests beside them. `search` (high) and `surveySources` are Fallow
+  complexity findings: refactor them after they are covered.
+- Small config files with a gap: `channel-slack/src/config.ts` (lines
+  76-80) and `channel-discord/src/config.ts` (lines 95-101) are the
+  `plugin.createModule` factory: it imports `./module.ts` lazily and builds
+  the module with its directory resolved against the home. Mock `./module.ts`
+  and check what it is called with. `browser/src/config.ts` has 20 lines
+  open. They looked covered while a host test ran the real Slack plugin;
+  that run is gone, so the gap shows now.
+- The `cli` package: `service.ts` (91 lines), `add.ts` (58), `main.ts` (53),
+  `link.ts` (47), `runtime.ts` (42), `update.ts` (30), `remove.ts` (27;
+  Fallow finding), `exec.ts` (23), `uninstall.ts`, `upgrade.ts`.
 - `packages/tracker-linear/src/module.ts` (96 lines, 52 branches): the twin
   of the GitHub module. Its test starts a real orchestrator and a fake
   OpenCode server; `packages/tracker-github/test/module-decisions.test.ts`
   is the same subject as units over fakes, for comparison. Linear's own
   copies of two bugs fixed in the GitHub module are tickets:
   `docs/backlog/linear-closing-can-be-said-twice.md` and
-  `docs/backlog/failed-module-start-leaves-its-registrations.md`.
+  `docs/backlog/failed-module-start-leaves-its-registrations.md`. Then
+  `tracker.ts` (58), `work.ts` (22), `mcp.ts` (13).
 - The rest of `packages/tracker-github/src/`, in the same package and the
-  same style: `runprogress.ts` (33 lines, no test file; three duplicate
-  groups run through it, see "Remaining Fallow findings"), `client.ts` (34
-  lines, 23 branches; `githubClient` is the default tracker's connection),
-  `setup-project.ts` (43 lines, 32 branches; `askLanes` is a Fallow
-  finding), `probe.ts` (17 lines, 17 branches), and a few branches in
-  `projects.ts` (4) and `work.ts` (3).
+  same style: `setup-project.ts` (43 lines, 32 branches; `askLanes` is a
+  Fallow finding), `client.ts` (34 lines, 23 branches; `githubClient` is the
+  default tracker's connection), `runprogress.ts` (33 lines; three duplicate
+  groups run through it, see "Remaining Fallow findings"), `probe.ts` (17
+  lines), and a few branches in `projects.ts` (4) and `work.ts` (3).
 - `packages/host/src/orchestrator/orchestrator.ts` (100 lines, 100
   branches): lines 188-193 wait for a small, clear fix. Under the
   operator's rule it is fixed with a test:
   `docs/backlog/orchestrator-release-rejection-is-unhandled.md`. The
   dispatcher's twin bug is
-  `docs/backlog/lease-callback-that-throws-escapes-the-drain.md`.
-- Needs a ruling first: `channel-discord/src/module.ts` (643 lines; see
-  "Code to refactor before it can be unit-tested").
+  `docs/backlog/lease-callback-that-throws-escapes-the-drain.md`. Then
+  `server.ts` (69), `application.ts` (60), `api/host-tools.ts` (59),
+  `cli/plugin-setup.ts` (34), `runtime.ts` (33), `store.ts` (30),
+  `cli/commands/knowledge.ts` (28) and the rest of the host tail.
+- `packages/channel-slack/src/module.ts` (40 lines).
+- `core/src/brand.ts` (30 lines, no function called).
+- Needs a ruling first: `channel-discord/src/module.ts` (643 lines) and
+  `voice.ts` (105): see "Code to refactor before it can be unit-tested". A
+  module mock of `discord.js` may reach them; nobody has checked how much
+  of the client a fake needs.
 
 Left open by the tracker-github pass (`module.ts` and `tracker.ts`;
 2026-11-18):
@@ -177,10 +218,10 @@ Left open by the plugin command pass (2026-11-18):
 - `packages/host/src/cli/project-setup.ts`: every line is covered. Four
   small functions are never called: the default `connect` and `sleep` of
   `listLaneAgents`, and the `print` and `agents` that the wizard hands a
-  contributor. `connect` and `agents` need a seam: a parameter whose
-  default is `../opencode.ts`, not a module mock (a mock leaves that file
-  a phantom uncovered branch; see "Test approach"). `print` writes to the
-  terminal through `@aivi/core`.
+  contributor. Reach them with mocks (the operator, 2026-11-18): a module
+  mock of `../opencode.ts` for `connectOpenCode`, a mock of `print` from
+  `@aivi/core`, and mock time for the one-second `sleep`. Add each use to
+  the register in `docs/testing.md`. Do not add a seam to `src` for them.
 - `packages/forge-github/src/setup-project.ts`: every line is covered.
   Open branches: line 53 (a listing error that is not an `Error`) and
   lines 73 and 89 (an answer that names no repository). The prompt's own
@@ -212,24 +253,18 @@ mocks reached them without a refactor (see `docs/testing.md`).
 ## Where the uncovered lines are
 
 From the table that `npm run test:cov` prints (its last column lists the
-uncovered lines of each file): 3,529 lines are uncovered, in 207 files. The
-largest files, under `packages/`:
+uncovered lines of each file): 2,924 lines are uncovered, in 210 files; 2,419
+without the three misread rows (see "Resumption baseline"). The largest
+files, under `packages/`:
 
 | Uncovered lines | File |
 | ---: | --- |
 | 643 | `channel-discord/src/module.ts` |
-| 233 | `chrome/src/tab.ts` |
-| 180 | `google-meet/src/meeting.ts` |
-| 171 | `google-meet/src/module.ts` |
-| 150 | `chrome/src/chrome.ts` |
-| 136 | `chrome/src/connection.ts` |
-| 126 | `channel-slack/src/connection.ts` |
 | 105 | `channel-discord/src/voice.ts` |
 | 100 | `host/src/orchestrator/orchestrator.ts` |
 | 96 | `knowledge/src/index.ts` |
 | 96 | `tracker-linear/src/module.ts` |
 | 91 | `cli/src/service.ts` |
-| 90 | `core/src/face-tab.ts` |
 | 69 | `host/src/server.ts` |
 | 60 | `host/src/application.ts` |
 | 59 | `host/src/api/host-tools.ts` |
@@ -237,13 +272,22 @@ largest files, under `packages/`:
 | 58 | `tracker-linear/src/tracker.ts` |
 | 53 | `cli/src/main.ts` |
 | 47 | `cli/src/link.ts` |
+| 43 | `tracker-github/src/setup-project.ts` |
+| 42 | `cli/src/runtime.ts` |
+| 40 | `channel-slack/src/module.ts` |
+| 35 | `tracker-github/src/module.ts` |
+| 34 | `host/src/cli/plugin-setup.ts` |
+| 34 | `tracker-github/src/client.ts` |
+| 33 | `host/src/runtime.ts` |
+| 33 | `tracker-github/src/runprogress.ts` |
 
 Notes for these:
 
 - `channel-discord/src/module.ts` constructs `new Client(...)` itself: it
-  has no seam like Slack's `SlackConnection`. Ask before adding one.
-- `chrome` and `google-meet`: use fake CDP, tabs and processes; keep live
-  browser/platform gates separate.
+  has no seam like Slack's `SlackConnection`. Try a module mock of
+  `discord.js` first, as a class (see the Slack SDK mocks in
+  `channel-slack/test/connection.test.ts`); a seam in `src` only if that is
+  not enough.
 
 ## Test approach the operator wants
 
@@ -269,11 +313,12 @@ Notes for these:
   pass `--experimental-test-module-mocks`: "go with the flag for now", and
   "every use of it must be accounted for". Read `docs/testing.md` first:
   the rules, the Node version facts and the register of every use.
-  - A mocked file can show a fake gap in the coverage report (not real
-    code): Node's generated mock script holds a never-run `if (…) throw`
-    that the report lays onto the real file's first lines. Under Node's
-    coverage it shows on `github/src/index.ts` only (a comment, plus one
-    branch). Mocks are fine to use; do not avoid one because of it. Details
+  - A mocked file can be misread by the coverage report (the code is
+    covered; the table is wrong): the report holds two entries for the one
+    path and shows the one it reads last. Measured 2026-11-18, it showed
+    229 phantom lines on one file and 197 on another in a full run. Mocks
+    are fine to use; do not avoid one because of it. To read the true
+    number, run the package's tests without the mocking file: the steps are
     in `docs/testing.md`.
 - The operator on a recording object that a test file keeps by hand
   (2026-11-18): it "reads like a custom mock. E.g. jest has
@@ -439,6 +484,28 @@ Fixtures and gotchas from the tracker-github pass (2026-11-18):
 - `recorder()` from `packages/host/test/support.ts` can be imported by
   another package's tests by relative path.
 
+Fixtures and gotchas from the chrome, google-meet, core and Slack passes
+(2026-11-18):
+
+- The code that runs inside a browser page is in `page.ts` files:
+  `chrome/src/page.ts`, `google-meet/src/page.ts` and
+  `core/src/face-page.ts`. Tests call those functions with the few globals
+  they touch: `inPage` and `element` in `packages/chrome/test/in-page.ts`
+  (google-meet imports them by relative path).
+- `Tab`, `Chrome` and `CdpConnection` are tested with targeted mocks: the
+  `WebSocket` is a tiny class, `Chrome` mocks spawn, fetch, fs, `existsSync`
+  and the static `CdpConnection.open`; `packages/chrome/test/connection-stub.ts`
+  is the stub connection. `Chrome.launch` is static: mock it with
+  `t.mock.method(Chrome, 'launch', …)`.
+- `driveJoin` (`google-meet/test/meeting.test.ts`) is tested with a tab stub
+  and "sleeping advances time": `setTimeout` answers at once and moves a
+  mocked `Date` on, so no test waits.
+- A fake path under `/home` is a trap on macOS: it is an automount point,
+  and every read of it stalls for about 30 ms. Fake paths go under the temp
+  directory, or are plain strings the unit never reads.
+- The Slack SDK is mocked by classes (`channel-slack/test/connection.test.ts`):
+  the unit builds `WebClient` and `SocketModeClient` with `new`.
+
 ## Coverage contracts to review
 
 These remaining fallbacks appear unreachable through their valid callers.
@@ -477,9 +544,13 @@ New with Fallow 3.43.2 (2026-11-18). Each needs a look; none is changed yet:
 - Duplicate export aliases: `contributor` and `default` are one value
   exported twice in `packages/tracker-github/src/setup-project.ts` and
   `packages/tracker-linear/src/setup-project.ts`.
-- 14 of the 20 refactoring targets are change coupling ("changes with X in N
-  commits without an import"), mostly a source file and its test. They are
-  suggestions, not defects.
+- 14 of the 22 refactoring targets are change coupling ("changes with X in N
+  commits without an import"), mostly a source file and its test; 7 say to
+  split a high-impact file (`jobs.ts`, `reports.ts`, `channel/router.ts`,
+  `channel/progress.ts`, `channel/context.ts`, `chrome/src/page.ts` and
+  `google-meet/src/page.ts`); 1 is `driveJoin`. They are suggestions, not
+  defects. The two `page.ts` files hold the code that runs in a browser
+  page, on purpose (`docs/testing.md`): leave them.
 - The new `fallow-type-aware` dev dependency is required: without it Fallow
   warns on every run and falls back to conservative findings.
 
