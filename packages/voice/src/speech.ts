@@ -32,6 +32,19 @@ export interface SpeechDeps {
   emit(event: Record<string, unknown>): void;
 }
 
+/** One step of the clause scan at `at`: where the scan goes on, and whether
+ *  the text before that point is a finished clause. A line break ends one;
+ *  a mark ends one when whitespace (or, so far, nothing) follows it and any
+ *  closing quotes — "3.5" and "2,5" carry their marks inside a word. */
+function scanClause(src: string, at: number): { next: number; clause: boolean } {
+  const c = src.charAt(at);
+  if (c === '\n') return { next: at + 1, clause: true };
+  if (!'.,;:!?…'.includes(c)) return { next: at + 1, clause: false };
+  let end = at + 1;
+  while (end < src.length && '"\'")」』'.includes(src.charAt(end))) end++;
+  return { next: end, clause: end === src.length || ' \n\t'.includes(src.charAt(end)) };
+}
+
 export class SpeechOut {
   private mouths: Mouth[] = [];
   private warnedMute = false;
@@ -139,29 +152,12 @@ export class SpeechOut {
   }
 
   private cutClauses(): void {
-    const src = this.speakRaw;
-    let i = this.spokenChars;
-    while (i < src.length) {
-      const c = src[i];
-      if (c === '\n') {
-        // A line break cuts — and must ADVANCE — like every other clause end.
-        if (this.feedSpeech(i + 1)) this.spokenChars = i + 1;
-        i++;
-        continue;
-      }
-      if (c !== undefined && '.,;:!?…'.includes(c)) {
-        let end = i + 1;
-        while (end < src.length && '"\'")」』'.includes(src[end]!)) end++;
-        const after = end < src.length ? src[end]! : ' ';
-        if (after === ' ' || after === '\n' || after === '\t') {
-          if (this.feedSpeech(end)) this.spokenChars = end;
-          i = end;
-          continue;
-        }
-        i = end; // "3.5", "2,5", "Mr." — not a clause end
-        continue;
-      }
-      i++;
+    for (let i = this.spokenChars; i < this.speakRaw.length; ) {
+      const { next, clause } = scanClause(this.speakRaw, i);
+      // A cut must ADVANCE, line breaks included; a refused scrap stays
+      // behind and joins the next cut.
+      if (clause && this.feedSpeech(next)) this.spokenChars = next;
+      i = next;
     }
   }
 
@@ -219,7 +215,6 @@ export class SpeechOut {
    *  the answer's generation. A barge that raised playGen kills the stretch
    *  where it stands: the playing chunk is stopped, the rest goes unheard. */
   private async speakOne(text: string): Promise<void> {
-    if (!this.mouths.length) return;
     const gen = this.answerGen;
     const tts = await this.deps.getTts();
     if (!tts) {

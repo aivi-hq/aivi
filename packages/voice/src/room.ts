@@ -213,16 +213,9 @@ export class HearingRoom implements VoiceRoom {
     } else void this.startEngine();
   }
 
-  /** Current engine state: a page that connects to a warm host is told the
-   *  truth at once, not a spinner for models that loaded an hour ago. */
-  currentEngineState(): EngineState {
-    return this.engineState;
-  }
-
   /** Own-lane rooms (file, mic) begin their own engine at once; push rooms
    *  never own one — the shared engine loads on the host's first audio. */
   private async startEngine(): Promise<void> {
-    if (this.engine) return;
     this.setEngineState('loading'); // the page says so; models take ~30 s
     const engine = new EngineRun(
       this.deps.engineSpec,
@@ -448,8 +441,9 @@ export class HearingRoom implements VoiceRoom {
     }, this.deps.finishWindowMs ?? CONVERSATION_GAP_MS);
   }
 
+  /** The window closed on a batch: it is only ever armed behind a line, and
+   *  a closing room takes the timer and the batch away together. */
   private flushBatch(): void {
-    if (!this.batch.length) return;
     const said = this.batch;
     this.batch = [];
     // Every line prefixes its speaker to the text when it has one: the

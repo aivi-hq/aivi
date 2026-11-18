@@ -169,7 +169,9 @@ Processes that actually start, by what you use: file/mic lane → one
 engine (ASR loads, the diarizer only in meeting mode on first mixed audio);
 Discord → one engine (ASR only, live lanes); TTS → its own process, and
 only once a room has a mouth and an answer to speak. Nothing idles that
-nothing asks of it.
+nothing asks of it. A process that dies is not kept as a permanent no: the
+streaming engine loads again on the next audio, a separate `stt` or `tts`
+endpoint on the next request.
 
 **Engine warmth is the module's job**: the streaming engine is born at the
 host's first audio — from any room — and stays loaded until the module stops.

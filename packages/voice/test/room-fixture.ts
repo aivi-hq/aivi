@@ -4,20 +4,13 @@ import type { EngineEvent, EngineRun } from '../src/engine.ts';
 import { HearingRoom, type RoomDeps, type RoomInit } from '../src/room.ts';
 import type { EngineSink, EngineState, SharedEngine } from '../src/shared.ts';
 import { VoiceStore } from '../src/store.ts';
-import type { TtsRun } from '../src/tts.ts';
 import { boundary } from './boundary.ts';
 import { engineSpec } from './process-fixture.ts';
+import { speaker } from './speech-fixture.ts';
 import { turnHost } from './turns-fixture.ts';
 
 /** A tenth of a second of silence: enough audio to be an utterance. */
 export const pcm = new Float32Array(1600);
-
-/** One sentence that reached the voice: the test plays its audio out. */
-export interface Sentence {
-  text: string;
-  chunk(wav: string): void;
-  end(): void;
-}
 
 /** A room with all its machinery and nothing alive: a recorded host, a real
  *  in-memory store, and the shared engine and the voice as the room sees
@@ -66,16 +59,7 @@ export function hearingRoom(
     sinks.delete(sink);
   });
 
-  // The voice: every stretch of text reaches `sentences` and stays on the
-  // air until the test ends it.
-  const sentences = boundary<[sentence: Sentence]>();
-  const tts = {
-    async *chunks(text: string): AsyncGenerator<Buffer> {
-      const audio = boundary<[wav: Buffer | null]>();
-      sentences.reach({ text, chunk: wav => audio.reach(Buffer.from(wav)), end: () => audio.reach(null) });
-      for (let [wav] = await audio.next(); wav !== null; [wav] = await audio.next()) yield wav;
-    },
-  } as unknown as TtsRun;
+  const { sentences, spoken, tts } = speaker();
   const getTts = t.mock.fn<RoomDeps['getTts']>(async () => tts);
   const getStt = t.mock.fn<RoomDeps['getStt']>(async () => null);
 
@@ -117,6 +101,7 @@ export function hearingRoom(
     attach,
     detach,
     sentences,
+    spoken,
     getTts,
     getStt,
     events,

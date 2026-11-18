@@ -6,13 +6,15 @@ import type { SessionEvent, SessionEventListener } from '@aivi/plugin/module';
 import { type TurnsConfig, type TurnsDeps, VoiceTurns } from '../src/turns.ts';
 import { boundary } from './boundary.ts';
 
+type Say = (message: string, fields?: Record<string, unknown>) => void;
+
 /** What a turn needs from the host, recorded and with nothing alive: the
  *  dispatcher grants on request, OpenCode is a client-shaped fake, and each
  *  model answer is a promise the test settles. */
 export function turnHost(t: TestContext) {
-  const debug = t.mock.fn();
-  const info = t.mock.fn();
-  const warn = t.mock.fn();
+  const debug = t.mock.fn<Say>();
+  const info = t.mock.fn<Say>();
+  const warn = t.mock.fn<Say>();
   let leases = 0;
   let sessions = 0;
   const request = t.mock.fn<Dispatcher['request']>(input => ({
@@ -71,7 +73,7 @@ export function turnHost(t: TestContext) {
     state,
   });
   const said = (level: 'debug' | 'info' | 'warn') =>
-    ({ debug, info, warn })[level].mock.calls.map(call => call.arguments[0] as string);
+    ({ debug, info, warn })[level].mock.calls.map(call => call.arguments[0]);
   return {
     debug,
     info,

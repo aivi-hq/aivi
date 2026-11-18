@@ -24,9 +24,9 @@
  *  sessions in the same process and skip the ring tap: identity slicing is
  *  the mixed lane's job, the platform already knows who speaks here.
  */
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { objectMessage } from './sidecar.ts';
+import { Sidecar, type SidecarLog } from './sidecar.ts';
 
 export type EngineEvent =
   | { ev: 'delta'; text: string; pos: number; lane?: string }
@@ -75,10 +75,7 @@ export interface AudioStream {
 const SR = 16000;
 const RING_SECONDS = 180;
 
-export type EngineLog = {
-  info(msg: string, f?: Record<string, unknown>): void;
-  warn(msg: string, f?: Record<string, unknown>): void;
-};
+export type EngineLog = SidecarLog;
 
 export interface EngineHandlers {
   onEvent(e: EngineEvent): void;
@@ -151,11 +148,10 @@ function defaultSource(input: AudioSource, log: EngineLog): AudioStream | undefi
 }
 
 export class EngineRun {
-  private engine: ChildProcessWithoutNullStreams | null = null;
+  private readonly proc: Sidecar;
   private source: AudioStream | null = null;
   private ring = new Float32Array(RING_SECONDS * SR);
   private ringEnd = 0; // absolute sample index one past the last written
-  private stopped = false;
   private eofSeen = false;
   private pending = new Map<string, (text: string | null) => void>();
   private reqSeq = 0;
@@ -170,6 +166,28 @@ export class EngineRun {
     this.input = input;
     this.handlers = handlers;
     this.log = log;
+    this.proc = new Sidecar(
+      {
+        prefix: 'voice.engine',
+        title: 'engine',
+        spec,
+        env: {
+          ...(spec.model ? { VOXTRAL_MODEL: spec.model } : {}),
+          ...(spec.diarModel ? { DIAR_MODEL: spec.diarModel } : {}),
+        },
+        log,
+      },
+      {
+        onMessage: (message, line) => this.receive(message, line),
+        // A source, if there is one: the caller's own stream, or the default
+        // (ffmpeg for a file or a microphone). Push without a source: the
+        // caller writes the PCM itself.
+        onReady: () => this.startSource(),
+        onGone: () => this.silence(),
+        // Engine exited without being stopped (after the eof event it is normal).
+        onExit: code => this.handlers.onExit(code),
+      },
+    );
   }
 
   /** Samples kept for slicing: [from, to) in absolute stream positions. */
@@ -185,87 +203,19 @@ export class EngineRun {
   /** Spawn the engine and start feeding. Resolves when the ready marker
    *  appeared; rejects if either process died first. */
   start(): Promise<void> {
-    this.stopped = false;
     this.eofSeen = false;
-    return new Promise((resolve, reject) => {
-      const env = {
-        ...process.env,
-        ...(this.spec.model ? { VOXTRAL_MODEL: this.spec.model } : {}),
-        ...(this.spec.diarModel ? { DIAR_MODEL: this.spec.diarModel } : {}),
-      };
-      const engine = spawn(this.spec.command, this.spec.args, { stdio: ['pipe', 'pipe', 'pipe'], env });
-      this.engine = engine;
-      let ready = false;
-      let stderrBuf = '';
-      let stdoutBuf = '';
-      engine.stderr.setEncoding('utf8');
-      engine.stderr.on('data', (d: string) => {
-        stderrBuf = (stderrBuf + d).slice(-8192);
-        if (!ready && stderrBuf.includes(this.spec.readyMarker)) {
-          ready = true;
-          // A source, if there is one: the caller's own stream, or the default
-          // (ffmpeg for a file or a microphone). Push without a source: the
-          // caller writes the PCM itself.
-          this.startSource();
-          resolve();
-        }
-      });
-      engine.stdout.setEncoding('utf8');
-      engine.stdout.on('data', (d: string) => {
-        stdoutBuf += d;
-        // bounded by the buffer: every pass consumes one line, and a
-        // buffer without a newline ends the loop
-        for (let i = stdoutBuf.indexOf('\n'); i >= 0; i = stdoutBuf.indexOf('\n')) {
-          const line = stdoutBuf.slice(0, i).trim();
-          stdoutBuf = stdoutBuf.slice(i + 1);
-          if (!line) continue;
-          this.receive(line);
-        }
-      });
-      engine.on('exit', code => {
-        this.engine = null;
-        // Nothing is left to hear the audio: a producer still running (a
-        // capture device, a paced file) ends with the engine it was feeding.
-        this.source?.stop();
-        this.source = null;
-        for (const waiter of this.pending.values()) waiter(null); // a dead engine answers nothing
-        this.pending.clear();
-        if (!ready) {
-          ready = true;
-          const tail = stderrBuf.slice(-400).trim().split('\n').slice(-3).join(' | ');
-          reject(new Error(`engine exited ${code} before ready: ${tail || 'no stderr'}`));
-          return;
-        }
-        if (!this.stopped) this.handlers.onExit(code);
-      });
-      // A dead engine must not turn a write into an unhandled stream error.
-      engine.stdin.on('error', err => this.log.warn('voice.engine.stdin-error', { error: String(err) }));
-      engine.on('error', err => {
-        this.log.warn('voice.engine.spawn-failed', { error: String(err) });
-        if (!ready) {
-          ready = true;
-          reject(err);
-        }
-      });
-    });
+    return this.proc.start();
   }
 
-  /** Framing, protocol validation and request settlement have separate
-   *  boundaries; a malformed reply must still settle its waiting request. */
-  private receive(line: string): void {
-    let msg: Record<string, unknown>;
-    try {
-      msg = objectMessage(line);
-    } catch {
-      this.badLine(line);
-      return;
-    }
+  /** Protocol validation and request settlement have separate boundaries; a
+   *  malformed reply must still settle its waiting request. */
+  private receive(msg: Record<string, unknown>, line: string): void {
     if (typeof msg.id === 'string') {
       this.reply(msg.id, msg, line);
       return;
     }
     if (!engineEvent(msg)) {
-      this.badLine(line);
+      this.proc.badLine(line);
       return;
     }
     if (msg.ev === 'eof') this.eofSeen = true;
@@ -279,7 +229,7 @@ export class EngineRun {
     const text = msg.text;
     const error = msg.error;
     if ((text !== undefined && typeof text !== 'string') || (error !== undefined && typeof error !== 'string')) {
-      this.badLine(line);
+      this.proc.badLine(line);
       waiter(null);
       return;
     }
@@ -287,12 +237,18 @@ export class EngineRun {
     waiter(error ? null : text?.trim() || null);
   }
 
-  private badLine(line: string): void {
-    this.log.warn('voice.engine.bad-line', { line: line.slice(0, 120) });
+  /** Nothing is left to hear the audio or to answer: a producer still
+   *  running (a capture device, a paced file) ends with the engine it was
+   *  feeding, and a dead engine answers every waiting request with a loss. */
+  private silence(): void {
+    this.source?.stop();
+    this.source = null;
+    for (const waiter of this.pending.values()) waiter(null);
+    this.pending.clear();
   }
 
   private startSource(): void {
-    if (this.stopped || !this.engine) return;
+    if (!this.proc.alive) return;
     const source = this.spec.source ? this.spec.source() : defaultSource(this.input, this.log);
     if (!source) return;
     this.source = source;
@@ -301,15 +257,14 @@ export class EngineRun {
       if (ended) return;
       ended = true;
       this.source = null;
-      this.engine?.stdin.end();
+      this.proc.endInput();
     };
     source.stream.on('data', (buf: Buffer) => {
       const f32 = new Float32Array(buf.length / 2);
       for (let i = 0; i < f32.length; i++) f32[i] = buf.readInt16LE(i * 2) / 32768;
-      const written = this.writeFrame(buf);
-      if (!written && this.engine) {
+      if (!this.writeFrame(buf)) {
         source.stream.pause();
-        this.engine.stdin.once('drain', () => source.stream.resume());
+        this.proc.drained(() => source.stream.resume());
       }
       this.tap(f32);
     });
@@ -323,14 +278,12 @@ export class EngineRun {
   /** One JSONL frame per event: two frames sharing one TCP/pipe segment would
    *  arrive as one write, and the engine reads one event per line. */
   private writeFrame(buf: Buffer): boolean {
-    const engine = this.engine;
-    if (!engine) return true;
-    return engine.stdin.write(`${JSON.stringify({ a: buf.toString('base64') })}\n`);
+    return this.proc.write(`${JSON.stringify({ a: buf.toString('base64') })}\n`);
   }
 
   /** Push mode: feed one s16le 16 kHz mono chunk, same ring tap as ffmpeg feeds. */
   write(buf: Buffer): void {
-    if (this.stopped || !this.engine) return;
+    if (!this.proc.alive) return;
     const f32 = new Float32Array(buf.length / 2);
     for (let i = 0; i < f32.length; i++) f32[i] = buf.readInt16LE(i * 2) / 32768;
     this.writeFrame(buf);
@@ -341,17 +294,15 @@ export class EngineRun {
    *  diarizer, no ring tap (the platform named the speaker already — the
    *  mixed-timeline ring is for slicing anonymous audio for identity). */
   writeLane(lane: string, pcm: Float32Array): void {
-    const engine = this.engine;
-    if (!engine || this.stopped) return;
-    engine.stdin.write(`${JSON.stringify({ a: this.b64i16(pcm), lane })}\n`);
+    if (!this.proc.alive) return;
+    this.proc.write(`${JSON.stringify({ a: this.b64i16(pcm), lane })}\n`);
   }
 
   /** The speaker's utterance is over: the engine flushes the tail (deltas
    *  keep coming) and answers with a lane_end event. */
   endLane(lane: string): void {
-    const engine = this.engine;
-    if (!engine || this.stopped) return;
-    engine.stdin.write(`${JSON.stringify({ lane, end: true })}\n`);
+    if (!this.proc.alive) return;
+    this.proc.write(`${JSON.stringify({ lane, end: true })}\n`);
   }
 
   private b64i16(pcm: Float32Array): string {
@@ -365,12 +316,11 @@ export class EngineRun {
    *  Resolves with the text, or null when the request was lost (error line,
    *  engine death). */
   transcribe(pcm: Float32Array): Promise<string | null> {
-    const engine = this.engine;
-    if (!engine || this.stopped) return Promise.resolve(null);
+    if (!this.proc.alive) return Promise.resolve(null);
     const id = `t${++this.reqSeq}`;
     return new Promise(resolve => {
       this.pending.set(id, resolve);
-      engine.stdin.write(`${JSON.stringify({ id, a: this.b64i16(pcm) })}\n`);
+      this.proc.write(`${JSON.stringify({ id, a: this.b64i16(pcm) })}\n`);
     });
   }
 
@@ -384,15 +334,7 @@ export class EngineRun {
   }
 
   async stop(): Promise<void> {
-    this.stopped = true;
-    this.source?.stop();
-    this.source = null;
-    for (const waiter of this.pending.values()) waiter(null);
-    this.pending.clear();
-    const engine = this.engine;
-    if (!engine) return;
-    this.engine = null;
-    engine.stdin.end();
-    engine.kill('SIGKILL');
+    this.silence();
+    this.proc.stop();
   }
 }

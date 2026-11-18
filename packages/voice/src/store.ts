@@ -264,34 +264,17 @@ export class VoiceStore {
    * label for continuity, a real utterance mints a new `tN`.
    */
   identify(vec: Float32Array, durSec: number, threshold: number): Match {
-    const ids = this.store.db.prepare('SELECT id, name FROM voice_identities ORDER BY id').all() as Array<{
+    const identities = this.store.db.prepare('SELECT id, name FROM voice_identities ORDER BY id').all() as Array<{
       id: number;
       name: string;
     }>;
-    const centroids = new Map<number, number[]>();
-    for (const id of ids) {
-      const vecs = this.store.db.prepare('SELECT vec FROM voice_embeddings WHERE identity = ?').all(id.id) as Array<{
-        vec: Uint8Array;
-      }>;
-      if (!vecs.length) continue;
-      const c = new Float64Array(vec.length);
-      for (const v of vecs) {
-        const f = fromBlob(v.vec);
-        for (let i = 0; i < c.length; i++) c[i] = (c[i] ?? 0) + f[i]! / vecs.length;
-      }
-      centroids.set(id.id, Array.from(c));
-    }
-    let best: { id: number; name: string; score: number } | null = null;
-    for (const [id, c] of centroids) {
-      const s = cos(vec, c);
-      if (!best || s > best.score) best = { id, name: ids.find(x => x.id === id)!.name, score: s };
-    }
+    const best = this.nearest(vec, identities);
     if (best && best.score >= threshold) {
       this.store.db.prepare('INSERT INTO voice_embeddings(identity, vec) VALUES (?, ?)').run(best.id, toBlob(vec));
       return { name: best.name, score: best.score, minted: false };
     }
     if (durSec < 2 && best) return { name: best.name, score: best.score, minted: false };
-    const used = new Set(ids.map(i => i.name));
+    const used = new Set(identities.map(i => i.name));
     let n = 1;
     while (used.has(`t${n}`)) n++; // renamed identities keep their names; mints never collide
     const name = `t${n}`;
@@ -300,5 +283,28 @@ export class VoiceStore {
       .prepare('INSERT INTO voice_embeddings(identity, vec) VALUES (?, ?)')
       .run(Number(r.lastInsertRowid), toBlob(vec));
     return { name, score: best?.score ?? 0, minted: true };
+  }
+
+  /** The stored voice closest to `vec`, by the centroid of its samples; the
+   *  first one heard wins a tie. A name with no sample yet (a row an
+   *  operator wrote) has no voice to compare with. */
+  private nearest(
+    vec: Float32Array,
+    identities: Array<{ id: number; name: string }>,
+  ): { id: number; name: string; score: number } | null {
+    let best: { id: number; name: string; score: number } | null = null;
+    for (const identity of identities) {
+      const rows = this.store.db
+        .prepare('SELECT vec FROM voice_embeddings WHERE identity = ?')
+        .all(identity.id) as Array<{
+        vec: Uint8Array;
+      }>;
+      if (!rows.length) continue;
+      const samples = rows.map(row => fromBlob(row.vec));
+      const centroid = Array.from(vec, (_, i) => samples.reduce((sum, sample) => sum + sample[i]! / samples.length, 0));
+      const score = cos(vec, centroid);
+      if (!best || score > best.score) best = { ...identity, score };
+    }
+    return best;
   }
 }

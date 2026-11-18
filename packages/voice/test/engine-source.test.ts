@@ -19,6 +19,8 @@ test('an engine that dies ends the audio source that was feeding it', async t =>
 
   assert.equal(stop.mock.callCount(), 1, 'nothing is left to hear the audio: its producer ends too');
   assert.deepEqual(h.exited.mock.calls[0]!.arguments, [3]);
+  audio.write(Buffer.from(new Int16Array([3000]).buffer));
+  assert.equal(h.children[0]!.inputs.length, 1, 'audio still in the pipe has no engine left to go to');
   await h.run.stop();
   assert.equal(stop.mock.callCount(), 1, 'the source is ended once');
 });

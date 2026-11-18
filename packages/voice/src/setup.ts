@@ -81,6 +81,59 @@ async function createRuntime(ctx: PluginSetupContext, envDir: string, python: st
   return made;
 }
 
+/** A model the wizard asked about: `on` is the feature (it lands in the
+ *  block whatever happens), `here` answers whether the model is HERE NOW. */
+interface ModelChoice {
+  on: boolean;
+  here: boolean;
+}
+
+/** What the model questions download with: the runtime's own python when
+ *  the runtime is there, and the downloads that failed — said at the end,
+ *  never hidden. */
+interface Downloads {
+  python: string | null;
+  lost: string[];
+}
+
+/** One model, one question, one download attempt. The question's YES is
+ *  the FEATURE; the download is convenience. A failed download says so, and
+ *  the model still arrives lazily on first use. */
+async function askModel(
+  ctx: PluginSetupContext,
+  question: string,
+  repo: string,
+  downloads: Downloads,
+): Promise<ModelChoice> {
+  const yes = settled(ctx, await ctx.prompts.confirm({ message: question, initialValue: true }));
+  if (!yes) return { on: false, here: false };
+  if (downloads.python === null) return { on: true, here: false }; // lazy on first audio, said in the summary
+  await ctx.prompts.log.message(`Downloading ${repo} — progress below, this can take a while.`);
+  const here = hfDownload(downloads.python, repo).status === 0;
+  if (!here) downloads.lost.push(repo);
+  return { on: true, here };
+}
+
+/** The voiceprint into models/, unless one is there already: a download
+ *  that fails is said (`lost`), never hidden. */
+async function fetchVoiceprint(ctx: PluginSetupContext, modelPath: string, lost: string[]): Promise<void> {
+  if (existsSync(modelPath)) {
+    await ctx.prompts.log.message('models/ already holds the voiceprint; it stays as it is.');
+    return;
+  }
+  try {
+    const res = await ctx.fetch(IDENTITY_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, Buffer.from(await res.arrayBuffer()));
+  } catch {
+    lost.push(IDENTITY_URL);
+  }
+}
+
+const said = (m: ModelChoice, name: string) =>
+  !m.on ? `${name} off` : m.here ? `${name} downloaded` : `${name} on, downloads on first use`;
+
 const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
   const existing = (ctx.config.plugins as Record<string, unknown> | undefined)?.voice;
   if (existing !== undefined)
@@ -117,35 +170,27 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     ctx.prompts.note(
       `Nothing installed. Before first audio: uv venv ${envDir} --python 3.12 && uv pip install --python ${python} -r ${pins}.`,
     );
-  const haveRuntime = existsSync(python);
-  const lost: string[] = []; // downloads that failed: said at the end, never hidden
-
-  /** One model, one question, one download attempt. The question's YES is
-   *  the FEATURE (it lands in the block whatever happens); the download is
-   *  convenience — `here` answers whether the model is HERE NOW. A failed
-   *  download says so, and the model still arrives lazily on first use. */
-  const askModel = async (question: string, repo: string): Promise<{ on: boolean; here: boolean }> => {
-    const yes = settled(ctx, await ctx.prompts.confirm({ message: question, initialValue: true }));
-    if (!yes) return { on: false, here: false };
-    if (!haveRuntime) return { on: true, here: false }; // lazy on first audio, said in the summary
-    await ctx.prompts.log.message(`Downloading ${repo} — progress below, this can take a while.`);
-    const dl = hfDownload(python, repo);
-    if (dl.status !== 0) lost.push(repo);
-    return { on: true, here: dl.status === 0 };
-  };
+  const downloads: Downloads = { python: existsSync(python) ? python : null, lost: [] };
+  const { lost } = downloads;
 
   // One at a time, in the order the voice needs them.
   const asr = await askModel(
+    ctx,
     `Download the transcription model now? (${ASR_MODEL}, ~2.5 GB — first audio would wait for it either way)`,
     ASR_MODEL,
+    downloads,
   );
   const diar = await askModel(
+    ctx,
     `Download the speaker-separation model now? (${DIAR_MODEL}, ~400 MB. Without it, mixed-audio lines carry NO speaker: naming a slice that may blend two voices invents people.)`,
     DIAR_MODEL,
+    downloads,
   );
   const tts = await askModel(
+    ctx,
     `Download the voice model now? (${TTS_MODEL}, ~3.5 GB. Without it, aivi answers in text and stays MUTE.)`,
     TTS_MODEL,
+    downloads,
   );
   const identity = settled(
     ctx,
@@ -173,37 +218,23 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     };
   if (identity) {
     const modelPath = join(ctx.home, 'models', IDENTITY_FILE);
-    if (existsSync(modelPath)) {
-      await ctx.prompts.log.message('models/ already holds the voiceprint; it stays as it is.');
-    } else {
-      try {
-        const res = await ctx.fetch(IDENTITY_URL);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        mkdirSync(dirname(modelPath), { recursive: true });
-        writeFileSync(modelPath, Buffer.from(await res.arrayBuffer()));
-      } catch (error) {
-        lost.push(IDENTITY_URL);
-        void error;
-      }
-    }
+    await fetchVoiceprint(ctx, modelPath, lost);
     block.identity = { model: modelPath };
   }
   const parsed = voiceConfigSchema.safeParse(block);
   if (!parsed.success) throw new Error('The voice block aivi writes does not load its own schema; this is a bug.');
   await ctx.writeConfigBlock(['plugins', 'voice'], block);
 
-  const here = (m: { on: boolean; here: boolean }, name: string) =>
-    !m.on ? `${name} off` : m.here ? `${name} downloaded` : `${name} on, downloads on first use`;
-  const parts: string[] = [];
-  parts.push(
-    wantsRuntime
-      ? `runtime ${made ? 'created' : 'already in place'}`
-      : 'no runtime yet — create that runtime before first audio',
-  );
-  parts.push(here(asr, 'transcription'));
-  parts.push(`${here(diar, 'diarizer')}${diar.on ? '' : ': mixed lines stay nameless'}`);
-  parts.push(`${here(tts, `voice ${VOICE}`)}${tts.on ? '' : ': aivi stays mute'}`);
-  parts.push(identity ? 'voiceprint on' : 'no voiceprint: nobody gets named, meeting rooms refused');
+  const runtime = !wantsRuntime
+    ? 'no runtime yet — create that runtime before first audio'
+    : `runtime ${made ? 'created' : 'already in place'}`;
+  const parts = [
+    runtime,
+    said(asr, 'transcription'),
+    `${said(diar, 'diarizer')}${diar.on ? '' : ': mixed lines stay nameless'}`,
+    `${said(tts, `voice ${VOICE}`)}${tts.on ? '' : ': aivi stays mute'}`,
+    identity ? 'voiceprint on' : 'no voiceprint: nobody gets named, meeting rooms refused',
+  ];
   const summary = `Voice is configured — ${parts.join('; ')}. Rooms declare their kind where they are configured — Discord voice is a call (default); a meeting room says "mode": "meeting".`;
   if (lost.length)
     ctx.prompts.note(

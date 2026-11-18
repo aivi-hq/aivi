@@ -48,6 +48,7 @@ test('shared audio starts one engine, flushes buffered frames in order and keeps
   assert.equal(nextEvents.mock.callCount(), 2);
   assert.equal(h.children[0]!.process.kill.mock.callCount(), 0);
   await shared.stop();
+  assert.equal(nextState.mock.calls.at(-1)!.arguments[0], 'idle', 'rooms hear the engine go quiet');
   const notifications = nextState.mock.callCount();
   await shared.stop();
   shared.push(a);
@@ -137,5 +138,38 @@ test('one failed room listener does not prevent state or engine events from reac
   assert.equal(event.mock.callCount(), 1);
   assert.equal(log.warn.mock.callCount(), 2);
   assert.ok(log.warn.mock.calls.every(call => call.arguments[0] === 'voice.engine.sink-failed'));
+  await shared.stop();
+});
+
+test('a shared engine that crashes after it loaded is replaced by the next audio', async t => {
+  const h = voiceProcesses(t);
+  const log = { info: t.mock.fn(), warn: t.mock.fn() };
+  const shared = new SharedEngine(engineSpec, log);
+  const state = t.mock.fn();
+  shared.attach({ onEvent() {}, onState: state });
+  const first = shared.ready();
+  h.children[0]!.ready();
+  const loaded = await first;
+  const audio = Buffer.from(new Int16Array([1000, 2000]).buffer);
+
+  h.children[0]!.exit(3);
+  shared.push(audio);
+  const reloading = shared.ready();
+  h.children[1]!.ready();
+  const replacement = await reloading;
+
+  assert.deepEqual(
+    state.mock.calls.map(call => call.arguments[0]),
+    ['idle', 'loading', 'ready', 'failed', 'loading', 'ready'],
+    'the death is said, loudly, and the next audio loads again',
+  );
+  assert.deepEqual(log.warn.mock.calls[0]!.arguments, ['voice.engine.exited', { code: 3 }]);
+  assert.equal(h.spawn.mock.callCount(), 2);
+  assert.equal(replacement === null || replacement === loaded, false, 'a dead engine is replaced, not reused');
+  assert.deepEqual(
+    h.children[1]!.inputs.map(line => JSON.parse(line).a),
+    [audio.toString('base64')],
+    'the audio that asked for the reload is the first thing the new engine hears',
+  );
   await shared.stop();
 });

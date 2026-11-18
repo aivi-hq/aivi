@@ -87,15 +87,16 @@ const SERVICE = 'voice';
 /** The one turn runner for one room's session. */
 export class VoiceTurns {
   private queue: TurnPrompt[] = [];
-  private running: { messageId: string; done: Promise<void> } | null = null;
+  /** The turn running NOW. Its `cut` is our own cord, tied beside the
+   *  host's before anything is awaited: `stop()` fires it so leaving a room
+   *  does not wait on an answer nobody is left to hear, whichever step of
+   *  the turn the leaving lands in. */
+  private running: { messageId: string; cut: AbortController; done: Promise<void> } | null = null;
   private queuedId: string | null = null;
   private sessionId: string | undefined;
   private staleSaid = false;
   private seq = 0;
   private stopped = false;
-  /** The cut for the turn running NOW: `stop()` fires it so leaving a room
-   *  does not wait on an answer nobody is left to hear. */
-  private turnCut: AbortController | undefined;
 
   private readonly cfg: TurnsConfig;
   private readonly deps: TurnsDeps;
@@ -135,7 +136,7 @@ export class VoiceTurns {
   prompt(p: TurnPrompt): void {
     if (this.stopped) return;
     if (this.running && this.cfg.steerWhenBusy && this.sessionId) {
-      void this.steer(p);
+      void this.steer(p, this.sessionId, this.running.messageId);
       return;
     }
     this.queue.push(p);
@@ -147,11 +148,10 @@ export class VoiceTurns {
     this.forgetSeat();
     if (this.stopped || this.running || !this.queue.length) {
       // Nobody left to hear it: the slot goes straight back.
-      void this.deps.dispatcher.release(lease.id).then(r => this.onReleased(r, lease.id));
+      void this.giveBack(lease.id);
       return;
     }
-    const p = this.queue.shift()!;
-    this.running = { messageId: this.messageId(), done: this.run(p, lease) };
+    this.start(this.queue.shift()!, lease);
   }
 
   /** Fan-out entry: capacity moved somewhere, `waiting` refusals try again. */
@@ -159,10 +159,8 @@ export class VoiceTurns {
     this.dispatch();
   }
 
-  private async steer(p: TurnPrompt): Promise<void> {
-    const running = this.running;
-    const sessionId = this.sessionId;
-    if (!running || !sessionId) return;
+  /** The interjection: the new words go into the session's running turn. */
+  private async steer(p: TurnPrompt, sessionId: string, turn: string): Promise<void> {
     try {
       const client = await this.deps.opencode();
       await client.session.prompt({
@@ -176,7 +174,7 @@ export class VoiceTurns {
             mode: 'call',
             ...(this.cfg.transcript !== undefined ? { transcript: this.cfg.transcript } : {}),
             ...(p.speakers.length ? { speakers: p.speakers } : {}),
-            steer: running.messageId,
+            steer: turn,
           },
         },
       });
@@ -216,30 +214,23 @@ export class VoiceTurns {
       });
       return;
     }
-    const p = this.queue.shift()!;
-    this.running = { messageId: this.messageId(), done: this.run(p, grant.lease) };
+    this.start(this.queue.shift()!, grant.lease);
   }
 
-  private async run(p: TurnPrompt, lease: DispatcherLeaseRef): Promise<void> {
-    let leaseId = lease.id;
-    // Our own cut cord, tied beside the host's before anything is awaited:
-    // leaving a room does not stand and wait for an answer nobody is left
-    // to hear, whichever step of the turn the leaving lands in.
+  /** The slot is ours: the turn runs, named by the message id it prompts with. */
+  private start(p: TurnPrompt, lease: DispatcherLeaseRef): void {
+    const messageId = this.messageId();
     const cut = new AbortController();
-    this.turnCut = cut;
+    this.running = { messageId, cut, done: this.run(p, lease, messageId, cut.signal) };
+  }
+
+  /** One turn, from its slot to the slot's return. Nothing here throws: a
+   *  turn that fails says so and still gives its slot back. */
+  private async run(p: TurnPrompt, lease: DispatcherLeaseRef, messageId: string, cut: AbortSignal): Promise<void> {
+    let leaseId = lease.id;
     try {
-      if (lease.state === 'preparing') {
-        // The pool decides the model at session create (the dispatcher's
-        // rule); a room that pins its own model says so per prompt below.
-        const attached = await this.deps.dispatcher.provide(leaseId, {
-          agent: this.cfg.agent,
-          directory: this.cfg.directory,
-        });
-        this.sessionId = attached.sessionId;
-        if (attached.sessionId) this.deps.rememberSession(attached.sessionId);
-        leaseId = attached.id;
-      }
-      if (cut.signal.aborted) {
+      if (lease.state === 'preparing') leaseId = await this.prepare(leaseId);
+      if (cut.aborted) {
         // The session is kept for the next join; the model is never asked.
         this.deps.log.info('turns.cut', { hint: 'the room left while its session was being prepared' });
         return;
@@ -249,89 +240,113 @@ export class VoiceTurns {
       // here looks like it is only transcribing while the model is already
       // at work (the operator checked for a session during a two-minute
       // generation and found none — it was there, silent).
-      this.deps.log.info('turns.started', {
-        ...(this.sessionId === undefined ? {} : { session: this.sessionId }),
-        chars: p.text.length,
-      });
-      const client = await this.deps.opencode();
-      const input: Record<string, unknown> = {
-        sessionId: this.sessionId,
-        agent: this.cfg.agent,
-        directory: this.cfg.directory,
-        create: false, // the lease's provide created it; a room keeps its conversation
-        messageId: this.running?.messageId ?? this.messageId(),
-        text: p.text,
-        messageMetadata: {
-          aivi: {
-            origin: this.cfg.origin,
-            ...(this.cfg.transcript !== undefined ? { transcript: this.cfg.transcript } : {}),
-            ...(p.speakers.length ? { speakers: p.speakers } : {}),
-            ...(p.wake ? { wake: p.wake } : {}),
-          },
-        },
-        ...(this.cfg.model ? { model: this.cfg.model } : {}),
-      };
-      const options = {
-        signal: AbortSignal.any([this.deps.servicesSignal, cut.signal]),
-        events: this.deps.events,
-        log: this.deps.log,
-        onPermission: 'reject' as const,
-      };
-      const offText = this.watchAnswerText();
-      this.onTurnState?.('thinking');
-      let result: { text: string };
-      try {
-        result = await this.deps.runTurn(client, input, options);
-      } finally {
-        offText();
-      }
+      this.deps.log.info('turns.started', { session: this.sessionId, chars: p.text.length });
+      const result = await this.ask(p, messageId, cut);
       // The room's mouth (if any) hears the answer; a missing mouth is fine.
       this.onAnswered?.(result.text);
       this.staleSaid = false;
     } catch (error) {
-      if (this.stopped) {
-        // Expected, not a failure: the room left and `stop()` cut the wait.
-        // (OpenCode may still be finishing the answer server-side; the
-        // release below says `pending-kill` if the slot is still busy,
-        // and the dispatcher keeps watching — nothing is invented here.)
-        this.deps.log.info('turns.cut', { hint: 'the room left while the model was still answering' });
-      } else if (!this.staleSaid && this.sessionId && /Session not found/i.test(String(error))) {
-        // A persisted session id outliving OpenCode's storage (a restart,
-        // retention) is not a permanent dead room: forget it once, put the
-        // line back, the next dispatch mints a fresh session. One strike —
-        // a room that cannot start twice says so and waits for the next line.
-        this.staleSaid = true;
-        this.deps.log.info('turns.session.stale', {
-          room: this.cfg.origin,
-          session: this.sessionId,
-          hint: 'the persisted session is gone; this room starts a fresh one',
-        });
-        this.sessionId = undefined;
-        this.deps.clearSession();
-        this.queue.unshift(p);
-      } else {
-        this.deps.log.warn('turns.failed', { error: String(error) });
-      }
+      this.ended(error, p);
     } finally {
       this.running = null;
-      this.turnCut = undefined;
       this.onTurnState?.('idle');
       this.deps.rememberLease(null);
-      try {
-        this.onReleased(await this.deps.dispatcher.release(leaseId), leaseId);
-      } catch (error) {
-        this.deps.log.warn('turns.lease.lost', { error: String(error) });
-      }
+      await this.giveBack(leaseId);
       this.dispatch();
     }
   }
 
-  /** Release answered: `pending` means the slot stays held until a kill is
-   *  confirmed — the dispatcher keeps watching; we say so once. */
-  private onReleased(result: { ended: DispatcherLeaseRef } | { pending: DispatcherLeaseRef }, leaseId: string): void {
-    if ('pending' in result)
-      this.deps.log.warn('turns.lease.pending-kill', { lease: leaseId, pool: result.pending.pool });
-    this.deps.capacityMoved(); // every voice room retries; the scheduler too
+  /** A fresh slot gets its session: the pool decides the model at session
+   *  create (the dispatcher's rule); a room that pins its own model says so
+   *  per prompt. Answers with the lease the session is attached to. */
+  private async prepare(leaseId: string): Promise<string> {
+    const attached = await this.deps.dispatcher.provide(leaseId, {
+      agent: this.cfg.agent,
+      directory: this.cfg.directory,
+    });
+    this.sessionId = attached.sessionId;
+    if (attached.sessionId) this.deps.rememberSession(attached.sessionId);
+    return attached.id;
+  }
+
+  /** Put the line to the room's session and wait for the answer, watching
+   *  its text and tools on the way. */
+  private async ask(p: TurnPrompt, messageId: string, cut: AbortSignal): Promise<{ text: string }> {
+    const client = await this.deps.opencode();
+    const input: Record<string, unknown> = {
+      sessionId: this.sessionId,
+      agent: this.cfg.agent,
+      directory: this.cfg.directory,
+      create: false, // the lease's provide created it; a room keeps its conversation
+      messageId,
+      text: p.text,
+      messageMetadata: {
+        aivi: {
+          origin: this.cfg.origin,
+          ...(this.cfg.transcript !== undefined ? { transcript: this.cfg.transcript } : {}),
+          ...(p.speakers.length ? { speakers: p.speakers } : {}),
+          ...(p.wake ? { wake: p.wake } : {}),
+        },
+      },
+      ...(this.cfg.model ? { model: this.cfg.model } : {}),
+    };
+    const options = {
+      signal: AbortSignal.any([this.deps.servicesSignal, cut]),
+      events: this.deps.events,
+      log: this.deps.log,
+      onPermission: 'reject' as const,
+    };
+    const offText = this.watchAnswerText();
+    this.onTurnState?.('thinking');
+    try {
+      return await this.deps.runTurn(client, input, options);
+    } finally {
+      offText();
+    }
+  }
+
+  /** The turn ended without an answer: cut by a leaving room, on a session
+   *  OpenCode no longer has, or failed. */
+  private ended(error: unknown, p: TurnPrompt): void {
+    if (this.stopped) {
+      // Expected, not a failure: the room left and `stop()` cut the wait.
+      // (OpenCode may still be finishing the answer server-side; the
+      // release says `pending-kill` if the slot is still busy, and the
+      // dispatcher keeps watching — nothing is invented here.)
+      this.deps.log.info('turns.cut', { hint: 'the room left while the model was still answering' });
+      return;
+    }
+    if (this.staleSaid || !this.sessionId || !/Session not found/i.test(String(error))) {
+      this.deps.log.warn('turns.failed', { error: String(error) });
+      return;
+    }
+    // A persisted session id outliving OpenCode's storage (a restart,
+    // retention) is not a permanent dead room: forget it once, put the
+    // line back, the next dispatch mints a fresh session. One strike —
+    // a room that cannot start twice says so and waits for the next line.
+    this.staleSaid = true;
+    this.deps.log.info('turns.session.stale', {
+      room: this.cfg.origin,
+      session: this.sessionId,
+      hint: 'the persisted session is gone; this room starts a fresh one',
+    });
+    this.sessionId = undefined;
+    this.deps.clearSession();
+    this.queue.unshift(p);
+  }
+
+  /** Return a slot. `pending` means it stays held until a kill is
+   *  confirmed — the dispatcher keeps watching; we say so once. Either way
+   *  capacity was touched: every voice room retries, the scheduler too. */
+  private async giveBack(leaseId: string): Promise<void> {
+    try {
+      const result = await this.deps.dispatcher.release(leaseId);
+      if ('pending' in result)
+        this.deps.log.warn('turns.lease.pending-kill', { lease: leaseId, pool: result.pending.pool });
+      this.deps.capacityMoved();
+    } catch (error) {
+      this.deps.log.warn('turns.lease.lost', { error: String(error) });
+    }
   }
 
   /** Hook for the room: called with each finished answer (for TTS). */
@@ -408,13 +423,8 @@ export class VoiceTurns {
           .then(client => client.session.interrupt({ sessionID: session }, { signal: AbortSignal.timeout(5_000) }))
           .catch(error => this.deps.log.warn('turns.interrupt.failed', { error: String(error) }));
       }
-      this.turnCut?.abort();
+      running.cut.abort();
       await running.done.catch(() => {});
     }
-  }
-
-  /** What a supervisor would ask: whether capacity is held right now. */
-  get busy(): boolean {
-    return this.running !== null;
   }
 }

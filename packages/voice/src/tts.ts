@@ -15,8 +15,7 @@
  *  be a visible silent aivi. `engine/mlx-tts.py` is the reference (Voxtral
  *  TTS, Dutch voices nl_male / nl_female).
  */
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
-import { objectMessage } from './sidecar.ts';
+import { Sidecar, type SidecarLog } from './sidecar.ts';
 
 export interface TtsSpec {
   command: string;
@@ -32,99 +31,51 @@ export interface TtsSpec {
   stream: boolean;
 }
 
-type TtsLog = {
-  info(msg: string, f?: Record<string, unknown>): void;
-  warn(msg: string, f?: Record<string, unknown>): void;
-};
-
 /** One waiting request: chunks land through `deliver`; null ends it. */
 interface TtsWaiter {
   deliver(chunk: Buffer | null): void;
 }
 
 export class TtsRun {
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private readonly proc: Sidecar;
   private pending = new Map<string, TtsWaiter>();
   private chain: Promise<void> = Promise.resolve();
   private seq = 0;
-  private stopped = false;
 
   private readonly spec: TtsSpec;
-  private readonly log: TtsLog;
+  private readonly log: SidecarLog;
   private readonly timeoutMs: number;
 
-  constructor(spec: TtsSpec, log: TtsLog, timeoutMs = 120_000) {
+  constructor(spec: TtsSpec, log: SidecarLog, timeoutMs = 120_000) {
     this.spec = spec;
     this.log = log;
     this.timeoutMs = timeoutMs;
+    this.proc = new Sidecar(
+      {
+        prefix: 'voice.tts',
+        title: 'tts engine',
+        spec,
+        env: spec.model ? { VOXTRAL_TTS_MODEL: spec.model } : {},
+        log,
+      },
+      {
+        onMessage: (message, line) => this.receive(message, line),
+        onGone: () => this.endAll(), // a dead voice ends every stream
+        onExit: code => this.log.warn('voice.tts.exited', { code }),
+      },
+    );
   }
 
   start(): Promise<void> {
-    this.stopped = false;
-    return new Promise((resolve, reject) => {
-      const child = spawn(this.spec.command, this.spec.args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...(this.spec.model ? { VOXTRAL_TTS_MODEL: this.spec.model } : {}) },
-      });
-      this.child = child;
-      let ready = false;
-      let stderrBuf = '';
-      let stdoutBuf = '';
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (d: string) => {
-        stderrBuf = (stderrBuf + d).slice(-8192);
-        if (!ready && stderrBuf.includes(this.spec.readyMarker)) {
-          ready = true;
-          resolve();
-        }
-      });
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', (d: string) => {
-        stdoutBuf += d;
-        // bounded by the buffer: every pass consumes one line
-        for (let i = stdoutBuf.indexOf('\n'); i >= 0; i = stdoutBuf.indexOf('\n')) {
-          const line = stdoutBuf.slice(0, i).trim();
-          stdoutBuf = stdoutBuf.slice(i + 1);
-          if (line) this.receive(line);
-        }
-      });
-      child.stdin.on('error', err => this.log.warn('voice.tts.stdin-error', { error: String(err) }));
-      child.on('exit', code => {
-        this.child = null;
-        for (const waiter of this.pending.values()) waiter.deliver(null); // a dead voice ends every stream
-        this.pending.clear();
-        if (!ready) {
-          ready = true;
-          const tail = stderrBuf.slice(-400).trim().split('\n').slice(-3).join(' | ');
-          reject(new Error(`tts engine exited ${code} before ready: ${tail || 'no stderr'}`));
-          return;
-        }
-        if (!this.stopped) this.log.warn('voice.tts.exited', { code });
-      });
-      child.on('error', err => {
-        this.log.warn('voice.tts.spawn-failed', { error: String(err) });
-        if (!ready) {
-          ready = true;
-          reject(err);
-        }
-      });
-    });
+    return this.proc.start();
   }
 
-  /** One stdout line. Only a well-formed reply is spoken; a malformed one
-   *  ends its sentence now — left alone it would hold the voice until the
-   *  timeout. */
-  private receive(line: string): void {
-    let res: Record<string, unknown>;
-    try {
-      res = objectMessage(line);
-    } catch {
-      this.badLine(line);
-      return;
-    }
+  /** One reply. Only a well-formed one is spoken; a malformed one ends its
+   *  sentence now — left alone it would hold the voice until the timeout. */
+  private receive(res: Record<string, unknown>, line: string): void {
     const { id, audio, error, final } = res;
     if (typeof id !== 'string') {
-      this.badLine(line);
+      this.proc.badLine(line);
       return;
     }
     const waiter = this.pending.get(id);
@@ -133,7 +84,7 @@ export class TtsRun {
       (audio !== undefined && typeof audio !== 'string') ||
       (error !== undefined && typeof error !== 'string') ||
       (final !== undefined && typeof final !== 'boolean');
-    if (malformed) this.badLine(line);
+    if (malformed) this.proc.badLine(line);
     else if (error) this.log.warn('voice.tts.engine-error', { id, error });
     else if (audio) waiter.deliver(Buffer.from(audio, 'base64'));
     // The sentence is done: a failed or malformed reply ends it unspoken, and
@@ -145,14 +96,16 @@ export class TtsRun {
     }
   }
 
-  private badLine(line: string): void {
-    this.log.warn('voice.tts.bad-line', { line: line.slice(0, 120) });
+  /** Nothing more will be spoken: every waiting sentence ends where it is. */
+  private endAll(): void {
+    for (const waiter of this.pending.values()) waiter.deliver(null);
+    this.pending.clear();
   }
 
   /** The process is running. A dead voice speaks nothing, so whoever keeps
    *  one warm asks before handing it out again. */
   get alive(): boolean {
-    return this.child !== null;
+    return this.proc.alive;
   }
 
   /** Speak one sentence: wav chunks out in order, the first one the moment
@@ -169,8 +122,7 @@ export class TtsRun {
       release = res;
     });
     await prev;
-    const child = this.child;
-    if (!child) {
+    if (!this.proc.alive) {
       release();
       return;
     }
@@ -198,7 +150,7 @@ export class TtsRun {
     };
     this.pending.set(id, { deliver });
     arm();
-    child.stdin.write(`${JSON.stringify({ id, text, voice: this.spec.voice, stream: this.spec.stream })}\n`);
+    this.proc.write(`${JSON.stringify({ id, text, voice: this.spec.voice, stream: this.spec.stream })}\n`);
     try {
       // ends on the queue's sentinel: final, error, timeout, and death all
       // push one, so the loop cannot outlive the answer
@@ -221,13 +173,7 @@ export class TtsRun {
   }
 
   async stop(): Promise<void> {
-    this.stopped = true;
-    const child = this.child;
-    this.child = null;
-    for (const waiter of this.pending.values()) waiter.deliver(null);
-    this.pending.clear();
-    if (!child) return;
-    child.stdin.end();
-    child.kill('SIGKILL');
+    this.endAll();
+    this.proc.stop();
   }
 }
