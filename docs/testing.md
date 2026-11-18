@@ -109,35 +109,49 @@ A use follows these rules:
   `{ exports: { ...real, runGit } }`.
 - Add the use to the register in the same commit.
 
-A mocked file can be misreported by the coverage report. The code is not
-wrong; the report is:
+A mocked first-party file does two kinds of damage to the coverage report. The
+code is not wrong; the report is:
 
-- Node builds the mock from generated source. Its script has the real
-  file's path plus `?node-test-mock=N`. The report then holds two entries
-  for one path and shows the one it reads last. That depends on the order
-  in which the test processes end, so it changes from run to run.
-- Measured on 2026-11-18 (Node 26.13.1):
-  - `packages/google-meet/src/meeting.ts` shows 8.40% of its lines in a run
-    that includes `module.test.ts`, which mocks it. The true value is 100%.
-    With `--test-concurrency=1` or another file order the same tests gave
-    100%.
-  - `packages/core/src/index.ts` fell from 100% to 73.33% in the full run,
-    because `module.test.ts` mocks `@aivi/core`.
-  - `packages/github/src/index.ts` shows lines 3–4 (a comment) and one
-    branch, because `packages/forge-github/test/setup-project.test.ts`
-    mocks it.
-  - `packages/host/src/cli/context.ts` and `registry.ts` matched a run
-    without the mocking test.
-  - `packages/channel-slack/src/module.ts` reads 8.01% of its lines in a
-    package run that includes `plugin.test.ts`, which mocks it. The true
-    value is 93.59%. `browser/src/module.ts` and `channel-discord/src/module.ts`
-    read the same with and without their `plugin.test.ts`.
-- Do not write a test for it, and do not avoid a mock because of it. Mocks
-  are the way to test a unit (the operator, 2026-11-18).
+- Node builds a mock from generated source. Its script has the real file's
+  path plus `?node-test-mock=N`, and **every dynamic `import()` of the
+  mocked module makes a new one** (checked in the raw V8 data of a full run:
+  `browser/src/module.ts` had four entries, one per test that built the
+  module). Node reads the real file for the line count, so each entry is a
+  copy of the whole real file, and nearly all of it counts as uncovered.
+- Damage to the `all files` line (the one `npm run test:cov` ends on): each
+  copy is added to the total. On 2026-11-18 a full run held 14 such entries
+  for first-party files, about 5,000 lines, and the line read 85.78% while
+  the rows of the table added up to 93.99%. A controlled change proved it:
+  the Slack and Discord plugin tests and the registry test imported their
+  mocked module 3, 2 and 2 times; with one import each, and the same
+  assertions, the line went from 85.78% to 89.82%.
+- Damage to a row: when a mock entry and the real entry share a path, the
+  report shows the one it reads last. That depends on the order in which the
+  test processes end, so it changes from run to run. In one full run
+  `google-meet/src/meeting.ts` read 8.40% (true 100%),
+  `channel-slack/src/module.ts` 8.01% (true 93.59%) and
+  `tracker-linear/src/setup-project.ts` 9.12% (true 97.19%); the next run
+  read them right and misread others (`host/src/cli/registry.ts` 8.80%,
+  `context.ts` 15.96%). A third-party package that is mocked costs nothing:
+  its files are not in the report.
+- What to do when you write a mock of a first-party file:
+  - Make the unit load it once. Table-driven cases that each import it again
+    add a copy each; one case is enough when the others only re-test a
+    helper that has its own tests.
+  - Prefer a mock of a small file.
+  - Do not avoid the mock because of this. Mocks are the way to test a unit
+    (the operator, 2026-11-18).
+- The honest overall figure is the sum over the rows of
+  `file length × (100 − line %) / 100`, with the rows of mocked files taken
+  from a run without the mocking test. At the end of 2026-11-18 it was about
+  94.7%; the `all files` line read 89.82%.
 - To read the true number of a file in the register: run the tests of its
   package with `--test-coverage-include=<that file>`, once with and once
   without the test file that mocks it. The run without it is the number to
   trust, and the gap that remains in it is real.
+- The line cannot be made right from the tests. A change to how `test:cov`
+  reports needs the operator: see the ticket
+  `docs/backlog/coverage-total-counts-copies-of-mocked-files.md`.
 
 Node version:
 
