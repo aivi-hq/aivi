@@ -171,7 +171,7 @@ export class Tab {
   readonly #connection: CdpConnection;
   readonly #targetId: string;
   readonly #sessionId: string;
-  readonly #listeners = new Map<(event: CdpEvent) => void, EventListener>();
+  readonly #listeners = new Map<string, Map<(event: CdpEvent) => void, EventListener>>();
   #pageEnabled = false;
 
   constructor(connection: CdpConnection, targetId: string, sessionId: string) {
@@ -194,39 +194,55 @@ export class Tab {
   }
 
   /** Listen for a protocol event of this tab. The listener sees only events
-   *  carrying our session id. */
+   *  carrying our session id. Asking twice for the same listener on the same
+   *  event is one registration, as it is for an `EventTarget`. */
   on(event: string, listener: (event: CdpEvent) => void): this {
+    let wrappers = this.#listeners.get(event);
+    if (wrappers === undefined) {
+      wrappers = new Map();
+      this.#listeners.set(event, wrappers);
+    }
+    if (wrappers.has(listener)) return this;
     const wrapper: EventListener = raw => {
-      const event = raw as CdpEvent;
-      if (event.sessionId === this.#sessionId) listener(event);
+      const arrived = raw as CdpEvent;
+      if (arrived.sessionId === this.#sessionId) listener(arrived);
     };
-    this.#listeners.set(listener, wrapper);
+    wrappers.set(listener, wrapper);
     this.#connection.addEventListener(event, wrapper);
     return this;
   }
 
   off(event: string, listener: (event: CdpEvent) => void): this {
-    const wrapper = this.#listeners.get(listener);
-    if (wrapper !== undefined) {
+    const wrappers = this.#listeners.get(event);
+    const wrapper = wrappers?.get(listener);
+    if (wrappers !== undefined && wrapper !== undefined) {
       this.#connection.removeEventListener(event, wrapper);
-      this.#listeners.delete(listener);
+      wrappers.delete(listener);
     }
     return this;
   }
 
-  #once(event: string, timeoutMs: number): Promise<CdpEvent> {
-    return new Promise<CdpEvent>((resolve, reject) => {
-      const listener = (arrived: CdpEvent): void => {
-        this.off(event, listener);
-        clearTimeout(timer);
-        resolve(arrived);
-      };
-      const timer = setTimeout(() => {
-        this.off(event, listener);
-        reject(new Error(`no ${event} within ${timeoutMs} ms`));
-      }, timeoutMs);
-      this.on(event, listener);
-    });
+  /** Wait for the next event of that name, for at most `timeoutMs`. `cancel`
+   *  ends the wait early and leaves nothing behind: no listener, no timer. */
+  #once(event: string, timeoutMs: number): { arrived: Promise<CdpEvent>; cancel: () => void } {
+    const waiting = Promise.withResolvers<CdpEvent>();
+    const stop = (): void => {
+      clearTimeout(timer);
+      this.off(event, listener);
+    };
+    const listener = (arrived: CdpEvent): void => {
+      stop();
+      waiting.resolve(arrived);
+    };
+    const timer = setTimeout(() => {
+      stop();
+      waiting.reject(new Error(`no ${event} within ${timeoutMs} ms`));
+    }, timeoutMs);
+    this.on(event, listener);
+    // A wait that runs out while its caller is still sending is reported where
+    // the caller awaits it, not as an unhandled rejection that ends the process.
+    waiting.promise.catch(() => {});
+    return { arrived: waiting.promise, cancel: stop };
   }
 
   /** Navigate and wait for the load event. Blank on arrival is normal for a
@@ -238,11 +254,15 @@ export class Tab {
       this.#pageEnabled = true;
     }
     const loaded = this.#once('Page.loadEventFired', timeoutMs);
-    const answer = await this.send<{ errorText?: string }>('Page.navigate', { url });
-    if (answer.errorText !== undefined) {
-      throw new Error(`navigation to ${url} failed: ${answer.errorText}`);
+    try {
+      const answer = await this.send<{ errorText?: string }>('Page.navigate', { url });
+      if (answer.errorText !== undefined) {
+        throw new Error(`navigation to ${url} failed: ${answer.errorText}`);
+      }
+      await loaded.arrived;
+    } finally {
+      loaded.cancel();
     }
-    await loaded;
   }
 
   /** Run an expression in the page and take its value back. */

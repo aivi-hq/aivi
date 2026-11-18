@@ -195,12 +195,13 @@ export class CdpConnection extends EventTarget {
   }
 
   #onMessage(raw: string): void {
-    let message: CdpMessage;
+    let message: CdpMessage | null;
     try {
-      message = JSON.parse(raw) as CdpMessage;
+      message = JSON.parse(raw) as CdpMessage | null;
     } catch {
       return;
     }
+    if (message === null) return;
     if (message.id !== undefined) {
       const pending = this.#pending.get(message.id);
       if (pending !== undefined) {
