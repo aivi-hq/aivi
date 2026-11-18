@@ -37,61 +37,112 @@ Useful starting points:
   `packages/forge-github/src/setup-project.ts` and
   `packages/host/src/cli/project-setup.ts`: further API and prompt-flow units.
 
-## Voice: open questions for the operator
+## In progress: operator rulings on voice (2026-11-18)
 
-Each item was confirmed by reading or by experiment. None is fixed and no
-test pins the questioned behavior. Ask before changing any of them.
+Resume here. The operator answered the open voice questions. Work the
+"todo" items in order. Each behavior change: a failing test first, its own
+commit, its own patch changeset (see `.changeset/`). Then run
+`npm run agentic:verify` once, refresh the baseline above and commit.
 
-Speaking the answer (`packages/voice/src/speech.ts`):
+How the operator wants to work:
 
-- A text block that opens (`session.text.started`) but whose deltas never
-  arrive is never spoken, and nothing is logged. `sawText` is set by the
-  start event alone, so `finish` speaks only the empty tail. The comment
-  says an answer that did not stream goes out whole.
-- A mark at the end of the text received so far counts as a clause end.
-  `3.` and `5 procent.` in two deltas are spoken as two clauses. The
-  comment says `3.5` survives uncut.
-- The comment says `Mr.` survives uncut. `Mr. Smith is here.` is cut after
-  `Mr.`: a period before a space is a clause end.
-- The closing-quote set holds `"` twice and no typographic `”`.
-- `flush` runs on the barge path when the barge is noticed at the next
-  chunk. The kit contract (`packages/plugin/src/voice.ts`) says never.
-  Both mouths tolerate it today.
+- No question tool. Put questions in the message and stop.
+- Post one short status line per step.
+- Ask before changing behavior, unless the intent is obvious.
+- The operator's word decides. Docs and recorded decisions are not law;
+  raise a disagreement, do not treat a doc as a veto.
+- Never pin a suspected bug in a test to gain coverage.
 
-Rooms and turns:
+Done and committed:
 
-- `turns.ts`: a `pool-gone` refusal is logged at info with the hint meant
-  for `waiting`. The line waits until the pool is configured again or the
-  session leaves the resume window; with `resumeMinutes: false`, forever.
-- `room.ts`: a file/mic room stopped while its engine still loads logs
-  `voice.engine.start-failed` and shows state `failed`.
-- `room.ts`: `onEvent` replays the engine state to a new listener outside
-  the guard that later events get. A listener that throws on that first
-  event throws out of `onEvent` and stays registered.
-- `room.ts`: after its file ends, a room of its own keeps state `ready`
-  and sends `heard()` and `feed()` to the ended engine.
-- `lanes.ts`: an engine that dies mid-utterance, before `end()`, leaves a
-  partial line without the `voice.lane.partial` warning.
+- `543705a` An answer whose text block opened but never streamed is spoken
+  whole (`sawText` is set by a delta, not by the start event).
+- `7693bb4` A mark ends a spoken clause only when whitespace follows it; a
+  mark at the end of the text so far waits. The comment now says `Mr.` is
+  cut. All marks (`. , ; : ! ? …`) still end a clause: the operator said
+  "`.` followed by space or `\n`" — tell them commas were kept and ask if
+  only `.` is wanted.
+
+Todo, ruled "sure" (do as described):
+
+- `speech.ts` `scanClause`: closing quotes. The set holds `"` twice; add
+  `”` and `’`. Test: `Hij zei “stop.” En ging weg. ` cuts after `.”`.
+- `speech.ts` `speakOne`: do not call `flush` when the stretch was
+  interrupted (the kit contract says never on the barge path).
+- `room.ts` `startEngine`: a room stopped while its own engine loads stays
+  quiet: return when `this.stopped`, after `start()` resolves and in the
+  catch. No `voice.engine.start-failed`, no `failed` state.
+- `room.ts` `onEvent`: deliver the replayed engine state through the same
+  guard as `emit` (a throwing listener is logged, `onEvent` still returns
+  the unsubscribe).
+- `lanes.ts` `end()`: warn `voice.lane.partial` when the lane had joined
+  the engine and never got `lane_end`: test `lane.run && !lane.gotEnd`
+  instead of `live && !lane.gotEnd`.
+- `setup.ts`: transcription is always on. The summary says "transcription
+  downloaded" or "transcription on, downloads on first use", never "off".
+- `engine.ts` `slice`: a negative start returns null
+  (`i0 < Math.max(0, this.ringEnd - this.ring.length)`).
+- `room.ts`: a room of its own after end of file: leave as it is.
+
+Todo, ruled otherwise:
+
+- Wake phrase: do not strip it. The meeting prompt quotes the line as it
+  was said. Delete `stripWake` (`wake.ts`, the export in `index.ts`, its
+  test in `wake.test.ts`) and update the meeting tests in `room.test.ts`.
+  Changeset: behavior change plus a removed export.
+- Setup self-check: use `schema.parse(block)` instead of `safeParse` plus
+  the unreachable throw, in `packages/{voice,browser,google-meet}/src/setup.ts`.
+  This is a refactor: no changeset. It closes voice's last open branch.
+- `engine/mlx-tts.py`: in streaming mode always send a final reply, also
+  when the model yields nothing or ends without a final chunk. Check with
+  `python3 -m py_compile`; no python test exists, say so.
+- `drained()`: the operator has no rule but forbids a helper that is not
+  needed. It is needed in two cases: state with no signal (a speaking
+  window closing) and "nothing more happened" checks. Replace its first
+  use in the mute test of `speech.test.ts` with a boundary on the
+  `voice.room.mute` log; explain the rest to the operator.
+
+Lease items (the operator: leases decide capacity, so nothing about them
+is "harmless" by default):
+
+- What lingers after recovery is voice's own note (`voice_state` key
+  `lease:<room>`), not a dispatcher lease. Capacity is counted from
+  `dispatcher_leases`. Todo: forget the note once its release was
+  attempted (`VoiceTurns.recover` gets a `forget(label)` callback; the
+  module passes `label => store.setRoomLease(label, null)`). Prove it with
+  the real host `Dispatcher` and `LeaseStore` over `new Store(':memory:')`
+  (see `packages/host/test/dispatcher.test.ts` for the construction): after
+  recovery `dispatcher.held()` is 0 and the note is gone.
+- Todo: persist the held lease before the session is prepared. Today
+  `rememberLease` runs after `provide`, so a crash during session creation
+  hides the lease from recovery. Call it first in `VoiceTurns.run`.
+- Ask the operator: recovery releases the slot at once and does not stop
+  the old session. `aivi serve` restarts OpenCode at start only with
+  `opencode.lifecycle: own` (the default). With `discover`, `ensure` or
+  `opencode.url`, OpenCode outlives aivi: an old turn may still generate
+  while its slot is granted again. Boot order: modules start (voice
+  recovery) before `dispatcher.reconcile()`. Should recovery interrupt the
+  room's session first?
+
+Open, ask the operator before building:
+
+- Removed pool. Ruling: when a session resumes and its pool is no longer
+  configured, warn and continue on the configured pool with the same
+  session; a configured pool that does not exist is a hard error (config
+  load already rejects an unknown `plugins.<id>.pool`). Not built. Two
+  things to confirm first:
+  1. Scope. Channels and tickets resume sessions too and wait today
+     (`pool-gone` in `packages/host/src/dispatcher/dispatcher.ts`, handled
+     in `channel/engine.ts`; the scheduler branch is unreachable because
+     jobs never resume). Build it in the dispatcher for every service
+     (recommended: the dispatcher owns the session-to-pool record), or in
+     voice only?
+  2. Model. A resumed session keeps the model it was created with. Is
+     that right when its pool, and maybe that model's endpoint, is gone?
 - `module.ts`: a room `stop()` that rejects would skip the other rooms and
-  the engines. The shipped room has no rejecting path; nothing changed.
-- `store.ts`/`turns.ts`: a `lease:<room>` row released at restart stays
-  until that room's next turn, and every restart releases it again. Lease
-  ids are random, so this is harmless.
-
-Engine and setup:
-
-- `engine.ts`: `slice` with a negative start returns NaN samples, not
-  null. Only a malformed `act` event can ask for one.
+  the engines. The shipped room cannot reject; nothing changed.
 - `engine.ts`: a caller-supplied `source()` that throws escapes from the
-  stderr handler and `start()` never settles. Only the programmatic seam.
-- `setup.ts`: a no to "Download the transcription model now?" reads
-  "transcription off" in the summary. ASR stays configured and downloads
-  on first audio.
-- `wake.ts`: `stripWake` leaves a leading comma: `Hey assistant, help me!`
-  becomes `, help me!`. An existing test pins that result.
-- `engine/mlx-tts.py` (python, outside coverage): a generator that yields
-  nothing sends no final reply, so the client waits its full timeout. A
-  chunk without `is_final_chunk` counts as final.
+  stderr handler and `start()` never settles. Programmatic seam only.
 
 ## Test approach the operator wants
 
