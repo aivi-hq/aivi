@@ -6,4 +6,4 @@ export { HearingRoom, type RoomDeps, type RoomInit } from './room.ts';
 export { cos, type Match, type VoiceLine, VoiceStore } from './store.ts';
 export { TtsRun, type TtsSpec } from './tts.ts';
 export { type TurnPrompt, type TurnsConfig, type TurnsDeps, VoiceTurns } from './turns.ts';
-export { normalize, scanWake, stripWake } from './wake.ts';
+export { normalize, scanWake } from './wake.ts';

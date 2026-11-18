@@ -38,7 +38,7 @@ Call is the default because it is the common case and loads the least.
   over); that record is what a meeting *is*. The wake phrase (`wake.phrases`,
   scanned mechanically on streaming text, case- and diacritic-insensitive,
   whole words) is the only thing that activates the session: the addressed
-  sentence (phrase stripped) plus the `aivi_voice_transcript` tool to read
+  sentence, as it was said, plus the `aivi_voice_transcript` tool to read
   the meeting back. Meetings are polite: answers play to the end, barge-in
   does nothing. A streaming room without `identity` is refused — a meeting
   with one anonymous speaker is a monologue.

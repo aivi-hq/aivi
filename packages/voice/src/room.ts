@@ -43,7 +43,7 @@ import type { VoiceStore } from './store.ts';
 import type { TtsRun } from './tts.ts';
 import type { TurnsDeps } from './turns.ts';
 import { VoiceTurns } from './turns.ts';
-import { scanWake, stripWake } from './wake.ts';
+import { scanWake } from './wake.ts';
 
 const SR = 16000;
 const BUFFER_MAX_BYTES = SR * 2 * 60; // own-lane wait-for-engine buffer: 60 s, then oldest goes
@@ -395,7 +395,7 @@ export class HearingRoom implements VoiceRoom {
       if (opts.wake) {
         this.deps.store.touchRoomSession(this.init.label); // the window restarts on every exchange
         this.turns.prompt({
-          text: `You were addressed by ${speaker || 'someone'} during a meeting (transcript ${this.transcript}, line ${id}). They said: "${stripWake(text, opts.wake)}". Use the aivi_voice_transcript tool to read back what was said around this moment.`,
+          text: `You were addressed by ${speaker || 'someone'} during a meeting (transcript ${this.transcript}, line ${id}). They said: "${text}". Use the aivi_voice_transcript tool to read back what was said around this moment.`,
           speakers: speaker === '' ? [] : [speaker],
           wake: opts.wake,
         });

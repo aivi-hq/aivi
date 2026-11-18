@@ -353,7 +353,7 @@ test('a meeting room appends every line to its record and stays silent until it 
   await say(h, 'quarterly numbers', { speaker: 'Ada', user: 'u-ada', channel: 'c-voice' });
   const [meeting] = h.store.transcripts();
   assert.equal(h.request.mock.callCount(), 0, 'no wake phrase: the meeting is not addressed');
-  await say(h, 'Hey assistant what did Ada say?', { speaker: 'Grace' });
+  await say(h, 'Hey assistant, what did Ada say?', { speaker: 'Grace' });
   const [input] = await h.asked.next();
 
   assert.deepEqual([meeting!.source, h.store.transcripts()[0]!.lines], ['room', 2], 'a meeting keeps its record');
@@ -365,7 +365,7 @@ test('a meeting room appends every line to its record and stays silent until it 
   assert.deepEqual([addressed!.speaker, addressed!.wake, addressed!.user], ['Grace', true, undefined]);
   assert.equal(
     input.text,
-    `You were addressed by Grace during a meeting (transcript ${meeting!.id}, line ${addressed!.id}). They said: "what did Ada say?". Use the aivi_voice_transcript tool to read back what was said around this moment.`,
+    `You were addressed by Grace during a meeting (transcript ${meeting!.id}, line ${addressed!.id}). They said: "Hey assistant, what did Ada say?". Use the aivi_voice_transcript tool to read back what was said around this moment.`,
   );
   assert.deepEqual(input.messageMetadata, {
     aivi: { origin: 'discord', transcript: meeting!.id, speakers: ['Grace'], wake: 'hey assistant' },
@@ -388,7 +388,10 @@ test('a nameless voice may address a meeting too: nobody is invented for it', as
   await say(h, 'hey assistant are you there');
   const [input] = await h.asked.next();
 
-  assert.match(String(input.text), /^You were addressed by someone during a meeting .* They said: "are you there"\./);
+  assert.match(
+    String(input.text),
+    /^You were addressed by someone during a meeting .* They said: "hey assistant are you there"\./,
+  );
   assert.deepEqual((input.messageMetadata as { aivi: object }).aivi, {
     origin: 'discord',
     transcript: h.store.transcripts()[0]!.id,
