@@ -5,14 +5,18 @@
  *  The answer streams off OpenCode's event bus (`session.text.started` /
  *  `.delta`, the same events the channels' progress reads). It cuts at every
  *  clause end — `. , ; : ! ? …` followed by whitespace, and every line break
- *  ("3.5", "2,5", "Mr." survive uncut). A clause goes to the voice at once
- *  when the wire is free — so the FIRST sound waits for one clause, comma
- *  included — and while the voice speaks, later clauses wait and leave as
- *  ONE chunk: the voice gets long natural text, not sentence confetti. The
- *  last block's unspoken tail (no punctuation to cut on) goes out when the
- *  answer ends. A barge raises playGen; clauses buffered or synthesizing
- *  under the old answerGen die, and the model's reconsidered message (a new
- *  id) re-arms the generation so the reconsidered answer is heard.
+ *  ("3.5" and "2,5" survive uncut; "Mr. Smith" does not: a period before a
+ *  space is a clause end). A mark with nothing after it yet ends nothing:
+ *  the next character decides, so a number split over two deltas stays one
+ *  number. A clause goes to the voice at once when the wire is free — so
+ *  the FIRST sound waits for one clause, comma included — and while the
+ *  voice speaks, later clauses wait and leave as ONE chunk: the voice gets
+ *  long natural text, not sentence confetti. No timer waits on text: the
+ *  last block's unspoken tail (its closing sentence, or words with no
+ *  punctuation to cut on) goes out when the answer ends. A barge raises
+ *  playGen; clauses buffered or synthesizing under the old answerGen die,
+ *  and the model's reconsidered message (a new id) re-arms the generation
+ *  so the reconsidered answer is heard.
  */
 import type { Logger } from '@aivi/core';
 import type { TtsRun } from './tts.ts';
@@ -34,15 +38,17 @@ export interface SpeechDeps {
 
 /** One step of the clause scan at `at`: where the scan goes on, and whether
  *  the text before that point is a finished clause. A line break ends one;
- *  a mark ends one when whitespace (or, so far, nothing) follows it and any
- *  closing quotes — "3.5" and "2,5" carry their marks inside a word. */
+ *  a mark ends one when whitespace follows it and any closing quotes —
+ *  "3.5" and "2,5" carry their marks inside a word. A mark at the end of
+ *  what was written so far ends nothing yet: the scan comes back to it when
+ *  more text arrives, and the end of the answer speaks whatever is left. */
 function scanClause(src: string, at: number): { next: number; clause: boolean } {
   const c = src.charAt(at);
   if (c === '\n') return { next: at + 1, clause: true };
   if (!'.,;:!?…'.includes(c)) return { next: at + 1, clause: false };
   let end = at + 1;
   while (end < src.length && '"\'")」』'.includes(src.charAt(end))) end++;
-  return { next: end, clause: end === src.length || ' \n\t'.includes(src.charAt(end)) };
+  return { next: end, clause: end < src.length && ' \n\t'.includes(src.charAt(end)) };
 }
 
 export class SpeechOut {

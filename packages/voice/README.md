@@ -49,8 +49,10 @@ The answer is spoken **sentence by sentence, while the model is still writing
 it** — the first sound waits for the first sentence, not the whole reply.
 Voice watches the same OpenCode events the channels' progress reads
 (`session.text.started` / `.delta` for the room's session), cuts complete
-sentences off the front, and sends each to the voice at once; the last
-clause, if it has no closing punctuation, goes out when the answer ends.
+clauses off the front — a `. , ; : ! ? …` followed by a space or a line
+break, so `3.5` stays one number — and sends each to the voice at once.
+Nothing waits on a timer: whatever is left, the closing sentence included,
+goes out when the answer ends.
 `@discordjs/voice` plays the sentences back to back in order.
 And each sentence speaks **while it synthesizes** too (`tts.stream`, default
 on): Voxtral TTS yields audio chunks as it generates them — its own interval,
