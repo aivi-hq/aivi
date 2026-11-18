@@ -408,6 +408,17 @@ export class HearingRoom implements VoiceRoom {
       return;
     }
     // Call: the session is the record. Caption the room, batch the words.
+    // A line worded after the room closed (an utterance still in the engine
+    // when everyone left) shares the fate of the closing batch: no flush
+    // may be armed on a room that is gone.
+    if (this.stopped) {
+      this.deps.log.info('voice.batch.dropped', {
+        room: this.init.label,
+        lines: 1,
+        hint: 'the room closed before this sentence was finished',
+      });
+      return;
+    }
     // Aivi's own voice never arrives as data: Discord separates streams
     // server-side, and the file/mic development lanes play nothing back —
     // so what is heard here is a person.
