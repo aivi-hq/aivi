@@ -52,6 +52,23 @@ Checked on Node 26.13.1, with scratch test files:
     does.
   - `mock.module` serves every test in the file, by design (see below).
 
+## Gotchas
+
+- Mock a property once per test. A second `t.mock.property` of the same
+  property in one test leaves the process hanging when the test ends
+  (checked on Node 26.13.1: it never exits). Mock it once and change the
+  object the mock holds.
+- A mock of a child process says `exit` after `kill` returns, as a real child
+  does. A mock that says it inside `kill` runs before the unit has registered
+  its listener, and the unit waits for ever.
+- Node loads some globals on first use: the first `new WebSocket` or read of
+  `WebSocket` costs about 25 ms, and the first `Response` about 15 ms. The
+  first test of a file that touches them is that much slower. It is not the
+  cost of the test.
+- Run a test file you are not sure of under a time limit
+  (`perl -e 'alarm 60; exec @ARGV' node --test …`). A hang leaves nothing to
+  read.
+
 ## Module mocks
 
 `mock.module` replaces a module that the unit imports itself. It is an
@@ -107,6 +124,8 @@ Node version:
 | `packages/host/test/project-wizard.test.ts` | `packages/host/src/cli/context.ts` | The loaded config, the composed schema, the home store |
 | `packages/host/test/project-wizard.test.ts` | `packages/host/src/cli/registry.ts` | The project contributors of the configured plugins |
 | `packages/forge-github/test/setup-project.test.ts` | `@aivi/github`: `githubApp` and `runGit`, the rest is the real module | The GitHub App's grant and token, and git |
+| `packages/google-meet/test/module.test.ts` | `@aivi/core`: `openFaceTab`, the rest is the real module | The face tab the meeting opens: its tab, ears, mouth and close |
+| `packages/google-meet/test/module.test.ts` | `packages/google-meet/src/meeting.ts` | The button trail: `driveJoin` and `driveLeave` |
 
 The register is complete when it lists every match of
 `grep -rn "mock.module(" packages/*/test`.

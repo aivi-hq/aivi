@@ -108,6 +108,22 @@ test('meet join asks serve to join and follows the run to its end', async t => {
   await assert.rejects(refused.run('join', URL), /already in a call \(in-call: .* — aivi meet leave first/);
 });
 
+test('meet join says so when the join was cancelled before it ran', async t => {
+  const { stateDirectory, store } = await home(t);
+  const meet = cliFixture(cli, {
+    stateDirectory,
+    store,
+    onPoke: () => {
+      const [run] = store.runs({ state: 'queued' });
+      store.cancelQueued(run!.id);
+    },
+  });
+
+  await meet.run('join', URL);
+
+  assert.equal(meet.said[1], 'The join did not make it: cancelled');
+});
+
 test('meet join stops following a join that is still working when its watch ends', async t => {
   const { stateDirectory, store } = await home(t);
   const waiting = clock(t);
