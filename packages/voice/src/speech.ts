@@ -130,8 +130,10 @@ export class SpeechOut {
       this.spokenChars = 0;
     }
     this.speakMsg = id;
-    this.sawText = true;
+    // A block that only opened has streamed nothing yet: if its deltas never
+    // arrive, the finished answer still has to be spoken whole.
     if (ev.kind === 'start') return;
+    this.sawText = true;
     this.speakRaw += ev.delta;
     this.cutClauses();
   }
