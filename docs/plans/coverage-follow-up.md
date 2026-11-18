@@ -7,26 +7,37 @@ serves that goal. Everything else is a ticket in `docs/backlog/` (see
 
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` (2026-11-18) exited 0: 1,229
-tests passed. Production coverage is 90.84% lines, 89.24% branches and
-85.62% functions. Fallow still reports 2 check
-findings, 6 duplicate groups, 15 health findings (2 critical, 2 high, 11
-moderate), 7 refactoring targets and 2 unconfigured-policy diagnostics.
-This run printed the Fallow graph-cache warning ("Graph cache decoded but
-not reused: resolver, entry points, or plugins changed"); it comes and
-goes between runs. The test run prints one `ExperimentalWarning` for each
-of the two test files that use module mocks. This is not zero tool
-feedback.
+The latest full `npm run agentic:verify` (2026-11-18, the tracker-github
+pass) exited 0: 1,317 tests passed. Production coverage is 91.42% lines,
+90.40% branches and 86.94% functions; 3,556 of 41,492 lines are
+uncovered. Fallow still reports 2 check findings, 5 duplicate groups, 13
+health findings (2 critical, 1 high, 10 moderate), 6 refactoring targets
+and 2 unconfigured-policy diagnostics. This is not zero tool feedback. The
+run printed these warnings:
 
-The full output is `coverage/agentic-verify-mocks.log`; exact coverage is
+- Fallow's graph-cache warning ("Graph cache decoded but not reused:
+  resolver, entry points, or plugins changed"). It comes and goes between
+  runs.
+- One `ExperimentalWarning` for each of the two test files that use module
+  mocks.
+- `npm notice` lines: the pack listing that `pack-smoke` prints. That is its
+  normal output.
+
+The full output is `coverage/agentic-verify-github2.log`; exact coverage is
 `coverage/coverage-final.json`. Both are generated/ignored artifacts:
 regenerate them if absent or stale. No checks or suppressions were
 weakened.
 
 At 100% lines, branches and functions, with no Fallow finding:
-`packages/voice`, and in `packages/host/src/`: `scheduler.ts`,
-`channel/engine.ts` and `dispatcher/leases.ts`. `dispatcher/dispatcher.ts`
-is at 100% lines and functions with one branch open (see "Next batch").
+`packages/voice`; in `packages/host/src/`: `scheduler.ts`,
+`channel/engine.ts` and `dispatcher/leases.ts`; in
+`packages/tracker-github/src/`: `tracker.ts` and `delivery.ts`.
+`dispatcher/dispatcher.ts` is at 100% lines and functions with one branch
+open (see "Next batch"). 91 of 207 files are at 100% on all three.
+
+`packages/tracker-github/src/module.ts` is at 96.27% lines, 97.3% branches
+and 95.55% functions. What is open is stop handling that nothing can reach
+(see "Left open by the tracker-github pass").
 
 At 100% lines since the plugin command pass (branches not checked):
 `google-meet/src/cli.ts`, `tracker-github/src/cli.ts` and `index.ts`,
@@ -46,13 +57,19 @@ At 100% lines since the plugin command pass (branches not checked):
 - Anything that gets to a clean `agentic:verify` has the operator's
   blessing (2026-11-18), as long as it is not a workaround, a hack, or a
   disabled or ignored rule.
-- Anything that seems wrong or requires a fix goes in a ticket; move on.
-  Do not stop to ask about it, and do not fix it in passing. When such a
-  fix blocks coverage, leave the lines open and point this note at the
-  ticket.
+- Anything that seems wrong goes in a ticket; move on. Do not stop to ask
+  about it. A bug that is simple to fix is fixed in the batch, with a test
+  that failed first and a changeset (the operator, 2026-11-18: "Bug? Fix if
+  simple, move to a ticket in docs/backlog otherwise"). A behavior question,
+  or a fix that needs a ruling, is a ticket: leave the lines open and point
+  this note at it.
 - The operator's word decides. Docs and recorded decisions are not law;
   raise a disagreement, do not treat a doc as a veto.
 - Never pin a suspected bug in a test to gain coverage.
+- Change files with the `edit` and `write` tools. No scripted edits
+  (`python`, `sed`, heredocs): the operator sees no diff for them, and a
+  script can change nothing without saying so (the operator, 2026-11-18).
+  The shell is for running things and for `git`, `mv` and `rm`.
 - No live checks. Do not launch real CLIs, services, browsers, decoders or
   model processes, in tests or outside them. The operator owns live
   checks. `npm run agentic:verify` is allowed as it is: its smoke step
@@ -81,11 +98,50 @@ At 100% lines since the plugin command pass (branches not checked):
 
 Not agreed yet. Say what it is and wait for the go.
 
-The largest gap that needs no decision first is
-`packages/tracker-github/src/module.ts`: 255 uncovered lines, in functions
-that no test calls (listed under the table below). It has one Fallow complexity finding
-(`onIssue`). `tracker.ts` in the same package has another (`dispatch`) and
-the repeated status-comment reads.
+The largest gaps, by uncovered lines (the table below has the list):
+
+- `packages/chrome/src/{tab,chrome,connection}.ts`: 519 lines and 68
+  functions that no test calls. No decision is needed first: fake CDP, tabs
+  and processes. `@aivi/chrome` is published, so these tests also guard a
+  public surface.
+- `packages/tracker-linear/src/module.ts` (96 lines, 52 branches): the twin
+  of the GitHub module. Its test starts a real orchestrator and a fake
+  OpenCode server; `packages/tracker-github/test/module-decisions.test.ts`
+  is the same subject as units over fakes, for comparison. Linear's own
+  copies of two bugs fixed in the GitHub module are tickets:
+  `docs/backlog/linear-closing-can-be-said-twice.md` and
+  `docs/backlog/failed-module-start-leaves-its-registrations.md`.
+- The rest of `packages/tracker-github/src/`, in the same package and the
+  same style: `runprogress.ts` (33 lines, no test file; three duplicate
+  groups run through it, see "Remaining Fallow findings"), `client.ts` (36
+  lines, 25 branches; `githubClient` is the default tracker's connection),
+  `setup-project.ts` (43 lines, 32 branches; `askLanes` is a Fallow
+  finding), `probe.ts` (17 lines, 17 branches), and a few branches in
+  `projects.ts` (4) and `work.ts` (3).
+- Needs a ruling first: `channel-discord/src/module.ts` (643 lines; see
+  "Code to refactor before it can be unit-tested") and
+  `host/src/orchestrator/orchestrator.ts` (116 lines, 105 branches; lines
+  188-193 wait for the fix in
+  `docs/backlog/orchestrator-release-rejection-is-unhandled.md`).
+
+Left open by the tracker-github pass (`module.ts` and `tracker.ts`;
+2026-11-18):
+
+- `packages/tracker-github/src/module.ts`, stop handling that nothing can
+  reach from the GitHub adapter: `stopAssistant`, `stopOrphans` and the
+  loop in `stopDeleted` (no assistant conversation is ever bound with an
+  issue), `onStopSignal` and the `signal === 'stop'` check in `onPrompted`
+  (GitHub sends no signal), and the `issue.archived` checks in `onBrought`
+  and `stopOrphanRun` (GitHub never reports it). Not tested on purpose:
+  reviving or removing them is a ruling. Ticket:
+  `docs/backlog/github-module-stop-handling-nothing-reaches.md`.
+- `stopOrphanRun`, the `run.sessionId` fallback: one branch arm. A person
+  who takes the ticket back while the run is still preparing does not stop
+  it. Ticket:
+  `docs/backlog/taking-the-ticket-back-during-preparation-does-not-stop-the-run.md`.
+- Host: a render stage that throws synchronously fails the run, not the
+  log. Ticket:
+  `docs/backlog/render-stage-that-throws-synchronously-fails-the-run.md`.
 
 Left open by the capacity-path batch (dispatcher, scheduler, channel
 engine; 2026-11-18):
@@ -103,8 +159,10 @@ Left open by the plugin command pass (2026-11-18):
 - `packages/host/src/cli/project-setup.ts`: every line is covered. Four
   small functions are never called: the default `connect` and `sleep` of
   `listLaneAgents`, and the `print` and `agents` that the wizard hands a
-  contributor. `connect` and `agents` need a module mock of
-  `../opencode.ts`; `print` writes to the terminal through `@aivi/core`.
+  contributor. `connect` and `agents` need a seam: a parameter whose
+  default is `../opencode.ts`, not a module mock (a mock leaves that file
+  a phantom uncovered branch; see "Test approach"). `print` writes to the
+  terminal through `@aivi/core`.
 - `packages/forge-github/src/setup-project.ts`: every line is covered.
   Open branches: line 53 (a listing error that is not an `Error`) and
   lines 73 and 89 (an answer that names no repository). The prompt's own
@@ -135,13 +193,12 @@ mocks reached them without a refactor (see `docs/testing.md`).
 
 ## Where the uncovered lines are
 
-From `coverage/coverage-final.json` at the baseline: 3,797 of 41,453
+From `coverage/coverage-final.json` at the baseline: 3,556 of 41,492
 lines are uncovered. The largest files, under `packages/`:
 
 | Uncovered lines | File |
 | ---: | --- |
 | 643 | `channel-discord/src/module.ts` |
-| 255 | `tracker-github/src/module.ts` |
 | 233 | `chrome/src/tab.ts` |
 | 180 | `google-meet/src/meeting.ts` |
 | 171 | `google-meet/src/module.ts` |
@@ -160,15 +217,12 @@ lines are uncovered. The largest files, under `packages/`:
 | 58 | `cli/src/add.ts` |
 | 58 | `tracker-linear/src/tracker.ts` |
 | 53 | `cli/src/main.ts` |
+| 47 | `cli/src/link.ts` |
 
 Notes for these:
 
 - `channel-discord/src/module.ts` constructs `new Client(...)` itself: it
   has no seam like Slack's `SlackConnection`. Ask before adding one.
-- `tracker-github/src/module.ts`: fake services and platform adapters for
-  lifecycle tests. Never called by a test: the delivery
-  (`send`, `edit`, `notice`, …), `question`, `plan`, the assistant start
-  and stop, `onBrought`, `onStopSignal`, `followUp`.
 - `chrome` and `google-meet`: use fake CDP, tabs and processes; keep live
   browser/platform gates separate.
 
@@ -196,6 +250,15 @@ Notes for these:
   pass `--experimental-test-module-mocks`: "go with the flag for now", and
   "every use of it must be accounted for". Read `docs/testing.md` first:
   the rules, the Node version facts and the register of every use.
+  - A mock of a file in `packages/*/src` leaves that file one phantom
+    uncovered branch, so it cannot reach 100% branches while the mock
+    stands. Verified on `host/src/index.ts`; the same mark is on
+    `host/src/cli/context.ts`, `host/src/cli/registry.ts` and
+    `github/src/index.ts`, the files the register replaces today. For a
+    module of ours, give the unit a parameter whose default is the real
+    thing (`githubTracker(config, connect)`). Details in
+    `docs/testing.md`. Those three files need a seam or the operator's
+    word.
 - The operator on a recording object that a test file keeps by hand
   (2026-11-18): it "reads like a custom mock. E.g. jest has
   .toHaveBeenCalled and you are maintaining a custom object." The
@@ -276,10 +339,13 @@ Notes for these:
       packages/voice/test/engine.test.ts
   ```
 
-- A bug that a test exposes becomes a ticket in `docs/backlog/`. Do not
-  write the test that pins it. Dead code and guards that nothing can reach
-  are removed instead: verify the callers first, and give a removed public
-  member its own changeset.
+- A bug that a test exposes: if the fix is simple, write the test that
+  fails first, fix it, and add a changeset; if it needs a ruling or is
+  large, it becomes a ticket in `docs/backlog/`. Never write the test that
+  pins the bug. Dead code and guards that nothing can reach are removed
+  instead: verify the callers first, and give a removed public member its
+  own changeset. Code that is dead only because a ruling is open stays, and
+  gets a ticket.
 - No exclusion or suppression to make a score green, and none at all
   without the operator's approval (see the hard rule in "How the operator
   wants to work").
@@ -312,6 +378,37 @@ Fixtures and gotchas from the plugin command pass (2026-11-18):
 - A wait loop on `sleep`: enable mock `Date` and `setTimeout`, settle a
   promise when the sleep is scheduled, then tick past the deadline
   (`clock()` in `google-meet/test/cli.test.ts`).
+
+Fixtures and gotchas from the tracker-github pass (2026-11-18):
+
+- `packages/tracker-github/test/module-decisions.test.ts` starts the module
+  over fakes with no module mock. `world(t)` builds the fakes and owns the
+  teardown order: the modules a test started stop first, then the store
+  closes. `t.after` hooks run in the order they were registered, so a
+  store closed by an earlier hook breaks the module's stop. `start(world)`
+  returns the registered tracker stages, the event sink and the wake
+  listener.
+- The host's real `ChannelEngine` runs over a dispatcher whose pool is
+  always full (`request` answers `{ refused: 'full' }`). The engine then
+  asks for every waiting turn and never starts one. `asked()` is what it
+  asked for, and the offline notice that a stop sends to the queued
+  conversations goes out through the module's own delivery.
+- `mock.method(realInstance, 'method', impl)` answers the I/O of a real
+  class and leaves its pure helpers real: `GithubPlatform`'s conversation
+  words (`idFor`, `parts`, `ticketOf`) stay its own.
+- `mockImplementationOnce(impl, onCall)`: `onCall` is the invocation
+  number. Two calls without it aim at the same invocation, and the later
+  one wins.
+- A log line is said before the attempt that said it has unwound. A test
+  that acts right after `recorder().next(event)` can meet that attempt
+  still in flight, and a second wake then joins it. Start each wake from a
+  settled state: one wake per test.
+- A stage hook returns `void | Promise<void>`: wrap it for `assert.rejects`
+  (`async () => h.work.ready(run)`). A run with no session is
+  `runOf({ sessionId: undefined as never })` under
+  `exactOptionalPropertyTypes`.
+- `recorder()` from `packages/host/test/support.ts` can be imported by
+  another package's tests by relative path.
 
 ## Coverage contracts to review
 
@@ -347,7 +444,6 @@ Duplicate groups to revisit:
   shared polling loop.
 - Progress scheduling/rendering across `host/src/channel/reporter.ts` and
   the two trackers' `runprogress.ts` files.
-- Repeated status-comment reads in `tracker-github/src/tracker.ts`.
 
 Remaining complexity findings:
 
@@ -358,9 +454,9 @@ Remaining complexity findings:
   `cli/commands/jobs.ts` (the add callback), under `packages/host/src/`;
   also `packages/host/test/dreaming.test.ts` (`respond`).
 - Knowledge: `packages/knowledge/src/index.ts` (`search`, `surveySources`).
-- GitHub tracker: `tracker.ts` (`dispatch`), `module.ts` (`onIssue`),
-  `probe.ts` (the agent-event `read`), `setup.ts` (`setup`) and
-  `setup-project.ts` (`askLanes`), under `packages/tracker-github/src/`.
+- GitHub tracker: `probe.ts` (the agent-event `read`), `setup.ts`
+  (`setup`) and `setup-project.ts` (`askLanes`), under
+  `packages/tracker-github/src/`.
 - Linear tracker: `packages/tracker-linear/src/setup-project.ts` (`askLanes`).
 - Meet: `packages/google-meet/src/meeting.ts` (`driveJoin`).
 
