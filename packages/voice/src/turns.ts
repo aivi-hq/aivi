@@ -227,15 +227,18 @@ export class VoiceTurns {
   /** One turn, from its slot to the slot's return. Nothing here throws: a
    *  turn that fails says so and still gives its slot back. */
   private async run(p: TurnPrompt, lease: DispatcherLeaseRef, messageId: string, cut: AbortSignal): Promise<void> {
-    let leaseId = lease.id;
+    const leaseId = lease.id;
     try {
-      if (lease.state === 'preparing') leaseId = await this.prepare(leaseId);
+      // The slot is held from here on. It is noted before anything is
+      // awaited, so a crash while the session is prepared cannot hide it
+      // from the next start's recovery.
+      this.deps.rememberLease(leaseId);
+      if (lease.state === 'preparing') await this.prepare(leaseId);
       if (cut.aborted) {
         // The session is kept for the next join; the model is never asked.
         this.deps.log.info('turns.cut', { hint: 'the room left while its session was being prepared' });
         return;
       }
-      this.deps.rememberLease(leaseId);
       // The turn is on: say so, with the session. A room that says nothing
       // here looks like it is only transcribing while the model is already
       // at work (the operator checked for a session during a two-minute
@@ -258,15 +261,14 @@ export class VoiceTurns {
 
   /** A fresh slot gets its session: the pool decides the model at session
    *  create (the dispatcher's rule); a room that pins its own model says so
-   *  per prompt. Answers with the lease the session is attached to. */
-  private async prepare(leaseId: string): Promise<string> {
+   *  per prompt. */
+  private async prepare(leaseId: string): Promise<void> {
     const attached = await this.deps.dispatcher.provide(leaseId, {
       agent: this.cfg.agent,
       directory: this.cfg.directory,
     });
     this.sessionId = attached.sessionId;
     if (attached.sessionId) this.deps.rememberSession(attached.sessionId);
-    return attached.id;
   }
 
   /** Put the line to the room's session and wait for the answer, watching
