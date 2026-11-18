@@ -1,165 +1,147 @@
 # Remaining coverage and quality work
 
+The goal is the output of `npm run agentic:verify`: 100% production
+coverage and zero feedback from every tool. This note holds only what
+serves that goal. Everything else is a ticket in `docs/backlog/` (see
+"Off-goal findings").
+
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` exited 0: 1,163 tests passed.
-Production coverage is 88.63% lines, 88.18% branches and 83.45% functions.
-Fallow still reports 2 check findings, 6 duplicate groups, 18 health
-findings, 7 refactoring targets and 2 unconfigured-policy diagnostics. It
-also printed the entry-point graph-cache invalidation warning; this is not
-zero tool feedback.
+The latest full `npm run agentic:verify` (2026-11-18) exited 0: 1,203
+tests passed. Production coverage is 88.88% lines, 88.92% branches and
+83.6% functions. Fallow still reports 2 check findings, 6 duplicate groups,
+15 health findings (2 critical, 2 high, 11 moderate), 7 refactoring targets
+and 2 unconfigured-policy diagnostics. This run printed no Fallow warning;
+the run before it printed the graph-cache warning ("decoded but not
+reused"), so look for it again. This is not zero tool feedback.
 
-The full output is `coverage/agentic-verify-voice-rulings.log`; exact
-coverage is `coverage/coverage-final.json`. Both are generated/ignored
-artifacts: regenerate them if absent or stale. No checks or suppressions
-were weakened.
+The full output is `coverage/agentic-verify-capacity.log`; exact coverage
+is `coverage/coverage-final.json`. Both are generated/ignored artifacts:
+regenerate them if absent or stale. No checks or suppressions were
+weakened.
 
-`packages/voice` is at 100% lines, branches and functions, with no Fallow
-finding in the package. What is left there are the operator questions below.
+At 100% lines, branches and functions, with no Fallow finding:
+`packages/voice`, and in `packages/host/src/`: `scheduler.ts`,
+`channel/engine.ts` and `dispatcher/leases.ts`. `dispatcher/dispatcher.ts`
+is at 100% lines and functions with one branch open (see "Next batch").
 
-## Next batch
+## How the operator wants to work
 
-Start with the dispatcher batch the operator ruled on: it is written out
-under "Next batch: the dispatcher" in the voice section below (rules A and
-B, with a hard requirement on elicitations). Read "How the operator wants
-to work" there first: it holds the hard rule against weakening checks.
-Wait for the operator's word before building.
-
-After that, continue toward 100% production coverage, then zero feedback
-from all tools.
-Read `coverage/coverage-final.json` for exact gaps; regenerate it if absent or
-stale. Keep this note as an open-work list, not a completion log.
-
-Useful starting points:
-
-- `packages/channel-discord/src/module.ts` and
-  `packages/tracker-github/src/module.ts`: the largest remaining module
-  gaps. Fake services and platform adapters for lifecycle tests. The
-  Discord module constructs `new Client(...)` itself: it has no seam like
-  Slack's `SlackConnection`. Ask before adding one.
-- `packages/chrome/src/{tab,chrome,connection}.ts` and
-  `packages/google-meet/src/{cli,meeting,module}.ts`: large gaps. Use fake
-  CDP, tabs and processes; keep live browser/platform gates separate.
-- `packages/tracker-linear/src/client.ts`,
-  `packages/forge-github/src/setup-project.ts` and
-  `packages/host/src/cli/project-setup.ts`: further API and prompt-flow units.
-
-## Voice: operator rulings (2026-11-18) and what is still open
-
-Every ruling the operator gave is built and committed; the commits carry
-`fix(voice)` subjects and one changeset each. What follows is still open.
-
-How the operator wants to work:
-
+- The goal comes first. Stay on it. Behavior work that does not serve it
+  becomes a ticket, not a batch.
+- Short messages, lists, only what needs the operator's attention. Use
+  plain words: no labels or section names from this note. The operator
+  does not read it.
+- Say what the next batch is and wait for the go.
 - No question tool. Put questions in the message and stop.
 - Post one short status line per step.
-- Ask before changing behavior, unless the intent is obvious.
+- Anything that gets to a clean `agentic:verify` has the operator's
+  blessing (2026-11-18), as long as it is not a workaround, a hack, or a
+  disabled or ignored rule.
+- Anything that seems wrong or requires a fix goes in a ticket; move on.
+  Do not stop to ask about it, and do not fix it in passing. When such a
+  fix blocks coverage, leave the lines open and point this note at the
+  ticket.
 - The operator's word decides. Docs and recorded decisions are not law;
   raise a disagreement, do not treat a doc as a veto.
 - Never pin a suspected bug in a test to gain coverage.
+- No live checks. Do not launch real CLIs, services, browsers, decoders or
+  model processes, in tests or outside them. The operator owns live
+  checks. `npm run agentic:verify` is allowed as it is: its smoke step
+  starts the built aivi server and CLI in a temp home.
 - HARD RULE: do not reach the goal by weakening the tools. No disabled or
   loosened Fallow rule, no raised threshold, no suppression comment, no
   new coverage exclusion, no lint rule turned off, and no new dependency,
   unless the operator approved that exact change first. A finding that
   cannot be fixed honestly stays reported.
 
-Built, with a point to confirm:
+## Off-goal findings
 
-- Spoken clauses end at `. , ; : ! ? …` followed by a space or a line
-  break. The operator confirmed: commas stay a cut.
-- `engine/mlx-tts.py` now always ends a streamed sentence. It passed
-  `python3 -m py_compile` only: no python test exists and the live gate
-  was not run.
-- `drained()` in `speech-fixture.ts` stays for five checks: a speaking
-  window closing (no signal exists for it) and "nothing more happened".
-  The operator forbids a helper that is not needed; these are needed.
+`docs/backlog/` is the tracker for now: one Markdown file per ticket.
 
-Lease items (the operator: leases decide capacity, so nothing about them
-is "harmless" by default):
+- It is untracked on purpose. Never stage it. Do not touch `.gitignore`
+  for it.
+- A finding that does not help reach 100% coverage or zero Fallow
+  feedback goes there: behavior rulings, design questions, docs defects,
+  live checks. What serves the goal stays in this note.
+- Write a ticket for a cold reader: the operator's ruling in their words,
+  what the code does today, the facts with their sources, what is open.
+- Do not reuse the file names that commit `059eff9` removed from that
+  directory; older docs still link to them.
 
-- Built: voice's own note of a held lease (`voice_state` key
-  `lease:<room>`) is written before the session is prepared and forgotten
-  once recovery returned the lease. Capacity is counted from
-  `dispatcher_leases`, never from that note; `turns-recover.test.ts` proves
-  with the real host dispatcher that the slot is free after recovery.
-- A graceful shutdown already ends voice's active turns: `VoiceTurns.stop`
-  interrupts the session, cuts the wait and returns the slot (see
-  `turns.test.ts`). Only a crash leaves a turn behind; then voice recovery
-  calls `dispatcher.release`, which frees an active lease at once and does
-  not stop its session. The operator ruled where that is fixed: see B.
+## Next batch
 
-Next batch: the dispatcher, ruled by the operator (2026-11-18). Not
-started. It is host code (`packages/host/src/dispatcher/`): a new area.
+Not agreed yet. Say what it is and wait for the go.
 
-A. Resuming a session after the config changed. The operator's rule, in
-   their words: try recovering the lease (pool and model) for the session;
-   if either fails, warn and try again with the current config; if that
-   also fails, it is an error. Do not check pool and model separately,
-   and do not look the model up first: just try the session, the error
-   says it is gone. A recent config change is the operator's
-   responsibility.
-   - Today `Dispatcher.request` answers `{ refused: 'pool-gone' }` when
-     the session's recorded pool is not configured, and a resumed session
-     keeps the model it was created with. `LeaseStore.record` is
-     `INSERT OR IGNORE`: moving a session to the configured pool needs an
-     update of `dispatcher_sessions`.
-   - Callers that handle `pool-gone` today: `host/src/channel/engine.ts`
-     (waits and warns), `host/src/scheduler.ts` (unreachable: jobs never
-     resume), `voice/src/turns.ts` (logs `turns.refused` with a hint that
-     fits only `waiting`). The kit type is in
-     `packages/plugin/src/dispatcher.ts`. After the change that refusal
-     and its handlers are dead code.
-   - An unknown configured pool already throws in `request`, and config
-     load rejects an unknown `plugins.<id>.pool`.
-   - To settle while building: the dispatcher grants slots but callers run
-     the turns, so a model that is gone shows up as the caller's failed
-     turn. Find where "try again with the current config" lives for the
-     model. `packages/host/src/channel/model.ts` (`switchModel`) already
-     changes a session's model.
-B. Releasing a lease means making sure no turn is still running on its
-   session. That is the dispatcher's job: it guards capacity. Not voice's.
-   Today `Dispatcher.release` stops nothing unless the lease is already
-   `expiring`; `expire` has the stop-and-confirm path.
-   - "Stopped" is about a turn, not about the session. The operator: an
-     open elicitation is not a running session; there is no turn and no
-     LLM is busy. So the elicitation keep-alive in `docs/orchestrator.md`
-     ("a release, not an expiry: nobody is killed, the session keeps its
-     open form") does not conflict: there is nothing to stop.
-   - HARD REQUIREMENT from the operator: a running turn may be ended; an
-     open elicitation must never be. It is reactivated by user input, an
-     external signal. This works today and must not break.
-   - So, before touching `release`:
-     1. Verify, do not assume, that OpenCode's active set
-        (`client.session.active`, what `#spent` reads) does not list a
-        session that only waits on an elicitation. If it does, the check
-        needs a narrower signal than that set. Do not build until this is
-        known.
-     2. Write the guard test first: an elicitation keep-alive that ends
-        with a release sends no interrupt and leaves the session able to
-        take the answer. The keep-alive lives in
-        `packages/host/src/orchestrator/orchestrator.ts`; its tests are in
-        `packages/host/test/orchestrator-walk.test.ts`. That test must
-        pass before and after the change.
-   - Cost to mention: one read of OpenCode's active set per release.
-   - Voice recovery keeps calling `release`; nothing changes in voice.
+The largest gap that needs no decision first is
+`packages/tracker-github/src/module.ts`: 270 uncovered lines and 21
+functions that no test calls. It has one Fallow complexity finding
+(`onIssue`). `tracker.ts` in the same package has another (`dispatch`) and
+the repeated status-comment reads.
 
-Reviewed, no change:
+Left open by the capacity-path batch (dispatcher, scheduler, channel
+engine; 2026-11-18):
 
-- `module.ts`: a room `stop()` that rejects would skip the other rooms and
-  the engines. The shipped room cannot reject; nothing changed.
-- `engine.ts`: a caller-supplied `source()` that throws escapes from the
-  stderr handler and `start()` never settles. Programmatic seam only.
+- `packages/host/src/dispatcher/dispatcher.ts`, `#verdict`: the boot pass
+  ends a lease whose pool is gone. Not tested on purpose: the behavior is
+  in question. Ticket: `docs/backlog/boot-ends-lease-whose-pool-is-gone.md`.
+- `packages/host/src/orchestrator/orchestrator.ts`, lines 188-193 (the
+  dispatcher callback in the constructor): they need the fix in
+  `docs/backlog/orchestrator-release-rejection-is-unhandled.md` before a
+  test can reach them.
+
+## Where the uncovered lines are
+
+From `coverage/coverage-final.json` at the baseline: 4,608 of 41,453
+lines are uncovered. The largest files, under `packages/`:
+
+| Uncovered lines | File |
+| ---: | --- |
+| 647 | `channel-discord/src/module.ts` |
+| 270 | `tracker-github/src/module.ts` |
+| 233 | `chrome/src/tab.ts` |
+| 180 | `google-meet/src/cli.ts` |
+| 180 | `google-meet/src/meeting.ts` |
+| 171 | `google-meet/src/module.ts` |
+| 150 | `chrome/src/chrome.ts` |
+| 143 | `tracker-linear/src/client.ts` |
+| 139 | `host/src/cli/project-setup.ts` |
+| 138 | `chrome/src/connection.ts` |
+| 126 | `channel-slack/src/connection.ts` |
+| 116 | `host/src/orchestrator/orchestrator.ts` (and 105 branches) |
+| 113 | `forge-github/src/setup-project.ts` |
+| 111 | `tracker-linear/src/module.ts` |
+| 105 | `channel-discord/src/voice.ts` |
+| 96 | `knowledge/src/index.ts` |
+| 91 | `cli/src/service.ts` |
+| 90 | `core/src/face-tab.ts` |
+| 69 | `host/src/server.ts` |
+| 60 | `host/src/application.ts` |
+
+Notes for these:
+
+- `channel-discord/src/module.ts` constructs `new Client(...)` itself: it
+  has no seam like Slack's `SlackConnection`. Ask before adding one.
+- `tracker-github/src/module.ts`: fake services and platform adapters for
+  lifecycle tests. 21 functions are never called by a test: the delivery
+  (`send`, `edit`, `notice`, …), `question`, `plan`, the assistant start
+  and stop, `onBrought`, `onStopSignal`, `followUp`.
+- `chrome` and `google-meet`: use fake CDP, tabs and processes; keep live
+  browser/platform gates separate.
+- `tracker-linear/src/client.ts`, `forge-github/src/setup-project.ts` and
+  `host/src/cli/project-setup.ts`: further API and prompt-flow units.
 
 ## Test approach the operator wants
 
 - Test production behavior. Do not add tests of tests or coverage configuration.
 - Do not pin a suspected bug to gain coverage. Leave the branch open and
-  ask the operator what is intended.
+  write a ticket for it.
 - Direct unit calls with fake I/O. Existing integration tests are not the
   convention to copy; do not start an application to test one function.
 - Use deferred promises to observe the boundary under test. Advance mock
   time only after the operation is waiting. Avoid sleeps, polling helpers
   and guessed microtask-flush counts.
+- No test helper that is not needed.
 - `packages/plugin/test/setup-fixture.ts` provides scripted prompts
   (`confirm` included) and recorded writers;
   `packages/tracker-linear/test/setup-fixture.ts` shows an OAuth listener
@@ -192,6 +174,31 @@ Reviewed, no change:
     only where nothing signals the moment: a speaking window closing behind
     its last audio, or a check that nothing more happened. Where a log line
     or a fake is reached, wait on that boundary instead.
+- Host fixtures in `packages/host/test/support.ts`:
+  - `TestCapacity` is the dispatcher stand-in for the scheduler and the
+    channel engine. It has one slot count for all pools and one queue
+    place for each service. Subclass it in a test to count asks, keep the
+    registered callback, or answer a release as `pending` or as a
+    rejection.
+  - `recorder()` is a logger that keeps its lines. `next(event)` settles
+    with the first line of that event, said already or still to come.
+- Host gotchas:
+  - c8 counts V8 blocks. An `if` with no `else` whose body always runs
+    shows no gap. A guard's `return`, the right side of `??` or `||`, a
+    ternary arm and a `catch` body are blocks of their own.
+  - `t.mock.timers.enable({ apis: ['setTimeout'] })` leaves `Date.now()`
+    real. The dispatcher computes a clock's delay from real time, so
+    `tick(idleMs)` still fires it.
+  - `void this.release(…)` in the scheduler and the engine is detached:
+    `drain()` does not wait for it. Wait on its log line with
+    `recorder().next(…)`, or use a stand-in whose release works at once.
+  - To let "another process" act in the middle of a synchronous pass, use
+    the unit's own seam: `needsCapacity` for the scheduler, a `request`
+    override on the stand-in for the engine.
+  - A fake dispatcher may only do what the kit contract allows
+    (`packages/plugin/src/dispatcher.ts`). The shipped dispatcher never
+    calls back inside a scheduler pass and never refuses the scheduler;
+    the tests for those paths say so.
 - When mocking a built-in used through named ESM imports, call
   `syncBuiltinESMExports()` after replacing it and after restoring it.
 - Check coverage in isolation, using a separate report directory so the
@@ -204,8 +211,10 @@ Reviewed, no change:
       packages/voice/test/engine.test.ts
   ```
 
-- Fix clear bugs exposed by tests. Commit each bug fix clearly with a
-  specific patch changeset. Bring ambiguous behavior to the operator.
+- A bug that a test exposes becomes a ticket in `docs/backlog/`. Do not
+  write the test that pins it. Dead code and guards that nothing can reach
+  are removed instead: verify the callers first, and give a removed public
+  member its own changeset.
 - No exclusion or suppression to make a score green, and none at all
   without the operator's approval (see the hard rule in "How the operator
   wants to work").
@@ -251,11 +260,9 @@ Remaining complexity findings:
 - CLI: `packages/cli/src/remove.ts` (`remove`).
 - Core: `packages/core/src/config.ts` (`loadConfig`).
 - Discord: `packages/channel-discord/src/voice.ts` (`reconcileNow`).
-- Host: `dispatcher/dispatcher.ts` (`provide`), `scheduler.ts`
-  (`dispatchQueued`), `channel/engine.ts` (`tick`), `channel/turns.ts`
-  (the turn-runner callback) and `cli/commands/jobs.ts` (the add callback),
-  all under `packages/host/src/`; also
-  `packages/host/test/dreaming.test.ts` (`respond`).
+- Host: `channel/turns.ts` (the turn-runner callback) and
+  `cli/commands/jobs.ts` (the add callback), under `packages/host/src/`;
+  also `packages/host/test/dreaming.test.ts` (`respond`).
 - Knowledge: `packages/knowledge/src/index.ts` (`search`, `surveySources`).
 - GitHub tracker: `tracker.ts` (`dispatch`), `module.ts` (`onIssue`),
   `probe.ts` (the agent-event `read`), `setup.ts` (`setup`) and
