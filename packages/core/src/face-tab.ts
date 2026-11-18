@@ -435,8 +435,13 @@ export async function openFaceTab(options: FaceTabOptions): Promise<FaceTab> {
     async close() {
       if (closed) return;
       closed = true;
-      await tab!.close();
-      await releaseChrome();
+      try {
+        await tab!.close();
+      } finally {
+        // A browser that died cannot close its tab. It must still be given
+        // back, or the next open reuses the dead browser.
+        await releaseChrome();
+      }
     },
   };
 }

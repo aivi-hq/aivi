@@ -271,3 +271,19 @@ test('a browser that fails to launch does not poison the next open', async t => 
   assert.equal(w.launch.mock.callCount(), 2, 'the cause is fixed, so the next open launches again');
   assert.equal(face.tab, tab as never);
 });
+
+test('a tab that cannot be closed because the browser died still gives the shared browser back', async t => {
+  const dead = tabStub(t);
+  const fresh = tabStub(t);
+  const w = await world(t, dead, fresh);
+  const face = await w.open();
+  dead.close.mock.mockImplementation(async () => {
+    throw new Error('connection closed when calling Target.closeTarget');
+  });
+
+  await assert.rejects(face.close(), new Error('connection closed when calling Target.closeTarget'));
+  assert.equal(w.chrome.close.mock.callCount(), 1, 'the dead browser is not kept for the next open');
+
+  assert.equal((await w.open()).tab, fresh as never);
+  assert.equal(w.launch.mock.callCount(), 2);
+});
