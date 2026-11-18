@@ -1,18 +1,17 @@
-/** What the clone contributor decides without a network: the name a
- *  repository suggests, which repository the person is asked for, what stops
- *  the flow before a directory is made, and what it does with a checkout that
- *  is already there. The clone landing on disk is the live gate's: a wrong
- *  answer in any of these would put something in a place a person has to
- *  clean up by hand.
+/** What the clone contributor decides from a person's answers, with no
+ *  network and no git: the name a repository suggests, which repository the
+ *  person is asked for, and what stops the flow before a directory is made.
+ *  A checkout that is already there and the clone itself are not proved
+ *  here: the contributor calls git directly.
  */
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 import { PROJECT_ID } from '@aivi/core';
-import { GitHubApp, runGit } from '@aivi/github';
+import { GitHubApp } from '@aivi/github';
 import { PluginSetupCancelled, type ProjectSetupContext } from '@aivi/plugin';
 import { cancelSetup, setupFixture } from '../../plugin/test/setup-fixture.ts';
 import { contributor, suggestedProjectId } from '../src/setup-project.ts';
@@ -36,8 +35,8 @@ test('and the suggestion is always a name aivi accepts, never one to be fixed la
 
 /** What GitHub says of the app's grant. The forge keeps one app connection
  *  for the whole process, so one app answers every test here and each test
- *  sets what it says. No test clones: the token is refused, which stops the
- *  flow before git reaches the network. */
+ *  sets what it says. The token is always refused: the flow stops there,
+ *  one step before the forge reaches git. */
 const github: { granted: string[] | Error; reads: boolean } = { granted: [], reads: true };
 const app = {
   appSlug: 'aivi-app',
@@ -74,25 +73,12 @@ async function wizard(t: TestContext, answers: unknown[], projectId?: string) {
   return { ...h, ctx, home };
 }
 
-/** A checkout already in the project's place, its `origin` pointing at `url`. */
-async function checkout(home: string, projectId: string, url: string) {
-  const source = join(home, 'projects', projectId, 'source');
-  await mkdir(source, { recursive: true });
-  for (const args of [
-    ['init', '-q'],
-    ['remote', 'add', 'origin', url],
-  ])
-    assert.equal((await runGit(source, args)).ok, true, `git ${args.join(' ')}`);
-  return source;
-}
-
-test('the forge offers the granted repositories, proves the pick, and takes a checkout that is already there', async t => {
+test('the forge offers the granted repositories, proves the pick, and asks for the project name', async t => {
   github.granted = ['acme/site', 'acme/docs'];
   github.reads = true;
-  const h = await wizard(t, ['acme/site', ' ']);
-  await checkout(h.home, 'site', 'https://github.com/acme/site.git');
+  const h = await wizard(t, ['acme/site', 'my-site']);
+  await assert.rejects(contributor.setup(h.ctx), /GitHub refused the installation token/);
 
-  assert.deepEqual(await contributor.setup(h.ctx), { id: 'site', cloned: true, repository: 'acme/site' });
   assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, ['The app can see 2 repositories']);
   assert.deepEqual(h.questions[0]!.options, [
     { value: 'acme/site', label: 'acme/site' },
@@ -100,10 +86,7 @@ test('the forge offers the granted repositories, proves the pick, and takes a ch
   ]);
   assert.deepEqual(
     h.log.mock.calls.map(call => call.arguments[0]),
-    [
-      'The app reads acme/site (default branch main).',
-      'projects/site/source is already a checkout of acme/site; left as it is.',
-    ],
+    ['The app reads acme/site (default branch main).'],
   );
   const name = h.questions[1]!;
   assert.equal(name.message, 'Project name');
@@ -111,21 +94,19 @@ test('the forge offers the granted repositories, proves the pick, and takes a ch
   assert.equal(name.validate!(undefined), undefined);
   assert.equal(name.validate!('my-site'), undefined);
   assert.match(name.validate!('My Site')!, /lowercase letters, digits, dashes and underscores/);
+  assert.equal(existsSync(join(h.home, 'projects')), false, 'nothing is made before the token is in hand');
 });
 
-test('a checkout of another repository, or of none, is never taken over', async t => {
+test('a name an earlier role settled is not asked again', async t => {
   github.granted = ['acme/site'];
   github.reads = true;
-  const h = await wizard(t, ['acme/site', 'acme/site'], 'site');
-  const source = await checkout(h.home, 'site', 'https://github.com/other/thing.git');
-  await assert.rejects(
-    contributor.setup(h.ctx),
-    /projects\/site\/source is a checkout of other\/thing\. Move it aside, or choose a project name/,
-  );
-  assert.equal((await runGit(source, ['remote', 'remove', 'origin'])).ok, true);
-  await assert.rejects(contributor.setup(h.ctx), /is a checkout of something that is not a GitHub repository/);
+  const h = await wizard(t, ['acme/site'], 'site');
+  await assert.rejects(contributor.setup(h.ctx), /GitHub refused the installation token/);
   assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, ['The app can see 1 repository']);
-  assert.equal(h.questions.length, 2, 'the name an earlier role settled is not asked again');
+  assert.deepEqual(
+    h.questions.map(question => question.message),
+    ['Which GitHub repository is this project?'],
+  );
 });
 
 test('a grant that cannot be listed leaves the typed question, and its answer is still refereed', async t => {
@@ -155,13 +136,5 @@ test('a cancelled question stops the forge before anything is made', async t => 
   const h = await wizard(t, [cancelSetup, 'acme/site', cancelSetup]);
   await assert.rejects(contributor.setup(h.ctx), PluginSetupCancelled, 'which repository');
   await assert.rejects(contributor.setup(h.ctx), PluginSetupCancelled, 'the project name');
-  assert.equal(existsSync(join(h.home, 'projects')), false);
-});
-
-test('a token GitHub refuses stops the clone before a directory is made', async t => {
-  github.granted = ['acme/site'];
-  github.reads = true;
-  const h = await wizard(t, ['acme/site', 'my-site']);
-  await assert.rejects(contributor.setup(h.ctx), /GitHub refused the installation token/);
   assert.equal(existsSync(join(h.home, 'projects')), false);
 });

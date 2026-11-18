@@ -8,16 +8,17 @@ serves that goal. Everything else is a ticket in `docs/backlog/` (see
 ## Resumption baseline
 
 The latest full `npm run agentic:verify` (2026-11-18, after the plugin
-command pass) exited 0: 1,224 tests passed. Production coverage is 90.66%
-lines, 89.06% branches and 85.54% functions. Fallow still reports 2 check
+command pass) exited 0: 1,222 tests passed. Production coverage is 90.44%
+lines, 89.15% branches and 85.24% functions. Fallow still reports 2 check
 findings, 6 duplicate groups, 15 health findings (2 critical, 2 high, 11
 moderate), 7 refactoring targets and 2 unconfigured-policy diagnostics.
-This run printed the Fallow graph-cache warning again ("Graph cache
-decoded but not reused: resolver, entry points, or plugins changed"); the
-run before it did not. This is not zero tool feedback.
+This run printed no Fallow warning. The run before it printed the
+graph-cache warning ("Graph cache decoded but not reused: resolver, entry
+points, or plugins changed"), so look for it again. This is not zero tool
+feedback.
 
-The full output is `coverage/agentic-verify-commands.log`; exact coverage
-is `coverage/coverage-final.json`. Both are generated/ignored artifacts:
+The full output is `coverage/agentic-verify-units.log`; exact coverage is
+`coverage/coverage-final.json`. Both are generated/ignored artifacts:
 regenerate them if absent or stale. No checks or suppressions were
 weakened.
 
@@ -97,18 +98,8 @@ engine; 2026-11-18):
 
 Left open by the plugin command pass (2026-11-18):
 
-- `packages/forge-github/src/setup-project.ts`, lines 142-156: the clone
-  itself. The contributor calls `runGit` directly, so a test would clone
-  from github.com. It needs a git seam (the forge module already takes a
-  `GitRunner`); ask before adding one. In the tests the fake app refuses
-  the git token, so no test reaches the clone.
-- `packages/host/src/cli/project-setup.ts`, 64 lines: `runContributor`,
-  `pickForRole` with two candidates, `askProjectName` and the stop line.
-  The wizard imports `@clack/prompts` directly, and the registry resolves
-  contributors from the real packages only. So a test can give it no fake
-  prompt and no fake contributor. It needs a prompts seam; ask before
-  adding one. Lines 81-84 wait for
-  `docs/backlog/projects-add-takes-any-name.md`.
+- The project wizard and the forge's git steps: see "Code to refactor
+  before it can be unit-tested".
 - `packages/channel-slack/src/cli.ts`, lines 36-49: the `manifest` prompt
   for an unconfigured home. `cliFixture` passes the real prompts: give it
   a `prompts` option and set `process.stdin.isTTY` to reach these 13
@@ -116,9 +107,40 @@ Left open by the plugin command pass (2026-11-18):
 - `packages/channel-discord/src/cli.ts`, lines 25-27: `register` calls
   Discord. Not for a unit test.
 
+## Code to refactor before it can be unit-tested
+
+The operator's rule (2026-11-18): code that cannot be tested as a unit is
+written down here, and the work moves on. It is refactored later to make
+it testable. Do not cover it through a real setup. A refactor is a batch
+like any other: say what it is and wait for the go.
+
+- `packages/host/src/cli/project-setup.ts` (139 lines): `runProjectSetup`
+  and its private steps (`writeProjectSections`, `runContributor`,
+  `pickForRole`, `askProjectName`, `outroFor`, `sayStopped`,
+  `ensureUntrackedSource`).
+  - Why not now: it imports `@clack/prompts` itself, loads the config and
+    the plugin registry itself, and prints to the terminal. The registry
+    resolves contributors from the real packages only.
+  - To make it testable: hand in the prompts, the loaded config with its
+    schema, and the contributors. Scripted answers and fake contributors
+    then drive every branch.
+  - Lines 81-84 also wait for
+    `docs/backlog/projects-add-takes-any-name.md`.
+- `packages/forge-github/src/setup-project.ts`, lines 130-139 and 142-156
+  (25 lines): a checkout that is already there, and the clone.
+  - Why not now: the contributor calls `runGit` itself.
+  - To make it testable: hand in the git runner, as the forge module does
+    (`GitRunner` in `forge.ts`).
+  - In the tests the fake app refuses the git token. The flow stops one
+    step before git.
+- `packages/channel-discord/src/module.ts` (643 lines): it constructs
+  `new Client(...)` itself.
+  - To make it testable: a connection handed in, like Slack's
+    `SlackConnection`.
+
 ## Where the uncovered lines are
 
-From `coverage/coverage-final.json` at the baseline: 3,868 of 41,453
+From `coverage/coverage-final.json` at the baseline: 3,960 of 41,453
 lines are uncovered. The largest files, under `packages/`:
 
 | Uncovered lines | File |
@@ -129,6 +151,7 @@ lines are uncovered. The largest files, under `packages/`:
 | 180 | `google-meet/src/meeting.ts` |
 | 171 | `google-meet/src/module.ts` |
 | 150 | `chrome/src/chrome.ts` |
+| 139 | `host/src/cli/project-setup.ts` |
 | 136 | `chrome/src/connection.ts` |
 | 126 | `channel-slack/src/connection.ts` |
 | 116 | `host/src/orchestrator/orchestrator.ts` |
@@ -138,7 +161,6 @@ lines are uncovered. The largest files, under `packages/`:
 | 91 | `cli/src/service.ts` |
 | 90 | `core/src/face-tab.ts` |
 | 69 | `host/src/server.ts` |
-| 64 | `host/src/cli/project-setup.ts` |
 | 60 | `host/src/application.ts` |
 | 59 | `host/src/api/host-tools.ts` |
 | 58 | `cli/src/add.ts` |
@@ -154,8 +176,8 @@ Notes for these:
   and stop, `onBrought`, `onStopSignal`, `followUp`.
 - `chrome` and `google-meet`: use fake CDP, tabs and processes; keep live
   browser/platform gates separate.
-- `host/src/cli/project-setup.ts`: what is left needs a prompts seam (see
-  "Next batch").
+- `host/src/cli/project-setup.ts` and the forge's git steps: see "Code to
+  refactor before it can be unit-tested".
 
 ## Test approach the operator wants
 
@@ -164,6 +186,16 @@ Notes for these:
   write a ticket for it.
 - Direct unit calls with fake I/O. Existing integration tests are not the
   convention to copy; do not start an application to test one function.
+- The operator's words (2026-11-18): "We're writing unit tests so we test
+  the units. Otherwise you are testing clack etc, which is a waste of time
+  and energy." And: "We are testing what would happen based on user
+  inputs. This does not require a real setup." So: prompts are mocks with
+  scripted answers. Never the real clack, never a real wizard run, never a
+  spawned git, never a real config load to reach one function.
+- "If the code … can't be tested, this is something we document so we can
+  move on and refactor them later to make them more testable." Such code
+  goes in "Code to refactor before it can be unit-tested". Do not reach it
+  through a real setup instead.
 - Use deferred promises to observe the boundary under test. Advance mock
   time only after the operation is waiting. Avoid sleeps, polling helpers
   and guessed microtask-flush counts.
@@ -259,11 +291,15 @@ Fixtures and gotchas from the plugin command pass (2026-11-18):
 - The kit cannot import its dependents statically. Its tests reach them
   with `await import(spec)` where `spec` is a string value.
 - Fixtures cross packages by relative path: `../../plugin/test/…`.
-- Never replace `process.stdout.write` with a function that holds the
-  bytes back. The test runner reports over the same pipe, and one test's
-  result was lost that way. Watch it with a spy that calls through
-  (`t.mock.method(process.stdout, 'write')`); the words then also show in
-  the test output.
+- Never replace `process.stdout.write` in a test. The test runner reports
+  over the same pipe, and one test's result was lost that way. Code that
+  prints straight to the terminal is not ready for a unit test: list it
+  for a refactor.
+- Node 26.13.1 has no `t.mock.module` without
+  `--experimental-test-module-mocks`, and the test scripts do not pass it
+  (checked 2026-11-18). So a module that a unit imports itself
+  (`@clack/prompts`, `runGit`) cannot be replaced from a test. The unit
+  must take it as an argument.
 - `githubApp()` keeps one connection for the whole process. Mock
   `GitHubApp.connect` and let one fake app answer every test in the file
   (`forge-github/test/setup-project.test.ts`).
