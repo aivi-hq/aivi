@@ -19,7 +19,13 @@ finding in the package. What is left there are the operator questions below.
 
 ## Next batch
 
-Continue toward 100% production coverage, then zero feedback from all tools.
+Start with the dispatcher batch the operator ruled on: it is written out
+under "Next batch: the dispatcher" in the voice section below (rules A and
+B, with a hard requirement on elicitations). Read "How the operator wants
+to work" there first. Wait for the operator's word before building.
+
+After that, continue toward 100% production coverage, then zero feedback
+from all tools.
 Read `coverage/coverage-final.json` for exact gaps; regenerate it if absent or
 stale. Keep this note as an open-work list, not a completion log.
 
