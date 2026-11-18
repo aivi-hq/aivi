@@ -34,12 +34,13 @@ import {
   stopTurn as stopRunningTurn,
 } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
-import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
+import type { ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
 import type { GithubClient } from './client.ts';
 import { githubClient, isGoneError } from './client.ts';
 import type { GithubConfig } from './config.ts';
 import { assistantAgent, MODULE_ID } from './config.ts';
+import { githubDelivery } from './delivery.ts';
 import { createGithubDesk } from './desk.ts';
 import { RunLinks } from './links.ts';
 import { githubRepoCollisions, projectForIssue, projectGithub } from './projects.ts';
@@ -92,25 +93,31 @@ export type MakeTracker = (services: AiviServices) => Promise<GithubPlatform>;
  *  lanes the way it hands its own tracker. */
 export type MakeBoard = (services: AiviServices, tracker: GithubPlatform) => GithubBoard;
 
-export function createGithubModule(config: GithubConfig, makeTracker?: MakeTracker, makeBoard?: MakeBoard): AiviModule {
-  return {
-    id: MODULE_ID,
-    start: services =>
-      startGithub(
-        config,
-        services,
-        makeTracker ??
-          (async ({ loaded, log }) => {
-            const { client, webhookSecret } = await githubClient(log.getChild(MODULE_ID));
-            const platform = new GithubPlatform(loaded, client, webhookSecret, log.getChild(MODULE_ID), config.trust);
-            // Boards first: a missing `Status` or `Agent` field is said now,
-            // with the remedy, not mid-run.
-            await platform.warm();
-            return platform;
-          }),
-        makeBoard ?? ((s, tracker) => githubBoard(config, s, tracker.client, s.log.getChild(MODULE_ID))),
-      ),
+/** GitHub's tracker by default: the adapter over the home's one app — the
+ *  connection and the webhook secret `githubClient` reads, with the boards
+ *  warmed first, so a missing `Status` or `Agent` field is said now, with the
+ *  remedy, not mid-run. `connect` is the connection's seam: a test answers it. */
+export const githubTracker =
+  (config: GithubConfig, connect: typeof githubClient = githubClient): MakeTracker =>
+  async ({ loaded, log }) => {
+    const { client, webhookSecret } = await connect(log.getChild(MODULE_ID));
+    const platform = new GithubPlatform(loaded, client, webhookSecret, log.getChild(MODULE_ID), config.trust);
+    await platform.warm();
+    return platform;
   };
+
+/** The board by default: the config's projects, read through the tracker's own client. */
+const githubBoardOf =
+  (config: GithubConfig): MakeBoard =>
+  (services, tracker) =>
+    githubBoard(config, services, tracker.client, services.log.getChild(MODULE_ID));
+
+export function createGithubModule(
+  config: GithubConfig,
+  makeTracker: MakeTracker = githubTracker(config),
+  makeBoard: MakeBoard = githubBoardOf(config),
+): AiviModule {
+  return { id: MODULE_ID, start: services => startGithub(config, services, makeTracker, makeBoard) };
 }
 
 /** The branch a ticket works on (D8): GitHub names none, so the tracker
@@ -168,7 +175,14 @@ async function startGithub(
     engine?.stop();
   };
   services.signal.addEventListener('abort', stop, { once: true });
+  /** What the start takes from the host and the platform — the event
+   *  subscription, the route, the channel entry, the wake listener — each
+   *  given back by the one teardown, whether the module stops or its start
+   *  fails halfway. The supervisor retries a failed start: a route left
+   *  registered would fail every retry. */
+  const held: (() => void)[] = [];
   const teardown = async () => {
+    for (const give of held.splice(0)) give();
     stop();
     for (const follower of runProgress.values()) void follower.stop();
     try {
@@ -196,38 +210,7 @@ async function startGithub(
       services.dispatcher,
       services.log,
     );
-    // A real comment the engine can edit by id and delete when the answer
-    // lands is GitHub's honest stand-in for Linear's ephemeral activity: the
-    // placeholder comment lives while the turn runs and is gone when it ends.
-    const delivery: ChannelDelivery = {
-      send: async (conversation, text) => {
-        const id = await tracker.comment(conversation, text, 'answer');
-        // The assistant's marks (D10): the rocket replaces the eyes once the
-        // answer lands. A status surface only — no run state rides it, and
-        // GitHub makes the pair idempotent per reactor.
-        const ref = tracker.ticketOf(conversation);
-        if (ref)
-          await Promise.all([
-            client.addReaction(ref, 'rocket').catch(error => log.warn('reaction.failed', { error })),
-            client.removeOwnReaction(ref, 'eyes').catch(error => log.warn('reaction.failed', { error })),
-          ]);
-        return id;
-      },
-      placeholder: async (conversation, text) => tracker.comment(conversation, text, 'progress'),
-      edit: async (conversation, id, text) => {
-        const ref = tracker.ticketOf(conversation);
-        if (!ref) return;
-        await client.updateComment(ref, Number(id), text);
-      },
-      delete: async (conversation, id) => {
-        const ref = tracker.ticketOf(conversation);
-        if (!ref) return;
-        await client.deleteComment(ref, Number(id));
-      },
-      notice: async (conversation, text) => {
-        await tracker.comment(conversation, text, 'outcome');
-      },
-    };
+    const delivery = githubDelivery(tracker, log);
     engine = new ChannelEngine(store, { pool: config.pool }, services.dispatcher, ask, delivery, {
       log, // the module's own child, so engine records carry the module category
       onRelease: services.wake,
@@ -315,7 +298,7 @@ async function startGithub(
      * move is not here: it is the orchestrator's decision and its debt,
      * performed through `moveTo` after this returns.
      */
-    const driveClosing = async (runId: string): Promise<void> => {
+    const attemptClosing = async (runId: string): Promise<void> => {
       const entry = closings.get(runId);
       if (!entry) return;
       const link = entry.sessionId ? links.byOpencodeSession(entry.sessionId) : undefined;
@@ -363,6 +346,18 @@ async function startGithub(
         } else log.warn('closing.retry.failed', { run: runId, error });
         throw error;
       }
+    };
+
+    /** The attempts in flight, one per run: a wake that finds a closing
+     *  mid-air joins it. Two attempts at once would each ask GitHub before
+     *  either had spoken, and say the final comment twice. */
+    const attempts = new Map<string, Promise<void>>();
+    const driveClosing = (runId: string): Promise<void> => {
+      const flying = attempts.get(runId);
+      if (flying) return flying;
+      const attempt = attemptClosing(runId).finally(() => attempts.delete(runId));
+      attempts.set(runId, attempt);
+      return attempt;
     };
 
     const retryClosings = async (): Promise<void> => {
@@ -446,7 +441,7 @@ async function startGithub(
         if (!links.attach(run.ticketId, run.sessionId)) log.debug('ready.replayed', { run: run.id });
         // The progress stream starts with the pair it can speak through:
         // while the run works, its session is the one edited status line.
-        if (config.progress === 'silent' || !tracker.progress) return;
+        if (config.progress === 'silent') return;
         const follower =
           runProgress.get(run.id) ??
           new RunProgress(tracker, conversationOf(run), run.sessionId, {
@@ -799,6 +794,27 @@ async function startGithub(
       }
     };
 
+    /** A `deleted` delivery and a ticket that answers nothing are the same
+     *  fact: whatever still works it stops. */
+    const stopDeleted = async (issueId: string) => {
+      const run = services.orchestrator.activeRun(MODULE_ID, issueId);
+      if (run) await services.orchestrator.stop(run.id, `Stopped: ${issueId} was deleted; there is no work.`);
+      for (const conversation of store.pendingForIssue(issueId))
+        await stopAssistant(conversation, `Stopped: ${issueId} was deleted; there is no work to do.`);
+    };
+
+    /** Anything a person does to a ticket's place or standing wakes the
+     *  walk — **unless the ticket sits where aivi does not look**: a human
+     *  lane that is not the queue, or a Status option not in the array at
+     *  all. Out of sight, out of mind — the event is ignored, not failed. A
+     *  run the move stranded was already stopped, and a stop wakes the walk
+     *  itself. */
+    const wakeAfterMove = (projectId: string, issueId: string, lane: ProjectLane | undefined) => {
+      services.orchestrator.cancelWaiting(MODULE_ID, issueId); // a person's move cancels a waiting request
+      if (lane === undefined || (lane.agent === undefined && !lane.queue)) return;
+      void services.orchestrator.wake(projectId); // a lane move is a wake and nothing more
+    };
+
     const onIssue = async (event: Extract<TrackerEvent, { kind: 'updated' }>) => {
       if (!event.changed.length) return;
       let issue: TrackerIssue;
@@ -806,13 +822,7 @@ async function startGithub(
         issue = await tracker.issue(GITHUB_FEED, event.issueId);
       } catch (error) {
         if (!isGoneError(error)) throw error;
-        // A `deleted` delivery and a ticket that answers nothing are the
-        // same fact: whatever still works it stops.
-        const run = services.orchestrator.activeRun(MODULE_ID, event.issueId);
-        if (run) await services.orchestrator.stop(run.id, `Stopped: ${event.issueId} was deleted; there is no work.`);
-        for (const conversation of store.pendingForIssue(event.issueId))
-          await stopAssistant(conversation, `Stopped: ${event.issueId} was deleted; there is no work to do.`);
-        return;
+        return stopDeleted(event.issueId);
       }
       const routed = projectForIssue(services.loaded, { repo: issue.teamId });
       if (!routed) return;
@@ -826,44 +836,34 @@ async function startGithub(
         event.changed.includes('delegate') &&
         issue.delegateId === tracker.ownerOf(GITHUB_FEED) &&
         !services.orchestrator.activeRun(MODULE_ID, issue.id)
-      ) {
-        await unclaimed(
+      )
+        return unclaimed(
           issue,
           'work reaches me through the board, not through the `Agent` field: I start a worker myself once the ticket sits in a lane I work.',
         );
-        return;
-      }
       await stopOrphanRun(issue, lane, human, event.changed);
-      const pending = store.pendingForIssue(issue.id);
-      await stopOrphans(pending, issue, lane, human, event.changed);
-      // Anything a person does to a ticket's place or standing wakes the
-      // walk — **unless the ticket sits where aivi does not look**: a human
-      // lane that is not the queue, or a Status option not in the array at
-      // all. Out of sight, out of mind — the event is ignored, not failed.
-      // A run the move stranded was already stopped above, and a stop wakes
-      // the walk itself.
-      if (event.changed.includes('state') || event.changed.includes('labels')) {
-        services.orchestrator.cancelWaiting(MODULE_ID, issue.id); // a person's move cancels a waiting request
-        if (lane === undefined || (lane.agent === undefined && !lane.queue)) return;
-        void services.orchestrator.wake(routed.project.id); // a lane move is a wake and nothing more
-      }
+      await stopOrphans(store.pendingForIssue(issue.id), issue, lane, human, event.changed);
+      if (event.changed.includes('state') || event.changed.includes('labels'))
+        wakeAfterMove(routed.project.id, issue.id, lane);
     };
 
     /** Everything downstream keys off the adapter's normalized events — the
      *  endpoint, the signature and the acknowledgement are the adapter's.
      *  A handler that throws is logged and dropped: the delivery was
      *  acknowledged already, so a retry would only replay what failed. */
-    const unsubscribeEvents = tracker.events(async event => {
-      try {
-        if (abort.signal.aborted) return;
-        if (event.kind === 'started') await onBrought(event.conversation, event.issueId, event.promptContext);
-        else if (event.kind === 'prompted') await onPrompted(event);
-        else await onIssue(event);
-      } catch (error) {
-        log.warn('event.failed', { error });
-      }
-    });
-    const unregisterRoute = registerWebhookRoute(services.routes, tracker, log);
+    held.push(
+      tracker.events(async event => {
+        try {
+          if (abort.signal.aborted) return;
+          if (event.kind === 'started') await onBrought(event.conversation, event.issueId, event.promptContext);
+          else if (event.kind === 'prompted') await onPrompted(event);
+          else await onIssue(event);
+        } catch (error) {
+          log.warn('event.failed', { error });
+        }
+      }),
+    );
+    held.push(registerWebhookRoute(services.routes, tracker, log));
 
     // An assistant turn interrupted by a restart is blocked (nobody knows whether the agent stopped); say so on its ticket.
     for (const turn of interrupted)
@@ -887,35 +887,31 @@ async function startGithub(
       }
     }
 
-    const unregister = services.channels.register({
-      id: GITHUB.id,
-      accepts: () => false,
-      ownsSession: session => store.channelOf(session) !== null,
-      channelOf: async () => undefined,
-      async reenter(session, text, context) {
-        store.enqueueJobResult(context.run.id, session, text, 100);
-        engine?.tick();
-      },
-      async post() {
-        throw new Error('GitHub is not a report destination; report to a chat channel instead');
-      },
-    });
-    const unsubscribeWake = services.onWake(() => {
-      engine!.tick();
-      void retryClosings();
-    });
+    held.push(
+      services.channels.register({
+        id: GITHUB.id,
+        accepts: () => false,
+        ownsSession: session => store.channelOf(session) !== null,
+        channelOf: async () => undefined,
+        async reenter(session, text, context) {
+          store.enqueueJobResult(context.run.id, session, text, 100);
+          engine?.tick();
+        },
+        async post() {
+          throw new Error('GitHub is not a report destination; report to a chat channel instead');
+        },
+      }),
+    );
+    held.push(
+      services.onWake(() => {
+        engine!.tick();
+        void retryClosings();
+      }),
+    );
     engine.tick();
     log.info('ready', { org: client.org, app: client.delegateName });
 
-    return {
-      async stop() {
-        unsubscribeEvents();
-        unregisterRoute();
-        unregister();
-        unsubscribeWake();
-        await teardown();
-      },
-    };
+    return { stop: teardown };
   } catch (error) {
     await teardown();
     throw error;
