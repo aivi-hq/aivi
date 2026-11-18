@@ -119,7 +119,7 @@ code is not wrong; the report is:
   module). Node reads the real file for the line count, so each entry is a
   copy of the whole real file, and nearly all of it counts as uncovered.
 - Damage to the `all files` line (the one `npm run test:cov` ends on): each
-  copy is added to the total. On 2026-11-18 a full run held 14 such entries
+  copy is added to the total. On 2026-11-18 a full run held 17 such entries
   for first-party files, about 5,000 lines, and the line read 85.78% while
   the rows of the table added up to 93.99%. A controlled change proved it:
   the Slack and Discord plugin tests and the registry test imported their
