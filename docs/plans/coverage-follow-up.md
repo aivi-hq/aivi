@@ -9,31 +9,19 @@ serves that goal. Everything else is a ticket in `docs/backlog/` (see
 
 The latest full `npm run agentic:verify` (2026-11-18, end of day) exited 0:
 1,665 tests passed. Coverage, from Node's report, the `all files` line that
-`npm run test:cov` ends on: 89.81% lines, 91.71% branches and 90.92%
-functions. 3,411 lines are uncovered in the table, in 210 files, and 111
+`npm run test:cov` ends on: 94.96% lines, 91.81% branches and 90.92%
+functions. 2,101 lines are uncovered in the table, in 210 files, and 115
 files are at 100% on all three. Node counts anonymous functions, which c8
 did not, so the function figure is stricter than the figures from before the
 move to Node's coverage.
 
-**That line is too low, and some rows are wrong, in a known way.** A test
-that mocks a first-party file with `mock.module` makes Node add a phantom
-copy of that whole file, mostly uncovered, for every import of it (see
-"Module mocks" in `docs/testing.md` and the ticket
-`docs/backlog/coverage-total-counts-copies-of-mocked-files.md`). The operator
-saw the line fall from about 92% to 85.7% while real coverage rose; one
-change that only cut the number of imports lifted it to 89.8%. The honest
-figure is the sum over the rows of `file length × (100 − line %) / 100`,
-with the rows of mocked files at their true values. This run nine rows are
-misread: `channel-discord/src/module.ts` reads 684 uncovered lines (true
-about 645), `channel-slack/src/module.ts` 574 (true 40),
-`tracker-linear/src/setup-project.ts` 259 (true 8), `host/src/cli/registry.ts`
-197 (true 0), `forge-github/src/setup-project.ts` 142 (true 0),
-`host/src/cli/context.ts` 79 (true 0), `browser/src/module.ts` 63 (true 6),
-`core/src/index.ts` 4 and `github/src/index.ts` 2 (true 0). That leaves about
-2,100 uncovered lines of 41,699: **about 95.0% of lines**. The same method on
-the verify before it (headline 91.66%) gives 94.2%. Which rows are misread
-changes from run to run: check a row of a mocked file as `docs/testing.md`
-says before you spend time on it.
+**That line is the honest figure.** Earlier the same day `test:cov` had an
+include glob, and Node then counted a phantom copy of every mocked
+first-party file: the same tests read 89.81%, and some rows were wrong. The
+include glob is gone and the test-runner options live in `node.config.json`
+(see "Module mocks" in `docs/testing.md`, and the closed ticket
+`docs/backlog/coverage-total-counts-copies-of-mocked-files.md`). Figures from
+before that change are not comparable. Do not add an include glob back.
 
 Fallow 3.43.2, with its type-aware companion, reads the V8 folder
 `coverage/v8` and reported 7 check findings, 5 duplicate groups, 11 health
@@ -95,13 +83,11 @@ At 100% lines since the plugin command pass (branches not checked):
   currently does not lend itself to it. Mock its dependencies and make sure
   that the UNIT does what it should do." Never run a real home, config,
   registry, plugin, shell, browser or service to reach a unit. Never change
-  `src`, or the shape of a test, to avoid a mock: mocks are fine, even when
-  they make the coverage report misread a file. Before a test, ask what the
-  unit reaches, and mock that.
+  `src`, or the shape of a test, to avoid a mock: mocks are fine. Before a
+  test, ask what the unit reaches, and mock that.
 - The operator watches the `all files` line of `npm run test:cov` in a
-  separate terminal (2026-11-18). When it and the per-file figure differ,
-  report both (see "Resumption baseline"), and say when a change moves one
-  and not the other.
+  separate terminal (2026-11-18). Since the include glob went (the same
+  day), that line is the honest figure: report it.
 - Short messages, lists, only what needs the operator's attention. Use
   plain words: no labels or section names from this note. The operator
   does not read it. They do not always read your reasoning either: if it
@@ -195,15 +181,15 @@ Discord and browser plugins build their modules, the Slack id shapes, the
   called) and the rest of the host tail.
 - `packages/channel-slack/src/module.ts` (40 lines, true value), and
   `browser/src/module.ts` (lines 60-65).
-- Needs a ruling first: `channel-discord/src/module.ts` (about 645 lines)
+- Needs a ruling first: `channel-discord/src/module.ts` (643 lines)
   and `voice.ts` (105): see "Code to refactor before it can be unit-tested".
   A module mock of `discord.js` may reach them; nobody has checked how much
   of the client a fake needs.
 
-Before more `mock.module` of a first-party file: import the mocked module as
-few times as the test allows, and read "Module mocks" in `docs/testing.md`.
-The ticket `docs/backlog/coverage-total-counts-copies-of-mocked-files.md`
-waits for the operator.
+Before more `mock.module` of a first-party file: read "Module mocks" in
+`docs/testing.md` (the rules and the register). The report no longer counts
+copies of mocked files, so the number of imports does not move it. The ticket
+`docs/backlog/coverage-total-counts-copies-of-mocked-files.md` is closed.
 
 Left open by the tracker-github pass (`module.ts` and `tracker.ts`;
 2026-11-18):
@@ -276,14 +262,12 @@ mocks reached them without a refactor (see `docs/testing.md`).
 
 From the table that `npm run test:cov` prints (its last column lists the
 uncovered lines of each file; long lists are cut off in the column, so count
-from the line percentage and the file length when it matters): 3,411 lines
-are uncovered, in 210 files; about 2,100 once the nine misread rows are
-corrected (see "Resumption baseline"). The largest files, under `packages/`,
-with true values for the mocked ones:
+from the line percentage and the file length when it matters): 2,101 lines
+are uncovered, in 210 files. The largest files, under `packages/`:
 
 | Uncovered lines | File |
 | ---: | --- |
-| about 645 | `channel-discord/src/module.ts` |
+| 643 | `channel-discord/src/module.ts` |
 | 105 | `channel-discord/src/voice.ts` |
 | 100 | `host/src/orchestrator/orchestrator.ts` |
 | 96 | `tracker-linear/src/module.ts` |
@@ -334,20 +318,15 @@ Notes for these:
 - The operator on mocks (2026-11-18): "Using mocks is the go-to solution
   when writing unit tests in basically every single programming
   language." A module that a unit imports itself (`@clack/prompts`,
-  `runGit`, `context.ts`) is replaced with `mock.module`. The test scripts
-  pass `--experimental-test-module-mocks`: "go with the flag for now", and
-  "every use of it must be accounted for". Read `docs/testing.md` first:
-  the rules, the Node version facts and the register of every use.
-  - A mocked first-party file does two kinds of damage to the coverage
-    report: Node adds a phantom copy of the whole file, mostly uncovered,
-    to the `all files` total for every import of the mocked module, and
-    a row can show the phantom instead of the file. Measured 2026-11-18: the
-    line fell from about 92% to 85.7% while real coverage rose, and a change
-    that only cut the number of imports lifted it to 89.8%. Mocks are fine to
-    use; do not avoid one because of it, but import the mocked module once.
-    The steps to read a true number, and the rules for writing such a mock,
-    are in `docs/testing.md`; the open question is the ticket
-    `docs/backlog/coverage-total-counts-copies-of-mocked-files.md`.
+  `runGit`, `context.ts`) is replaced with `mock.module`. `node.config.json`
+  turns the flag on: "go with the flag for now", and "every use of it must
+  be accounted for". Read `docs/testing.md` first: the rules, the Node
+  version facts and the register of every use.
+  - The coverage report ignores the copies Node makes of mocked files, as
+    long as `node.config.json` has no `test-coverage-include` glob. Never add
+    one: with it, the line fell from about 92% to 85.7% while real coverage
+    rose (2026-11-18). The cause and the record are in `docs/testing.md` and
+    the ticket `docs/backlog/coverage-total-counts-copies-of-mocked-files.md`.
 - The operator on a recording object that a test file keeps by hand
   (2026-11-18): it "reads like a custom mock. E.g. jest has
   .toHaveBeenCalled and you are maintaining a custom object." The
@@ -429,25 +408,25 @@ Notes for these:
     the tests for those paths say so.
 - When mocking a built-in used through named ESM imports, call
   `syncBuiltinESMExports()` after replacing it and after restoring it.
-- Check coverage in isolation: run one test file with Node's coverage,
-  limited to the file you work on. It prints the table for that file only.
-  For example:
+- Check coverage in isolation: run the test file of the unit with Node's
+  coverage and pick the row of the file you work on. The report lists every
+  file, so the rest shows 0%. For example:
 
   ```sh
-  NODE_OPTIONS=--conditions=development node --test \
-    --experimental-test-module-mocks --conditions=development \
-    --experimental-test-coverage --test-coverage-include-all \
-    '--test-coverage-include=packages/voice/src/engine.ts' \
-    packages/voice/test/engine.test.ts
+  NODE_OPTIONS=--conditions=development node --config-file=node.config.json \
+    --test --conditions=development --experimental-test-coverage \
+    packages/chrome/test/tab.test.ts | grep ' tab.ts '
   ```
 
-  Pass the file with `--test-coverage-include=`, never as a positional
-  argument: after `--test-coverage-include-all` a bare glob lists every file
-  in the repo. In zsh a variable that holds a list of files is not split:
-  write `${=files}`. The table lists only uncovered lines. For the open
-  branches add `--test-reporter=spec --test-reporter-destination=stdout
-  --test-reporter=lcov --test-reporter-destination=<file>`: the
-  `BRDA:<line>,<block>,<branch>,0` rows of the lcov file are the open ones.
+  Do not narrow the report with `--test-coverage-include`: for a mocked file
+  it brings the phantom copies back (see `docs/testing.md`). A file name can
+  exist in more than one package; the rows are nested under their directory,
+  so read the row under the right one. In zsh a variable that holds a list of
+  files is not split: write `${=files}`. The table lists only uncovered
+  lines. For the open branches add `--test-reporter=spec
+  --test-reporter-destination=stdout --test-reporter=lcov
+  --test-reporter-destination=<file>`: the `BRDA:<line>,<block>,<branch>,0`
+  rows of the lcov file are the open ones.
 
 - A bug that a test exposes: if the fix is simple, write the test that
   fails first, fix it, and add a changeset; if it needs a ruling or is
@@ -478,8 +457,9 @@ Fixtures and gotchas from the plugin command pass (2026-11-18):
   over the same pipe, and one test's result was lost that way. Code that
   prints straight to the terminal is not ready for a unit test: list it
   for a refactor.
-- `mock.module` exists only with `--experimental-test-module-mocks`. The
-  `test` and `test:cov` scripts pass it; a targeted run must pass it too.
+- `mock.module` exists only with `--experimental-test-module-mocks`.
+  `node.config.json` sets it; a targeted run must read that file too, with
+  `--config-file=node.config.json`.
 - `githubApp()` keeps one connection for the whole process. Replace it
   through the `@aivi/github` module mock
   (`forge-github/test/setup-project.test.ts`).
