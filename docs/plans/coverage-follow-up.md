@@ -5,34 +5,11 @@ coverage and zero feedback from every tool. This note holds only what
 serves that goal. Everything else is a ticket in `docs/backlog/` (see
 "Off-goal findings").
 
-## Where this stops (operator, 2026-11-18)
-
-"Make this the last change and we're moving to a new code architecture,
-and vitest in a new session. That should help make the test suite more
-manageable."
-
-- No further coverage batch in the current form. The next session moves
-  the suite to vitest, with a new code architecture. The operator has not
-  said more about the architecture: ask, do not guess.
-- The operator's reasons, in their words: "Using mocks is the go-to
-  solution when writing unit tests in basically every single programming
-  language." A recording object that a test file keeps by hand "reads like
-  a custom mock"; jest's `toHaveBeenCalled` is the example to follow.
-- Until the move: the test scripts pass `--experimental-test-module-mocks`
-  ("go with the flag for now"), and "every use of it must be accounted
-  for". The rules and the register are in `docs/testing.md`.
-- Two test files use module mocks and still keep a `scene` object by
-  hand: `packages/host/test/project-wizard.test.ts` and
-  `packages/forge-github/test/setup-project.test.ts`. Rewrite them with
-  the framework's mock functions in the move.
-- The rest of this note is still the map: what is uncovered, what Fallow
-  reports, the test rules, the gotchas.
-
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` (2026-11-18, the last change of
-the session) exited 0: 1,229 tests passed. Production coverage is 90.84%
-lines, 89.24% branches and 85.62% functions. Fallow still reports 2 check
+The latest full `npm run agentic:verify` (2026-11-18) exited 0: 1,229
+tests passed. Production coverage is 90.84% lines, 89.24% branches and
+85.62% functions. Fallow still reports 2 check
 findings, 6 duplicate groups, 15 health findings (2 critical, 2 high, 11
 moderate), 7 refactoring targets and 2 unconfigured-policy diagnostics.
 This run printed the Fallow graph-cache warning ("Graph cache decoded but
@@ -212,9 +189,20 @@ Notes for these:
   move on and refactor them later to make them more testable." Such code
   goes in "Code to refactor before it can be unit-tested". Do not reach it
   through a real setup instead.
-- A module that a unit imports itself (`@clack/prompts`, `runGit`,
-  `context.ts`) is replaced with `mock.module`. Read `docs/testing.md`
-  first: the rules, the Node version facts and the register of every use.
+- The operator on mocks (2026-11-18): "Using mocks is the go-to solution
+  when writing unit tests in basically every single programming
+  language." A module that a unit imports itself (`@clack/prompts`,
+  `runGit`, `context.ts`) is replaced with `mock.module`. The test scripts
+  pass `--experimental-test-module-mocks`: "go with the flag for now", and
+  "every use of it must be accounted for". Read `docs/testing.md` first:
+  the rules, the Node version facts and the register of every use.
+- The operator on a recording object that a test file keeps by hand
+  (2026-11-18): it "reads like a custom mock. E.g. jest has
+  .toHaveBeenCalled and you are maintaining a custom object." The
+  runner's own equivalent is `mock.fn()` with `.mock.calls` and
+  `.mock.callCount()`. Two test files keep such an object (`scene`):
+  `packages/host/test/project-wizard.test.ts` and
+  `packages/forge-github/test/setup-project.test.ts`.
 - Use deferred promises to observe the boundary under test. Advance mock
   time only after the operation is waiting. Avoid sleeps, polling helpers
   and guessed microtask-flush counts.
