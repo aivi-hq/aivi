@@ -172,9 +172,9 @@ function announce(text: string): void {
 export function serviceStop(): void {
   if (!serviceInstalled()) throw new Error('not running as a service');
   announce('server stopping…');
+  // Installed means darwin or linux: serviceInstalled is false on any other platform.
   if (process.platform === 'darwin') runOrThrow('launchctl', ['bootout', `gui/${uid()}/${SERVICE_LABEL}`], true);
-  else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'stop', 'aivi.service']);
-  else throw new Error(`aivi service is not supported on ${process.platform}.`);
+  else runOrThrow('systemctl', ['--user', 'stop', 'aivi.service']);
 }
 
 export function serviceRestart(): void {
@@ -189,8 +189,7 @@ export function serviceRestart(): void {
       // `systemctl restart` does that in one call on Linux.
       serviceStart();
     }
-  } else if (process.platform === 'linux') runOrThrow('systemctl', ['--user', 'restart', 'aivi.service']);
-  else throw new Error(`aivi service is not supported on ${process.platform}.`);
+  } else runOrThrow('systemctl', ['--user', 'restart', 'aivi.service']);
 }
 
 export function serviceStatus(): void {
