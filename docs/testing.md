@@ -61,6 +61,13 @@ Checked on Node 26.13.1, with scratch test files:
 - A mock of a child process says `exit` after `kill` returns, as a real child
   does. A mock that says it inside `kill` runs before the unit has registered
   its listener, and the unit waits for ever.
+- A collaborator that the unit builds with `new` (an SDK client) is mocked by a
+  class, not by `mock.fn(function …)`. `biome check --write` rewrites a function
+  expression into an arrow function, and an arrow cannot be constructed
+  (`WebClient is not a constructor`).
+- A CommonJS package under `mock.module`: name the exports the unit imports.
+  Spreading the real module brings `__esModule` along, and the mock cannot
+  redefine it.
 - Node loads some globals on first use: the first `new WebSocket` or read of
   `WebSocket` costs about 25 ms, and the first `Response` about 15 ms. The
   first test of a file that touches them is that much slower. It is not the
@@ -126,6 +133,8 @@ Node version:
 | `packages/forge-github/test/setup-project.test.ts` | `@aivi/github`: `githubApp` and `runGit`, the rest is the real module | The GitHub App's grant and token, and git |
 | `packages/google-meet/test/module.test.ts` | `@aivi/core`: `openFaceTab`, the rest is the real module | The face tab the meeting opens: its tab, ears, mouth and close |
 | `packages/google-meet/test/module.test.ts` | `packages/google-meet/src/meeting.ts` | The button trail: `driveJoin` and `driveLeave` |
+| `packages/channel-slack/test/connection.test.ts` | `@slack/web-api`: `WebClient` | The Slack Web API: auth, chat, reactions and users |
+| `packages/channel-slack/test/connection.test.ts` | `@slack/socket-mode`: `SocketModeClient`, with the real `LogLevel` | The Socket Mode client: its events, start and disconnect |
 
 The register is complete when it lists every match of
 `grep -rn "mock.module(" packages/*/test`.
