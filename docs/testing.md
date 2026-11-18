@@ -35,6 +35,23 @@ A use follows these rules:
   `{ exports: { ...real, runGit } }`.
 - Add the use to the register in the same commit.
 
+A mock of a file under `packages/*/src` costs that file its 100%:
+
+- Node builds the mock from generated source. It holds an
+  `if (…) { throw … }` block that nothing enters. c8 maps that block onto
+  the real file by its URL, so the file shows one uncovered branch near its
+  first lines, in a comment or an import.
+- Isolated on `packages/host/src/index.ts` (2026-11-18): a test file that
+  mocks it shows the branch; the same code run by a test file that does not
+  mock it shows none. The full report shows the same mark on
+  `packages/host/src/cli/context.ts`, `packages/host/src/cli/registry.ts`
+  and `packages/github/src/index.ts`, the files the register replaces.
+- A module outside `packages/*/src` (`@clack/prompts`) has no such cost.
+- For a module of ours, give the unit a parameter whose default is the real
+  thing (`githubTracker(config, connect = githubClient)` in
+  `packages/tracker-github/src/module.ts`) and pass a fake. Use a mock only
+  when no seam can be made.
+
 Node version:
 
 - The floor is `engines` in `package.json`: `>=26.1.0 <27`.
