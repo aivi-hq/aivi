@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Config, ExecutionContext, ExecutionResult, Logger, Run, Task } from '@aivi/core';
 import { errorMessage, getLogger, taskLabel } from '@aivi/core';
-import type { Dispatcher } from './dispatcher/dispatcher.ts';
-import type { DispatcherLease } from './dispatcher/leases.ts';
+import type { Dispatcher, DispatcherLeaseRef } from '@aivi/plugin/dispatcher';
 import type { Store } from './store.ts';
 
 /** Runs one run; the run carries its task snapshot. */
@@ -52,7 +51,7 @@ export class Scheduler {
   /** Runs waiting behind a request, so the claim pass never asks twice. */
   private readonly waitingRuns = new Set<string>();
   /** Grants the callback delivered but no claim pass has collected yet. */
-  private readonly grants = new Map<string, DispatcherLease>();
+  private readonly grants = new Map<string, DispatcherLeaseRef>();
   /** Pools whose queue place the jobs service holds this pass. */
   private readonly poolsWaiting = new Set<string>();
   private ticking = false;
@@ -110,7 +109,8 @@ export class Scheduler {
         job: run.jobId,
         scheduledFor: new Date(run.scheduledFor).toISOString(),
       });
-      this.report(run, 'missed', null, run.error ?? 'missed');
+      // A missed run carries the reason the store wrote for it.
+      this.report(run, 'missed', null, run.error!);
     }
     for (const id of this.store.cancelRequested(this.owner)) {
       const entry = this.active.get(id);
@@ -149,42 +149,54 @@ export class Scheduler {
     if (this.abort.signal.aborted) return;
     for (const candidate of this.store.queuedRuns(now)) {
       if (this.waitingRuns.has(candidate.id)) continue; // a grant may already be on its way
-      if (!this.needsCapacity(candidate.task)) {
-        const run = this.store.claimRun(candidate.id, this.owner, now);
-        if (run) this.launch(run);
-        continue;
+      if (!this.needsCapacity(candidate.task)) this.claim(candidate.id, now);
+      // One queue place per pool; the callback wakes the rest.
+      else if (!this.poolsWaiting.has(candidate.resource)) this.ask(candidate, now);
+    }
+  }
+
+  /** Take a queued run and start it, inside its slot when it has one. A run
+   *  that is no longer there to take pays the slot straight back. */
+  private claim(runId: string, now: number, lease?: DispatcherLeaseRef): void {
+    const run = this.store.claimRun(runId, this.owner, now);
+    if (run) this.launch(run, lease);
+    else if (lease) void this.release(lease.id);
+  }
+
+  /** Ask the run's pool for a slot: start in it, or stop asking that pool
+   *  until its grant arrives. */
+  private ask(candidate: Run, now: number): void {
+    const grant = this.request(candidate.resource);
+    if (!grant) return;
+    if ('lease' in grant) {
+      this.claim(candidate.id, now, grant.lease);
+      return;
+    }
+    if ('queued' in grant) {
+      this.requested.set(grant.queued, { runId: candidate.id, pool: candidate.resource });
+      this.waitingRuns.add(candidate.id);
+    }
+    // Queued, or refused: `waiting` means the place is held and a grant is
+    // coming; `full` means no callback — registering in the constructor is
+    // what makes a pool waitable.
+    this.poolsWaiting.add(candidate.resource);
+  }
+
+  /** One ask of the dispatcher. A pool it does not know is said once and
+   *  answers nothing: the run waits for the configuration. */
+  private request(pool: string): ReturnType<Dispatcher['request']> | undefined {
+    try {
+      return this.dispatcher.request({ service: SERVICE, pool });
+    } catch (error) {
+      if (!this.warned.has(pool)) {
+        this.warned.add(pool);
+        this.log.warn('pool.unknown', {
+          resource: pool,
+          hint: 'Queued runs wait until this pool is configured or they are cancelled.',
+          error: errorMessage(error),
+        });
       }
-      if (this.poolsWaiting.has(candidate.resource)) continue; // one queue place per pool; the callback wakes the rest
-      let grant: ReturnType<Dispatcher['request']>;
-      try {
-        grant = this.dispatcher.request({ service: SERVICE, pool: candidate.resource });
-      } catch (error) {
-        if (!this.warned.has(candidate.resource)) {
-          this.warned.add(candidate.resource);
-          this.log.warn('pool.unknown', {
-            resource: candidate.resource,
-            hint: 'Queued runs wait until this pool is configured or they are cancelled.',
-            error: errorMessage(error),
-          });
-        }
-        continue;
-      }
-      if ('lease' in grant) {
-        const run = this.store.claimRun(candidate.id, this.owner, now);
-        if (!run) {
-          void this.release(grant.lease.id);
-          continue;
-        }
-        this.launch(run, grant.lease);
-      } else if ('queued' in grant) {
-        this.requested.set(grant.queued, { runId: candidate.id, pool: candidate.resource });
-        this.waitingRuns.add(candidate.id);
-        this.poolsWaiting.add(candidate.resource);
-      } else {
-        // `waiting` means the place is held and a grant is coming; `full` means no
-        // callback — registering in the constructor is what makes a pool waitable.
-        this.poolsWaiting.add(grant.pool);
-      }
+      return undefined;
     }
   }
 
@@ -197,7 +209,7 @@ export class Scheduler {
     this.active.set(`report:${run.id}`, { promise, abort: new AbortController() });
   }
 
-  private launch(run: Run, lease?: DispatcherLease): void {
+  private launch(run: Run, lease?: DispatcherLeaseRef): void {
     const log = this.log.with({ run: run.id, job: run.jobId, kind: taskLabel(run.task), resource: run.resource });
     log.info('run.started', lease ? { lease: lease.id, pool: lease.pool } : {});
     const own = new AbortController();
