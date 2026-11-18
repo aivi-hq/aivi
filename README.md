@@ -19,7 +19,7 @@ installs reach the knowledge server through a small native plugin.
 Install the CLI, then create a server here or sign this machine in to an
 existing one. `aivi setup` asks which, installs the OpenCode plugins, and
 ends with a verified "Signed in as …" — never a promise it can't keep.
-Requires Node 26.
+Requires Node 26.12 or newer.
 
 ```sh
 npm i -g @aivi/cli

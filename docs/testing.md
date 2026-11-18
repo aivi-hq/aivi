@@ -156,15 +156,15 @@ Coverage and mocks:
 
 Node version:
 
-- The floor is `engines` in `package.json`: `>=26.1.0 <27`.
-- The Node docs list the `exports` option from v26.1.0 on (checked at
-  v26.1.0, v26.12.0, v26.13.0 and v26.13.1). The tests have run on 26.13.1
-  only.
+- The floor is `engines` in `package.json`, in the root and in every
+  package: `>=26.12.0 <27`. The scripts read `node.config.json` through
+  `--config-file`, the stable name from v26.12.0 (before that,
+  `--experimental-config-file`, which stays as an alias). The option
+  `test-coverage-include-all` needs v26.7.0.
+- The Node docs list the `exports` option of `mock.module` from v26.1.0 on
+  (checked at v26.1.0, v26.12.0, v26.13.0 and v26.13.1). The tests have run
+  on 26.13.1 only.
 - A test file that uses a module mock prints one `ExperimentalWarning`.
-- The scripts read `node.config.json` through `--config-file`, the stable
-  name from v26.12.0 (before that, `--experimental-config-file`, which stays
-  as an alias). The option `test-coverage-include-all` needs v26.7.0.
-  `engines` was not raised to match.
 - On a Node upgrade: read the `mock.module` entry in the test runner docs
   of the new version, then run the files in the register.
 
