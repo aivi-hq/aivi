@@ -41,8 +41,9 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
       'Nothing was written. For the existing or attach modes, add the browser block to config.json yourself — docs/browser.md has the shapes — then restart aivi.',
     );
   const block = LAUNCH_BLOCK;
-  const parsed = browserConfigSchema.safeParse(block);
-  if (!parsed.success) throw new Error('The launch block aivi writes does not load its own schema; this is a bug.');
+  // The block aivi writes must load its own schema: a mismatch is a bug
+  // here, and it throws before anything is written.
+  browserConfigSchema.parse(block);
   await ctx.writeConfigBlock(['plugins', 'browser'], block);
   return {
     module: 'browser',

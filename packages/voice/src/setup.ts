@@ -221,8 +221,9 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     await fetchVoiceprint(ctx, modelPath, lost);
     block.identity = { model: modelPath };
   }
-  const parsed = voiceConfigSchema.safeParse(block);
-  if (!parsed.success) throw new Error('The voice block aivi writes does not load its own schema; this is a bug.');
+  // The block aivi writes must load its own schema: a mismatch is a bug
+  // here, and it throws before anything is written.
+  voiceConfigSchema.parse(block);
   await ctx.writeConfigBlock(['plugins', 'voice'], block);
 
   const runtime = !wantsRuntime

@@ -2,20 +2,20 @@
 
 ## Resumption baseline
 
-The latest full `npm run agentic:verify` exited 0: 1,152 tests passed.
-Production coverage is 88.63% lines, 88.17% branches and 83.55% functions.
+The latest full `npm run agentic:verify` exited 0: 1,163 tests passed.
+Production coverage is 88.63% lines, 88.18% branches and 83.45% functions.
 Fallow still reports 2 check findings, 6 duplicate groups, 18 health
-findings, 7 refactoring targets and 2 unconfigured-policy diagnostics. That
-run printed no Fallow warning; a standalone `npx fallow` may still print the
-entry-point graph-cache invalidation warning.
+findings, 7 refactoring targets and 2 unconfigured-policy diagnostics. It
+also printed the entry-point graph-cache invalidation warning; this is not
+zero tool feedback.
 
-The full output is `coverage/agentic-verify-voice-followup.log`; exact
+The full output is `coverage/agentic-verify-voice-rulings.log`; exact
 coverage is `coverage/coverage-final.json`. Both are generated/ignored
 artifacts: regenerate them if absent or stale. No checks or suppressions
 were weakened.
 
-`packages/voice` is done except for the open questions below: 100% lines
-and functions, 99.9% branches, and no Fallow finding in the package.
+`packages/voice` is at 100% lines, branches and functions, with no Fallow
+finding in the package. What is left there are the operator questions below.
 
 ## Next batch
 
@@ -37,12 +37,10 @@ Useful starting points:
   `packages/forge-github/src/setup-project.ts` and
   `packages/host/src/cli/project-setup.ts`: further API and prompt-flow units.
 
-## In progress: operator rulings on voice (2026-11-18)
+## Voice: operator rulings (2026-11-18) and what is still open
 
-Resume here. The operator answered the open voice questions. Work the
-"todo" items in order. Each behavior change: a failing test first, its own
-commit, its own patch changeset (see `.changeset/`). Then run
-`npm run agentic:verify` once, refresh the baseline above and commit.
+Every ruling the operator gave is built and committed; the commits carry
+`fix(voice)` subjects and one changeset each. What follows is still open.
 
 How the operator wants to work:
 
@@ -53,60 +51,26 @@ How the operator wants to work:
   raise a disagreement, do not treat a doc as a veto.
 - Never pin a suspected bug in a test to gain coverage.
 
-Done and committed:
+Built, with a point to confirm:
 
-- `543705a` An answer whose text block opened but never streamed is spoken
-  whole (`sawText` is set by a delta, not by the start event).
-- `7693bb4` A mark ends a spoken clause only when whitespace follows it; a
-  mark at the end of the text so far waits. The comment now says `Mr.` is
-  cut. All marks (`. , ; : ! ? …`) still end a clause: the operator said
-  "`.` followed by space or `\n`" — tell them commas were kept and ask if
-  only `.` is wanted.
-
-- `3531412` typographic closing quotes; `01044dd` no `flush` after a
-  barge; `57566a5` a room closed while its engine loads stays quiet;
-  `6eb962c` the first event shown to a watcher is guarded; `13a377a`
-  `voice.lane.partial` when the engine died mid-utterance; `7e5c6fe`
-  `slice` before the stream began is null; `ba0b230` setup summary keeps
-  transcription on.
-- `abf44b6` the wake phrase stays in the quoted sentence, `stripWake` is
-  gone; `8f13509` a held lease is noted before its session is prepared;
-  the commit after it forgets a room's lease note once recovery returned
-  it (proved against the real host dispatcher in `turns-recover.test.ts`).
-- Ruled "leave as it is": a room of its own after end of file.
-
-Todo, ruled otherwise:
-
-- Wake phrase: do not strip it. The meeting prompt quotes the line as it
-  was said. Delete `stripWake` (`wake.ts`, the export in `index.ts`, its
-  test in `wake.test.ts`) and update the meeting tests in `room.test.ts`.
-  Changeset: behavior change plus a removed export.
-- Setup self-check: use `schema.parse(block)` instead of `safeParse` plus
-  the unreachable throw, in `packages/{voice,browser,google-meet}/src/setup.ts`.
-  This is a refactor: no changeset. It closes voice's last open branch.
-- `engine/mlx-tts.py`: in streaming mode always send a final reply, also
-  when the model yields nothing or ends without a final chunk. Check with
-  `python3 -m py_compile`; no python test exists, say so.
-- `drained()`: the operator has no rule but forbids a helper that is not
-  needed. It is needed in two cases: state with no signal (a speaking
-  window closing) and "nothing more happened" checks. Replace its first
-  use in the mute test of `speech.test.ts` with a boundary on the
-  `voice.room.mute` log; explain the rest to the operator.
+- Spoken clauses end at `. , ; : ! ? …` followed by a space or a line
+  break. The operator said "`.` followed by space or `\n`": ask whether
+  only `.` should cut, or all marks as built.
+- `engine/mlx-tts.py` now always ends a streamed sentence. It passed
+  `python3 -m py_compile` only: no python test exists and the live gate
+  was not run.
+- `drained()` in `speech-fixture.ts` stays for five checks: a speaking
+  window closing (no signal exists for it) and "nothing more happened".
+  The operator forbids a helper that is not needed; these are needed.
 
 Lease items (the operator: leases decide capacity, so nothing about them
 is "harmless" by default):
 
-- What lingers after recovery is voice's own note (`voice_state` key
-  `lease:<room>`), not a dispatcher lease. Capacity is counted from
-  `dispatcher_leases`. Todo: forget the note once its release was
-  attempted (`VoiceTurns.recover` gets a `forget(label)` callback; the
-  module passes `label => store.setRoomLease(label, null)`). Prove it with
-  the real host `Dispatcher` and `LeaseStore` over `new Store(':memory:')`
-  (see `packages/host/test/dispatcher.test.ts` for the construction): after
-  recovery `dispatcher.held()` is 0 and the note is gone.
-- Todo: persist the held lease before the session is prepared. Today
-  `rememberLease` runs after `provide`, so a crash during session creation
-  hides the lease from recovery. Call it first in `VoiceTurns.run`.
+- Built: voice's own note of a held lease (`voice_state` key
+  `lease:<room>`) is written before the session is prepared and forgotten
+  once recovery returned the lease. Capacity is counted from
+  `dispatcher_leases`, never from that note; `turns-recover.test.ts` proves
+  with the real host dispatcher that the slot is free after recovery.
 - Ask the operator: recovery releases the slot at once and does not stop
   the old session. `aivi serve` restarts OpenCode at start only with
   `opencode.lifecycle: own` (the default). With `discover`, `ensure` or
@@ -174,8 +138,9 @@ Open, ask the operator before building:
     assertion that prints the whole ring can render millions of samples
     and stall the test runner.
   - `drained()` in `speech-fixture.ts` is one `setImmediate` turn. Use it
-    only for state with no boundary of its own (a speaking window closing
-    behind its last audio). The operator has not ruled on it yet.
+    only where nothing signals the moment: a speaking window closing behind
+    its last audio, or a check that nothing more happened. Where a log line
+    or a fake is reached, wait on that boundary instead.
 - When mocking a built-in used through named ESM imports, call
   `syncBuiltinESMExports()` after replacing it and after restoring it.
 - Check coverage in isolation, using a separate report directory so the
@@ -206,12 +171,6 @@ Review the contract before deleting them or inventing tests for them:
   recent runs. `Store.recent` requires `finished_at >= ?`, excluding null.
 - `packages/core/src/config.ts`, `manualSources`: the non-Error fallback
   after JSON parsing or reading a property on the parsed manifest.
-- The setup self-check "The … block aivi writes does not load its own
-  schema; this is a bug." in `packages/voice/src/setup.ts`,
-  `packages/browser/src/setup.ts` and `packages/google-meet/src/setup.ts`.
-  The wizard builds the block itself, so the throw cannot be reached. It
-  is the one uncovered branch in voice. Ask the operator: keep the guard,
-  or let `schema.parse` throw.
 
 ## Remaining Fallow findings
 

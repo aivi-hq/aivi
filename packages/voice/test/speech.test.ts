@@ -243,9 +243,11 @@ test('without a voice the answers stay in text and the room says so once', async
   const h = speechOut(t);
   h.mouth();
   h.getTts.mock.mockImplementation(async () => null);
+  const muted = boundary();
+  h.info.mock.mockImplementation(() => muted.reach());
 
   h.out.finish('First answer.');
-  await drained();
+  await muted.next();
   h.out.finish('Second answer.');
   await drained();
 
