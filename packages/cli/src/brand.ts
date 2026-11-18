@@ -47,7 +47,6 @@ export function brandBanner(
   for (let i = 0; i < Math.max(WORDMARK.length, lines.length); i++) {
     const glyph = i < WORDMARK.length ? paint(mark, WORDMARK[i]!.padEnd(width)) : ' '.repeat(width);
     const line = lines[i];
-    if (!line && i >= WORDMARK.length) continue;
     const text = line === undefined ? '' : i === 0 || !line.muted ? line.text : paint(MUTED, line.text);
     out.push(`  ${glyph}      ${text}`.trimEnd());
   }
