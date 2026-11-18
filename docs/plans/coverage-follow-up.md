@@ -22,7 +22,8 @@ finding in the package. What is left there are the operator questions below.
 Start with the dispatcher batch the operator ruled on: it is written out
 under "Next batch: the dispatcher" in the voice section below (rules A and
 B, with a hard requirement on elicitations). Read "How the operator wants
-to work" there first. Wait for the operator's word before building.
+to work" there first: it holds the hard rule against weakening checks.
+Wait for the operator's word before building.
 
 After that, continue toward 100% production coverage, then zero feedback
 from all tools.
@@ -56,6 +57,11 @@ How the operator wants to work:
 - The operator's word decides. Docs and recorded decisions are not law;
   raise a disagreement, do not treat a doc as a veto.
 - Never pin a suspected bug in a test to gain coverage.
+- HARD RULE: do not reach the goal by weakening the tools. No disabled or
+  loosened Fallow rule, no raised threshold, no suppression comment, no
+  new coverage exclusion, no lint rule turned off, and no new dependency,
+  unless the operator approved that exact change first. A finding that
+  cannot be fixed honestly stays reported.
 
 Built, with a point to confirm:
 
@@ -200,8 +206,9 @@ Reviewed, no change:
 
 - Fix clear bugs exposed by tests. Commit each bug fix clearly with a
   specific patch changeset. Bring ambiguous behavior to the operator.
-- Use exclusions or suppressions only when necessary, not to make a score
-  green.
+- No exclusion or suppression to make a score green, and none at all
+  without the operator's approval (see the hard rule in "How the operator
+  wants to work").
 
 ## Coverage contracts to review
 
