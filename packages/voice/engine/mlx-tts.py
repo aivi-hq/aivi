@@ -60,6 +60,7 @@ def main():
                 # Speak as it synthesizes: every yielded chunk is a wav on the
                 # wire, and the last one (even empty) says the sentence is done.
                 seq = 0
+                done = False
                 for r in model.generate(
                     text=req["text"], voice=req["voice"], stream=True, streaming_interval=TTS_INTERVAL
                 ):
@@ -70,7 +71,13 @@ def main():
                     emit({"id": req_id, "seq": seq, "audio": wav_b64(audio, sr), "sr": sr, "final": final})
                     seq += 1
                     if final:
+                        done = True
                         break
+                if not done:
+                    # The model yielded nothing, or stopped without a final
+                    # chunk: say the sentence is over, or the client waits
+                    # out its whole timeout with the voice held.
+                    emit({"id": req_id, "seq": seq, "sr": sr, "final": True})
             else:
                 parts = [np.asarray(r.audio).flatten() for r in model.generate(text=req["text"], voice=req["voice"])]
                 audio = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
