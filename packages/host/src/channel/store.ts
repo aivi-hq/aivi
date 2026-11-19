@@ -320,18 +320,6 @@ export class ConversationStore implements ConversationStoreApi {
     });
   }
 
-  /** Conversations bound to `issue` that still have work queued, running or blocked. */
-  pendingForIssue(issue: string): string[] {
-    return (
-      this.core.db
-        .prepare(
-          `SELECT DISTINCT s.channel AS channel FROM ${this.n.sessions} s JOIN ${this.n.turns} t ON t.channel=s.channel
-           WHERE s.issue=? AND t.state IN ${PENDING}`,
-        )
-        .all(issue) as Row[]
-    ).map(r => String(r.channel));
-  }
-
   /**
    * The conversation whose pending turn keeps `channel`'s next turn waiting: the same
    * issue busy elsewhere; null when nothing stands in the way.

@@ -26,13 +26,7 @@
  * channels reform.
  */
 import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
-import {
-  ChannelEngine,
-  ConversationStore,
-  createTurnRunner,
-  isTerminal,
-  stopTurn as stopRunningTurn,
-} from '@aivi/host';
+import { ChannelEngine, ConversationStore, createTurnRunner, isTerminal } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
@@ -512,16 +506,6 @@ async function startGithub(
       );
     };
 
-    /** End the assistant turn in `conversation` because the person asked; the session stays. */
-    const stopAssistant = async (conversation: string, why: string) => {
-      const result = await stopRunningTurn(engine!, services.opencode, conversation);
-      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-      // The engine's stopped notice follows for a running turn; queued-only conversations hear this one.
-      if (!result.stopped) await say(conversation, why, 'outcome');
-      else await say(conversation, why, 'note');
-      log.info('assistant.stopped', { conversation, why });
-    };
-
     /**
      * A ticket brought to us with nothing known about it. Routing is
      * deterministic, from the issue re-read: a redelivery finds the bound
@@ -539,7 +523,6 @@ async function startGithub(
       if (store.has(conversation) || (issueId && services.orchestrator.activeRun(MODULE_ID, issueId))) return; // a redelivery
       if (!issueId) return refuse(conversation, 'I only work on issues; this has none.');
       const issue = await tracker.issue(GITHUB_FEED, issueId);
-      if (issue.archived) return log.debug('session.archived', { issue: issue.identifier });
       if (issue.labels.some(l => l.name === config.humanLabel))
         return refuse(
           conversation,
@@ -568,27 +551,6 @@ async function startGithub(
         said ? `${issueDossier(issue)}\n\nThe person wrote on the ticket: ${said}` : undefined,
       );
       engine?.tick();
-    };
-
-    /** A stop signal: the run's stop goes to a person's hands on the board
-     *  *before* the run ends (ruled 2026-10-03) — "not that one again" is
-     *  the human label's memory, never one in a database — and the ending
-     *  clears the `Agent` value and wakes the walk in the same breath. A
-     *  stop with no run stops the assistant's own turn, if one is running. */
-    const onStopSignal = async (conversation: string, run: RunView | undefined): Promise<void> => {
-      if (run) {
-        await markForHuman(GITHUB_FEED, run.ticketId);
-        await services.orchestrator.stop(run.id, `A person asked to stop ${run.ticketId} from the ticket.`);
-        return;
-      }
-      if (!store.has(conversation))
-        return refuse(
-          conversation,
-          'I do not know this conversation (it started before aivi did, or its state is gone). Comment on the ticket again.',
-        );
-      const result = await stopRunningTurn(engine!, services.opencode, conversation);
-      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-      if (!result.stopped) await say(conversation, 'Nothing is running right now.', 'answer');
     };
 
     /** An answer to a pending form: the orchestrator owns its delivery — the
@@ -709,7 +671,6 @@ async function startGithub(
       // finished one is the assistant's ground: a message into a completed
       // conversation is a follow-up, not an answer or an interjection.
       const run = record && !isTerminal(record.state) ? record : undefined;
-      if (event.signal === 'stop') return onStopSignal(conversation, run);
       const text = event.body?.trim();
       if (!text) return;
       if (run?.sessionId) {
@@ -732,37 +693,9 @@ async function startGithub(
       return onBrought(conversation, ref, text);
     };
 
-    /** The assistant conversations the update orphaned: the human label, a
-     *  lane move or an `Agent` change each stops only its own kind of change. */
-    const stopOrphans = async (
-      pending: string[],
-      issue: TrackerIssue,
-      lane: ProjectLane | undefined,
-      human: boolean,
-      changed: TrackerChange[],
-    ) => {
-      for (const conversation of pending) {
-        const workerAgent = store.sessionOf(conversation)?.agent;
-        if (issue.archived && changed.includes('archive'))
-          await stopAssistant(conversation, `Stopped: ${issue.identifier} was deleted; there is no work to do.`);
-        else if (human && changed.includes('labels'))
-          await stopAssistant(
-            conversation,
-            `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
-          );
-        else if (changed.includes('state') && lane?.agent !== workerAgent)
-          await stopAssistant(
-            conversation,
-            `Stopped: ${issue.identifier} moved to "${issue.state.name}", which is not my lane.`,
-          );
-        else if (changed.includes('delegate') && issue.delegateId !== tracker.ownerOf(GITHUB_FEED))
-          await stopAssistant(conversation, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
-      }
-    };
-
-    /** The run the update orphaned — same three reasons: interrupt the
-     *  worker and end the run cancelled; the ending's catch-up says so in
-     *  the status comment. */
+    /** The run the update orphaned — the human label, a lane move or an
+     *  `Agent` change: interrupt the worker and end the run cancelled; the
+     *  ending's catch-up says so in the status comment. */
     const stopOrphanRun = async (
       issue: TrackerIssue,
       lane: ProjectLane | undefined,
@@ -772,9 +705,7 @@ async function startGithub(
       const run = services.orchestrator.activeRun(MODULE_ID, issue.id);
       if (!run) return;
       const link = run.sessionId ? links.byOpencodeSession(run.sessionId) : undefined;
-      if (issue.archived && changed.includes('archive'))
-        await services.orchestrator.stop(run.id, `Stopped: ${issue.identifier} was deleted; there is no work.`);
-      else if (human && changed.includes('labels'))
+      if (human && changed.includes('labels'))
         await services.orchestrator.stop(
           run.id,
           `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
@@ -799,8 +730,6 @@ async function startGithub(
     const stopDeleted = async (issueId: string) => {
       const run = services.orchestrator.activeRun(MODULE_ID, issueId);
       if (run) await services.orchestrator.stop(run.id, `Stopped: ${issueId} was deleted; there is no work.`);
-      for (const conversation of store.pendingForIssue(issueId))
-        await stopAssistant(conversation, `Stopped: ${issueId} was deleted; there is no work to do.`);
     };
 
     /** Anything a person does to a ticket's place or standing wakes the
@@ -842,7 +771,6 @@ async function startGithub(
           'work reaches me through the board, not through the `Agent` field: I start a worker myself once the ticket sits in a lane I work.',
         );
       await stopOrphanRun(issue, lane, human, event.changed);
-      await stopOrphans(store.pendingForIssue(issue.id), issue, lane, human, event.changed);
       if (event.changed.includes('state') || event.changed.includes('labels'))
         wakeAfterMove(routed.project.id, issue.id, lane);
     };
