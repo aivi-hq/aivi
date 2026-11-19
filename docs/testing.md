@@ -93,8 +93,11 @@ Checked on Node 26.13.1, with scratch test files:
 experimental Node API ("Stability: 1.0 - Early development"). The `test`
 and `test:cov` scripts enable it through `node.config.json`
 (`experimental-test-module-mocks`). A run that does not read that file, such
-as a bare `node --test`, has no `mock.module`. The operator allows it
-sparingly (2026-11-18): every use is in the register below.
+as a bare `node --test`, has no `mock.module`. Mocks are the go-to way to
+test a unit, and there is no limit on how many a test file uses: use one
+wherever it makes sense (the operator, 2026-11-19). What the operator asked
+to use sparingly (2026-11-18) is experimental *flags*; this is the one flag
+the tests use. Every use of `mock.module` is in the register below.
 
 A use follows these rules:
 
@@ -186,6 +189,70 @@ Node version:
 | `packages/google-meet/test/module.test.ts` | `packages/google-meet/src/meeting.ts` | The button trail: `driveJoin` and `driveLeave` |
 | `packages/channel-slack/test/connection.test.ts` | `@slack/web-api`: `WebClient` | The Slack Web API: auth, chat, reactions and users |
 | `packages/channel-slack/test/connection.test.ts` | `@slack/socket-mode`: `SocketModeClient`, with the real `LogLevel` | The Socket Mode client: its events, start and disconnect |
+| `packages/browser/test/transport.test.ts` | `@modelcontextprotocol/sdk/client/index.js`: `Client` | The MCP client the transport drives: connect, list tools, call a tool, close |
+| `packages/browser/test/transport.test.ts` | `@modelcontextprotocol/sdk/client/stdio.js`: `getDefaultEnvironment`, `StdioClientTransport` | The stdio child process of the MCP server: its parameters, its stderr listener and its close |
+| `packages/channel-discord/test/cli.test.ts` | `packages/channel-discord/src/index.ts` | The package door that `register` calls: `registerDiscordCommands` |
+| `packages/channel-discord/test/commands.test.ts` | `discord.js`, named exports | The gateway client and REST that the module logs in and registers its slash commands through |
+| `packages/channel-discord/test/module.test.ts` | `discord.js`, named exports | The gateway client and REST: login, events, channels and application commands |
+| `packages/channel-discord/test/module.test.ts` | `packages/channel-discord/src/voice.ts` | The voice watcher the module starts: `watchVoice`, as a spy |
+| `packages/channel-discord/test/voice-encoder.test.ts` | `@discordjs/opus` | An `OpusEncoder` that always fails (the real one cannot fail on a good frame), reached through `createRequire` |
+| `packages/channel-discord/test/voice-player.test.ts` | `@discordjs/voice`: `createAudioPlayer`, `createAudioResource`, `entersState` and `joinVoiceChannel`, the rest is the real module | The voice connection and the audio player that the room's mouth plays through |
+| `packages/channel-slack/test/module.test.ts` | `@aivi/host`: `ChannelEngine` and `createTurnRunner`, the rest is the real module | The engine the module builds, ticks, stops and asks to stop a turn, and the turn runner it wraps with reactions |
+| `packages/cli/test/default-io.test.ts` | `packages/cli/src/mount.ts` | The installed server's modules, through `importApp`: `context`, `pluginSetup`, `pluginRemove` and `writeEditorSchema` |
+| `packages/cli/test/link-io.test.ts` | `@clack/prompts`: `select` and `isCancel` | The question `aivi link` asks on a terminal |
+| `packages/cli/test/main-routes.test.ts` | `packages/cli/src/add.ts`: `add`, the rest is the real module | The command `aivi add` hands its arguments and options to |
+| `packages/cli/test/main-routes.test.ts` | `packages/cli/src/link.ts`: `link`, the rest is the real module | The command `aivi link` hands its arguments to |
+| `packages/cli/test/main-routes.test.ts` | `packages/cli/src/mount.ts`: `mountAppCommands`, the rest is the real module | The installed app's commands that mount onto the tree |
+| `packages/cli/test/main-routes.test.ts` | `packages/cli/src/remove.ts`: `remove`, the rest is the real module | The command `aivi remove` hands its arguments and options to |
+| `packages/cli/test/main-routes.test.ts` | `packages/cli/src/service.ts`: the seven `service…` verbs, the rest is the real module | The verbs the `service` command dispatches to |
+| `packages/cli/test/main-routes.test.ts` | `packages/cli/src/setup.ts`: `setup`, the rest is the real module | The command `aivi setup` hands its arguments and the home to |
+| `packages/cli/test/main-routes.test.ts` | `packages/cli/src/update.ts`: `updateServer`, the rest is the real module | The command `aivi update` hands its options to |
+| `packages/cli/test/update.test.ts` | `packages/cli/src/runtime.ts`: `ensureNode`, the rest is the real module | The managed Node that an update provisions |
+| `packages/host/test/apicli-channels-command.test.ts` | `packages/host/src/cli/context.ts` | The CLI context: the loaded config, the home and the store |
+| `packages/host/test/apicli-channels-command.test.ts` | `packages/host/src/cli/registry.ts` | The plugin registry that the channel commands list |
+| `packages/host/test/apicli-channels-command.test.ts` | `@aivi/channel-slack/cli` | A package's own command factory, which the channels command loads by name |
+| `packages/host/test/apicli-exec-door.test.ts` | `ws`: `WebSocketServer` | The exec door's WebSocket server |
+| `packages/host/test/apicli-exec-door.test.ts` | `node-pty`: `spawn` | The pseudo-terminal that the door runs commands in, reached through the door's default loader |
+| `packages/host/test/apicli-identity.test.ts` | `@clack/prompts`: `intro`, `outro`, `cancel`, `select`, `text` and `isCancel` | The questions of `server create` and of signing in |
+| `packages/host/test/apicli-identity.test.ts` | `@aivi/core`: `clientConfigPath`, `installFace`, `installPrompts`, `loadConfig` and `writeConfigBlock`, the rest is the real module | The client record, the CLI's face and prompts, and the config it writes |
+| `packages/host/test/apicli-identity.test.ts` | `@aivi/host`: the `Store` class, the rest is the real module | The people store |
+| `packages/host/test/apicli-knowledge-command.test.ts` | `packages/host/src/cli/context.ts` | The CLI context: the loaded config, the store, the poke and the printer |
+| `packages/host/test/apicli-knowledge-command.test.ts` | `@aivi/plugin/api` | The host client the command talks to |
+| `packages/host/test/apicli-knowledge-command.test.ts` | `@aivi/knowledge`: `warmKnowledge` | The knowledge warm-up |
+| `packages/host/test/apicli-people-command.test.ts` | `packages/host/src/cli/context.ts` | The CLI context: the loaded config, the store and the printer |
+| `packages/host/test/apicli-people-command.test.ts` | `@aivi/plugin/api` | The host client the command talks to |
+| `packages/host/test/apicli-people-command.test.ts` | `@clack/prompts`: `confirm` and `isCancel` | The confirmation question of the people commands |
+| `packages/host/test/apicli-people-command.test.ts` | `packages/host/src/cli/identity.ts`: `readClientConfigToken` | The token of the signed-in client |
+| `packages/host/test/apicli-plugin-setup.test.ts` | `@clack/prompts`: `intro`, `outro` and `cancel` | The setup flow's own opening and closing lines |
+| `packages/host/test/apicli-plugin-setup.test.ts` | `packages/host/src/cli/context.ts`: `context` and `withStore` | The loaded config and the store |
+| `packages/host/test/apicli-plugin-setup.test.ts` | `@aivi/channel-discord/setup` | A package's own setup entry, which `pluginSetup` loads by name |
+| `packages/host/test/apicli-plugin-setup.test.ts` | `@aivi/core`: `print`, `upsertEnvFile` and `writeConfigBlock`, the rest is the real module | The printer, the `.env` writer and the config-block writer |
+| `packages/host/test/apicli-projects-command.test.ts` | `packages/host/src/cli/context.ts` | The CLI context: the loaded config, the home and the store |
+| `packages/host/test/apicli-projects-command.test.ts` | `packages/host/src/cli/project-setup.ts`: `runProjectSetup` | The project wizard |
+| `packages/host/test/apicli-projects-command.test.ts` | `@aivi/core`: `removeProject` and `purgeProject`, the rest is the real module | The project removal on disk |
+| `packages/host/test/apicli-prompts-command.test.ts` | `packages/host/src/cli/context.ts`: `home` and `print` | The home and the printer |
+| `packages/host/test/apicli-schema-cache.test.ts` | `packages/host/src/cli/registry.ts`: `loadComposedConfig` and `pluginRegistry` | The composed config and the plugin registry that the editor schema is built from |
+| `packages/host/test/apicli-serve-logging.test.ts` | `@aivi/core`: `configureLogging` and `isTty`, the rest is the real module | The logging set-up and the terminal test |
+| `packages/host/test/apicli-serve-logging.test.ts` | `packages/host/src/cli/commands/channels.ts`: `registerChannels`, as a no-op | The channel commands that `serve` also registers |
+| `packages/host/test/apicli-server-command.test.ts` | `packages/host/src/cli/context.ts` | The CLI context: the loaded config, the home and the store |
+| `packages/host/test/apicli-server-command.test.ts` | `packages/host/src/server.ts`: `startServer` | The server the command starts |
+| `packages/host/test/apicli-server-command.test.ts` | `packages/host/src/cli/schema-cache.ts`: `writeEditorSchema` | The editor schema rebuilt on start |
+| `packages/host/test/apicli-server-command.test.ts` | `@aivi/host`: `connectOpenCode` and `status`, the rest is the real module | The OpenCode connection and the status call |
+| `packages/host/test/process-application.test.ts` | `packages/host/src/opencode.ts`: `connectOpenCode` and `restartOpenCode` | OpenCode discovery and restart |
+| `packages/host/test/process-application.test.ts` | `packages/host/src/api/app.ts`: `createApp` and `serveApp` | The HTTP app, with a listener that never binds |
+| `packages/host/test/process-application.test.ts` | `packages/host/src/api/exec.ts`: `attachExec` | The exec door |
+| `packages/host/test/process-application.test.ts` | `packages/host/src/orchestrator/orchestrator.ts` | The orchestrator: its constructor options, tools, `leaseEnded`, `recover`, `runBySession`, `tracker` and `wake` |
+| `packages/host/test/process-runtime.test.ts` | `packages/host/src/dreaming.ts`: `dream` | The dreaming run that an operation starts |
+| `packages/host/test/process-server.test.ts` | `packages/host/src/application.ts`: `runHost` | The host that the server command starts |
+| `packages/host/test/process-server.test.ts` | `packages/host/src/cli/context.ts`: `context`, `home` and `withStore` | The loaded config, the home and the store |
+| `packages/host/test/process-server.test.ts` | `packages/host/src/cli/registry.ts`: `buildModules` and `loadComposedConfig` | The modules and the composed config |
+| `packages/host/test/process-server.test.ts` | `@aivi/knowledge`: `createKnowledgeService` | The knowledge service |
+| `packages/host/test/project-wizard.test.ts` | `@aivi/core`: `print`, the rest is the real module | The printer the wizard hands a contributor |
+| `packages/host/test/project-wizard.test.ts` | `packages/host/src/opencode.ts`: `connectOpenCode` | The OpenCode connection behind the lane agents |
+| `packages/host/test/wtree-git-process.test.ts` | `node:child_process`: `execFile`, the rest is the real module | The promisified `execFile` behind `gitIn`, `realGit` and `globalGitConfig` |
+| `packages/tracker-github/test/connection.test.ts` | `@aivi/github`: `githubApp`, the rest is the real module | The home's one GitHub App connection, which `githubClient` and the wizard's default `productionClient` are handed |
+| `packages/tracker-github/test/plugin.test.ts` | `packages/tracker-github/src/module.ts`: `createGithubModule` | The module that `plugin.createModule` builds lazily |
+| `packages/tracker-linear/test/module-decisions.test.ts` | `@aivi/host`: `ChannelEngine`, the rest is the real module | The engine the module builds: a subclass of the real engine records the delivery, the pool and the options it is handed |
 
 The register is complete when it lists every match of
 `grep -rn "mock.module(" packages/*/test`.
