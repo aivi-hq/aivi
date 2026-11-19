@@ -81,7 +81,10 @@ async function createResources(loaded: LoadedConfig, log: Logger): Promise<HostR
 // launchd and systemd point their unit at this file: no bin, no argv, no
 // parse. The logging is the `serve` command's shape — the same the preAction
 // hook gives the mounted path — and the process lives until the stop signal
-// drains it.
+// drains it. Left out of the coverage report (the operator, 2026-11-19): no
+// in-process test reaches a process entry, and `scripts/smoke.mjs` runs this
+// file live.
+/* node:coverage disable */
 if (import.meta.main) {
   const closeLogging = await configureLogging({
     level: 'info',
@@ -95,3 +98,4 @@ if (import.meta.main) {
     })
     .finally(() => closeLogging());
 }
+/* node:coverage enable */

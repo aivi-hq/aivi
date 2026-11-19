@@ -42,6 +42,35 @@ run them is in [AGENTS.md](../AGENTS.md#build-and-test).
 - Use mock time only when the code gives no way to shorten the wait. A real
   wait of more than a few milliseconds is the last resort.
 
+## A stuck test
+
+A stuck test fails fast. Three things see to it:
+
+- `--test-timeout` (5 s in `node.config.json`, 8 s in `test:cov`) ends a test
+  that awaits something that never comes.
+- A test process still alive 10 s after its last test fails, and the message
+  names what holds it open (`Timeout`, `TCPServerWrap`, `ProcessWrap`). A
+  test that starts a server, a timer or a process ends it, in `t.after`. A
+  host the test builds is ended with its `AbortController`: the dispatcher and
+  the orchestrator disarm their clocks on it.
+- The runner fails after 5 minutes (`AIVI_TEST_LIMIT_MS` moves it) and kills
+  every process under it. That is what ends a test that never yields (a
+  synchronous loop), which no timer in its own process can.
+
+Both live in `scripts/test-guard.cjs`, loaded with `--require` in the `test`
+scripts. It is a `--require`: the runner does not run `--import` modules, and
+with `NODE_OPTIONS` set (the scripts need it) Node leaves the `nodeOptions`
+of `node.config.json` out. `test-force-exit` is not set: it ends a test
+process before the pipe to the runner is flushed, and 6 tests of one file
+went unreported in a full run (reproduced with 3000 trivial tests and a slow
+runner: 36–41 of them lost, 3 runs of 3; none lost without it).
+
+`test:cov` fails below 100% lines, branches and functions
+(`--test-coverage-*=100`): the check is on the exact total, so 100 means every
+line, branch and function of every file in the report. The flags live in the
+script and not in `node.config.json`, so a run of one file, which has to read
+the config for the mock flag, does not fail on the files it did not load.
+
 ## What a mock can reach
 
 Checked on Node 26.13.1, with scratch test files:
@@ -136,6 +165,12 @@ Coverage and mocks:
   top-level folder with code shows as a row at 0% until it is added to the
   list. Any exclude glob replaces Node's default exclusion of test files,
   which is why `packages/*/test/**` is in the list.
+- One block is left out in the source instead: the `import.meta.main` entry at
+  the end of `packages/host/src/server.ts`, between `/* node:coverage disable */`
+  and `/* node:coverage enable */` (the operator, 2026-11-19). It is the file
+  launchd and systemd run; no in-process test reaches a process entry, and
+  `scripts/smoke.mjs` runs it live. It is the only such comment pair. Do not
+  add another without asking.
 - A mocked third-party package costs nothing: its files are not in the
   report.
 - Fallow reads the raw V8 folder, which still holds the mock entries. With
@@ -150,8 +185,8 @@ Coverage and mocks:
 
   ```sh
   NODE_OPTIONS=--conditions=development node --config-file=node.config.json \
-    --test --conditions=development --experimental-test-coverage \
-    packages/chrome/test/tab.test.ts | grep ' tab.ts '
+    --require=./scripts/test-guard.cjs --test --conditions=development \
+    --experimental-test-coverage packages/chrome/test/tab.test.ts | grep ' tab.ts '
   ```
 
   Ticket with the full record:

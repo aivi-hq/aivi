@@ -29,6 +29,12 @@
   "ignoreDependencies": [
     "libsodium-wrappers"
   ],
+  // The OpenCode CLI is the user's own install, not a package of this repo:
+  // `aivi setup` and `aivi uninstall` spawn it by name (the operator,
+  // 2026-11-19).
+  "ignoreBinaries": [
+    "opencode"
+  ],
   "workspaces": {
     "patterns": [
       "packages/*"
@@ -58,12 +64,7 @@
     // V8 coverage from `npm run test:cov` (the folder Node's test runner
     // writes), so CRAP scores are measured, not estimated. Every function is
     // in it, anonymous callbacks included.
-    "coverage": "./coverage/v8",
-    // 30 → 350 for now: at 30, measured coverage reports 68 findings instead
-    // of 13, most of them functions no test calls yet. Complexity thresholds
-    // stay at their defaults — those are the real gate. Drop this back to 30
-    // when the coverage work has closed that gap.
-    "maxCrap": 350
+    "coverage": "./coverage/v8"
   },
   "rules": {}
 }
