@@ -230,3 +230,106 @@ test('the aliases point at the shipped plugin packages', () => {
   assert.equal(PLUGIN_ALIASES.browser, '@aivi/browser');
   assert.equal(PLUGIN_ALIASES.linear, '@aivi/tracker-linear');
 });
+
+/** The dependency npm writes into the manifest when it installs a package. */
+function addDependency(...names: string[]): void {
+  const manifest = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')) as {
+    dependencies: Record<string, string>;
+  };
+  for (const name of names) manifest.dependencies[name] = '*';
+  writeFileSync(join(appDir, 'package.json'), JSON.stringify(manifest));
+}
+
+/** npm's own part of an install, as a fake: it records the spec and adds the named dependencies. */
+function npmAdds(calls: Harness['calls'], ...names: string[]): AddIo['install'] {
+  return spec => {
+    calls.installs.push(spec);
+    addDependency(...names);
+  };
+}
+
+test('a version on the spec is npm’s, not the package name’s', async () => {
+  const { io, calls } = harness([], 'teams');
+  await add(['@acme/aivi-teams@1.2.0'], options(), io);
+  assert.deepEqual(calls.installs, ['@acme/aivi-teams@1.2.0'], 'npm was handed the whole spec');
+  assert.deepEqual(calls.setups, ['@acme/aivi-teams']);
+  assert.deepEqual(pluginNames(appDir), ['@acme/aivi-teams'], 'the list holds the bare name');
+});
+
+test('a directory that declares no usable name is refused', async () => {
+  const { io } = harness();
+  const src = join(directory, 'packages', 'nameless');
+  mkdirSync(src, { recursive: true });
+  const declared: [string, object][] = [
+    ['no name', {}],
+    ['an empty name', { name: '' }],
+    ['a name that is not text', { name: 7 }],
+  ];
+  for (const [what, manifest] of declared) {
+    writeFileSync(join(src, 'package.json'), JSON.stringify(manifest));
+    await assert.rejects(() => add(['file:../packages/nameless'], options(), io), /declares no name/, what);
+  }
+});
+
+test('a package installed without a version is reported as an unknown version', async () => {
+  mkdirSync(join(appDir, 'node_modules', '@aivi', 'channel-discord'), { recursive: true });
+  writeFileSync(join(appDir, 'node_modules', '@aivi', 'channel-discord', 'package.json'), '{}');
+  addDependency('@aivi/channel-discord');
+  const { io, calls } = harness(RUNNING);
+  await add(['discord'], options(), io);
+  assert.match(calls.logs[0]!, /@aivi\/channel-discord unknown is already installed/);
+});
+
+test('npm may name the dependency differently from the spec: the list holds the name npm added', async () => {
+  const { io, calls } = harness([], 'aivi-foo');
+  io.install = npmAdds(calls, 'aivi-foo');
+  await add(['github:acme/aivi-foo'], options(), io);
+  assert.deepEqual(calls.installs, ['github:acme/aivi-foo']);
+  assert.deepEqual(calls.setups, ['aivi-foo'], 'the setup entry is reached by the name npm gave');
+  assert.deepEqual(pluginNames(appDir), ['aivi-foo']);
+});
+
+test('add does not guess which dependency is the plugin when npm added two', async () => {
+  const { io, calls } = harness();
+  io.install = npmAdds(calls, 'one', 'two');
+  await assert.rejects(
+    add(['github:acme/pair'], options(), io),
+    /npm added 2 dependencies \(one, two\); say which one is the plugin/,
+  );
+  assert.deepEqual(calls.setups, [], 'nothing ran against a package that was not identified');
+});
+
+test('add does not guess which package was installed when npm added nothing', async () => {
+  for (const spec of ['github:acme/ghost', 'github:acme/ghost@v1']) {
+    const { io, calls } = harness();
+    io.install = npmAdds(calls);
+    await assert.rejects(add([spec], options(), io), {
+      message: `Cannot tell which package ${spec} installed; name it in aivi-plugins in app/package.json.`,
+    });
+    assert.deepEqual(calls.setups, []);
+  }
+});
+
+test('a setup that rejects with something that is not an Error is said as it is', async () => {
+  const { io, calls } = harness(RUNNING);
+  io.setupPlugin = () => Promise.reject('the flow said no');
+  await add(['discord'], options(), io);
+  assert.ok(calls.logs.includes('the flow said no'));
+  assert.equal(process.exitCode, 1);
+  assert.deepEqual(pluginNames(appDir), [], 'and nothing joined the list');
+});
+
+test('a schema rebuild that rejects with something that is not an Error is still only a warning', async () => {
+  const { io, calls } = harness(RUNNING);
+  io.rebuildSchema = () => Promise.reject('disk full');
+  await add(['discord'], options(), io);
+  assert.match(calls.logs.find(message => message.startsWith('warn: '))!, /not rebuilt \(disk full\)/);
+  assert.deepEqual(pluginNames(appDir), ['@aivi/channel-discord']);
+});
+
+test('a degraded module with no reason on record still says aivi keeps retrying', async () => {
+  const { io, calls } = harness([{ id: 'discord', state: 'degraded', lastError: null }]);
+  await add(['discord'], options(), io);
+  assert.match(calls.logs.at(-1)!, /degraded so far: no reason given\. aivi keeps retrying/);
+  assert.equal(process.exitCode, 1);
+});

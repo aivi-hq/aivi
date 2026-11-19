@@ -5,6 +5,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
+import { configure } from '../src/configure.ts';
 import { machineStatus } from '../src/home.ts';
 import { main } from '../src/main.ts';
 
@@ -275,5 +276,115 @@ test('a broken record does not block the exit ramp', async t => {
     await readFile(process.env.AIVI_CONFIG!, 'utf8'),
     'not json at all',
     'a preview leaves the record intact',
+  );
+});
+
+test('a plain configure shows a record that loads, the person and the roles included, and writes nothing', async t => {
+  await machine(t, undefined);
+  const shown: [Record<string, unknown>, RegExp[]][] = [
+    [
+      { configVersion: 1 },
+      [
+        /host: {4}not set/,
+        /home: {4}not set \(this machine drives another host\)/,
+        /app dir: not set/,
+        /person: {2}nobody signed in/,
+      ],
+    ],
+    [
+      {
+        configVersion: 1,
+        url: 'http://127.0.0.1:4100',
+        home: '/h',
+        appDir: '/h/app',
+        person: { token: 't', id: 'p-1' },
+      },
+      [/host: {4}http:\/\/127\.0\.0\.1:4100\n/, /home: {4}\/h\n/, /app dir: \/h\/app\n/, /person: {2}p-1\n/],
+    ],
+    [{ configVersion: 1, person: { token: 't' } }, [/person: {2}unnamed\n/]],
+    [
+      { configVersion: 1, person: { token: 't', name: 'Ada', roles: ['operator', 'member'] } },
+      [/person: {2}Ada \(operator, member\)\n/],
+    ],
+  ];
+  for (const [record, expected] of shown) {
+    await writeFile(process.env.AIVI_CONFIG!, JSON.stringify(record));
+    const before = await readFile(process.env.AIVI_CONFIG!, 'utf8');
+    const { out } = await run(['configure']);
+    for (const line of expected) assert.match(out, line);
+    assert.equal(await readFile(process.env.AIVI_CONFIG!, 'utf8'), before, 'showing a record writes nothing');
+  }
+});
+
+test('a record that is JSON but not an object is written fresh', async t => {
+  const directory = await machine(t, undefined);
+  await writeFile(process.env.AIVI_CONFIG!, '[1, 2]');
+  const { out } = await run(['configure', '--home', directory]);
+  assert.match(out, /was not JSON; writing it fresh/);
+  const record = JSON.parse(await readFile(process.env.AIVI_CONFIG!, 'utf8')) as Record<string, unknown>;
+  assert.deepEqual([record.configVersion, record.home], [1, directory]);
+});
+
+test('configure refuses a URL that is not http or https, and an app dir that is not a directory', async t => {
+  await machine(t, { configVersion: 1, url: 'http://127.0.0.1:4100' });
+  await assert.rejects(() => run(['configure', '--url', 'ftp://example.org']), {
+    message: 'not an http(s) URL: ftp://example.org',
+  });
+  await assert.rejects(() => run(['configure', '--app-dir', '/no/such/app']), {
+    message: 'no app dir directory at /no/such/app',
+  });
+});
+
+test('configure lands the app dir as an absolute directory', async t => {
+  const directory = await machine(t, { configVersion: 1, url: 'http://127.0.0.1:4100' });
+  await run(['configure', '--app-dir', directory]);
+  const record = JSON.parse(await readFile(process.env.AIVI_CONFIG!, 'utf8')) as Record<string, unknown>;
+  assert.equal(record.appDir, directory);
+});
+
+test('an edit of an unloadable record keeps what still reads right and drops the rest', async t => {
+  await machine(t, undefined);
+  const url = 'http://127.0.0.1:4100';
+  const rescued: [string, Record<string, unknown>, Record<string, unknown>][] = [
+    [
+      'a bad install method, an empty node path and a person that is not an object',
+      { configVersion: 1, installMethod: 'pip', nodePath: '', person: ['Ada'] },
+      {},
+    ],
+    ['a person that is null, and a url that is not text', { configVersion: 1, url: 42, person: null }, {}],
+    ['a person whose token is empty', { configVersion: 1, person: { token: '' } }, {}],
+    [
+      'a person with its token, its names and its roles',
+      {
+        configVersion: 1,
+        installMethod: 'npm',
+        nodePath: '/n',
+        person: { token: 't', id: 'p', name: 'Ada', roles: ['operator'] },
+      },
+      {
+        installMethod: 'npm',
+        nodePath: '/n',
+        person: { token: 't', id: 'p', name: 'Ada', roles: ['operator'] },
+      },
+    ],
+    [
+      'names that are empty and roles that are not text',
+      { configVersion: 1, person: { token: 't', id: '', name: '', roles: [1] } },
+      { person: { token: 't' } },
+    ],
+  ];
+  for (const [what, before, kept] of rescued) {
+    await writeFile(process.env.AIVI_CONFIG!, JSON.stringify(before));
+    await run(['configure', '--url', url]);
+    const record = JSON.parse(await readFile(process.env.AIVI_CONFIG!, 'utf8')) as Record<string, unknown>;
+    assert.deepEqual(record, { configVersion: 1, url, ...kept }, what);
+  }
+});
+
+test('configure with no record at all says that setup creates one', async t => {
+  await machine(t, undefined);
+  assert.throws(
+    () => configure({ url: 'http://127.0.0.1:4100' }),
+    /^Error: no client record at .*aivi\.json; `aivi setup` creates one$/,
   );
 });
