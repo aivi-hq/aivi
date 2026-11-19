@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { type TestContext, test } from 'node:test';
+import type { KnowledgeService, LoadedConfig } from '@aivi/core';
 import { configSchema, getLogger, jobSchema, taskSchema } from '@aivi/core';
 import type { PublicRouteHandler } from '@aivi/plugin/module';
 import { Hono } from 'hono';
@@ -8,10 +9,14 @@ import type { AppEnv } from '../src/api/env.ts';
 import { MAX_JOB_BODY, MAX_PUBLIC_BODY } from '../src/api/http.ts';
 import { requireOperator, resolvePerson } from '../src/api/person.ts';
 import { PublicRoutes, publicDispatch } from '../src/api/public.ts';
+import { registerContext } from '../src/api/routes/context.ts';
+import { registerKnowledge } from '../src/api/routes/knowledge.ts';
 import { registerLinks } from '../src/api/routes/links.ts';
 import { registerPeople } from '../src/api/routes/people.ts';
+import { registerTools } from '../src/api/routes/tools.ts';
 import { status } from '../src/api/status.ts';
 import { Store } from '../src/store.ts';
+import { ToolRegistry } from '../src/tools.ts';
 import { hostVersion } from '../src/version.ts';
 
 const loaded = { path: '/config.json', config: configSchema.parse({ version: 1 }), projects: [], sources: [] };
@@ -207,4 +212,103 @@ test('status shows only the next three active occurrences and labels invocation 
   ]);
   assert.equal(view.leases, 2);
   assert.deepEqual(view.modules, modules);
+});
+
+const catalog: LoadedConfig = {
+  ...loaded,
+  projects: [{ id: 'app', directory: '/app' }],
+  sources: [
+    { id: 'company', path: '/company', kind: 'doc', scope: 'core' },
+    { id: 'adrs', path: '/app/docs', kind: 'decision', scope: 'project', projectId: 'app' },
+  ],
+};
+
+/** A knowledge route over a service whose `search` is the given function. */
+function knowledgeApp(search: KnowledgeService['search'] | undefined, log = getLogger(['aivi', 'test', 'knowledge'])) {
+  const app = new Hono<AppEnv>();
+  const knowledge = search && { search, index: async () => {}, close: async () => {} };
+  registerKnowledge(app, { loaded: catalog, knowledge, log });
+  return app;
+}
+
+test('knowledge search hands the service exactly the selection the query string names', async t => {
+  const search = t.mock.fn<KnowledgeService['search']>(async () => []);
+  const app = knowledgeApp(search);
+  for (const [query, request] of [
+    ['q=deploy', { query: 'deploy', limit: 8, includeCore: true }],
+    [
+      'q=deploy&limit=3&project=app&includeCore=false&kind=decision',
+      { query: 'deploy', limit: 3, projects: ['app'], includeCore: false, kinds: ['decision'] },
+    ],
+  ] as const) {
+    const response = await app.request(`/knowledge/search?${query}`);
+    assert.equal(response.status, 200, query);
+    assert.deepEqual(await response.json(), []);
+    assert.deepEqual(search.mock.calls.at(-1)!.arguments, [request], query);
+  }
+});
+
+test('knowledge search refuses a selection or a request it cannot read before the service is asked', async t => {
+  const search = t.mock.fn<KnowledgeService['search']>(async () => []);
+  const app = knowledgeApp(search);
+  for (const [query, error] of [
+    ['q=deploy&kind=gossip', 'Unknown kind: gossip'],
+    ['limit=3', 'Invalid search request'],
+    ['q=deploy&project=typo', 'Unknown project: typo'],
+  ] as const) {
+    const response = await app.request(`/knowledge/search?${query}`);
+    assert.equal(response.status, 400, query);
+    assert.deepEqual(await response.json(), { error });
+  }
+  assert.equal(search.mock.callCount(), 0);
+});
+
+test('knowledge search says it is unavailable when the host has no service or the service fails', async t => {
+  const log = getLogger(['aivi', 'test', 'knowledge']);
+  const warn = t.mock.method(log, 'warn');
+  const failure = new Error('the index is locked');
+  const failing = async () => {
+    throw failure;
+  };
+  for (const app of [knowledgeApp(undefined, log), knowledgeApp(failing, log)]) {
+    const response = await app.request('/knowledge/search?q=deploy');
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'Knowledge search is unavailable' });
+  }
+  assert.deepEqual(
+    warn.mock.calls.map(call => call.arguments),
+    [['knowledge.search.failed', { error: failure }]],
+    'only the failure is news; no service is a plain answer',
+  );
+});
+
+test('the context route says session context is unavailable when the host has no OpenCode to ask', async () => {
+  const app = new Hono<AppEnv>();
+  registerContext(app, { log: getLogger(['aivi', 'test', 'context']) });
+  const response = await app.request('/context?session=ses_x');
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'Session context is unavailable' });
+});
+
+test('a tool call carries the native message id to the tool when the plugin sent one', async () => {
+  const seen: unknown[] = [];
+  const tools = new ToolRegistry();
+  tools.claim('host', { namespace: 'aivi', name: 'ping', description: 'Say pong.', input: {} }, async call => {
+    seen.push(call);
+    return 'pong';
+  });
+  const app = new Hono<AppEnv>();
+  registerTools(app, { tools, log: getLogger(['aivi', 'test', 'tools']) });
+  for (const body of [
+    { tool: 'aivi_ping', sessionId: 'ses_1', messageId: 'msg_1', input: { a: 1 } },
+    { tool: 'aivi_ping', sessionId: 'ses_1' },
+  ])
+    assert.equal(
+      (await app.request('/tools', { method: 'POST', headers: json, body: JSON.stringify(body) })).status,
+      200,
+    );
+  assert.deepEqual(seen, [
+    { sessionId: 'ses_1', messageId: 'msg_1', input: { a: 1 } },
+    { sessionId: 'ses_1', input: {} },
+  ]);
 });

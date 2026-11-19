@@ -1,8 +1,9 @@
 /** The project wizard as a unit: what it asks, runs and writes for the
  *  plugins a home has configured and the answers a person gives. The
- *  terminal (`@clack/prompts`), the loaded config and the plugin registry are
- *  module mocks, registered before the wizard is imported: nothing here
- *  draws a prompt, loads a real config or resolves a real plugin. */
+ *  terminal (`@clack/prompts`), the loaded config, the plugin registry, core's
+ *  `print` and the OpenCode connection are module mocks, registered before the
+ *  wizard is imported: nothing here draws a prompt, loads a real config,
+ *  resolves a real plugin or dials a service. */
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -30,6 +31,8 @@ const scene = {
   contributors: [] as ProjectContributorEntry[],
   /** What the composed schema says of the config the wizard wrote, when it refuses it. */
   refusal: undefined as string | undefined,
+  /** The `opencode` block of the loaded config, which says where the service is. */
+  opencode: {} as Record<string, unknown>,
 };
 
 const ask = async (question: Question) => {
@@ -47,7 +50,7 @@ mock.module('@clack/prompts', {
 mock.module('../src/cli/context.ts', {
   exports: {
     context: async () => ({
-      loaded: { config: { plugins: scene.plugins, projectDefaults: scene.projectDefaults } },
+      loaded: { config: { plugins: scene.plugins, projectDefaults: scene.projectDefaults, opencode: scene.opencode } },
       registry: {
         configSchema: {
           parse: () => {
@@ -61,7 +64,21 @@ mock.module('../src/cli/context.ts', {
 });
 mock.module('../src/cli/registry.ts', { exports: { projectContributors: async () => scene.contributors } });
 
-const { runProjectSetup } = await import('../src/cli/project-setup.ts');
+/** What the wizard hands a plugin to print with, and the OpenCode service it lists lane agents from. */
+const printed = mock.fn((_value: unknown, _output?: unknown) => {});
+const agentList = mock.fn(
+  async (_options: unknown): Promise<{ data: { id: string; mode: string }[] }> => ({ data: [] }),
+);
+const locationGet = mock.fn(async (_options: unknown) => ({}));
+const connectOpenCode = mock.fn(async (_config: unknown) => ({
+  location: { get: locationGet },
+  agent: { list: agentList },
+}));
+const core = await import('@aivi/core');
+mock.module('@aivi/core', { exports: { ...core, print: printed } });
+mock.module('../src/opencode.ts', { exports: { connectOpenCode } });
+
+const { listLaneAgents, runProjectSetup } = await import('../src/cli/project-setup.ts');
 
 /** A home with its config file, a terminal, and a fresh scene. */
 async function wizard(t: TestContext, given: Partial<typeof scene> = {}) {
@@ -80,9 +97,19 @@ async function wizard(t: TestContext, given: Partial<typeof scene> = {}) {
   });
   Object.assign(
     scene,
-    { answers: [], asked: [], said: [], plugins: {}, projectDefaults: {}, contributors: [], refusal: undefined },
+    {
+      answers: [],
+      asked: [],
+      said: [],
+      plugins: {},
+      projectDefaults: {},
+      contributors: [],
+      refusal: undefined,
+      opencode: {},
+    },
     given,
   );
+  for (const spy of [printed, agentList, locationGet, connectOpenCode]) spy.mock.resetCalls();
   return {
     home,
     configPath,
@@ -253,4 +280,55 @@ test('a second lane array, or a config the schema refuses, stops the wizard and 
   );
   assert.equal(await readFile(w.configPath, 'utf8'), before, 'the old bytes return');
   assert.equal(process.exitCode, 1);
+});
+
+test('a contributor is handed core’s print and the agents that could work a lane, listed from the new checkout', async t => {
+  const seen: { agents?: string[] } = {};
+  const tracker = contributor('tracker-linear', 'tracker', async ctx => {
+    ctx.print({ teams: 2 }, 'two teams');
+    seen.agents = await ctx.agents('site');
+    return { id: 'site', section: { team: 'ENG' } };
+  });
+  const w = await wizard(t, {
+    plugins: { 'tracker-linear': {} },
+    contributors: [tracker.entry],
+    opencode: { url: 'http://opencode.test' },
+  });
+  agentList.mock.mockImplementationOnce(async () => ({
+    data: [
+      { id: 'dev', mode: 'primary' },
+      { id: 'explore', mode: 'subagent' },
+    ],
+  }));
+
+  assert.equal(await w.run(), 'site');
+
+  assert.deepEqual(printed.mock.calls[0]!.arguments, [{ teams: 2 }, 'two teams']);
+  assert.deepEqual(seen.agents, ['dev'], 'a lane works as a primary: the subagent-only agent is no lane’s worker');
+  const location = { location: { directory: join(w.home, 'projects', 'site', 'source') } };
+  assert.deepEqual(locationGet.mock.calls[0]!.arguments, [location]);
+  assert.deepEqual(agentList.mock.calls[0]!.arguments, [location]);
+});
+
+test('with no service handed in, lane agents come from one the wizard ensures, asked again a second after an empty answer', async t => {
+  const w = await wizard(t);
+  const slept: number[] = [];
+  t.mock.method(globalThis, 'setTimeout', ((callback: () => void, ms: number) => {
+    slept.push(ms);
+    callback();
+    return 0;
+  }) as unknown as typeof setTimeout);
+  agentList.mock.mockImplementationOnce(async () => ({ data: [] }), 0);
+  agentList.mock.mockImplementationOnce(async () => ({ data: [{ id: 'dev', mode: 'primary' }] }), 1);
+
+  const agents = await listLaneAgents(
+    w.home,
+    { config: { opencode: { url: 'http://opencode.test' } } } as never,
+    'shop',
+  );
+
+  assert.deepEqual(agents, ['dev']);
+  assert.deepEqual(slept, [1_000], 'the one-second gap the cold boot needs, taken once');
+  assert.equal(agentList.mock.callCount(), 2);
+  assert.deepEqual(connectOpenCode.mock.calls[0]!.arguments, [{ url: 'http://opencode.test', lifecycle: 'ensure' }]);
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { type TestContext, test } from 'node:test';
-import type { LoadedConfig } from '@aivi/core';
-import { configSchema } from '@aivi/core';
+import type { LoadedConfig, Logger } from '@aivi/core';
+import { configSchema, getLogger } from '@aivi/core';
 import { createApp, serveApp } from '../src/api/app.ts';
 import { MAX_DIARY_BODY } from '../src/api/diary.ts';
 import { PublicRoutes } from '../src/api/public.ts';
@@ -83,4 +83,40 @@ test('the diary does not starve webhooks: the public route signs over the full b
   const row = store.requests()[0]!;
   assert.equal(row.status, 200);
   assert.equal(row.truncated, true, 'the diary kept its own cap');
+});
+
+/** The real chain with no socket: the diary is the unit, `Request`s go straight in. */
+function appOver(store: Store, log: Logger) {
+  const loaded: LoadedConfig = {
+    path: '/config',
+    config: configSchema.parse({ version: 1 }),
+    sources: [],
+    projects: [],
+  };
+  return createApp({ store, loaded, log });
+}
+
+test('a diary row that cannot be written is logged and never costs the request', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const log = getLogger(['aivi', 'test', 'diary']);
+  const warn = t.mock.method(log, 'warn');
+  const failure = new Error('the disk is full');
+  t.mock.method(store, 'logRequest', () => {
+    throw failure;
+  });
+  const response = await appOver(store, log).request('/health');
+  assert.equal(response.status, 200, 'the request is answered as if the diary were fine');
+  assert.deepEqual(warn.mock.calls[0]!.arguments, ['api.diary.failed', { path: '/health', error: failure }]);
+});
+
+test('a request whose body was already read is journaled without a body and still answered', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const request = new Request('http://host.test/nowhere', { method: 'POST', body: 'spent', headers: api });
+  await request.text();
+  const response = await appOver(store, getLogger(['aivi', 'test', 'diary'])).request(request);
+  assert.equal(response.status, 405, 'the chain went on as for any unknown path');
+  const [row] = store.requests();
+  assert.deepEqual([row!.path, row!.status, row!.body, row!.truncated], ['/nowhere', 405, null, false]);
 });
