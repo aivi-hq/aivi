@@ -106,6 +106,29 @@ for (const { name, queued, meanwhile, warned } of waitings) {
   });
 }
 
+test('a granted slot that cannot be given back is said, and the second try to give it back fails quietly', async () => {
+  const w = world();
+  const ghost = {
+    id: 'lease_ghost',
+    kind: 'session',
+    service: 'orchestrator',
+    pool: 'default',
+    state: 'preparing',
+    activityAt: 0,
+    createdAt: 0,
+  } as const;
+
+  w.dispatcher.fulfil('req_nobody_asked', ghost);
+  await w.log.next('fulfill.failed');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(
+    calls(w.dispatcher.release),
+    [['lease_ghost'], ['lease_ghost']],
+    'it tried twice, and neither escaped',
+  );
+});
+
 test('a person’s move cancels the queue place of that ticket only, and a granted place that was cancelled goes back', async () => {
   const w = world({ lanes: [lane('Doing', { agent: 'dev', pool: 'a' }), lane('Later', { agent: 'dev', pool: 'b' })] });
   w.tracker.tickets.does(async (_project, state) => [{ id: state === 'Doing' ? 't-1' : 't-2', blocked: false }]);

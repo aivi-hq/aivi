@@ -63,8 +63,9 @@ export const context = async (): Promise<{
  *  and plugin channel commands render the same way. */
 export const print = (value: unknown, output?: OutputBlock[] | string): void => corePrint(value, output);
 
-/** Repeatable options collect into a list: `--project site --project api`. */
-export const collect = (value: string, previous: string[]): string[] => [...previous, value];
+/** Repeatable options collect into a list: `--project site --project api`. Commander hands the first value an
+ *  `undefined` previous when the option has no default. */
+export const collect = (value: string, previous: string[] = []): string[] => [...previous, value];
 
 /** The home's SQLite store, open for the callback and closed after, whatever
  *  the callback does. Commands that need no database never touch one. */

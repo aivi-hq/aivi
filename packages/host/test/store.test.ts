@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -507,6 +508,24 @@ test('link codes: minted hashed, consumed once, already-bound refused without co
   );
   assert.equal(store.redeemLinkCode(live.code, 'discord', 'new', start + 10).reason, 'bound');
   store.close();
+});
+
+test('a link code that collides with one already minted is minted again', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const ada = store.createPerson({ name: 'Ada', roles: [] });
+  const bob = store.createPerson({ name: 'Bob', roles: [] });
+  // Bob holds 99% of the five-digit space: nearly every draw for Ada collides before one lands.
+  const hold = store.db.prepare('INSERT INTO link_codes(code_hash,person_id,created_at,expires_at) VALUES(?,?,?,?)');
+  store.db.exec('BEGIN');
+  for (let n = 0; n < 99_000; n++)
+    hold.run(createHash('sha256').update(String(n).padStart(5, '0')).digest('hex'), bob.id, start, start + 60_000);
+  store.db.exec('COMMIT');
+
+  const minted = store.mintLinkCode(ada.id, 15 * 60_000, start);
+
+  assert.match(minted.code, /^99\d{3}$/, 'the code is one nobody held');
+  assert.equal(store.redeemLinkCode(minted.code, 'discord', 'u1', start + 1).reason, 'bound');
 });
 
 test('the request diary reads oldest-first through its filters; clearRequests retires only the old', async t => {

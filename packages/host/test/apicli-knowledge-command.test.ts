@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 import type { KnowledgeSource, LoadedConfig } from '@aivi/core';
+import { selectSources } from '@aivi/core';
 import { loadedWith, parse } from './apicli-fixture.ts';
 
 const world = { loaded: loadedWith() };
@@ -20,11 +21,11 @@ const withStore = mock.fn(async (_loaded: LoadedConfig, fn: (store: { enqueue: t
   fn({ enqueue }),
 );
 
+const { collect } = await import('../src/cli/context.ts');
 mock.module('../src/cli/context.ts', {
   exports: {
-    // The parser of the repeatable `--project`: no test here passes that flag,
-    // because the real `collect` throws on its first value.
-    collect: mock.fn(),
+    // The repeatable `--project` is parsed by the real `collect`: it is the unit under these commands' flags.
+    collect,
     context: async () => ({ loaded: world.loaded, poke, log: { getChild } }),
     hostUrl: () => 'http://host.test',
     print,
@@ -55,12 +56,20 @@ test('sources lists every source the home indexes', async () => {
   assert.deepEqual(printed(), [[sources]]);
 });
 
+test('sources restricts itself to the projects it is given, one flag each', async () => {
+  world.loaded = loadedWith({}, { projects: [{ id: 'app', directory: '/app' }], sources });
+  await parse(registerKnowledge, 'sources', '--project', 'app');
+  assert.deepEqual(printed(), [[selectSources(world.loaded, ['app'])]]);
+});
+
 test('search asks the running host for what the flags select and prints its hits', async () => {
   for (const [argv, request] of [
     [['wiki'], { query: 'wiki' }],
     [['wiki', '--limit', '5'], { query: 'wiki', limit: 5 }],
     [['wiki', '--core-only'], { query: 'wiki', projects: [] }],
     [['wiki', '--no-core'], { query: 'wiki', includeCore: false }],
+    [['wiki', '--project', 'app'], { query: 'wiki', projects: ['app'] }],
+    [['wiki', '--project', 'app', '--project', 'api'], { query: 'wiki', projects: ['app', 'api'] }],
   ] as const) {
     search.mock.resetCalls();
     await parse(registerKnowledge, 'knowledge', 'search', ...argv);
@@ -68,6 +77,14 @@ test('search asks the running host for what the flags select and prints its hits
   }
   assert.deepEqual(createHostClient.mock.calls[0]!.arguments, ['http://host.test']);
   assert.deepEqual(printed().at(-1), [['a hit']]);
+});
+
+test('search refuses the core alone and a project together, and asks nothing of the host', async () => {
+  await assert.rejects(
+    parse(registerKnowledge, 'knowledge', 'search', 'wiki', '--core-only', '--project', 'app'),
+    /Choose --core-only or --project/,
+  );
+  assert.equal(search.mock.callCount(), 0);
 });
 
 test('index queues one index run on the maintenance pool and wakes the host', async () => {
