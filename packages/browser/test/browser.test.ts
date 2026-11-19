@@ -139,6 +139,10 @@ test('configuration preserves profiles, limits attachment to loopback, and rejec
   const launch = browserConfigSchema.parse({ connection: { mode: 'launch', userDataDir: '/aivi/chrome' } });
   assert.ok(chromeArguments(launch).includes('--headless=false'));
   assert.ok(!chromeArguments(launch).includes('--isolated'));
+  const binary = browserConfigSchema.parse({
+    connection: { mode: 'launch', userDataDir: '/aivi/chrome', executablePath: '/opt/chrome/chrome' },
+  });
+  assert.ok(chromeArguments(binary).includes('--executablePath=/opt/chrome/chrome'));
   assert.throws(() =>
     browserConfigSchema.parse({ connection: { mode: 'attach', browserUrl: 'http://outside.invalid:9222' } }),
   );
@@ -213,4 +217,133 @@ test('a launched profile is branded once and never overrides a colour the person
   const merged = await read(partial);
   assert.equal(merged.profile.name, 'kept');
   assert.equal(merged.browser.theme.color_variant, 3, 'missing theme values are filled in');
+});
+
+/** The human's own tab: what every page list shows before the service has opened anything. */
+const human = { id: 1, url: 'https://human.invalid/private', title: 'Human tab', selected: false };
+const blank = (id: number, over: Partial<typeof human> = {}) => ({
+  id,
+  url: 'about:blank',
+  title: 'Blank',
+  selected: true,
+  ...over,
+});
+/** A transport that lists the human's tab, and answers a new_page with `answer`. */
+const opening = (answer: object): BrowserTransport => ({
+  call: async name => (name === 'new_page' ? answer : { structuredContent: { pages: [human] } }),
+  close: async () => {},
+});
+const showing = (pages: unknown) => opening({ structuredContent: { pages } });
+
+test('each page action asks Chrome for what it means, on the tab the session owns', async () => {
+  const fake = fixture();
+  const service = createBrowserService(config(), fake.transport);
+  const tab = (await service.execute('s', { action: 'open', url: 'https://a.invalid' })).tab!;
+  const pageId = 2;
+  for (const [request, asked] of [
+    [
+      { action: 'navigate', url: 'https://b.invalid' },
+      { name: 'navigate_page', args: { pageId, type: 'url', url: 'https://b.invalid', timeout: 30000 } },
+    ],
+    [
+      { action: 'fill', uid: '1_2', value: 'hello' },
+      { name: 'fill', args: { pageId, uid: '1_2', value: 'hello' } },
+    ],
+    [
+      { action: 'press', key: 'Enter' },
+      { name: 'press_key', args: { pageId, key: 'Enter' } },
+    ],
+    [{ action: 'focus' }, { name: 'select_page', args: { pageId, bringToFront: true } }],
+    [
+      { action: 'dialog', response: 'accept' },
+      { name: 'handle_dialog', args: { pageId, action: 'accept' } },
+    ],
+  ] as const) {
+    const done = await service.execute('s', { ...request, tabId: tab.tabId });
+
+    assert.deepEqual(done, { completed: true }, request.action);
+    assert.deepEqual(fake.calls.at(-1), asked, request.action);
+  }
+});
+
+test('a page list that is no list of pages is an invalid answer, not something to work with', async () => {
+  for (const pages of [
+    'nope',
+    [null],
+    [{ ...human, id: 1.5 }],
+    [{ ...human, url: 5 }],
+    [{ ...human, title: 5 }],
+    [{ ...human, selected: 'yes' }],
+  ]) {
+    const service = createBrowserService(config(), {
+      call: async () => ({ structuredContent: { pages } }),
+      close: async () => {},
+    });
+
+    await assert.rejects(service.execute('s', { action: 'tabs' }), /Invalid Chrome MCP page response/);
+  }
+});
+
+test('an answer that lists no pages means there are none', async () => {
+  const service = createBrowserService(config(), { call: async () => ({}), close: async () => {} });
+
+  assert.deepEqual(await service.execute('s', { action: 'tabs' }), { tabs: [] });
+});
+
+test('a new_page that fails or answers wrongly leaves the connection uncertain, for that call and every later one', async () => {
+  for (const [why, transport] of [
+    ['Chrome reports an error', opening({ isError: true })],
+    ['the answer is no page list', showing('nope')],
+    ['no page was added', showing([human])],
+    ['the added page is not blank', showing([human, blank(2, { url: 'https://x.invalid' })])],
+    ['the added page is not selected', showing([human, blank(2, { selected: false })])],
+    ['two pages were added and selected', showing([human, blank(2), blank(3)])],
+  ] as const) {
+    const service = createBrowserService(config(), transport);
+
+    await assert.rejects(service.execute('s', { action: 'open', url: 'https://a.invalid' }), /uncertain/, why);
+    await assert.rejects(service.execute('s', { action: 'tabs' }), /uncertain/, `${why}: later calls too`);
+  }
+});
+
+test('a page that is gone when it is listed after opening is no longer open, and is forgotten by the next call', async () => {
+  const fake = fixture();
+  const original = fake.transport.call;
+  fake.transport.call = async (name, args) => {
+    const reply = await original(name, args);
+    if (name === 'navigate_page') fake.all.pop();
+    return reply;
+  };
+  const service = createBrowserService(config(), fake.transport);
+
+  await assert.rejects(service.execute('s', { action: 'open', url: 'https://a.invalid' }), /Tab is no longer open/);
+
+  assert.deepEqual(await service.execute('s', { action: 'tabs' }), { tabs: [] });
+});
+
+test('a snapshot that comes back empty is an error, and what Chrome said about a failed action is the first line, cut short', async () => {
+  const fake = fixture();
+  const original = fake.transport.call;
+  const service = createBrowserService(config(), fake.transport);
+  const tab = (await service.execute('s', { action: 'open', url: 'https://a.invalid' })).tab!;
+  fake.transport.call = async (name, args) =>
+    name === 'take_snapshot' ? { structuredContent: { pages: [] } } : original(name, args);
+  await assert.rejects(service.execute('s', { action: 'snapshot', tabId: tab.tabId }), /returned no snapshot/);
+
+  for (const [content, said] of [
+    [
+      [{ type: 'text', text: '\n  \nTimeout waiting for navigation\nat page.goto' }],
+      ': Timeout waiting for navigation',
+    ],
+    [[{ type: 'text', text: 'x'.repeat(300) }], `: ${'x'.repeat(200)}`],
+    [[{ type: 'image' }], ''],
+    [undefined, ''],
+  ] as const) {
+    fake.transport.call = async () => ({ isError: true, ...(content ? { content: [...content] } : {}) });
+
+    await assert.rejects(
+      service.execute('s', { action: 'tabs' }),
+      error => (error as Error).message === `Browser action failed${said}; inspect the tab before retrying`,
+    );
+  }
 });

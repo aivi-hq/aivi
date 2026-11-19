@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type RequestListener, type Server } from 'node:http';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 import type { ServedTool } from '@aivi/core';
 import plugin from '../src/index.ts';
 import type { EvaluationLike } from '../src/redirect.ts';
@@ -75,10 +77,12 @@ function setupWith(
   onDispose = () => {},
   agent?: ReturnType<typeof fakeAgentDomain>['domain'],
   permission?: ReturnType<typeof fakePermission>['domain'],
+  location?: { directory: string },
 ) {
   return plugin.setup({
     options,
     agent,
+    location,
     permission: permission ?? fakePermission().domain,
     tool: {
       transform: async (callback: (editor: Editor) => void) => {
@@ -89,15 +93,17 @@ function setupWith(
   } as unknown as Parameters<typeof plugin.setup>[0]);
 }
 
-function withToken(t: { after(fn: () => void): void }, value: string | undefined) {
-  const previous = process.env.AIVI_TOKEN;
-  if (value === undefined) delete process.env.AIVI_TOKEN;
-  else process.env.AIVI_TOKEN = value;
+function withEnv(t: { after(fn: () => void): void }, name: string, value: string | undefined) {
+  const previous = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
   t.after(() => {
-    if (previous === undefined) delete process.env.AIVI_TOKEN;
-    else process.env.AIVI_TOKEN = previous;
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
   });
 }
+
+const withToken = (t: { after(fn: () => void): void }, value: string | undefined) => withEnv(t, 'AIVI_TOKEN', value);
 
 /** The plugin reads `~/.config/aivi/config.json` for remote credentials; tests must
  *  never see the machine's own client config. */
@@ -553,4 +559,252 @@ test('the redirect hook denies boundary git for aivi’s runs only, asking the h
   await evaluate(person);
   assert.equal(person.effect, 'allow', 'the person next door pushes freely');
   assert.deepEqual(asked, ['ses_run', 'ses_person']);
+});
+
+/** The same stand-in host as `hostServing`, with no socket: `fetch` is the plugin's only way to it.
+ *  A route that throws is a host that does not answer. */
+function hostByFetch(t: TestContext, routes: Record<string, Route>) {
+  return t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const route = routes[`${init?.method ?? 'GET'} ${url.pathname}`];
+    const answer = route
+      ? await route({
+          body: undefined,
+          headers: Object.fromEntries(new Headers(init?.headers)),
+          url: `${url.pathname}${url.search}`,
+        })
+      : { status: 404, json: { error: 'Not found' } };
+    return new Response(JSON.stringify(answer.json), { status: answer.status ?? 200 });
+  });
+}
+
+/** `fs.watch` without the file system: what the plugin asked it to watch, the listener it gave, and
+ *  what it closed. `fail` is a directory that cannot be watched. */
+function watching(t: TestContext, fail?: Error) {
+  const close = t.mock.fn();
+  const watch = t.mock.method(fs, 'watch', (() => {
+    if (fail) throw fail;
+    return { close };
+  }) as never);
+  syncBuiltinESMExports();
+  t.after(() => {
+    watch.mock.restore();
+    syncBuiltinESMExports();
+  });
+  return {
+    close,
+    watched: () => watch.mock.calls.map(call => call.arguments[0]),
+    heard: (event: string, filename: string | null) =>
+      (watch.mock.calls[0]!.arguments[1] as unknown as (event: string, filename: string | null) => void)(
+        event,
+        filename,
+      ),
+  };
+}
+
+/** A directory with these files in it, gone when the test ends. */
+async function scratchHome(t: TestContext, files: Record<string, string> = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-home-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const [name, text] of Object.entries(files)) await writeFile(join(root, name), text);
+  return root;
+}
+
+const withBasePrompt = () => new Map<string, AgentLike>([['assistant', { id: 'assistant', system: 'base prompt' }]]);
+
+/**
+ * The plugin set up as OpenCode would over a home holding `files`: a host that serves no tools, the
+ * home's watch in `watcher` (`watcherFails` is a home that cannot be watched), an agent that has only
+ * its base prompt, and a `reload` that counts. `via` is how the plugin is told where the home is.
+ */
+async function overHome(
+  t: TestContext,
+  files: Record<string, string>,
+  via: 'soul' | 'env' | 'location' = 'soul',
+  watcherFails?: Error,
+) {
+  await hermeticXdg(t);
+  withToken(t, 'test-home-token');
+  const home = await scratchHome(t, files);
+  withEnv(t, 'AIVI_HOME', via === 'env' ? home : undefined);
+  hostByFetch(t, toolsRoute());
+  const watcher = watching(t, watcherFails);
+  const agents = withBasePrompt();
+  const fake = fakeAgentDomain(agents);
+  const reload = t.mock.fn(fake.domain.reload);
+  const cleanup = await setupWith(
+    via === 'soul' ? { soul: join(home, 'soul.md') } : {},
+    () => {},
+    () => {},
+    { ...fake.domain, reload },
+    undefined,
+    via === 'location' ? { directory: home } : undefined,
+  );
+  return {
+    home,
+    watcher,
+    agents,
+    reload,
+    stop: async () => {
+      if (typeof cleanup === 'function') await cleanup();
+    },
+  };
+}
+
+test('the aivi home is the soul option’s directory, else AIVI_HOME, else where OpenCode runs', async t => {
+  for (const [from, via] of [
+    ['the soul option', 'soul'],
+    ['AIVI_HOME', 'env'],
+    ['the OpenCode location', 'location'],
+  ] as const) {
+    await t.test(from, async s => {
+      const over = await overHome(s, { 'soul.md': `I am aivi, said from ${from}.` }, via);
+
+      assert.equal(over.agents.get('assistant')!.system, `base prompt\n\nI am aivi, said from ${from}.`);
+      assert.deepEqual(over.watcher.watched(), [over.home], 'and that directory is the one it keeps watching');
+      await over.stop();
+    });
+  }
+});
+
+test('an identity with no usable name says no name: the soul stands alone', async t => {
+  for (const identity of [undefined, {}, { name: 5 }, { name: '   ' }]) {
+    await t.test(`identity ${JSON.stringify(identity) ?? 'left out'}`, async s => {
+      const over = await overHome(s, {
+        'soul.md': 'I route rather than do.',
+        'config.json': JSON.stringify({ version: 1, identity }),
+      });
+
+      assert.equal(over.agents.get('assistant')!.system, 'base prompt\n\nI route rather than do.');
+    });
+  }
+});
+
+test('with no soul to say, the agents are left as they are, and the home is still watched for one', async t => {
+  for (const [why, files] of [
+    ['there is no soul.md yet', {}],
+    ['soul.md is blank and no name is configured', { 'soul.md': ' \n' }],
+  ] as const) {
+    await t.test(why, async s => {
+      const over = await overHome(s, files);
+
+      assert.equal(over.agents.get('assistant')!.system, 'base prompt');
+      assert.deepEqual(over.watcher.watched(), [over.home], 'a soul written later is picked up');
+    });
+  }
+});
+
+test('a change to soul.md or config.json reloads the agents once the changes settle; other files are no business of theirs', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const over = await overHome(t, { 'soul.md': 'I route rather than do.' });
+  const heard = over.watcher.heard;
+
+  heard('change', 'notes.txt');
+  t.mock.timers.tick(100);
+  assert.equal(over.reload.mock.callCount(), 0, 'a file the plugin does not read changes nothing');
+
+  heard('change', 'soul.md');
+  heard('rename', 'config.json');
+  t.mock.timers.tick(99);
+  assert.equal(over.reload.mock.callCount(), 0, 'not before the changes have settled');
+  t.mock.timers.tick(1);
+  assert.equal(over.reload.mock.callCount(), 1, 'two changes in one window are one reload');
+
+  heard('change', null);
+  t.mock.timers.tick(100);
+  assert.equal(over.reload.mock.callCount(), 2, 'a change that names no file might be either');
+
+  heard('change', 'soul.md');
+  await over.stop();
+  t.mock.timers.tick(100);
+  assert.equal(over.reload.mock.callCount(), 2, 'a reload still pending when the plugin is disposed never happens');
+  assert.equal(over.watcher.close.mock.callCount(), 1, 'and the watch is closed');
+});
+
+test('a home that cannot be watched costs only the live reload: the soul is still read at load', async t => {
+  const over = await overHome(
+    t,
+    { 'soul.md': 'I route rather than do.' },
+    'soul',
+    new Error('ENOENT: no such file or directory, watch'),
+  );
+
+  assert.equal(over.agents.get('assistant')!.system, 'base prompt\n\nI route rather than do.');
+  await over.stop();
+  assert.equal(over.watcher.close.mock.callCount(), 0, 'there was no watch to close');
+});
+
+test('a client config that names neither a host nor a person leaves the default host, asked anonymously', async t => {
+  const xdg = await hermeticXdg(t);
+  withToken(t, undefined);
+  withEnv(t, 'AIVI_HOME', undefined);
+  await writeFile(join(xdg, 'aivi', 'config.json'), JSON.stringify({ configVersion: 1, url: 5, person: { token: 7 } }));
+  const host = hostByFetch(t, toolsRoute());
+
+  await setupWith({}, () => {});
+
+  const [url, init] = host.mock.calls[0]!.arguments;
+  assert.equal(String(url), 'http://127.0.0.1:4100/tools');
+  assert.equal(new Headers(init?.headers).get('authorization'), null);
+});
+
+test('a host that cannot say whether a session is a run is taken to say no, and is asked again next time', async t => {
+  await hermeticXdg(t);
+  const answers: (boolean | Error)[] = [new Error('ECONNREFUSED'), new Error('ECONNREFUSED'), true];
+  hostByFetch(t, {
+    ...toolsRoute(),
+    'GET /run': () => {
+      const answer = answers.shift()!;
+      if (answer instanceof Error) throw answer;
+      return { json: { run: answer } };
+    },
+  });
+  const permission = fakePermission();
+  await setupWith(
+    { url: 'http://127.0.0.1:4100' },
+    () => {},
+    () => {},
+    undefined,
+    permission.domain,
+  );
+  const evaluate = permission.evaluates[0]! as unknown as (event: EvaluationLike) => Promise<void>;
+  const push = (): EvaluationLike => ({
+    sessionID: 'ses_run',
+    action: 'shell',
+    resources: ['git push origin'],
+    effect: 'allow',
+  });
+
+  const unreachable = [push(), push()];
+  for (const event of unreachable) await evaluate(event);
+  assert.deepEqual(
+    unreachable.map(event => event.effect),
+    ['allow', 'allow'],
+    'the wall is the safety, so the signpost fails open',
+  );
+
+  const reachable = push();
+  await evaluate(reachable);
+  assert.equal(reachable.effect, 'deny', 'once the host answers, the run is known and refused');
+  assert.equal(answers.length, 0, 'every unanswered question was asked again');
+});
+
+test('the connection tool names the tools this process loaded, and a status the host cannot give costs only the version', async t => {
+  await hermeticXdg(t);
+  withToken(t, 'test-connection-token');
+  hostByFetch(t, {
+    ...toolsRoute(descriptor({}), descriptor({ id: 'knowledge_search', namespace: 'knowledge', name: 'search' })),
+    'GET /health': () => ({ json: { ok: true } }),
+    'GET /status': () => ({ status: 500, json: { error: 'Internal' } }),
+  });
+  const tools: RegisteredTool[] = [];
+  await setupWith({ url: 'http://127.0.0.1:4100' }, tool => tools.push(tool));
+
+  const report = JSON.parse((await tools[0]!.execute({}, { sessionID: 's' })).content);
+
+  assert.deepEqual(report, {
+    reachable: true,
+    host: 'http://127.0.0.1:4100',
+    toolsLoaded: ['aivi_status', 'knowledge_search'],
+  });
 });

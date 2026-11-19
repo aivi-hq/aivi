@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { getLogger } from '@aivi/core';
 import { ToolError, ToolRegistry } from '@aivi/host';
 import type { AiviServices } from '@aivi/plugin';
+import { recorder } from '../../host/test/support.ts';
 import type { BrowserConfig } from '../src/config.ts';
 import { browserConfigSchema } from '../src/config.ts';
 import type { BrowserTransport } from '../src/index.ts';
@@ -67,4 +68,34 @@ test('the browser module claims aivi_browser at its own door; stop releases it a
     undefined,
     'stop released the tool so the next plugin load will not see it',
   );
+});
+
+test('a browser operation that fails is a 409 that says what to do, and the cause stays in the log', async () => {
+  const lines = recorder();
+  const registry = new ToolRegistry();
+  const services = { tools: registry.forModule('browser'), log: lines.log } as unknown as AiviServices;
+  const lost: BrowserTransport = {
+    call: async () => {
+      throw new Error('connection lost');
+    },
+    close: async () => {},
+  };
+  await createBrowserModule(config(), lost).start(services);
+
+  await assert.rejects(
+    registry.get('aivi_browser')!.handler({ sessionId: 'ses_owner', input: { action: 'tabs' } }),
+    (error: unknown) => {
+      assert.ok(error instanceof ToolError);
+      assert.equal(error.status, 409);
+      assert.match(
+        error.message,
+        /Inspect the owned tabs before retrying; uncertain connections require a host restart\./,
+      );
+      return true;
+    },
+  );
+
+  const [warned] = lines.said('warn');
+  assert.deepEqual([warned!.event, warned!.session, warned!.action], ['browser.failed', 'ses_owner', 'tabs']);
+  assert.match((warned!.error as Error).message, /Browser connection is uncertain/);
 });

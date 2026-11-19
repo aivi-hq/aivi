@@ -5,12 +5,16 @@ import type { PluginCliContext } from '../src/cli.ts';
 import type { Store } from '../src/module.ts';
 
 /** What a home holds for a plugin command: the plugin blocks of its config,
- *  where its state lives, its open store, and what its host does on a poke. */
+ *  where its state lives, the persona's name, its open store, and what its
+ *  host does on a poke. `prompts` stands in for the runner's clack: a test
+ *  that leaves it out gets clack itself. */
 export interface CliHome {
   plugins?: Record<string, unknown>;
   stateDirectory?: string;
+  identityName?: string;
   store?: Store;
   onPoke?: () => void;
+  prompts?: PluginCliContext['prompts'];
 }
 
 /**
@@ -28,7 +32,13 @@ export function cliFixture(factory: (ctx: PluginCliContext) => Command | Promise
     home: '/home',
     configPath: '/home/config.json',
     loaded: async () =>
-      ({ config: { plugins: home.plugins ?? {}, stateDirectory: home.stateDirectory } }) as unknown as LoadedConfig,
+      ({
+        config: {
+          plugins: home.plugins ?? {},
+          stateDirectory: home.stateDirectory,
+          identity: { name: home.identityName ?? 'aivi' },
+        },
+      }) as unknown as LoadedConfig,
     withStore: async fn => fn(home.store as Store),
     print: (value, output) => {
       printed.push(value);
@@ -39,7 +49,7 @@ export function cliFixture(factory: (ctx: PluginCliContext) => Command | Promise
       pokes += 1;
       home.onPoke?.();
     },
-    prompts,
+    prompts: home.prompts ?? prompts,
   };
   return {
     printed,
