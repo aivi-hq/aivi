@@ -574,6 +574,63 @@ test('a grant for a request this scheduler never made is paid straight back', t 
   assert.equal(scheduler.activeCount, 0);
 });
 
+test('a report that fails is said and changes nothing: the run keeps its outcome, and the scheduler keeps going', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const run = store.enqueue(check, 'local-model', 'a', 1);
+  const { log, said } = recorder();
+  const jobs = work();
+  const scheduler = new Scheduler(
+    store,
+    config,
+    new TestCapacity(),
+    () => false,
+    jobs.execute,
+    log,
+    async () => {
+      throw new Error('nobody is listening');
+    },
+  );
+  scheduler.tick();
+  await jobs.started(run.id);
+  jobs.end(run.id);
+  await scheduler.drain();
+  assert.equal(store.run(run.id).state, 'succeeded');
+  assert.equal(scheduler.stopped, false);
+  assert.deepEqual(
+    said('warn').map(line => [line.event, (line.error as Error).message]),
+    [['run.report.failed', 'nobody is listening']],
+  );
+});
+
+test('a missed occurrence whose report fails is said, and drain still settles', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  store.syncJobs([{ ...hourly, id: 'standup', cron: '0 9 * * *' }], [], 0);
+  const { log, said } = recorder();
+  const scheduler = new Scheduler(
+    store,
+    config,
+    new TestCapacity(),
+    () => false,
+    work().execute,
+    log,
+    async () => {
+      throw new Error('nobody is listening');
+    },
+  );
+  scheduler.tick(store.job('standup').nextAt! + 3_600_000);
+  await scheduler.drain();
+  const [missed] = store.runs();
+  assert.equal(missed!.state, 'missed');
+  assert.deepEqual(
+    said('warn')
+      .filter(line => line.event === 'run.report.failed')
+      .map(line => [line.run, (line.error as Error).message]),
+    [[missed!.id, 'nobody is listening']],
+  );
+});
+
 test('a grant that arrives after the stop is paid straight back', t => {
   const store = new Store(':memory:');
   t.after(() => store.close());

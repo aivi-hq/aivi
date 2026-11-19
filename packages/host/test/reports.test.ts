@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Run } from '@aivi/core';
+import type { Run, RunState } from '@aivi/core';
 import { configSchema, jobSchema, taskSchema } from '@aivi/core';
 import type { ChannelModule } from '@aivi/plugin/channel';
 import { Channels } from '../src/channel/router.ts';
@@ -213,4 +213,176 @@ test('a report to "session" goes to the module that owns the session, else into 
   await channels.deliver({ to: 'session', session: 'ses_discord_1', on: 'always' }, 'later', context);
   assert.deepEqual(native.at(-1), 'ses_discord_1:later', 'without an owner the native path is used');
   assert.match(reentryPrompt('body'), /^\[aivi delivers the outcome[^\]]*\]\nbody$/);
+});
+
+const reportedAt = Date.parse('2026-09-15T09:00:00Z');
+const runFor = (task: unknown, over: Partial<Run> = {}): Run => ({
+  id: 'abcdef12-0000',
+  jobId: 'job',
+  task: taskSchema.parse(task),
+  resource: 'r',
+  state: 'succeeded',
+  createdAt: 0,
+  scheduledFor: reportedAt,
+  startedAt: null,
+  finishedAt: null,
+  sessionId: null,
+  owner: null,
+  result: null,
+  error: null,
+  report: null,
+  ...over,
+});
+const operation = (name: string) => ({ kind: 'invocation', name });
+const script = { kind: 'shell', command: ['x'] };
+
+const outcomes: [string, unknown, RunState, unknown, string | undefined, string][] = [
+  [
+    'a sources check names the missing ones',
+    operation('system.check'),
+    'succeeded',
+    {
+      sources: [
+        { id: 'handbook', available: true },
+        { id: 'adrs', available: false },
+      ],
+    },
+    undefined,
+    '✅ job (system.check) succeeded\nMissing sources: adrs',
+  ],
+  [
+    'a sources check with every source there says so',
+    operation('system.check'),
+    'succeeded',
+    { sources: [{ id: 'handbook', available: true }] },
+    undefined,
+    '✅ job (system.check) succeeded\nAll 1 knowledge sources available.',
+  ],
+  [
+    'a sources check whose result has another shape is shown raw',
+    operation('system.check'),
+    'succeeded',
+    { ok: true },
+    undefined,
+    '✅ job (system.check) succeeded\n{"ok":true}',
+  ],
+  [
+    'a projects sync lists what moved and what was left alone, and why',
+    operation('projects.sync'),
+    'succeeded',
+    {
+      projects: [
+        { id: 'site', state: 'updated' },
+        { id: 'api', state: 'skipped', reason: 'local changes in source/' },
+      ],
+    },
+    undefined,
+    '✅ job (projects.sync) succeeded\nUpdated: site.\nSkipped: api (local changes in source/).',
+  ],
+  [
+    'a projects sync with nothing to do says every checkout is current',
+    operation('projects.sync'),
+    'succeeded',
+    { projects: [{ id: 'site', state: 'current' }] },
+    undefined,
+    '✅ job (projects.sync) succeeded\nAll 1 project checkout(s) current.',
+  ],
+  [
+    'a projects sync whose result has another shape is shown raw',
+    operation('projects.sync'),
+    'succeeded',
+    { projects: 'none' },
+    undefined,
+    '✅ job (projects.sync) succeeded\n{"projects":"none"}',
+  ],
+  [
+    'a prune says what it deleted, expired link codes included',
+    operation('runs.prune'),
+    'succeeded',
+    { runs: 3, jobs: 1, linkCodes: 2 },
+    undefined,
+    '✅ job (runs.prune) succeeded\nDeleted 3 run(s) and 1 finished one-off job(s) and 2 expired link code(s).',
+  ],
+  [
+    'a prune that found no expired link codes does not mention them',
+    operation('runs.prune'),
+    'succeeded',
+    { runs: 3, jobs: 0, linkCodes: 0 },
+    undefined,
+    '✅ job (runs.prune) succeeded\nDeleted 3 run(s) and 0 finished one-off job(s).',
+  ],
+  [
+    'a dreaming run that reviewed nothing says there was nothing new',
+    operation('dreaming'),
+    'succeeded',
+    { changed: [] },
+    undefined,
+    '✅ job (dreaming) succeeded\nNo new conversations to review.',
+  ],
+  [
+    'a dreaming run that changed no memory file says the memory is unchanged',
+    operation('dreaming'),
+    'succeeded',
+    { reviewed: 2, changed: 'facts.md' },
+    undefined,
+    '✅ job (dreaming) succeeded\nReviewed 2 conversation(s); memory unchanged.',
+  ],
+  [
+    'a shell run that printed nothing shows its exit code alone',
+    script,
+    'succeeded',
+    { exitCode: 0 },
+    undefined,
+    '✅ job (shell) succeeded\nexit 0',
+  ],
+  [
+    'a module’s own operation shows its result raw',
+    operation('linear.sweep'),
+    'succeeded',
+    { removed: 1 },
+    undefined,
+    '✅ job (linear.sweep) succeeded\n{"removed":1}',
+  ],
+  [
+    'a run with no result has no body',
+    operation('system.check'),
+    'succeeded',
+    null,
+    undefined,
+    '✅ job (system.check) succeeded',
+  ],
+  [
+    'a falsy result is shown as it is, not dropped',
+    operation('system.check'),
+    'succeeded',
+    0,
+    undefined,
+    '✅ job (system.check) succeeded\n0',
+  ],
+  [
+    'a blocked run with no output leads with why',
+    operation('system.check'),
+    'blocked',
+    null,
+    'Host stopped while the command was running',
+    '⏸ job (system.check) blocked\nHost stopped while the command was running',
+  ],
+  [
+    'a missed occurrence with no reason says when aivi was not running',
+    operation('system.check'),
+    'missed',
+    null,
+    undefined,
+    '⏭ job (system.check) missed\nmissed: aivi was not running at 2026-09-15T09:00:00.000Z',
+  ],
+];
+
+for (const [name, task, state, result, reason, expected] of outcomes)
+  test(`outcome text: ${name}`, () => {
+    assert.equal(describeOutcome(runFor(task), state, result, reason), expected);
+  });
+
+test('a report is audited by where it went: the session or the module and its channel', () => {
+  assert.equal(reportTarget({ to: 'session', session: 'ses_1', on: 'always' }), 'session:ses_1');
+  assert.equal(reportTarget({ to: 'channel', module: 'discord', channel: '42', on: 'always' }), 'discord:42');
 });
