@@ -3,9 +3,20 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { loadConfig } from '@aivi/core';
+import { type LoadedConfig, loadConfig } from '@aivi/core';
 import { assistantAgent, githubProjectSchema, githubSchema } from '../src/config.ts';
-import { githubRepoCollisions, projectGithub, writeProjectGithub } from '../src/projects.ts';
+import { githubRepoCollisions, projectForIssue, projectGithub, writeProjectGithub } from '../src/projects.ts';
+
+/** The loaded config as far as the routing reads it: each project's entry, and which projects exist. */
+const loadedWith = (entries: Record<string, unknown>, removed: string[] = []) =>
+  ({
+    config: { projects: entries, projectDefaults: {} },
+    projects: Object.keys(entries).map(id => ({
+      id,
+      directory: `/aivi/projects/${id}/source`,
+      ...(removed.includes(id) ? { removed: true } : {}),
+    })),
+  }) as unknown as LoadedConfig;
 
 test('the block keeps no facts by default, and names the human label and the pool', () => {
   const config = githubSchema.parse({});
@@ -84,6 +95,26 @@ test('a repository feeds one board: every collision is said, not just the first'
   assert.match(collisions[0]!, /already feeds project site/);
 });
 
+test('a project with no GitHub section claims no repository, so it collides with nothing', () => {
+  const loaded = loadedWith({ plain: {}, site: { 'tracker-github': { board: 1, repos: ['acme/shop'] } } });
+  assert.deepEqual(githubRepoCollisions(loaded), []);
+});
+
+test('an issue belongs to the project whose repositories hold it, never to a removed one', () => {
+  const loaded = loadedWith(
+    {
+      gone: { 'tracker-github': { board: 1, repos: ['acme/shop'] } },
+      site: { 'tracker-github': { board: 2, repos: ['acme/shop', 'acme/tools'] } },
+      plain: {},
+    },
+    ['gone'],
+  );
+  const routed = projectForIssue(loaded, { repo: 'acme/shop' });
+  assert.equal(routed?.project.id, 'site');
+  assert.deepEqual(routed?.github, { board: 2, repos: ['acme/shop', 'acme/tools'] });
+  assert.equal(projectForIssue(loaded, { repo: 'acme/elsewhere' }), undefined, 'a repository nobody maps is nobody’s');
+});
+
 test('writeProjectGithub writes the section and core lanes, and restores what it broke', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-projects-github-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -126,4 +157,32 @@ test('writeProjectGithub writes the section and core lanes, and restores what it
   assert.equal(await readFile(config, 'utf8'), before, 'a refused write restores the bytes');
 
   await assert.rejects(writeProjectGithub(config, 'site', { board: 1, repos: [] }), /at least one repositor/i);
+});
+
+test('a project id the directory rule refuses is refused before the file is read', async () => {
+  await assert.rejects(
+    writeProjectGithub('/aivi-nowhere/config.json', 'Not A Project', { board: 1, repos: ['acme/shop'] }),
+    /Project id "Not A Project" must match/,
+  );
+});
+
+test('a project with no GitHub section of its own never blocks another project’s write', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-projects-github-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, 'config.json');
+  await writeFile(
+    config,
+    JSON.stringify({ version: 1, knowledge: [{ id: 'company', path: 'kb' }], projects: { other: {} } }),
+  );
+  await mkdir(join(root, 'projects/site/source'), { recursive: true });
+  await mkdir(join(root, 'projects/other/source'), { recursive: true });
+
+  const written = await writeProjectGithub(config, 'site', { board: 1, repos: ['acme/shop'] });
+
+  assert.deepEqual(written, { id: 'site', board: 1, repos: ['acme/shop'] });
+  assert.deepEqual(
+    JSON.parse(await readFile(config, 'utf8')).projects.other,
+    {},
+    'the other project is left as it was',
+  );
 });

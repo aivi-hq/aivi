@@ -65,6 +65,46 @@ test('a board without Status or Agent is said by name with its remedy, never fix
   );
 });
 
+test('a board the app cannot read, or one that lists no fields at all, is said by its number', async t => {
+  for (const [name, answer, expected] of [
+    [
+      'a board that is not visible',
+      { organization: { projectV2: null } },
+      /board 1 is not visible to the app in aivi-hq/,
+    ],
+    ['an organization that answers nothing', { organization: null }, /board 1 is not visible to the app in aivi-hq/],
+    ['a board with no fields', { organization: { projectV2: { id: 'P' } } }, /no "Status" single-select field/],
+  ] as const)
+    await t.test(name, async () => {
+      const client = await clientWith({ 'POST /graphql': graphql({ BoardFields: () => answer }) });
+      await assert.rejects(client.boardFields(1), expected);
+    });
+});
+
+test('fields that carry no options resolve to empty option lists, so no lane can map', async () => {
+  const client = await clientWith({
+    'POST /graphql': graphql({
+      BoardFields: () => ({
+        organization: {
+          projectV2: {
+            id: 'P',
+            fields: { nodes: [null, { id: 'F_s', name: 'Status' }, { id: 'F_a', name: 'Agent', options: null }] },
+          },
+        },
+      }),
+    }),
+  });
+  assert.deepEqual(await client.boardFields(1), {
+    projectId: 'P',
+    number: 1,
+    statusFieldId: 'F_s',
+    statusOptions: [],
+    agentFieldId: 'F_a',
+    agentOptions: [],
+  });
+  assert.deepEqual(await client.laneOptions(1), []);
+});
+
 test('an issue reads its board values, dependencies and authors in aivi words', async () => {
   const client = await clientWith({
     'POST /graphql': graphql({
@@ -114,6 +154,74 @@ test('a closed issue is closed whatever the reason, and reads its reason', async
   assert.equal(issue.state, 'closed');
   assert.equal(issue.stateReason, 'not_planned');
   assert.equal(client.laneOf(issue, 1), undefined, 'off the board: no lane');
+});
+
+test('an issue the API answers thinly still reads in aivi words', async () => {
+  const client = await clientWith({
+    'POST /graphql': graphql({
+      IssueFacts: () => ({
+        repository: {
+          issue: { id: 'I_5', number: 5, title: 'Bare', url: 'https://github.com/acme/shop/issues/5', state: 'OPEN' },
+        },
+      }),
+    }),
+  });
+  assert.deepEqual(await client.issue('acme/shop#5'), {
+    id: 'I_5',
+    ref: 'acme/shop#5',
+    repo: 'acme/shop',
+    number: 5,
+    title: 'Bare',
+    body: null,
+    url: 'https://github.com/acme/shop/issues/5',
+    state: 'open',
+    stateReason: null,
+    labels: [],
+    assignees: [],
+    projectItems: [],
+    blockedBy: [],
+  });
+});
+
+test('board items and values the API leaves blank give no lane and no delegate', async () => {
+  const blank = issueNode({ lane: null });
+  blank.projectItems = {
+    nodes: [
+      null, // an item of a board the app cannot read
+      { project: { number: 1 } }, // an item that names nothing but its board
+      {
+        id: 'PVTI_2',
+        project: { number: 2 },
+        fieldValues: { nodes: [null, {}, { field: { name: 'Status' } }, { field: { name: 'Agent' } }] },
+      },
+    ],
+  };
+  const client = await clientWith({
+    'POST /graphql': graphql({ IssueFacts: () => ({ repository: { issue: blank } }) }),
+  });
+  const issue = await client.issue('acme/shop#47');
+  for (const board of [1, 2]) {
+    assert.equal(client.laneOf(issue, board), undefined, `board ${board}: no Status value, no lane`);
+    assert.equal(client.agentOn(issue, board), undefined, `board ${board}: no Agent value, no delegate`);
+  }
+});
+
+test('open issues of a repository that answers nothing read as none, and a read that fills its cap says so', async () => {
+  const empty = await clientWith({ 'POST /graphql': graphql({ OpenIssues: () => ({ repository: null }) }) });
+  assert.deepEqual(await empty.openIssues('acme/shop'), { issues: [], truncated: false });
+  const full = await clientWith({
+    'POST /graphql': graphql({
+      OpenIssues: () => ({
+        repository: { issues: { nodes: [issueNode({ number: 1 }), issueNode({ number: 2 })] } },
+      }),
+    }),
+  });
+  const read = await full.openIssues('acme/shop', 2);
+  assert.deepEqual(
+    read.issues.map(issue => issue.ref),
+    ['acme/shop#1', 'acme/shop#2'],
+  );
+  assert.equal(read.truncated, true, 'a truncated read is said, never silently short');
 });
 
 test('setLane moves the Status option, lands on the board first when it must, and says nothing twice', async () => {
@@ -195,6 +303,36 @@ test('setAgent speaks the delegate in board words and clears it honestly', async
   await assert.rejects(client.setAgent('acme/shop#47', 1, 'someone-else'), /no Agent option "someone-else"/);
 });
 
+test('setAgent says nothing when the delegate already speaks for the ticket', async () => {
+  const moves: string[] = [];
+  const client = await clientWith({
+    'POST /graphql': graphql({
+      BoardFields: v => boardFieldsAnswer('aivi-hq', v),
+      IssueFacts: () => ({ repository: { issue: issueNode({ agent: 'aivi-agent' }) } }),
+      SetSelect: () => {
+        moves.push('set');
+        return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_47' } } };
+      },
+    }),
+  });
+  await client.setAgent('acme/shop#47', 1, 'aivi-agent');
+  assert.deepEqual(moves, [], 'the re-drive lands as nothing');
+});
+
+test('a ticket that is not on the board has no Agent value to set or to clear', async () => {
+  const client = await clientWith({
+    'POST /graphql': graphql({
+      BoardFields: v => boardFieldsAnswer('aivi-hq', v),
+      IssueFacts: () => ({ repository: { issue: issueNode({ lane: null }) } }),
+    }),
+  });
+  await assert.rejects(
+    client.setAgent('acme/shop#47', 1, 'aivi-agent'),
+    /not on board 1; it has no Agent value to set/,
+  );
+  await assert.rejects(client.setAgent('acme/shop#47', 1, null), /not on board 1; it has no Agent value to clear/);
+});
+
 test('the comment trail reads oldest first with authors in GitHub words', async () => {
   const { fetch } = scripted(
     connectRoutes({
@@ -232,6 +370,35 @@ test('a comment is created, read, edited and deleted by its GitHub id', async ()
   assert.ok(calls().includes('DELETE /repos/acme/shop/issues/comments/1234'));
   const patch = seen.find(c => c.method === 'PATCH')!;
   assert.deepEqual(JSON.parse(patch.body!), { body: 'edited' });
+});
+
+test('a comment whose author is gone, or that lacks a body or a time, still reads', async () => {
+  const { fetch } = scripted(
+    connectRoutes({
+      'GET /repos/acme/shop/issues/47/comments': () => ({
+        status: 200,
+        body: [
+          { id: 1, user: null, body: null, created_at: null, updated_at: '2026-10-08T00:00:00Z' },
+          { id: 2, user: { login: 'person', type: 'User' }, body: 'hi', created_at: null, updated_at: null },
+        ],
+      }),
+    }),
+  );
+  const client = new GithubClient(await connectApp(fetch));
+  assert.deepEqual(await client.comments('acme/shop#47'), [
+    { id: 1, author: null, authorIsBot: false, body: '', at: '2026-10-08T00:00:00Z' },
+    { id: 2, author: 'person', authorIsBot: false, body: 'hi', at: '' },
+  ]);
+});
+
+test('a status comment with an empty body reads as empty, not as gone', async () => {
+  const { fetch } = scripted(
+    connectRoutes({
+      'GET /repos/acme/shop/issues/comments/1234': () => ({ status: 200, body: { body: null } }),
+    }),
+  );
+  const client = new GithubClient(await connectApp(fetch));
+  assert.equal(await client.getComment('acme/shop#47', 1234), '');
 });
 
 test('a new issue carries the words and ensures every label before it adds one', async () => {
@@ -277,6 +444,87 @@ test('removing a label that is not on the ticket says done, not broken', async (
   const client = new GithubClient(await connectApp(fetch));
   await client.removeLabel('acme/shop#47', 'needs-human');
   assert.ok(calls().includes('DELETE /repos/acme/shop/issues/47/labels/needs-human'));
+});
+
+test('removing a label that GitHub refuses for another reason stands as the failure', async () => {
+  const { fetch } = scripted(
+    connectRoutes({
+      'DELETE /repos/acme/shop/issues/47/labels/needs-human': () => ({ status: 403, body: { message: 'Forbidden' } }),
+    }),
+  );
+  const client = new GithubClient(await connectApp(fetch));
+  await assert.rejects(client.removeLabel('acme/shop#47', 'needs-human'), { status: 403 });
+});
+
+test('a label is created only where the repository lacks it, and a refusal other than not-found stands', async t => {
+  const lookup = 'GET /repos/acme/shop/labels/needs-human';
+  for (const [name, status, expected, refused] of [
+    ['a label the repository carries is left alone', 200, [lookup], false],
+    ['a missing label is created', 404, [lookup, 'POST /repos/acme/shop/labels'], false],
+    ['a refusal other than not-found creates nothing', 403, [lookup], true],
+  ] as const)
+    await t.test(name, async () => {
+      const { fetch, calls } = scripted(
+        connectRoutes({
+          [lookup]: () => ({ status, body: {} }),
+          'POST /repos/acme/shop/labels': () => ({ status: 201, body: {} }),
+        }),
+      );
+      const client = new GithubClient(await connectApp(fetch));
+      const ensured = client.ensureLabel('acme/shop', 'needs-human');
+      await (refused ? assert.rejects(ensured, { status }) : ensured);
+      assert.deepEqual(
+        calls().filter(call => call.includes('/repos/')),
+        expected,
+      );
+    });
+});
+
+test('the label catalogue is read a page at a time until a short page ends it', async () => {
+  const pages: (string | null)[] = [];
+  const { fetch } = scripted(
+    connectRoutes({
+      'GET /repos/acme/shop/labels': call => {
+        const page = new URLSearchParams(call.search).get('page');
+        pages.push(page);
+        const full = Array.from({ length: 100 }, (_, n) => ({ name: `label-${n}` }));
+        return { status: 200, body: page === '1' ? full : [{ name: 'last' }] };
+      },
+    }),
+  );
+  const labels = await new GithubClient(await connectApp(fetch)).repoLabels('acme/shop');
+  assert.equal(labels.length, 101);
+  assert.equal(labels.at(-1), 'last');
+  assert.deepEqual(pages, ['1', '2']);
+});
+
+test('updating an issue sends only the words named, then answers the issue as it now reads', async t => {
+  for (const [changes, sent] of [
+    [{ title: 'New title' }, { title: 'New title' }],
+    [{ description: 'New why' }, { body: 'New why' }],
+    [
+      { title: 'New title', description: 'New why' },
+      { title: 'New title', body: 'New why' },
+    ],
+  ] as const)
+    await t.test(Object.keys(changes).join(' and '), async () => {
+      const { fetch, bodies, calls } = scripted(
+        connectRoutes({
+          'PATCH /repos/acme/shop/issues/47': () => ({ status: 200, body: {} }),
+          'POST /graphql': graphql({
+            IssueFacts: () => ({ repository: { issue: issueNode({ title: 'New title' }) } }),
+          }),
+        }),
+      );
+      const updated = await new GithubClient(await connectApp(fetch)).updateIssue('acme/shop#47', changes);
+      assert.deepEqual(bodies('/repos/acme/shop/issues/47'), [sent]);
+      assert.deepEqual(
+        calls().slice(-2),
+        ['PATCH /repos/acme/shop/issues/47', 'POST /graphql'],
+        'the write, then the read',
+      );
+      assert.equal(updated.title, 'New title');
+    });
 });
 
 test('the assistant marks react to the issue, and only aivi own reactions are taken back', async () => {
