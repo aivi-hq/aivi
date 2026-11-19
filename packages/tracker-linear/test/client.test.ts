@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
+import type { Logger } from '@aivi/core';
+import { recorder } from '../../host/test/support.ts';
 import { LinearApiError, LinearClient, resolveTeams } from '../src/client.ts';
 
 interface Seen {
@@ -422,5 +424,87 @@ test('a token request Linear refuses is said with its status and its words', asy
       error instanceof LinearApiError &&
       error.status === 503 &&
       /Linear token request failed \(503\): upstream down/.test(error.message),
+  );
+});
+
+/** Linear answered by two functions, no socket: what the token endpoint says and what the API says. */
+const answering = (token: () => Response, api: () => Response, log?: Logger) =>
+  new LinearClient(
+    { clientId: 'cid', clientSecret: 'sec' },
+    { fetch: async url => (url.endsWith('/oauth/token') ? token() : api()), log },
+  );
+const goodToken = () => Response.json({ access_token: 'tok', expires_in: 86_399 });
+
+test('a token answer with no token in it is refused, and so is a GraphQL answer with no data and no errors', async () => {
+  await assert.rejects(
+    answering(
+      () => Response.json({ expires_in: 60 }),
+      () => Response.json({}),
+    ).viewer(),
+    (error: unknown) =>
+      error instanceof LinearApiError &&
+      error.status === 502 &&
+      /Linear token response had no access_token/.test(error.message),
+  );
+  await assert.rejects(
+    answering(goodToken, () => Response.json({})).viewer(),
+    (error: unknown) =>
+      error instanceof LinearApiError && error.status === 502 && /Linear API returned no data/.test(error.message),
+  );
+});
+
+test('a token that names no lifetime is good for a day, less the hour kept back for refreshing', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  const lines = recorder();
+  let minted = 0;
+  const client = new LinearClient(
+    { clientId: 'cid', clientSecret: 'sec' },
+    { fetch: async () => Response.json({ access_token: `tok-${++minted}` }), log: lines.log },
+  );
+  assert.equal(await client.accessToken(), 'tok-1');
+  t.mock.timers.setTime(22 * 3_600_000);
+  assert.equal(await client.accessToken(), 'tok-1', 'twenty-two hours on it still stands');
+  t.mock.timers.setTime(23 * 3_600_000 + 1);
+  assert.equal(await client.accessToken(), 'tok-2', 'a day less the hour: it is minted again');
+  assert.deepEqual(lines.said('debug')[0], { level: 'debug', event: 'linear.token', expiresIn: null });
+});
+
+test('GraphQL errors keep the codes Linear gave them; an error that gave none keeps an empty one', async () => {
+  const client = answering(goodToken, () =>
+    Response.json({ errors: [{ message: 'bad input', extensions: { code: 'INPUT_ERROR' } }, { message: 'worse' }] }),
+  );
+  await assert.rejects(
+    client.viewer(),
+    (error: unknown) =>
+      error instanceof LinearApiError &&
+      error.message === 'bad input; worse' &&
+      error.status === 200 &&
+      JSON.stringify(error.codes) === JSON.stringify(['INPUT_ERROR', '']),
+  );
+});
+
+test('an issue Linear answers with nothing is gone, in the words the closing already knows', async () => {
+  const client = answering(goodToken, () => Response.json({ data: { issue: null } }));
+  await assert.rejects(client.issue('iss-1'), (error: unknown) => LinearApiError.isGone(error));
+});
+
+test('a refusal says what Linear said, in whichever shape it said it: an OAuth error, an empty object, or nothing parseable', async () => {
+  const oauth = new LinearClient(
+    { clientId: 'cid', clientSecret: 'sec' },
+    {
+      fetch: async () =>
+        new Response(JSON.stringify({ error: 'invalid_client', error_description: 'bad secret' }), { status: 401 }),
+    },
+  );
+  await assert.rejects(oauth.viewer(), /Linear token request failed \(401\): invalid_client: bad secret/);
+  await assert.rejects(
+    answering(goodToken, () => new Response('{}', { status: 500 })).viewer(),
+    /Linear API 500: \{\}/,
+    'a shape with nothing in it falls back to the body',
+  );
+  await assert.rejects(
+    answering(goodToken, () => new Response('', { status: 502 })).viewer(),
+    /Linear API 502: Unexpected end of JSON input/,
+    'no body at all falls back to why it could not be read',
   );
 });

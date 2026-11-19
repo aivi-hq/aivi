@@ -48,3 +48,30 @@ test('a signed, fresh delivery is accepted and classified; anything else is refu
   const noStamp = verifyWebhook({ body: bare, signature: signWebhook(bare, secret), secret, now });
   assert.ok(!noStamp.ok && /webhookTimestamp/.test(noStamp.reason));
 });
+
+test('a signature header that arrives as a list is read from its first value; an empty list says it is missing', () => {
+  const body = Buffer.from(JSON.stringify({ type: 'Issue', action: 'update', webhookTimestamp: now }));
+  assert.equal(verifyWebhook({ body, signature: [signWebhook(body, secret), 'zz'], secret, now }).ok, true);
+  assert.deepEqual(verifyWebhook({ body, signature: [], secret, now }), {
+    ok: false,
+    status: 401,
+    reason: 'missing Linear-Signature',
+  });
+});
+
+test('a signed body that is no payload — not an object, no type, no action — is refused after the seal', () => {
+  for (const payload of [
+    null,
+    42,
+    { action: 'update', webhookTimestamp: now },
+    { type: 'Issue', webhookTimestamp: now },
+    { type: 7, action: 'update', webhookTimestamp: now },
+  ]) {
+    const body = Buffer.from(JSON.stringify(payload));
+    assert.deepEqual(verifyWebhook({ body, signature: signWebhook(body, secret), secret, now }), {
+      ok: false,
+      status: 400,
+      reason: 'payload has no type/action',
+    });
+  }
+});

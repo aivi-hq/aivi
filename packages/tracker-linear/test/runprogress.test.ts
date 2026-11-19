@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { getLogger } from '@aivi/core';
 import type { SessionEvent, SessionEventListener, SessionEvents } from '@aivi/plugin/module';
 import type { Platform, TrackerProgressLine } from '@aivi/plugin/tracker';
+import { recorder } from '../../host/test/support.ts';
 import { RunProgress } from '../src/runprogress.ts';
 
 class FakeEvents implements SessionEvents {
@@ -99,4 +100,127 @@ test('a platform with no progress surface is never even watched', async () => {
   });
   follower.start();
   assert.equal(events.watched, false, 'silence is the contract, not a fallback');
+});
+
+/** A platform whose every line is kept, and `arrival()` the moment the next one lands. */
+function recording() {
+  const lines: TrackerProgressLine[] = [];
+  const waiting: PromiseWithResolvers<void>[] = [];
+  const platform = {
+    async progress(_conversation: string, line: TrackerProgressLine): Promise<void> {
+      lines.push(line);
+      waiting.shift()?.resolve();
+    },
+  } as unknown as Platform;
+  const arrival = () => {
+    const next = Promise.withResolvers<void>();
+    waiting.push(next);
+    return next.promise;
+  };
+  return { lines, platform, arrival };
+}
+
+test('a line that changes inside the throttle window waits for the window’s end, and says the last state once', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const events = new FakeEvents();
+  const { lines, platform, arrival } = recording();
+  const follower = new RunProgress(platform, 'dev:as-1', 'ses-1', { mode: 'tools', events, log, clock: SLOW_CLOCK });
+  follower.start();
+  const first = arrival();
+  events.emit('ses-1', { type: 'session.tool.input.started', data: { id: 't1', name: 'read' } });
+  await first;
+  events.emit('ses-1', { type: 'session.tool.success', data: { id: 't1' } });
+  events.emit('ses-1', { type: 'session.text.delta', data: {} });
+  assert.equal(lines.length, 1, 'the first line went at once; the rest wait for the window to close');
+  const second = arrival();
+  t.mock.timers.tick(2_000);
+  await second;
+  assert.deepEqual(lines, [{ text: '🔧 reading', tool: { name: 'read' } }, { text: '✍️ writing the answer' }]);
+  await follower.stop();
+});
+
+test('a long turn’s line changes by itself when it crosses its threshold, with no event to say so', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const { lines, platform, arrival } = recording();
+  const follower = new RunProgress(platform, 'dev:as-1', 'ses-1', {
+    mode: 'status',
+    events: new FakeEvents(),
+    log,
+    throttleMs: 0,
+    clock: { longMs: 1_000, idleMs: 3_600_000, refreshMs: 3_600_000 },
+  });
+  follower.start();
+  const posted = arrival();
+  t.mock.timers.tick(1_000);
+  await posted;
+  assert.deepEqual(lines, [{ text: '⏳ thinking… · 1s' }]);
+  await follower.stop();
+});
+
+test('a status-mode follower keeps a running tool inside its one line; a tool with a detail offers it as a tool', async () => {
+  const status = recording();
+  const events = new FakeEvents();
+  const follower = new RunProgress(status.platform, 'dev:as-1', 'ses-1', {
+    mode: 'status',
+    events,
+    log,
+    throttleMs: 0,
+    clock: SLOW_CLOCK,
+  });
+  follower.start();
+  let landed = status.arrival();
+  events.emit('ses-1', { type: 'session.tool.input.started', data: { id: 't1', name: 'read' } });
+  await landed;
+  await follower.stop();
+  assert.deepEqual(status.lines, [{ text: '🔧 reading' }]);
+
+  const tools = recording();
+  const toolEvents = new FakeEvents();
+  const detailed = new RunProgress(tools.platform, 'dev:as-1', 'ses-1', {
+    mode: 'tools',
+    events: toolEvents,
+    log,
+    throttleMs: 0,
+    clock: SLOW_CLOCK,
+  });
+  detailed.start();
+  landed = tools.arrival();
+  toolEvents.emit('ses-1', {
+    type: 'session.tool.called',
+    data: { id: 't1', name: 'read', input: { filePath: '/src/header.ts' } },
+  });
+  await landed;
+  await detailed.stop();
+  assert.deepEqual(tools.lines, [{ text: '🔧 reading header.ts', tool: { name: 'read', detail: 'header.ts' } }]);
+});
+
+test('an activity the platform refuses is logged and never reaches the worker; one the stop overtakes is never posted', async () => {
+  const logged = recorder();
+  const events = new FakeEvents();
+  const refusing = new RunProgress(
+    {
+      progress: async () => {
+        throw new Error('502');
+      },
+    } as unknown as Platform,
+    'dev:as-1',
+    'ses-1',
+    { mode: 'tools', events, log: logged.log, throttleMs: 0, clock: SLOW_CLOCK },
+  );
+  refusing.start();
+  events.emit('ses-1', { type: 'session.tool.input.started', data: { id: 't1', name: 'read' } });
+  await logged.next('progress.activity.failed');
+  await refusing.stop();
+  const { lines, platform } = recording();
+  const overtaken = new RunProgress(platform, 'dev:as-1', 'ses-1', {
+    mode: 'tools',
+    events,
+    log,
+    throttleMs: 0,
+    clock: SLOW_CLOCK,
+  });
+  overtaken.start();
+  events.emit('ses-1', { type: 'session.tool.input.started', data: { id: 't2', name: 'bash' } });
+  await overtaken.stop();
+  assert.deepEqual(lines, [], 'the closing is the last word: nothing is said after the stop');
 });

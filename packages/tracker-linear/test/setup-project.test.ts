@@ -95,12 +95,22 @@ test('a workflow with no worker lane asks no queue question — and none was rul
 const cancel = Symbol('cancel');
 const wizard = (
   answers: unknown[],
-  opts: { forgeConfigured?: boolean; agents?: string[]; teams?: LinearTeam[]; teamListError?: string } = {},
+  opts: {
+    forgeConfigured?: boolean;
+    agents?: string[];
+    teams?: LinearTeam[];
+    teamListError?: string;
+    teamListRejection?: unknown;
+    config?: unknown;
+  } = {},
 ) => {
   const asked: string[] = [];
   const said: string[] = [];
   const tape: string[] = [];
   const asks: { message: string; opts: Record<string, unknown> }[] = [];
+  /** The app each teams request was made through, and what the spinner said when it failed. */
+  const clientApps: (string | undefined)[] = [];
+  const spinnerErrors: string[] = [];
   let next = 0;
   const prompt = async (message: string) => {
     asked.push(message);
@@ -121,14 +131,18 @@ const wizard = (
       ],
     },
   ];
-  const makeClient: MakeTeamsClient = () => ({
-    async listTeams() {
-      if (opts.teamListError) throw new Error(opts.teamListError);
-      return teams;
-    },
-  });
+  const makeClient: MakeTeamsClient = (_config, app) => {
+    clientApps.push(app);
+    return {
+      async listTeams() {
+        if (opts.teamListError) throw new Error(opts.teamListError);
+        if (opts.teamListRejection !== undefined) throw opts.teamListRejection;
+        return teams;
+      },
+    };
+  };
   const ctx = {
-    config: { apps: { dev: {} } },
+    config: opts.config ?? { apps: { dev: {} } },
     forgeConfigured: opts.forgeConfigured ?? false,
     print: () => {},
     prompts: {
@@ -142,7 +156,13 @@ const wizard = (
         asks.push({ message: options.message, opts: options });
         return prompt(options.message);
       },
-      spinner: () => ({ start: () => {}, stop: () => {}, error: () => {} }),
+      spinner: () => ({
+        start: () => {},
+        stop: () => {},
+        error: (line: string) => {
+          spinnerErrors.push(line);
+        },
+      }),
       log: {
         message: async (line: string) => {
           said.push(line);
@@ -155,7 +175,16 @@ const wizard = (
     fetch: async () => new Response(),
     withStore: async (fn: (store: unknown) => unknown) => fn({}),
   };
-  return { contributor: makeContributor(makeClient), ctx: ctx as never, asked, said, tape, asks };
+  return {
+    contributor: makeContributor(makeClient),
+    ctx: ctx as never,
+    asked,
+    said,
+    tape,
+    asks,
+    clientApps,
+    spinnerErrors,
+  };
 };
 
 /** The four-state board answered by the kind question: Backlog and
@@ -320,4 +349,84 @@ test('a team answered “None” on every state gets the honest note and no lane
       'no lanes were written — the boards had no states, or every state was answered “None” — so aivi works no tickets until lanes exist',
     ],
   );
+});
+
+test('with several apps the person picks the one that lists the teams, and only that app is asked', async () => {
+  const { contributor, ctx, asked, asks, clientApps } = wizard(['face', ['t-1'], '', ...KINDS, 'Todo'], {
+    config: { apps: { dev: {}, face: {} } },
+  });
+  await contributor.setup(ctx);
+  assert.equal(asked[0], 'Ask which Linear app for teams');
+  assert.deepEqual((asks[0]!.opts as { options: unknown[] }).options, [
+    { value: 'dev', label: 'dev' },
+    { value: 'face', label: 'face' },
+  ]);
+  assert.deepEqual(clientApps, ['face']);
+});
+
+test('one app, or a block that names none, is never asked of the person', async () => {
+  for (const config of [{ apps: { dev: {} } }, {}]) {
+    const { contributor, ctx, asked, clientApps } = wizard([['t-1'], '', ...KINDS, 'Todo'], { config });
+    await contributor.setup(ctx);
+    assert.equal(asked[0], 'Which teams may work in this project?');
+    assert.deepEqual(clientApps, [undefined], 'the client chooses its own app');
+  }
+});
+
+test('a cancelled answer at any other question cancels the setup by name', async () => {
+  const several = { config: { apps: { dev: {}, face: {} } } };
+  for (const { script, opts, words } of [
+    { script: [cancel], opts: several, words: /no app chosen/ },
+    { script: [cancel], opts: {}, words: /no teams picked/ },
+    { script: [['t-1'], '', 'agent', cancel], opts: {}, words: /lane setup incomplete/ },
+    {
+      script: [['t-1'], '', 'agent', 'developer', cancel],
+      opts: { forgeConfigured: true },
+      words: /lane setup incomplete/,
+    },
+    { script: [['t-1'], '', ...KINDS, cancel], opts: {}, words: /lane setup incomplete/ },
+  ]) {
+    const { contributor, ctx } = wizard(script, opts);
+    await assert.rejects(
+      () => contributor.setup(ctx),
+      (error: unknown) => error instanceof PluginSetupCancelled && words.test(String(error)),
+    );
+  }
+});
+
+test('“None” at the queue question leaves the workflow without a queue lane', async () => {
+  const { contributor, ctx } = wizard([['t-1'], '', ...KINDS, '']);
+  const result = await contributor.setup(ctx);
+  assert.deepEqual(result.lanes, [
+    { name: 'Backlog', agent: 'developer' },
+    { name: 'Todo' },
+    { name: 'In Progress', agent: 'developer' },
+    { name: 'Done' },
+  ]);
+});
+
+test('a board of human lanes only asks no queue question and says why none could wait for a slot', async () => {
+  const { contributor, ctx, asked, said } = wizard([['t-1'], '', 'human'], {
+    teams: [{ id: 't-1', key: 'WEB', name: 'Web', states: [{ id: 's-1', name: 'Done', type: 'completed' }] }],
+  });
+  const result = await contributor.setup(ctx);
+  assert.deepEqual(result.lanes, [{ name: 'Done' }]);
+  assert.ok(!asked.some(message => /queue/.test(message)), 'no lane could feed a worker, so nothing is asked');
+  assert.deepEqual(
+    said.filter(line => !line.includes('What each answer means')),
+    [
+      'no lane sits before a working lane, so nothing can wait for a slot — a queue lane comes later with a worker lane',
+    ],
+  );
+});
+
+test('an app that answers with something that is not an error is said on the spinner as it came, and still ends the setup', async () => {
+  const dead = wizard([], { teamListError: 'Linear says no' });
+  await assert.rejects(() => dead.contributor.setup(dead.ctx), /Linear says no/);
+  const odd = wizard([], { teamListRejection: 'quota exceeded' });
+  await assert.rejects(
+    () => odd.contributor.setup(odd.ctx),
+    (error: unknown) => error === 'quota exceeded',
+  );
+  assert.deepEqual([dead.spinnerErrors, odd.spinnerErrors], [['Linear says no'], ['quota exceeded']]);
 });
