@@ -1,5 +1,8 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { GITHUB_APP_ID_ENV, GITHUB_PRIVATE_KEY_ENV, GitHubApp } from '@aivi/github';
+import { type Answer, type Seen, scripted } from '../../github/test/scripted.ts';
+
+export { type Answer, type Seen, scripted };
 
 /** A throwaway key, secret to nothing: what the tests prove is which bytes
  *  octokit signs and where they are sent. Every test that connects needs
@@ -13,92 +16,6 @@ const privateKey = generateKeyPairSync('rsa', {
 
 process.env[GITHUB_APP_ID_ENV] ??= '7';
 process.env[GITHUB_PRIVATE_KEY_ENV] ??= privateKey;
-
-/** A GitHub that only says what the test wrote. Nothing here reaches a
- *  network: a call nobody scripted is an error rather than a miss. */
-
-/** One call as aivi's side saw it. */
-export interface Seen {
-  method: string;
-  path: string;
-  search: string;
-  authorization?: string;
-  body?: string;
-}
-
-/** What one route answers. */
-export interface Answer {
-  status: number;
-  body: unknown;
-}
-
-export interface Scripted {
-  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-  seen: Seen[];
-  /** The calls so far, as `METHOD path`, in the order they arrived. */
-  calls: () => string[];
-  /** The calls whose path is `what`, bodies parsed where they are JSON. */
-  bodies: (what: string) => any[];
-}
-
-const requestOf = (input: string | URL | Request, init?: RequestInit): Request | undefined =>
-  typeof input === 'object' && !init?.method ? (input as Request) : undefined;
-
-const bodyOf = async (request: Request | undefined, init?: RequestInit): Promise<string | undefined> =>
-  request ? request.clone().text() : typeof init?.body === 'string' ? init.body : undefined;
-
-async function readCall(input: string | URL | Request, init?: RequestInit): Promise<Seen> {
-  const request = requestOf(input, init);
-  const url = new URL(request?.url ?? String(input));
-  const method = (request?.method ?? init?.method ?? 'GET').toUpperCase();
-  const headers = new Headers(request?.headers ?? init?.headers);
-  const authorization = headers.get('authorization') ?? undefined;
-  const body = await bodyOf(request, init);
-  return {
-    method,
-    path: url.pathname,
-    search: url.search,
-    ...(authorization ? { authorization } : {}),
-    ...(body ? { body } : {}),
-  };
-}
-
-export function scripted(routes: Record<string, (call: Seen) => Answer>): Scripted {
-  const seen: Seen[] = [];
-  const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const call = await readCall(input, init);
-    seen.push(call);
-    const answer = routes[`${call.method} ${call.path}`];
-    if (!answer) {
-      // Status 400 on the throw: octokit's retry plugin backs off (seconds,
-      // then tens of them) on anything it classifies as retryable, and a
-      // test waiting on a backoff is a stuck test, not a proved one. A
-      // sub-500 status says "this answer is final" — the message still
-      // names the unasked-for call.
-      const error = new Error(`unasked-for call: ${call.method} ${call.path}${call.search}`);
-      (error as { status?: number }).status = 400;
-      throw error;
-    }
-    const { status, body: payload } = answer(call);
-    if (status === 204) return new Response(null, { status });
-    return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } });
-  };
-  return {
-    fetch,
-    seen,
-    calls: () => seen.map(other => `${other.method} ${other.path}`),
-    bodies: what =>
-      seen
-        .filter(other => other.path === what && other.body)
-        .map(other => {
-          try {
-            return JSON.parse(other.body!);
-          } catch {
-            return other.body;
-          }
-        }),
-  };
-}
 
 /** The routes that connect: one app, one installation, one account — the
  *  shape `GitHubApp.connect` reads, with the app slug the delegate name is

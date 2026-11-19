@@ -88,6 +88,8 @@ export {
 } from './channel/engine.ts';
 export type { ModelChoice } from './channel/model.ts';
 export { describeModel, formatModel, listModels, matchModels, resolveModel, switchModel } from './channel/model.ts';
+export type { PacerOptions } from './channel/pacer.ts';
+export { ProgressPacer } from './channel/pacer.ts';
 export { announce, OFFLINE_NOTICE, ONLINE_NOTICE } from './channel/presence.ts';
 export type { Progress, ProgressClock, ProgressMode, ToolCall, ToolState } from './channel/progress.ts';
 export {
@@ -103,6 +105,8 @@ export type { ProgressOptions } from './channel/reporter.ts';
 export { ProgressReporter } from './channel/reporter.ts';
 export type { NativeReentry } from './channel/router.ts';
 export { Channels } from './channel/router.ts';
+export type { StopSwitch } from './channel/stop.ts';
+export { stopSwitch } from './channel/stop.ts';
 export { ConversationStore } from './channel/store.ts';
 export { createTurnRunner, messageIdFor } from './channel/turns.ts';
 export type { Refusal } from './dispatcher/dispatcher.ts';

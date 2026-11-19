@@ -29,6 +29,7 @@ import {
   createTurnRunner,
   isTerminal,
   stopTurn as stopRunningTurn,
+  stopSwitch,
 } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
@@ -38,7 +39,6 @@ import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
 import { createLinearDesk } from './desk.ts';
 import { RunLinks } from './links.ts';
-import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue, projectLinear } from './projects.ts';
 import { RunProgress } from './runprogress.ts';
 import { createLinearPlatform } from './tracker.ts';
@@ -153,22 +153,15 @@ async function startLinear(
   // an agent file that works tickets allows the ones it speaks (docs/linear.md).
   const desk = createLinearDesk(services.loaded, config, tracker);
 
-  const abort = new AbortController();
   let engine: ChannelEngine | undefined;
-  const stop = () => {
-    abort.abort();
-    engine?.stop();
-  };
-  services.signal.addEventListener('abort', stop, { once: true });
-  let mcp: LinearMcp | undefined;
+  const halt = stopSwitch(services.signal, () => engine);
   const teardown = async () => {
-    stop();
+    halt.stop();
     for (const follower of runProgress.values()) void follower.stop();
     try {
       await engine?.shutdown();
     } finally {
-      await mcp?.stop();
-      services.signal.removeEventListener('abort', stop);
+      halt.release();
     }
   };
 
@@ -779,7 +772,7 @@ async function startLinear(
      *  acknowledged already, so a retry would only replay what failed. */
     const unsubscribeEvents = tracker.events(async event => {
       try {
-        if (abort.signal.aborted) return;
+        if (halt.signal.aborted) return;
         if (event.kind === 'started') await onStarted(event.conversation, event.issueId, event.promptContext);
         else if (event.kind === 'prompted') await onPrompted(event);
         else await onIssue(event);

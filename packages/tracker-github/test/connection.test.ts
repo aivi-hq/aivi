@@ -18,7 +18,7 @@ const githubApp = mock.fn(async (_options?: github.GitHubOptions) => app as unkn
 mock.module('@aivi/github', { exports: { ...github, githubApp } });
 
 const { githubClient } = await import('../src/client.ts');
-const { contributor } = await import('../src/setup-project.ts');
+const { default: contributor } = await import('../src/setup-project.ts');
 
 test('the tracker’s client speaks through the home’s one app, with the log it was given', async t => {
   t.mock.property(process, 'env', { ...process.env, [github.GITHUB_WEBHOOK_SECRET_ENV]: 'whsec' });

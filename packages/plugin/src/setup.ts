@@ -26,6 +26,68 @@ export function settled<T>(ctx: PluginSetupContext, answer: T): Exclude<NonNulla
   return answer as Exclude<NonNullable<T>, symbol>;
 }
 
+/** When a wait for something another process writes looks, and when it gives up. */
+export interface PollWindow {
+  /** The window's end: a known instant, after which the wait is over. */
+  windowMs: number;
+  /** The quiet pause between two looks. */
+  pollMs: number;
+}
+
+/**
+ * Wait for another process: look now, look again after every `pollMs`, and
+ * end when `read` calls `stop` (it has what it waited for), when it throws
+ * (the wait fails with its error), or when the window ends. A wait that
+ * ends without a throw ends with one last look, so a read is complete even
+ * if a tick came late.
+ *
+ * Self-rescheduling: one timer is pending at a time, so a slow read cannot
+ * pile up behind itself, and a read that ended the wait never re-arms — no
+ * timer outlives the verdict. A flow whose data is written by another
+ * process (the server's webhook diary, read from the installer) has no
+ * event to wait on: a quiet re-read of one indexed query is the reliable
+ * arrival signal.
+ */
+export function pollWithin({ windowMs, pollMs }: PollWindow, read: (stop: () => void) => void): Promise<void> {
+  return new Promise<void>((settle, fail) => {
+    let done = false;
+    let poll: ReturnType<typeof setTimeout> | undefined;
+    let expiry: ReturnType<typeof setTimeout> | undefined;
+    const stop = (error?: Error): void => {
+      if (done) return;
+      done = true;
+      if (poll !== undefined) clearTimeout(poll);
+      if (expiry !== undefined) clearTimeout(expiry);
+      if (error === undefined) {
+        try {
+          read(stop); // the deadline read: complete even if a tick was late
+        } catch (cause) {
+          fail(cause as Error);
+          return;
+        }
+        settle();
+      } else fail(error);
+    };
+    const tick = (): void => {
+      try {
+        read(stop);
+      } catch (cause) {
+        stop(cause as Error);
+        return;
+      }
+      if (done) return;
+      poll = setTimeout(tick, pollMs);
+    };
+    poll = setTimeout(tick, pollMs);
+    expiry = setTimeout(() => stop(), windowMs);
+    try {
+      read(stop); // whatever already arrived before the watching began
+    } catch (cause) {
+      stop(cause as Error);
+    }
+  });
+}
+
 export interface PluginSetupContext {
   /** The aivi home that owns `config.json` and `.env`. */
   home: string;

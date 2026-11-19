@@ -17,6 +17,7 @@ import {
   redeemLink,
   splitReply,
   status,
+  stopSwitch,
   stopTurn,
   switchModel,
   usageHint,
@@ -214,22 +215,17 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
   const interrupted = store.recover();
   if (interrupted.length) log.warn('turns.interrupted', { discarded: interrupted.length });
 
-  const abort = new AbortController();
   let engine: ChannelEngine | undefined;
-  const stop = () => {
-    abort.abort();
-    engine?.stop();
-  };
-  services.signal.addEventListener('abort', stop, { once: true });
+  const halt = stopSwitch(services.signal, () => engine);
   let ready = false;
   const teardown = async () => {
-    stop();
+    halt.stop();
     try {
       if (ready) await announce(config.reportChannels, (c, t) => slack.post(c, t), OFFLINE_NOTICE, log);
       await engine?.shutdown();
     } finally {
       await slack.disconnect().catch(error => log.warn('disconnect.failed', { error }));
-      services.signal.removeEventListener('abort', stop);
+      halt.release();
     }
   };
 
@@ -313,7 +309,7 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
     // One link hint per account per start: a stranger's tenth DM says nothing new.
     const hinted = new Set<string>();
     const onEvent = async (event: SlackEvent) => {
-      if (abort.signal.aborted) return;
+      if (halt.signal.aborted) return;
       const id = `${event.channel}:${event.ts}`;
       const routed = routeMessage(
         config,
@@ -494,7 +490,7 @@ async function startSlack(config: SlackConfig, services: AiviServices, given?: S
     };
 
     const onCommand = async (command: SlackCommand) => {
-      if (abort.signal.aborted) return;
+      if (halt.signal.aborted) return;
       const name = command.command.replace(/^\//, '').slice(config.commandPrefix.length + 1);
       if (!command.command.startsWith(`/${config.commandPrefix}-`) || !isChatCommand(name)) return;
       const channel = command.channel_id;

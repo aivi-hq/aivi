@@ -1,16 +1,8 @@
 import type { Logger } from '@aivi/core';
 import type { ChannelDelivery } from '@aivi/plugin/channel';
 import type { SessionEvents } from '@aivi/plugin/module';
-import {
-  DEFAULT_CLOCK,
-  nextRenderChange,
-  type Progress,
-  type ProgressClock,
-  type ProgressMode,
-  reduceProgress,
-  renderProgress,
-  startProgress,
-} from './progress.ts';
+import { ProgressPacer } from './pacer.ts';
+import type { ProgressClock, ProgressMode } from './progress.ts';
 
 export interface ProgressOptions {
   mode: ProgressMode;
@@ -32,18 +24,10 @@ export type Editable = ChannelDelivery & Required<Pick<ChannelDelivery, 'edit'>>
 export class ProgressReporter {
   private readonly delivery: Editable;
   private readonly conversation: string;
-  private readonly mode: 'status' | 'tools';
   private readonly log: Logger;
-  private readonly throttleMs: number;
-  private readonly clock: ProgressClock;
   private readonly placeholder: Promise<string | undefined>;
-  private readonly unwatch: () => void;
-  private trailing: NodeJS.Timeout | undefined;
-  private change: NodeJS.Timeout | undefined;
+  private readonly pacer: ProgressPacer;
   private inflight: Promise<void> = Promise.resolve();
-  private state: Progress;
-  private shown: string;
-  private lastEditAt: number;
   private stopped = false;
 
   constructor(
@@ -55,54 +39,17 @@ export class ProgressReporter {
   ) {
     this.delivery = delivery;
     this.conversation = conversation;
-    this.mode = options.mode;
     this.log = log;
-    this.throttleMs = options.throttleMs ?? 2000;
-    this.clock = { ...DEFAULT_CLOCK, ...options.clock };
-    const now = Date.now();
-    this.state = startProgress(now);
-    this.shown = renderProgress(this.state, this.mode, now, this.clock);
-    this.lastEditAt = now;
-    this.placeholder = (delivery.placeholder ?? delivery.send)(conversation, this.shown).catch(error => {
+    // The placeholder counts as an edit: the first change waits out the window.
+    this.pacer = new ProgressPacer(options, text => this.edit(text), Date.now());
+    this.placeholder = (delivery.placeholder ?? delivery.send)(conversation, this.pacer.text).catch(error => {
       log.warn('progress.placeholder.failed', { error });
       return undefined;
     });
-    this.unwatch = options.events.watch(sessionId, event => {
-      this.state = reduceProgress(this.state, event, Date.now());
-      this.schedule();
-    });
-    this.arm();
+    this.pacer.start(options.events, sessionId);
   }
 
-  /** Wait for the next instant the text changes by itself (the suffix, the idle notice, an elapsed refresh). */
-  private arm(): void {
-    clearTimeout(this.change);
-    if (this.stopped) return;
-    const now = Date.now();
-    const at = nextRenderChange(this.state, now, this.clock);
-    this.change = setTimeout(() => this.schedule(), Math.max(0, at - now)).unref();
-  }
-
-  private schedule(): void {
-    if (this.stopped || this.trailing) return;
-    const wait = this.lastEditAt + this.throttleMs - Date.now();
-    if (wait <= 0) {
-      this.flush();
-      return;
-    }
-    this.trailing = setTimeout(() => {
-      this.trailing = undefined;
-      this.flush();
-    }, wait).unref();
-  }
-
-  private flush(): void {
-    if (this.stopped) return;
-    this.arm();
-    const text = renderProgress(this.state, this.mode, Date.now(), this.clock);
-    if (text === this.shown) return;
-    this.shown = text;
-    this.lastEditAt = Date.now();
+  private edit(text: string): void {
     this.inflight = this.inflight
       .then(async () => {
         const id = await this.placeholder;
@@ -113,9 +60,7 @@ export class ProgressReporter {
 
   private async stop(): Promise<string | undefined> {
     this.stopped = true;
-    this.unwatch();
-    clearTimeout(this.trailing);
-    clearTimeout(this.change);
+    this.pacer.stop();
     await this.inflight;
     return this.placeholder;
   }

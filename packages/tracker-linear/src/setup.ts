@@ -19,7 +19,14 @@
  */
 import { createServer } from 'node:http';
 import { configSchema, errorMessage, hostUrl, PROJECT_ID } from '@aivi/core';
-import { type PluginSetup, type PluginSetupContext, type PluginSetupResult, type Store, settled } from '@aivi/plugin';
+import {
+  type PluginSetup,
+  type PluginSetupContext,
+  type PluginSetupResult,
+  pollWithin,
+  type Store,
+  settled,
+} from '@aivi/plugin';
 import { LinearClient, type LinearTeam } from './client.ts';
 import type { LinearConfig } from './config.ts';
 import { linearPrimarySecretNames, MODULE_ID } from './config.ts';
@@ -562,81 +569,41 @@ async function waitDiary(
   let mine = 0;
   let others = 0;
   let last = cursor;
-  await new Promise<void>((settled, failed) => {
-    let done = false;
-    let poll: ReturnType<typeof setTimeout> | undefined;
-    let expiry: ReturnType<typeof setTimeout> | undefined;
-    const read = (): void => {
-      // `aivi host clear-logs` can empty the diary and restart its ids below
-      // our cursor; when that happens, follow the fresh diary, not the mark.
-      if (latestId(store) < last) last = 0;
-      for (const row of store.requests({ method: 'POST', path, sinceId: last })) {
-        last = row.id;
-        if (row.truncated)
-          throw new Error(
-            `a delivery arrived but its body is not readable JSON — the diary cut it off (row ${row.id}) — verification needs the whole body.`,
-          );
-        const verdict = verifyWebhook({
-          body: Buffer.from(row.body ?? '', 'utf8'),
-          signature: row.headers['linear-signature'],
-          secret: webhookSecret,
-          now: row.at,
-        });
-        if (!verdict.ok)
-          throw new Error(
-            `a delivery arrived but failed the module's own check: ${verdict.reason} (HTTP ${row.status}).` +
-              (verdict.reason.includes('signature')
-                ? ' The signing secret pasted here is not the one Linear sends.'
-                : ''),
-          );
-        say(`Heard: ${describeDelivery(verdict.payload)}`); // every delivery, the moment it lands
-        if (!namesIssue(verdict.payload, issueId)) {
-          others++;
-          continue;
-        }
-        // The proof is in: a passed wait is nobody's waiting room, and the
-        // stop's own read finishes nothing this loop has left to say.
-        if (accepts(verdict.payload)) {
-          mine++;
-          stop();
-          return;
-        }
+  await pollWithin({ windowMs: ms, pollMs: POLL_MS }, stop => {
+    // `aivi host clear-logs` can empty the diary and restart its ids below
+    // our cursor; when that happens, follow the fresh diary, not the mark.
+    if (latestId(store) < last) last = 0;
+    for (const row of store.requests({ method: 'POST', path, sinceId: last })) {
+      last = row.id;
+      if (row.truncated)
+        throw new Error(
+          `a delivery arrived but its body is not readable JSON — the diary cut it off (row ${row.id}) — verification needs the whole body.`,
+        );
+      const verdict = verifyWebhook({
+        body: Buffer.from(row.body ?? '', 'utf8'),
+        signature: row.headers['linear-signature'],
+        secret: webhookSecret,
+        now: row.at,
+      });
+      if (!verdict.ok)
+        throw new Error(
+          `a delivery arrived but failed the module's own check: ${verdict.reason} (HTTP ${row.status}).` +
+            (verdict.reason.includes('signature')
+              ? ' The signing secret pasted here is not the one Linear sends.'
+              : ''),
+        );
+      say(`Heard: ${describeDelivery(verdict.payload)}`); // every delivery, the moment it lands
+      if (!namesIssue(verdict.payload, issueId)) {
+        others++;
+        continue;
       }
-    };
-    const stop = (error?: Error): void => {
-      if (done) return;
-      done = true;
-      if (poll !== undefined) clearTimeout(poll);
-      if (expiry !== undefined) clearTimeout(expiry);
-      if (error === undefined) {
-        try {
-          read(); // the deadline read: complete even if a tick was late
-        } catch (cause) {
-          failed(cause as Error);
-          return;
-        }
-        settled();
-      } else failed(error);
-    };
-    const tick = (): void => {
-      try {
-        read();
-      } catch (cause) {
-        stop(cause as Error);
+      // The proof is in: a passed wait is nobody's waiting room, and the
+      // stop's own read finishes nothing this loop has left to say.
+      if (accepts(verdict.payload)) {
+        mine++;
+        stop();
         return;
       }
-      // Self-rescheduling: one pending timer, always, and a slow read
-      // cannot pile up behind itself. And a read that ended the wait is
-      // never re-armed: no timer outlives the verdict.
-      if (done) return;
-      poll = setTimeout(tick, POLL_MS);
-    };
-    poll = setTimeout(tick, POLL_MS); // the reliable arrival signal across processes: a re-read
-    expiry = setTimeout(() => stop(), ms); // the window's end: a known instant
-    try {
-      read(); // whatever already arrived before the watching began
-    } catch (cause) {
-      stop(cause as Error);
     }
   });
   return { mine, others, last };

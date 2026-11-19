@@ -26,7 +26,7 @@
  * channels reform.
  */
 import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
-import { ChannelEngine, ConversationStore, createTurnRunner, isTerminal } from '@aivi/host';
+import { ChannelEngine, ConversationStore, createTurnRunner, isTerminal, stopSwitch } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
@@ -162,13 +162,8 @@ async function startGithub(
   // agent, and an agent file that works tickets allows the ones it speaks.
   const desk = createGithubDesk(services.loaded, config, tracker);
 
-  const abort = new AbortController();
   let engine: ChannelEngine | undefined;
-  const stop = () => {
-    abort.abort();
-    engine?.stop();
-  };
-  services.signal.addEventListener('abort', stop, { once: true });
+  const halt = stopSwitch(services.signal, () => engine);
   /** What the start takes from the host and the platform — the event
    *  subscription, the route, the channel entry, the wake listener — each
    *  given back by the one teardown, whether the module stops or its start
@@ -177,12 +172,12 @@ async function startGithub(
   const held: (() => void)[] = [];
   const teardown = async () => {
     for (const give of held.splice(0)) give();
-    stop();
+    halt.stop();
     for (const follower of runProgress.values()) void follower.stop();
     try {
       await engine?.shutdown();
     } finally {
-      services.signal.removeEventListener('abort', stop);
+      halt.release();
     }
   };
 
@@ -782,7 +777,7 @@ async function startGithub(
     held.push(
       tracker.events(async event => {
         try {
-          if (abort.signal.aborted) return;
+          if (halt.signal.aborted) return;
           if (event.kind === 'started') await onBrought(event.conversation, event.issueId, event.promptContext);
           else if (event.kind === 'prompted') await onPrompted(event);
           else await onIssue(event);

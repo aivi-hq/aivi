@@ -9,6 +9,7 @@
  *  `tracker` role. */
 import { getLogger, type Logger, type ProjectLaneInput } from '@aivi/core';
 import {
+  askAgentLane,
   LANE_KIND,
   type LaneKind,
   laneKindLines,
@@ -170,37 +171,8 @@ async function askLanes(
     if (ctx.prompts.isCancel(picked)) throw new PluginSetupCancelled('lane setup incomplete');
     const kind = String(picked) as LaneKind;
     if (kind === 'none') continue;
-    let agent = '';
-    if (kind === 'agent') {
-      const answer = await ctx.prompts.autocomplete({
-        message: `Which OpenCode agent works the "${state.name}" lane?`,
-        options: agentNames.map(name => ({ value: name, label: name })),
-        maxItems: 12,
-      });
-      if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
-      agent = String(answer).trim();
-    }
-    // A worked lane with git possible: does it work on the ticket's branch?
-    // The worktree belongs to the branch, not to writing: a review lane
-    // changes nothing yet must read the pull request's branch, and that
-    // branch lives nowhere but a worktree — a run on a branch reuses the
-    // worktree already holding it. Only a yes is written — core's default
-    // is false, and a key stating the default is noise. "No" means the
-    // project's own checkout; it is never a promise of read-only: that is
-    // the agent file's own deny, never aivi's. Without a forge there are
-    // no worktrees to promise, so nothing is asked.
-    let worktree = false;
-    if (agent && ctx.forgeConfigured) {
-      const onBranch = await ctx.prompts.select({
-        message: `Does work in the "${state.name}" lane happen on the ticket's branch (git worktree)?`,
-        options: [
-          { value: 'yes', label: "yes — on the ticket's branch, in its own worktree" },
-          { value: 'no', label: 'no — in the project checkout itself' },
-        ],
-      });
-      if (ctx.prompts.isCancel(onBranch)) throw new PluginSetupCancelled('lane setup incomplete');
-      worktree = onBranch === 'yes';
-    }
+    const { agent, worktree } =
+      kind === 'agent' ? await askAgentLane(ctx, state.name, agentNames) : { agent: '', worktree: false };
     lanes.push({ name: state.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
   }
   return lanes;
@@ -221,7 +193,7 @@ async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Pr
     });
     if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
     const chosen = String(answer).trim();
-    for (const line of chosen ? markQueue(lanes, chosen) : []) await ctx.prompts.log.message(line);
+    if (chosen) markQueue(lanes, chosen); // a candidate works nobody, so there is no agent to say goodbye to
   } else if (lanes.length)
     await ctx.prompts.log.message(
       'no lane sits before a working lane, so nothing can wait for a slot — a queue lane comes later with a worker lane',
@@ -280,6 +252,7 @@ function makeContributor(makeClient: MakeTeamsClient = clientFor): ProjectContri
   };
 }
 
-export const contributor = makeContributor();
+const contributor = makeContributor();
+
 export { makeContributor };
 export default contributor;

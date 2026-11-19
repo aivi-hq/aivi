@@ -22,6 +22,7 @@ import {
   redeemLink,
   splitReply,
   status,
+  stopSwitch,
   stopTurn,
   switchModel,
 } from '@aivi/host';
@@ -139,28 +140,23 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
     rest: { timeout: 15000, retries: 0 },
   });
 
-  const abort = new AbortController();
   let engine: ChannelEngine | undefined;
   let voiceWatcher: import('./voice.ts').VoiceWatcher | null = null;
-  const stop = () => {
-    abort.abort();
-    engine?.stop();
-  };
-  services.signal.addEventListener('abort', stop, { once: true });
+  const halt = stopSwitch(services.signal, () => engine);
   const post = async (channelId: string, text: string) => {
     const channel = await client.channels.fetch(channelId);
     if (!channel?.isSendable()) throw new Error('Discord channel is not sendable');
     return (await channel.send({ content: text, ...safeSend })).id;
   };
   const teardown = async () => {
-    stop();
+    halt.stop();
     try {
       if (client.isReady()) await announce(config.reportChannels, post, OFFLINE_NOTICE, log);
       await engine?.shutdown();
       await voiceWatcher?.stop(); // the meeting heard stops; running turns finish and release leases
     } finally {
       await client.destroy();
-      services.signal.removeEventListener('abort', stop);
+      halt.release();
     }
   };
 
@@ -258,7 +254,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
 
     /** One message from a person: admitted, turned into a queued turn in its conversation. */
     async function handleMessage(message: Message): Promise<void> {
-      if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
+      if (halt.signal.aborted || client.application?.id !== config.applicationId) return;
       if (message.author.bot || message.webhookId || message.system) return;
       const route: Route = {
         channelId: message.channelId,
@@ -383,7 +379,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
      * status catches everything else.
      */
     async function handleInteraction(interaction: Interaction): Promise<void> {
-      if (abort.signal.aborted || client.application?.id !== config.applicationId) return;
+      if (halt.signal.aborted || client.application?.id !== config.applicationId) return;
       if (!interaction.isChatInputCommand() && !interaction.isAutocomplete()) return;
       if (!isChatCommand(interaction.commandName)) return;
       const name: ChatCommandName = interaction.commandName;
@@ -587,7 +583,7 @@ async function startDiscord(config: DiscordConfig, services: AiviServices) {
 
     try {
       await Promise.all([
-        once(client, Events.ClientReady, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]) }),
+        once(client, Events.ClientReady, { signal: AbortSignal.any([halt.signal, AbortSignal.timeout(30000)]) }),
         client.login(token),
       ]);
     } catch (error) {
