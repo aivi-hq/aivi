@@ -134,6 +134,34 @@ for (const [name, user, speaker, person] of [
   });
 }
 
+test('a directory that fails when a speaker is named is said, and Discord names the speaker', async t => {
+  const h = voiceHarness();
+  let lookups: number | undefined;
+  const watcher = watchVoice({
+    ...h.deps,
+    // The directory finds the person while the meeting opens and when the speech starts, then fails on the next look.
+    personName: userId => {
+      if (lookups !== undefined && ++lookups === 2) throw new Error('the directory is down');
+      return h.deps.personName(userId);
+    },
+  });
+  t.after(() => watcher.stop());
+  await h.settle();
+  h.enter(h.channelId, 'u-link');
+  await h.settle();
+  lookups = 0;
+
+  h.speaking.emit('start', 'u-link');
+
+  assert.deepEqual(h.said('warn'), [
+    { event: 'voice.discord.person-failed', userId: 'u-link', error: 'Error: the directory is down' },
+  ]);
+  assert.deepEqual(
+    h.lanes().map(lane => lane.init),
+    [{ speaker: 'u-link', user: 'u-link', person: true, channel: h.channelId }],
+  );
+});
+
 test('a join that fails is said, and tried again at the next presence', async t => {
   let attempts = 0;
   const { h } = await inCall(t, {
@@ -280,6 +308,26 @@ test('an answer whose player fails is lost and said, and the next answer gets th
   assert.deepEqual(h.said('warn'), [
     { event: 'voice.discord.play-failed', channelId: h.channelId, error: 'Error: the player broke' },
   ]);
+  assert.deepEqual(h.played, [5]);
+});
+
+test('an answer whose band cannot take its audio is lost and said, and the next answer gets the air', async t => {
+  const { h } = await inCall(t);
+  t.mock.method(
+    PacketBand.prototype,
+    'add',
+    () => {
+      throw new Error('the band is broken');
+    },
+    { times: 1 },
+  );
+
+  assert.equal(await h.mouthPlays[0]!(sineWav(24000, 0.1)), false, 'what never reached the band is not played');
+  const heard = h.mouthPlays[0]!(sineWav(24000, 0.1));
+  h.mouthFlushes[0]!();
+
+  assert.equal(await heard, true);
+  assert.deepEqual(h.said('warn'), [{ event: 'voice.discord.speak-failed', error: 'Error: the band is broken' }]);
   assert.deepEqual(h.played, [5]);
 });
 

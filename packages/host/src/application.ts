@@ -9,7 +9,7 @@ import { attachExec } from './api/exec.ts';
 import { PublicRoutes } from './api/public.ts';
 import { describeSession } from './channel/context.ts';
 import { Channels } from './channel/router.ts';
-import { Dispatcher, type DispatcherLease } from './dispatcher/dispatcher.ts';
+import { Dispatcher } from './dispatcher/dispatcher.ts';
 import { LeaseStore } from './dispatcher/leases.ts';
 import { EventStream } from './events.ts';
 import { Forges } from './forges.ts';
@@ -163,12 +163,9 @@ export async function runHost(options: RunHostOptions): Promise<void> {
   const ledger = new RunLedger(store);
   // The dispatcher is the only part that knows how much capacity is left;
   // the orchestrator's claims are leases here, and when the dispatcher ends
-  // one on its own the mirrored claim must clear. The link between them is
-  // set in the same synchronous breath that builds both — anything firing
-  // earlier says so, rather than silently losing an ended lease.
-  let clearClaim: (lease: DispatcherLease, reason: string) => void = () => {
-    throw new Error('a lease ended before the orchestrator was wired to the dispatcher');
-  };
+  // one on its own the mirrored claim must clear. The callback reads the
+  // orchestrator built right below it: a lease ended earlier is a
+  // ReferenceError, said rather than silently lost.
   const dispatcher = new Dispatcher({
     leases: new LeaseStore(store),
     dispatcher: loaded.config.dispatcher,
@@ -179,7 +176,7 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     opencode,
     signal: abort.signal,
     log,
-    onEnded: (lease, reason) => clearClaim(lease, reason),
+    onEnded: (lease, reason) => void orchestrator.leaseEnded(lease, reason),
   });
   const orchestrator = new Orchestrator({
     ledger,
@@ -208,7 +205,6 @@ export async function runHost(options: RunHostOptions): Promise<void> {
     // an edit lands on the next run, a delete is instant restoration.
     prompt: name => readPrompt(dirname(loaded.path), name),
   });
-  clearClaim = (lease, reason) => void orchestrator.leaseEnded(lease, reason);
   for (const tool of orchestrator.tools()) tools.claim('host', tool.descriptor, tool.handler);
   // The ticket desk, claimed once for the whole home (ruled 2026-10-07): the
   // host owns the aivi_ticket_* ids and routes each call to the desk of the

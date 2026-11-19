@@ -75,8 +75,10 @@ interface Inbox {
 
 test('every first-party inbox adapter shows its conversations and releases a blocked one', async t => {
   // The home store is the host's; the kit cannot name its own dependents, so they are found by name.
-  const host = '@aivi/host';
-  const { Store: HomeStore } = (await import(host)) as { Store: new (path: string) => Store & { close(): void } };
+  const dependents = { host: '@aivi/host' };
+  const { Store: HomeStore } = (await import(dependents.host)) as {
+    Store: new (path: string) => Store & { close(): void };
+  };
   // Enough of a config block for an adapter to name its inbox.
   const block = { applicationId: 'app-1', agent: 'assistant', directory: '/home/projects/site' };
   for (const adapter of [

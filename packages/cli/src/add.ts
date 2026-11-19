@@ -159,9 +159,9 @@ function installPackage(io: AddIo, spec: string, pkg: string, appDir: string): v
   io.install(spec, appDir);
 }
 
-/** The npm name behind a spec: the dependency npm just added, or — when npm
- *  had nothing to add because the package was there — the dependency that
- *  already points at it (a trailing `@version` is npm's, not the name's).
+/** The npm name behind a spec: the dependency npm just added. A package that
+ *  was listed under its own name never gets here (the caller asked for it
+ *  first), so npm having nothing to add means nothing says which it is.
  *  The list holds names; npm was handed the specs. */
 function dependencyFor(appDir: string, spec: string, before: string[]): string {
   const added = pluginDependencies(appDir).filter(name => !before.includes(name));
@@ -170,9 +170,6 @@ function dependencyFor(appDir: string, spec: string, before: string[]): string {
     throw new Error(
       `npm added ${added.length} dependencies (${added.join(', ')}); say which one is the plugin by naming it in aivi-plugins in app/package.json.`,
     );
-  const at = spec.lastIndexOf('@');
-  const bare = at > 0 ? spec.slice(0, at) : spec;
-  if (dependencyNames(appDir).includes(bare)) return bare;
   throw new Error(`Cannot tell which package ${spec} installed; name it in aivi-plugins in app/package.json.`);
 }
 

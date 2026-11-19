@@ -41,7 +41,7 @@ mock.module('../src/remove.ts', { exports: { ...realRemove, remove } });
 mock.module('../src/service.ts', { exports: { ...realService, ...service } });
 mock.module('../src/setup.ts', { exports: { ...realSetup, setup } });
 mock.module('../src/update.ts', { exports: { ...realUpdate, updateServer } });
-const { main } = await import('../src/main.ts');
+const { main, reportFailure } = await import('../src/main.ts');
 
 let directory: string;
 let home: string;
@@ -194,5 +194,21 @@ test('a help page whose app cannot be mounted says why, whether the reason is an
     mountAppCommands.mock.mockImplementationOnce(reason);
     const { out } = await run(['--help']);
     assert.match(out, footer);
+  }
+});
+
+test('the bin says a failure by its message when it is an Error, as it is when it is not, and exits failing', async t => {
+  const said = t.mock.method(console, 'error', () => {});
+
+  for (const [failure, shown] of [
+    [new Error('the server is down'), 'the server is down'],
+    ['a plain reason', 'a plain reason'],
+  ] as const) {
+    process.exitCode = undefined;
+
+    reportFailure(failure);
+
+    assert.equal(process.exitCode, 1);
+    assert.equal(said.mock.calls.at(-1)!.arguments[0], shown);
   }
 });

@@ -113,7 +113,7 @@ export async function configureLogging(options: LoggingSetup): Promise<() => Pro
   }
   await configure({
     sinks,
-    filters: { atLeast: LOG_LEVELS[options.level] ?? 'info', metaOnly: 'error' },
+    filters: { atLeast: LOG_LEVELS[options.level], metaOnly: 'error' },
     loggers: [
       { category: ['aivi'], sinks: sinkNames, filters: ['atLeast'] },
       { category: ['logtape', 'meta'], sinks: sinkNames, filters: ['metaOnly'] },

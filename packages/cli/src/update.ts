@@ -164,7 +164,7 @@ export async function updateServer(options: UpdateOptions, io: UpdateIo = defaul
     readFileSync(join(appDir, 'node_modules', '@aivi', 'host', 'package.json'), 'utf8'),
   ) as { version: string };
 
-  const targetVersion = await io.npmView(`@aivi/host@${channel === 'stable' ? 'latest' : channel}`, 'version');
+  const targetVersion = await io.npmView('@aivi/host@latest', 'version');
   if (targetVersion === currentVersion.version) {
     io.log(`Already up to date: @aivi/host ${targetVersion}.`);
     return;

@@ -781,6 +781,19 @@ test('a closing is spoken in order: the progress falls silent, the final comment
   });
 });
 
+test('an Agent value GitHub will not let go of is said, and the closing lands all the same', async t => {
+  const h = await started(t);
+  pair(h);
+  h.io.unassign.mock.mockImplementationOnce(async () => {
+    throw new Error('403');
+  });
+
+  await h.work.endWork(ended());
+
+  assert.deepEqual(h.said('warn'), ['delegate.undone']);
+  assert.notEqual(h.links.byAgentSession('acme/shop#47:c1234')?.endedAt, undefined);
+});
+
 test('a result GitHub already shows is not said again: the final comment is skipped, the rest still lands', async t => {
   const h = await started(t);
   pair(h);
@@ -1360,6 +1373,21 @@ test('a change that leaves a live run where it stands stops nothing: its lane ke
   await h.sink(updated(['state']));
   h.io.issue.mock.mockImplementationOnce(async () => issueOf({ delegateId: 'aivi-agent' }));
   await h.sink(updated(['delegate']));
+  assert.equal(h.fakes.orchestrator.stop.mock.callCount(), 0);
+});
+
+// Known gap (docs/backlog, taking the ticket back during preparation): a run still getting ready has no
+// session yet, so the Agent value taken back finds no conversation and stops nothing. The ruling moves the
+// stop into the orchestrator; this test then flips.
+test('an Agent value a person takes back while the worker is still getting ready stops nothing yet', async t => {
+  const h = await started(t);
+  pair(h);
+  const { sessionId: _none, ...preparing } = runOf({ state: 'preparing' });
+  h.fakes.orchestrator.activeRun.mock.mockImplementation(() => preparing as RunView);
+  h.io.issue.mock.mockImplementationOnce(async () => issueOf({ delegateId: null }));
+
+  await h.sink(updated(['delegate']));
+
   assert.equal(h.fakes.orchestrator.stop.mock.callCount(), 0);
 });
 

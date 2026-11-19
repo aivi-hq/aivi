@@ -104,7 +104,7 @@ export class LinearMcp {
     }
     headers.authorization = `Bearer ${token}`;
     headers.host = this.upstream.host;
-    const incoming = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const incoming = new URL(request.url!, 'http://127.0.0.1');
     await new Promise<void>((resolve, reject) => {
       const upstreamRequest = this.upstream.protocol === 'https:' ? httpsRequest : httpRequest;
       const upstream = upstreamRequest(
@@ -121,7 +121,7 @@ export class LinearMcp {
             this.forward(request, response, body, true).then(() => resolve(), reject);
             return;
           }
-          response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+          response.writeHead(upstreamResponse.statusCode!, upstreamResponse.headers);
           upstreamResponse.pipe(response);
           upstreamResponse.on('end', () => resolve());
           upstreamResponse.on('error', reject);

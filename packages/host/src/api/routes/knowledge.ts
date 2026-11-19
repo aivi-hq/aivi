@@ -31,13 +31,13 @@ export function registerKnowledge(
     }
     const { knowledge } = deps;
     if (!knowledge) return respond({ error: 'Knowledge search is unavailable' }, 503);
-    const { query, limit, projects, includeCore, kinds } = parsed.data;
+    const { query, limit, projects, kinds } = parsed.data;
     try {
       const hits = await knowledge.search({
         query,
         limit,
         ...(projects ? { projects } : {}),
-        ...(includeCore !== undefined ? { includeCore } : {}),
+        includeCore: selection.value.includeCore,
         ...(kinds ? { kinds } : {}),
       });
       return c.json(hits);

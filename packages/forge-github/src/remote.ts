@@ -38,7 +38,7 @@ const bareRemote = (raw: string): GitHubRemote | undefined => {
   const bare = BARE.exec(raw);
   if (!bare) return undefined;
   const [, owner, repo] = bare;
-  if (/^\.+$/.test(owner ?? '') || /^\.+$/.test(repo ?? '')) return undefined;
+  if (/^\.+$/.test(owner!) || /^\.+$/.test(repo!)) return undefined;
   return { host: GITHUB_HOST, owner: owner!, repo: stripSuffix(repo!), ssh: false };
 };
 

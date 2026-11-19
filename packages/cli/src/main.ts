@@ -363,12 +363,17 @@ const commanderExit = (error: CommanderError): number =>
     ? 0
     : error.exitCode;
 
+/** What the bin says when a command fails: the message, not a stack, and a failing exit code. */
+export function reportFailure(error: unknown): void {
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+}
+
 // The bin runs itself; tests import main() without starting a parse.
 if (import.meta.main)
   try {
     await main(process.argv.slice(2));
     if (process.exitCode === undefined) process.exitCode = 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
+    reportFailure(error);
   }

@@ -21,7 +21,7 @@ type GitAnswer = Awaited<ReturnType<typeof github.runGit>>;
 /** What GitHub and git answer in one run, and what git was asked. Each test
  *  sets it; the mocks answer from it. */
 const scene = {
-  granted: [] as string[] | Error,
+  granted: [] as string[] | Error | { thrown: unknown },
   reads: true,
   git: [] as GitAnswer[],
   ran: [] as { directory: string; args: string[]; env?: Record<string, string> }[],
@@ -30,7 +30,7 @@ const app = {
   appSlug: 'aivi-app',
   installationId: 42,
   repositories: async () => {
-    if (scene.granted instanceof Error) throw scene.granted;
+    if (!Array.isArray(scene.granted)) throw scene.granted instanceof Error ? scene.granted : scene.granted.thrown;
     return scene.granted.map(id => ({ id }));
   },
   repository: async () => (scene.reads ? { defaultBranch: 'main' } : undefined),
@@ -50,7 +50,13 @@ const { contributor, suggestedProjectId } = await import('../src/setup-project.t
  *  the forge; `projectId` is the name an earlier role settled. */
 async function wizard(
   t: TestContext,
-  given: { answers: unknown[]; granted: string[] | Error; reads?: boolean; git?: GitAnswer[]; projectId?: string },
+  given: {
+    answers: unknown[];
+    granted: string[] | Error | { thrown: unknown };
+    reads?: boolean;
+    git?: GitAnswer[];
+    projectId?: string;
+  },
 ) {
   const home = await mkdtemp(join(tmpdir(), 'aivi-forge-project-'));
   t.after(() => rm(home, { recursive: true, force: true }));
@@ -200,6 +206,25 @@ test('a grant that cannot be listed leaves the typed question, and its answer is
   );
   assert.equal(existsSync(join(h.home, 'projects')), false, 'nothing is made for a repository the app cannot read');
   assert.deepEqual(scene.ran, [], 'and git is never asked');
+});
+
+test('a grant that fails with something that is not an Error is said as it is', async t => {
+  const h = await wizard(t, { answers: ['acme/site'], granted: { thrown: 'the network is gone' }, reads: false });
+
+  await assert.rejects(contributor.setup(h.ctx), /the app aivi-app cannot see acme\/site/);
+
+  assert.deepEqual(h.spinners[0]!.stop.mock.calls[0]!.arguments, [
+    "Could not list the app's repositories: the network is gone",
+  ]);
+});
+
+test('an answer that names no repository stops the forge before anything is made', async t => {
+  const h = await wizard(t, { answers: ['not a repository'], granted: ['acme/site'] });
+
+  await assert.rejects(contributor.setup(h.ctx), /no repository named/);
+
+  assert.equal(existsSync(join(h.home, 'projects')), false);
+  assert.deepEqual(scene.ran, []);
 });
 
 test('a cancelled question stops the forge before anything is made', async t => {

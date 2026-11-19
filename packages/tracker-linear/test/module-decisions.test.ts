@@ -1233,6 +1233,110 @@ test('a change that leaves a live run where it stands stops nothing: its lane ke
   assert.equal(h.fakes.orchestrator.stop.mock.callCount(), 0);
 });
 
+// Known gap (docs/backlog, taking the ticket back during preparation): a run still getting ready has no
+// session yet, so the delegate taken back finds no pair and stops nothing. The ruling moves the stop into
+// the orchestrator; this test then flips.
+test('a delegate a person takes back while the worker is still getting ready stops nothing yet', async t => {
+  const h = await started(t);
+  pair(h);
+  const { sessionId: _none, ...preparing } = runOf({ state: 'preparing' });
+  h.fakes.orchestrator.activeRun.mock.mockImplementation(() => preparing as RunView);
+  h.io.issue.mock.mockImplementationOnce(async () => issueOf({ delegateId: null }));
+
+  await h.sink(updated(['delegate']));
+
+  assert.equal(h.fakes.orchestrator.stop.mock.callCount(), 0);
+});
+
+const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+
+test('a wake from the host ticks the engine and drives the closings still owed, quietly while they keep failing', async t => {
+  const h = await started(t);
+  pair(h);
+  h.io.closingNote.mock.mockImplementationOnce(async () => {
+    throw new Error('502');
+  });
+  await assert.rejects(h.work.endWork(ended()), /502/);
+  const [wake] = h.fakes.onWake.mock.calls.map(call => call.arguments[0]);
+  const tick = t.mock.method(h.engine, 'tick');
+
+  h.io.closingNote.mock.mockImplementationOnce(async () => {
+    throw new Error('502 again');
+  });
+  wake!();
+  await flush();
+
+  assert.equal(tick.mock.callCount(), 1);
+  assert.deepEqual(
+    h.said('warn'),
+    ['closing.retry.failed'],
+    'a retry that fails is said as one, never as a second cry',
+  );
+  assert.equal(h.links.byAgentSession('as-1')?.endedAt, undefined, 'and the closing stays owed');
+
+  wake!();
+  await flush();
+
+  assert.notEqual(h.links.byAgentSession('as-1')?.endedAt, undefined, 'the next wake lands it');
+  assert.equal(h.said('info').includes('run.caughtup'), true);
+});
+
+test('a delegate Linear will not let go of is said, and the closing lands all the same', async t => {
+  const h = await started(t);
+  pair(h);
+  h.io.unassign.mock.mockImplementationOnce(async () => {
+    throw new Error('403');
+  });
+
+  await h.work.endWork(ended());
+
+  assert.deepEqual(h.said('warn'), ['delegate.undone']);
+  assert.notEqual(h.links.byAgentSession('as-1')?.endedAt, undefined);
+});
+
+test('two wakes at once may reach the same owed closing: the one that finds it landed has nothing left to do', async t => {
+  const h = await started(t);
+  pair(h);
+  pair(h, 'iss-48', 'as-2', 'ses_two');
+  for (const call of [0, 1])
+    h.io.closingNote.mock.mockImplementationOnce(async () => {
+      throw new Error('502');
+    }, call);
+  await assert.rejects(h.work.endWork(ended()), /502/);
+  await assert.rejects(h.work.endWork(ended({ id: 'run-2', ticketId: 'iss-48', sessionId: 'ses_two' })), /502/);
+  const [wake] = h.fakes.onWake.mock.calls.map(call => call.arguments[0]);
+  const gate = Promise.withResolvers<boolean>();
+  h.io.resultShown.mock.mockImplementationOnce(() => gate.promise);
+
+  wake!(); // the first wake is at run-1, waiting on Linear
+  wake!(); // the second drives run-1 and run-2 to their end
+  await flush();
+  gate.resolve(true);
+  await flush();
+
+  const noted = (ticket: string) => h.io.closingNote.mock.calls.filter(call => call.arguments[1] === ticket).length;
+  assert.equal(noted('iss-48'), 2, 'run-2 failed once, then landed once: the first wake found nothing owed');
+});
+
+test('a start that fails closes what it opened and gives the failure back', async t => {
+  const w = await world(t);
+  const shutdown = t.mock.method(host.ChannelEngine.prototype, 'shutdown');
+  w.fakes.channels.register.mock.mockImplementationOnce(() => {
+    throw new Error('the channel registry refused');
+  });
+
+  await assert.rejects(
+    createLinearModule(
+      linearSchema.parse({ apps: { dev: {} } }),
+      async () => w.tracker,
+      () => w.board,
+    ).start(w.services),
+    /the channel registry refused/,
+  );
+
+  assert.equal(shutdown.mock.callCount(), 1, 'the engine it had built is shut down');
+});
+
 test('a person’s move cancels a waiting request and wakes the walk — unless the ticket sits where aivi does not look', async t => {
   const h = await started(t);
   const woken = () => h.fakes.orchestrator.wake.mock.calls.map(call => call.arguments);

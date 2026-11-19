@@ -95,7 +95,7 @@ export function describeJobs(store: Store, now = Date.now()): string {
     });
   const recent = store
     .recent(0, 10)
-    .map(r => `- ${ICON[r.state] ?? '❔'} ${named(r.jobId)} ${r.state} · ${when(r.finishedAt ?? now)}`);
+    .map(r => `- ${ICON[r.state]!} ${named(r.jobId)} ${r.state} · ${when(r.finishedAt!)}`);
   return [
     '**Next occurrences**',
     ...(upcoming.length ? upcoming : ['No jobs are due.']),

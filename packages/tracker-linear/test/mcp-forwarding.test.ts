@@ -113,6 +113,23 @@ test('a request with a body goes upstream whole, over the scheme the upstream na
   await mcp.stop();
 });
 
+test('a body over a mebibyte is refused in the protocol’s own shape, and nothing goes upstream', async t => {
+  const web = fakeHttp(t);
+  const mcp = new LinearMcp(client, { port: 0 });
+  await mcp.start();
+
+  const answer = await web.call({ method: 'POST', url: '/mcp', body: 'x'.repeat(1024 * 1024 + 1) });
+
+  assert.equal(answer.status, 413);
+  assert.deepEqual(JSON.parse(answer.text), {
+    jsonrpc: '2.0',
+    id: null,
+    error: { code: -32001, message: 'Request body over the cap' },
+  });
+  assert.deepEqual(web.sent, []);
+  await mcp.stop();
+});
+
 test('the bridge binds loopback only and reports the port it got; stopping it twice, or before it started, is harmless', async t => {
   const web = fakeHttp(t);
   const mcp = new LinearMcp(client, { port: 4101 });

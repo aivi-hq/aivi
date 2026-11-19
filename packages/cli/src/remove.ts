@@ -83,7 +83,8 @@ function listedAs(appDir: string, spec: string): string | undefined {
   return pluginNames(appDir).find(entry => entry === spec || entry === bare);
 }
 
-export async function remove(args: string[], options: RemoveOptions, io: RemoveIo = defaultIo): Promise<void> {
+/** The listed package the arguments name; each way they can fail to name one says so by name. */
+function listedPackage(args: string[], options: RemoveOptions): string {
   const flags = args.filter(arg => arg.startsWith('-'));
   if (flags.length) throw new Error(`Unknown remove flag: ${flags[0]}`);
   const name = args[0];
@@ -96,6 +97,22 @@ export async function remove(args: string[], options: RemoveOptions, io: RemoveI
     throw new Error(
       `${name} is not in the plugin list (aivi-plugins in app/package.json); nothing to remove. \`aivi remove\` takes browser, discord, slack, linear or a listed package name.`,
     );
+  return pkg;
+}
+
+/** What left the config with the plugin, as the clause that follows "is out of the plugin list". */
+function configLeft(moduleId: string, blockRemoved: boolean, sectionsRemoved: number): string {
+  const said = [];
+  if (blockRemoved) said.push(`its plugins.${moduleId} block is gone`);
+  if (sectionsRemoved)
+    said.push(
+      `its ${sectionsRemoved} section${sectionsRemoved === 1 ? '' : 's'} under projects and projectDefaults ${sectionsRemoved === 1 ? 'is' : 'are'} gone`,
+    );
+  return said.length ? ` — ${said.join('; ')}` : '';
+}
+
+export async function remove(args: string[], options: RemoveOptions, io: RemoveIo = defaultIo): Promise<void> {
+  const pkg = listedPackage(args, options);
 
   // The config first, while the package can still say its module id; then the
   // entry, so no moment has a block listed to a plugin nobody imports; then
@@ -103,13 +120,7 @@ export async function remove(args: string[], options: RemoveOptions, io: RemoveI
   // list, its config gone — and says so.
   const { moduleId, blockRemoved, sectionsRemoved } = await io.removeBlock(pkg, options);
   removePluginName(options.appDir, pkg);
-  const said = [];
-  if (blockRemoved) said.push(`its plugins.${moduleId} block is gone`);
-  if (sectionsRemoved)
-    said.push(
-      `its ${sectionsRemoved} section${sectionsRemoved === 1 ? '' : 's'} under projects and projectDefaults ${sectionsRemoved === 1 ? 'is' : 'are'} gone`,
-    );
-  io.log(`${pkg} is out of the plugin list${said.length ? ` — ${said.join('; ')}` : ''}.`);
+  io.log(`${pkg} is out of the plugin list${configLeft(moduleId, blockRemoved, sectionsRemoved)}.`);
   try {
     io.uninstall(pkg, options.appDir);
   } catch (error) {

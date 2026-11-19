@@ -39,7 +39,7 @@ export function status(
       jobId: r.jobId,
       kind: taskLabel(r.task),
       state: r.state,
-      finishedAt: new Date(r.finishedAt ?? now).toISOString(),
+      finishedAt: new Date(r.finishedAt!).toISOString(),
       error: r.error,
     })),
   };

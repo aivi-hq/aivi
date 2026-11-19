@@ -245,6 +245,18 @@ test('stop gives back what start took, says goodbye, and a socket that will not 
   assert.deepEqual(events(w, 'warn'), ['disconnect.failed']);
 });
 
+test('a start that fails closes the socket and gives the failure back, with nothing announced', async t => {
+  const w = world(t);
+  w.slack.connection.identify.mock.mockImplementation(async () => {
+    throw new Error('token revoked');
+  });
+
+  await assert.rejects(start(w, { ...config, reportChannels: [HOME] }), /token revoked/);
+
+  assert.equal(w.slack.connection.disconnect.mock.callCount(), 1, 'the socket is closed');
+  assert.deepEqual(posted(w), [], 'a module that never came up says nothing about going offline');
+});
+
 test('after stop, a late message or command is dropped without an answer', async t => {
   const w = world(t);
   const { running } = await start(w);
@@ -404,13 +416,18 @@ test('the turn runner is wrapped: 👀 while a message turn works and cleared wh
   }
 });
 
-test('a job turn has no message to react to', async t => {
+test('a job turn, or a message turn whose id names no message, has nothing to react to', async t => {
   const w = world(t);
   const { engine } = await start(w);
 
-  const answer = await engine.args[3]({ kind: 'job', id: 'run:run-1' } as Turn, new AbortController().signal, () => {});
+  for (const turn of [
+    { kind: 'job', id: 'run:run-1' },
+    { kind: 'message', id: 'no-message-here' },
+  ] as Turn[]) {
+    const answer = await engine.args[3](turn, new AbortController().signal, () => {});
 
-  assert.equal(answer, 'Answer');
+    assert.equal(answer, 'Answer');
+  }
   assert.equal(w.slack.connection.react.mock.callCount() + w.slack.connection.unreact.mock.callCount(), 0);
 });
 

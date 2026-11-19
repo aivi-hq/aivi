@@ -305,7 +305,7 @@ export function attachExec(server: Server, deps: ExecDeps): void {
     // The bearer this connection already presented, re-exported into the
     // child so `whoami`, link creation and association name the remote human,
     // never the server's own client-config token.
-    const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '');
+    const bearer = req.headers.authorization!.replace(/^Bearer /, '');
     wss.handleUpgrade(req, socket, head, ws => open(ws, req, { id: person.id, name: person.name }, bearer));
   });
 

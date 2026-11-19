@@ -348,6 +348,20 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
   );
 });
 
+test('answering None to the queue question marks no lane', async t => {
+  const { contributor, ctx, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, '']);
+  t.after(cleanup);
+
+  const result = await contributor.setup(ctx);
+
+  assert.deepEqual(result.lanes, [
+    { name: 'Backlog', agent: 'developer' },
+    { name: 'Todo' },
+    { name: 'In Progress', agent: 'developer' },
+    { name: 'In Review' },
+  ]);
+});
+
 test('the board number question really defaults to 1: Enter — an empty answer — takes it', async t => {
   // clack 1.x validates the raw input before finalize applies
   // defaultValue, so a validate that refuses '' makes the default

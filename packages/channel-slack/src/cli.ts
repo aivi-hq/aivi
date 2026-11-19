@@ -36,10 +36,10 @@ export default (ctx: PluginCliContext): Command => {
         const answered = await ctx.prompts.text({
           message: 'Slash command prefix — the commands become /<prefix>-new, /<prefix>-status, …',
           placeholder: 'aivi',
-          validate: value =>
-            !String(value ?? '').trim() || /^[a-z][a-z0-9_-]*$/.test(String(value ?? '').trim())
-              ? undefined
-              : 'Lowercase letters, digits, _ or -',
+          validate: value => {
+            const name = String(value ?? '').trim();
+            return !name || /^[a-z][a-z0-9_-]*$/.test(name) ? undefined : 'Lowercase letters, digits, _ or -';
+          },
         });
         // Clack answers Ctrl+C with its cancel symbol and an empty Enter with
         // nothing — neither is an answer; the command ends unsaid.

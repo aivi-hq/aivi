@@ -525,6 +525,7 @@ for (const [name, setup, run, title, text, expected] of [
   ['the first line when neither has a title', () => job(), runOf(), undefined, '\n\nfirst line\nsecond', 'first line'],
   ['the first line when the job was removed since', () => undefined, runOf(), undefined, 'Result:\nmore', 'Result:'],
   ['the post’s title for a notice', () => undefined, undefined, 'Notice', 'out', 'Notice'],
+  ['a plain name when the post has no words', () => undefined, undefined, undefined, '\n  \n', 'aivi'],
   [
     'a first line cut to 79 characters and an ellipsis',
     () => undefined,
@@ -1204,16 +1205,20 @@ test('a job outcome addressed to a session of a conversation comes back into it 
 test('the channel of a conversation is the parent of its thread, or the conversation itself', async t => {
   const w = world(t);
   const thread = w.know(threadChannel('10000000000000070', HOME));
+  const orphan = w.know({ ...threadChannel('10000000000000072', HOME), parentId: null });
   const gone = '10000000000000071';
   w.places.set(gone, new Error('Unknown Channel'));
-  for (const channel of [thread.id, DM, gone]) w.inbox.adopt(channel, { seed: 'a report' });
+  for (const channel of [thread.id, orphan.id, DM, gone]) w.inbox.adopt(channel, { seed: 'a report' });
   await w.start();
   w.know(dmChannel(DM));
 
   assert.deepEqual(
-    await Promise.all([thread.id, DM, gone].map(channel => w.channels.channelOf(w.inbox.sessionOf(channel)!.session))),
+    await Promise.all(
+      [thread.id, orphan.id, DM, gone].map(channel => w.channels.channelOf(w.inbox.sessionOf(channel)!.session)),
+    ),
     [
       { module: 'discord', channel: HOME },
+      undefined,
       { module: 'discord', channel: DM },
       { module: 'discord', channel: gone },
     ],

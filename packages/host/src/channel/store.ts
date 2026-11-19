@@ -36,7 +36,7 @@ const turn = (r: Row): Turn => ({
   state: r.state as TurnState,
   result: r.result === null ? null : String(r.result),
   error: r.error === null ? null : String(r.error),
-  kind: (r.kind as TurnKind | undefined) ?? 'message',
+  kind: r.kind as TurnKind,
   agent: r.agent == null ? null : String(r.agent),
   directory: r.directory == null ? null : String(r.directory),
   seed: r.seed == null ? null : String(r.seed),
@@ -275,8 +275,7 @@ export class ConversationStore implements ConversationStoreApi {
         .prepare(`UPDATE ${this.n.turns} SET state='running' WHERE id=? AND state='queued'`)
         .run(id);
       if (Number(update.changes) !== 1) return null;
-      const row = this.core.db.prepare(`${this.select} WHERE t.id=?`).get(id);
-      return row ? turn({ ...row, state: 'running' }) : null;
+      return turn({ ...this.core.db.prepare(`${this.select} WHERE t.id=?`).get(id)!, state: 'running' });
     });
   }
 
@@ -324,7 +323,7 @@ export class ConversationStore implements ConversationStoreApi {
    * The conversation whose pending turn keeps `channel`'s next turn waiting: the same
    * issue busy elsewhere; null when nothing stands in the way.
    */
-  waitingOn(channel: string): { channel: string; issue: string | null } | null {
+  waitingOn(channel: string): { channel: string; issue: string } | null {
     const row = this.core.db
       .prepare(
         `SELECT bs.channel AS channel, bs.issue AS issue FROM ${this.n.sessions} s
@@ -333,7 +332,7 @@ export class ConversationStore implements ConversationStoreApi {
          WHERE s.channel=? LIMIT 1`,
       )
       .get(channel);
-    return row ? { channel: String(row.channel), issue: row.issue == null ? null : String(row.issue) } : null;
+    return row ? { channel: String(row.channel), issue: String(row.issue) } : null;
   }
 
   /**

@@ -108,6 +108,36 @@ test('a delivery the diary kept no body for cannot pass the seal, and ends the i
   await assert.rejects(waitDiary(store, installation(LONG_WINDOW_MS), 0, say), BAD_SEAL);
 });
 
+test('a verified delivery that names little is still heard, for as much as it names', async t => {
+  const named = 'something the payload did not name';
+  await t.test('a payload that is JSON null', async t => {
+    const { rows, store, say, said } = begin(t);
+    rows.push(delivery(1, 'installation', null));
+    assert.deepEqual(await waitDiary(store, installation(LONG_WINDOW_MS), 0, say), { mine: 1, others: 0, last: 1 });
+    assert.deepEqual(said(), [`Heard: installation on ${named}`]);
+  });
+  await t.test('no body at all, when the seal vouches for the empty one', async t => {
+    const { rows, store, say, said } = begin(t);
+    const headers = {
+      'x-github-event': 'installation',
+      'x-hub-signature-256': webhookSignature(SECRET, Buffer.from('')),
+    };
+    rows.push(delivery(1, 'installation', {}, { body: null, headers }));
+    assert.deepEqual(await waitDiary(store, installation(LONG_WINDOW_MS), 0, say), { mine: 1, others: 0, last: 1 });
+    assert.deepEqual(said(), [`Heard: installation on ${named}`]);
+  });
+  await t.test('no event header: it names no event, and the window closes on it', async t => {
+    const { rows, store, say, said } = begin(t);
+    const body = JSON.stringify({ action: 'created' });
+    const headers = { 'x-hub-signature-256': webhookSignature(SECRET, Buffer.from(body)) };
+    rows.push(delivery(1, 'installation', { action: 'created' }, { headers }));
+    const waiting = waitDiary(store, installation(BEFORE_FIRST_POLL_MS), 0, say);
+    t.mock.timers.tick(BEFORE_FIRST_POLL_MS);
+    assert.deepEqual(await waiting, { mine: 0, others: 0, last: 1 });
+    assert.deepEqual(said(), [`Heard:  created on ${named}`]);
+  });
+});
+
 test('a diary emptied behind the mark is followed from its new start, by both waits', async t => {
   await t.test('the installation wait', async t => {
     const { rows, store, say } = begin(t);
