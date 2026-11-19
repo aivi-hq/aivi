@@ -147,6 +147,52 @@ test('a worktree elsewhere that holds the branch continues it — git allows one
   assert.equal(again.base, 'existing worktree');
 });
 
+test('a branch that exists only locally is checked out as it is, with no remote tip to start from', async t => {
+  const { source } = await scratch(t);
+  const path = worktreePathFor(source, 'as_1');
+  const { git, calls } = scriptedGit((cwd, args) => {
+    if (args.join(' ') === 'rev-parse --verify --quiet refs/heads/me/eng-1-fix') return 'the-local-tip';
+    return empty()(cwd, args);
+  });
+  const made = await ensureWorktree({ source, path, branch: 'me/eng-1-fix', identity: BOT, git });
+  assert.deepEqual(made, { path, branch: 'me/eng-1-fix', base: 'me/eng-1-fix' });
+  assert.ok(
+    calls.some(call => call.args.join(' ') === `worktree add --quiet ${path} me/eng-1-fix`),
+    'the local branch is not reset: no -B, no -b',
+  );
+});
+
+test('a branch nowhere yet starts from the remote default branch, else the checkout’s upstream, else HEAD', async t => {
+  const { source } = await scratch(t);
+  const fails = { fail: 'fatal: no such ref' };
+  const cases: [string, { head: Reply; upstream: Reply }, string][] = [
+    ['origin/HEAD names the default branch', { head: 'origin/main', upstream: fails }, 'origin/main'],
+    [
+      'origin/HEAD is not set, the checked-out branch has an upstream',
+      { head: fails, upstream: 'origin/trunk' },
+      'origin/trunk',
+    ],
+    ['origin/HEAD answers nothing and the upstream cannot be read', { head: '', upstream: fails }, 'HEAD'],
+    ['origin/HEAD cannot be read and the upstream answers nothing', { head: fails, upstream: '' }, 'HEAD'],
+  ];
+
+  for (const [what, answers, base] of cases) {
+    const path = worktreePathFor(source, 'as_1');
+    const { git, calls } = scriptedGit((cwd, args) => {
+      const key = args.join(' ');
+      if (key === 'symbolic-ref --quiet --short refs/remotes/origin/HEAD') return answers.head;
+      if (key === 'rev-parse --abbrev-ref --symbolic-full-name @{u}') return answers.upstream;
+      return empty()(cwd, args);
+    });
+    const made = await ensureWorktree({ source, path, branch: 'me/eng-1-fix', identity: BOT, git });
+    assert.equal(made.base, base, what);
+    assert.ok(
+      calls.some(call => call.args.join(' ') === `worktree add --quiet -b me/eng-1-fix ${path} ${base}`),
+      what,
+    );
+  }
+});
+
 test('a worker worktree says aivi launched it: the mark rides in the worktree’s own config', async t => {
   const { source } = await scratch(t);
   const path = worktreePathFor(source, 'as_1');
@@ -233,5 +279,21 @@ test('a branch held by another worktree is named by the teardown, never swallowe
     await removeWorktree(source, path, undefined, git),
     'me/eng-11',
     'the leftover branch is answered, and the caller says so',
+  );
+});
+
+test('a worktree whose branch cannot be read is still taken down, and no branch is deleted', async t => {
+  const { source } = await scratch(t);
+  const path = worktreePathFor(source, 'as_unreadable');
+  await mkdir(join(path, '.git'), { recursive: true });
+  const { git, calls } = scriptedGit((cwd, args) => {
+    if (cwd === path && args.join(' ') === 'rev-parse --abbrev-ref --quiet HEAD') return { fail: 'fatal: bad HEAD' };
+    return empty()(cwd, args);
+  });
+  assert.equal(await removeWorktree(source, path, undefined, git), undefined);
+  assert.deepEqual(
+    calls.map(call => call.args.join(' ')),
+    ['rev-parse --abbrev-ref --quiet HEAD', `worktree remove --force ${path}`],
+    'the directory goes; with no branch name to go by, nobody’s branch is deleted',
   );
 });

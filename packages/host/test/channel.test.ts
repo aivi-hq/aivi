@@ -3,7 +3,14 @@ import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
 import type { OpenCodeClient } from '@aivi/plugin/module';
-import { ChannelEngine, OFFLINE_MID_REPLY, STOPPED_NOTICE, STOPPED_REASON, splitReply } from '../src/channel/engine.ts';
+import {
+  ChannelEngine,
+  type EngineOptions,
+  OFFLINE_MID_REPLY,
+  STOPPED_NOTICE,
+  STOPPED_REASON,
+  splitReply,
+} from '../src/channel/engine.ts';
 import { ConversationStore } from '../src/channel/store.ts';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore } from '../src/dispatcher/leases.ts';
@@ -746,22 +753,25 @@ test('a worker turn that ends without proof that it stopped blocks, and its slot
   );
 });
 
-test('a store that fails under a turn stops the engine, tells the host, and drain says why', async () => {
+/** A turn answered after its store closed: the outcome has nowhere to go. */
+function turnWhoseStoreFails(options: EngineOptions = {}) {
   const core = new Store(':memory:');
   const store = new ConversationStore(core, platform, 'binding');
   store.enqueue(message('one'), 10);
   const capacity = new TestCapacity(1);
   const answer = Promise.withResolvers<string>();
+  const engine = new ChannelEngine(store, limits, capacity, () => answer.promise, quietly, options);
+  engine.tick();
+  core.close();
+  answer.resolve('Answer');
+  return { engine, capacity };
+}
+
+test('a store that fails under a turn stops the engine, tells the host, and drain says why', async () => {
   const failures: unknown[] = [];
   const { log, said } = recorder();
-  const engine = new ChannelEngine(store, limits, capacity, () => answer.promise, quietly, {
-    log,
-    onFailure: error => failures.push(error),
-  });
-  engine.tick();
-  core.close(); // the turn's outcome has nowhere to go
+  const { engine, capacity } = turnWhoseStoreFails({ log, onFailure: error => failures.push(error) });
 
-  answer.resolve('Answer');
   await assert.rejects(engine.drain());
   assert.equal(engine.stopped, true, 'an unreliable store ends the engine');
   assert.equal(failures.length, 1, 'and the host hears it');
@@ -770,6 +780,132 @@ test('a store that fails under a turn stops the engine, tells the host, and drai
     ['engine.failed'],
   );
   assert.equal(capacity.heldCount(), 0, 'the slot is paid back all the same');
+});
+
+test('a store that fails under a turn stops an engine that nobody listens to as well', async () => {
+  const { engine, capacity } = turnWhoseStoreFails();
+
+  await assert.rejects(engine.drain());
+  assert.equal(engine.stopped, true);
+  assert.equal(capacity.heldCount(), 0);
+});
+
+test('a person who cannot be told why their turn failed is warned about in the log; the turn is over all the same', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one'), 10);
+  const capacity = new TestCapacity(1);
+  const refused = new Error('missing access');
+  const { log, said } = recorder();
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    capacity,
+    async () => {
+      throw new Error('lost after prompt');
+    },
+    {
+      send: async () => {
+        throw refused;
+      },
+    },
+    { log },
+  );
+
+  engine.tick();
+  await engine.drain();
+
+  assert.equal(store.state('one'), 'discarded');
+  assert.equal(capacity.heldCount(), 0);
+  const warned = said('warn');
+  assert.deepEqual(
+    warned.map(line => line.event),
+    ['turn.failed', 'notify.failed'],
+  );
+  assert.equal(warned[1]!.error, refused);
+});
+
+test('a waiting conversation that cannot be told about the shutdown is warned about, and the shutdown goes on', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  store.enqueue(message('one', 'dm-a'), 10);
+  store.enqueue(message('two', 'dm-b'), 10);
+  const refused = new Error('missing access');
+  const { log, said } = recorder();
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    new TestCapacity(1),
+    async () => 'Answer',
+    {
+      send: async () => {
+        throw refused;
+      },
+    },
+    { log },
+  );
+
+  await engine.shutdown();
+
+  assert.deepEqual(said('warn'), [
+    { level: 'warn', event: 'notify.failed', channel: 'dm-a', error: refused },
+    { level: 'warn', event: 'notify.failed', channel: 'dm-b', error: refused },
+  ]);
+  assert.deepEqual(
+    store.list().map(turn => turn.state),
+    ['queued', 'queued'],
+    'their messages stay queued for the next start',
+  );
+});
+
+test('a turn of a conversation that already has its session asks the dispatcher to resume that session', async t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  const asked: Parameters<TestCapacity['request']>[0][] = [];
+  class Recording extends TestCapacity {
+    override request(input: Parameters<TestCapacity['request']>[0]) {
+      asked.push(input);
+      return super.request(input);
+    }
+  }
+  const engine = new ChannelEngine(
+    store,
+    limits,
+    new Recording(),
+    async (_turn, _signal, ready) => {
+      ready();
+      return 'Answer';
+    },
+    quietly,
+  );
+
+  store.enqueue(message('one'), 10);
+  engine.tick();
+  await engine.drain();
+  store.enqueue(message('two'), 10);
+  engine.tick();
+  await engine.drain();
+
+  assert.deepEqual(asked, [
+    { service: 'discord', pool: 'local-model' },
+    { service: 'discord', pool: 'local-model', resume: store.sessionOf('dm-a')!.session },
+  ]);
+});
+
+test('the store has no state for a turn it never saw, and will not resolve a blocked turn without a reason', t => {
+  const core = new Store(':memory:');
+  t.after(() => core.close());
+  const store = new ConversationStore(core, platform, 'binding');
+  assert.equal(store.state('never-enqueued'), undefined);
+
+  store.enqueue(message('one'), 10);
+  const running = claimTurn(store)!;
+  store.block(running.id);
+  assert.throws(() => store.resolve(running.id, '  '), /A reason is required/);
+  assert.equal(store.state(running.id), 'blocked', 'still waiting for someone to say what happened');
 });
 
 test('a shutdown that cuts a reply mid-delivery discards the turn and says the answer may be incomplete', async t => {

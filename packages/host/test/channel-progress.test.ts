@@ -101,6 +101,21 @@ test('tool names: codemode execute shows the aivi tools its code calls; native t
     { name: 'bash', detail: `${'x'.repeat(39)}…` },
   ]);
   assert.deepEqual(describeToolCall('todowrite', { todos: [] }), [{ name: 'todowrite' }]);
+  assert.deepEqual(describeToolCall('webfetch', { url: 'handbook' }), [{ name: 'webfetch', detail: 'handbook' }]);
+  assert.deepEqual(
+    describeToolCall('execute', {
+      code: [
+        'tools.knowledge.search({ query: "leave" });',
+        'tools.knowledge.search({ query: "leave" });',
+        'tools.knowledge.search({ query: "pay" });',
+      ].join('\n'),
+    }),
+    [
+      { name: 'knowledge.search', detail: '"leave"' },
+      { name: 'knowledge.search', detail: '"pay"' },
+    ],
+    'the same call made twice is shown once; the same tool asked something else is a call of its own',
+  );
 });
 
 test('the reducer follows a turn through thinking, tools and writing; the renderer has two modes and a long-turn suffix', () => {
@@ -185,6 +200,81 @@ test('the reducer follows a turn through thinking, tools and writing; the render
   assert.equal(nextRenderChange(fresh, 31_000), 35_000, 'the idle notice comes before the next refresh mark');
   assert.equal(nextRenderChange(fresh, 35_000), 61_000);
   assert.equal(nextRenderChange(fresh, 61_000, { ...DEFAULT_CLOCK, refreshMs: 10_000 }), 71_000);
+});
+
+test('a tool that arrives without its start, or without a name, is still listed', () => {
+  const state = fold([
+    ev('session.tool.called', { id: 'a', name: 'read', input: { filePath: '/k/handbook.md' } }),
+    ev('session.tool.called', { id: 'b' }),
+    ev('session.tool.input.started', { id: 'c' }),
+  ]);
+  assert.deepEqual(state.tools, [
+    { id: 'a', name: 'read', detail: 'handbook.md', state: 'running' },
+    { id: 'b', name: 'tool', state: 'running' },
+    { id: 'c', name: 'tool', state: 'running' },
+  ]);
+  assert.equal(state.phase, 'tool');
+  assert.equal(renderProgress(state, 'status', 1), '🔧 tool', 'a tool with no verb of its own is shown under its name');
+});
+
+test('an execute whose code only travels with its result is named when the call ends', () => {
+  const started = fold([
+    ev('session.tool.input.started', { id: 'e', name: 'execute' }),
+    ev('session.tool.input.started', { id: 'r', name: 'read' }),
+  ]);
+  assert.deepEqual(started.tools, [
+    { id: 'e', name: 'execute', state: 'running', pending: true },
+    { id: 'r', name: 'read', state: 'running' },
+  ]);
+
+  const ended = fold(
+    [
+      ev('session.tool.success', { id: 'e', input: { code: 'return tools.aivi.status();' } }),
+      ev('session.tool.failed', { id: 'r', input: { filePath: '/k/a.md' } }),
+    ],
+    started,
+  );
+  assert.deepEqual(ended.tools, [
+    { id: 'e', name: 'aivi.status', state: 'done' },
+    { id: 'r', name: 'read', state: 'failed' },
+  ]);
+  assert.equal(ended.phase, 'thinking');
+});
+
+test('progress that names no tool changes nothing; named tools replace their wrapper in place and keep the detail already shown', () => {
+  const wrapped = fold([
+    ev('session.tool.input.started', { id: 'c', name: 'execute' }),
+    ev('session.tool.called', { id: 'c', input: { code: 'return tools.knowledge.search({ query: "leave" })' } }),
+  ]);
+  const nothingNamed = fold(
+    [
+      ev('session.tool.progress', { id: 'c' }),
+      ev('session.tool.progress', { id: 'c', metadata: { toolCalls: 'none' } }),
+      ev('session.tool.progress', { id: 'c', metadata: { toolCalls: [] } }),
+      ev('session.tool.progress', { id: 'c', metadata: { toolCalls: [{ status: 'running' }] } }),
+    ],
+    wrapped,
+    50,
+  );
+  assert.deepEqual(nothingNamed.tools, wrapped.tools);
+  assert.equal(nothingNamed.lastActivityAt, 50, 'but each one is a sign of life');
+
+  const named = (id: string, status: string) =>
+    ev('session.tool.progress', { id, metadata: { toolCalls: [{ tool: 'knowledge.search', status }] } });
+  assert.deepEqual(fold([named('c', 'completed')], wrapped).tools, [
+    { id: 'c', name: 'knowledge.search', detail: '"leave"', state: 'done' },
+  ]);
+  assert.deepEqual(fold([named('other', 'failed')], wrapped).tools, [
+    { id: 'c', name: 'knowledge.search', detail: '"leave"', state: 'running' },
+    { id: 'other', name: 'knowledge.search', state: 'failed' },
+  ]);
+});
+
+test('an event with no data counts only as activity', () => {
+  const before = fold([ev('session.tool.input.started', { id: 'a', name: 'read' })]);
+  const after = reduceProgress(before, { type: 'session.usage.updated' }, 9);
+  assert.deepEqual({ ...after, lastActivityAt: before.lastActivityAt }, before);
+  assert.equal(after.lastActivityAt, 9);
 });
 
 function fakeEvents() {

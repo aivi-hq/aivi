@@ -25,6 +25,8 @@ interface Fake {
   creates: { value: 'answered' | 'lost' | 'refused' };
   /** Every create waits for this first: the window a revoke can land in. */
   createGate: { value?: Promise<void> };
+  /** true: no client can be built at all (nothing to point at), the way `opencode()` rejects. */
+  down: { value: boolean };
 }
 
 function fakeOpenCode(agentModel: unknown = { providerID: 'agentprov', id: 'agentmodel' }): Fake {
@@ -40,6 +42,7 @@ function fakeOpenCode(agentModel: unknown = { providerID: 'agentprov', id: 'agen
     created: [],
     creates: { value: 'answered' },
     createGate: {},
+    down: { value: false },
   };
   fake.client = {
     agent: { list: async () => ({ data: [{ id: 'dev', ...(agentModel ? { model: agentModel } : {}) }] }) },
@@ -91,14 +94,17 @@ function harness(
   leases = new LeaseStore(new Store(':memory:')),
 ) {
   const ended: { id: string; reason: string; code?: string }[] = [];
-  const { log, said } = recorder();
+  const { log, said, next } = recorder();
   let ending = Promise.withResolvers<void>();
   const dispatcher = new Dispatcher({
     leases,
     dispatcher: dispatcherConfig(written),
     idleMs: clocks.idleMs ?? 60_000,
     prepareMs: clocks.prepareMs ?? 300_000,
-    opencode: async () => fake.client,
+    opencode: async () => {
+      if (fake.down.value) throw new Error('No running OpenCode v2 service found');
+      return fake.client;
+    },
     log,
     onEnded: (lease, reason, code) => {
       ended.push({ id: lease.id, reason, ...(code ? { code } : {}) });
@@ -110,7 +116,7 @@ function harness(
   const nextEnding = () => ending.promise;
   /** Every warning the dispatcher said so far, with its fields. */
   const warned = () => said('warn');
-  return { leases, dispatcher, ended, warned, nextEnding, fake };
+  return { leases, dispatcher, ended, warned, nextEnding, nextLine: next, fake };
 }
 
 test('unlimited mode grants everything, and the agent file alone decides the model', async () => {
@@ -797,4 +803,71 @@ test('one strike is all a session gets when the config says so, and the ending c
   ]);
   assert.deepEqual(fake.interrupted, [provided.sessionId]);
   assert.equal(dispatcher.held(), 0, 'the slot comes back even though the session did not');
+});
+
+test('an interrupt that fails is said, and the active set alone decides whether the slot comes back', async () => {
+  const { dispatcher, leases, ended, warned, fake } = harness({ dispatcher: { pools: { default: { capacity: 2 } } } });
+  const stopped = await working(dispatcher);
+  const spending = await working(dispatcher);
+  fake.busy.add(spending.sessionId!);
+  fake.client.session.interrupt = async () => {
+    throw new Error('interrupt refused');
+  };
+
+  assert.ok(
+    'ended' in (await dispatcher.expire(stopped.id, 'idle beyond the timeout')),
+    'a session not listed as active',
+  );
+  assert.ok('pending' in (await dispatcher.expire(spending.id, 'idle beyond the timeout')), 'a session still listed');
+  assert.deepEqual(
+    warned()
+      .filter(line => line.event === 'expire.interrupt.failed')
+      .map(line => [line.lease, (line.error as Error).message]),
+    [
+      [stopped.id, 'interrupt refused'],
+      [spending.id, 'interrupt refused'],
+    ],
+  );
+  assert.equal(leases.held('default'), 1, 'only the session that stopped spending gave its slot back');
+  assert.deepEqual(
+    ended.map(entry => entry.id),
+    [stopped.id],
+  );
+});
+
+test('an idle clock that strikes while no OpenCode can be reached is said as a monitor failure', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { dispatcher, nextLine, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } }, undefined, {
+    idleMs: 1_000,
+  });
+  const provided = await working(dispatcher);
+  fake.down.value = true;
+
+  const monitor = nextLine('monitor.failed');
+  t.mock.timers.tick(1_000);
+  const line = await monitor;
+  assert.equal(line.level, 'warn');
+  assert.equal(line.lease, provided.id);
+  assert.equal((line.error as Error).message, 'No running OpenCode v2 service found');
+});
+
+test('a service callback that rejects is said, and the release that woke it still completes', async () => {
+  const { dispatcher, nextLine } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const failure = new Error('the store failed');
+  dispatcher.registerCallback('caller', async () => {
+    throw failure;
+  });
+  const holder = mustGrant(dispatcher.request({ service: 'holder' }));
+  const waiting = dispatcher.request({ service: 'caller' });
+  assert.ok('queued' in waiting, 'the pool is full: the ask waits');
+
+  assert.ok('ended' in (await dispatcher.release(holder.id)));
+  const line = await nextLine('callback.failed');
+  assert.deepEqual(line, {
+    level: 'warn',
+    event: 'callback.failed',
+    service: 'caller',
+    request: queuedId(waiting),
+    error: failure,
+  });
 });
