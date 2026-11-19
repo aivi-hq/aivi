@@ -56,11 +56,16 @@ const host = async (
 ) => {
   const server = createServer();
   const wss = new WebSocketServer({ noServer: true });
+  // The upgraded sockets are the ws's now, and `server.close()` waits for them: they end with the test.
+  const sockets = new Set<Duplex>();
   server.on('upgrade', (request, socket, head) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
     behavior(request, socket, head, onSocket => wss.handleUpgrade(request, socket, head, onSocket));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => {
+    for (const socket of sockets) socket.destroy();
     wss.close();
     server.close();
   });

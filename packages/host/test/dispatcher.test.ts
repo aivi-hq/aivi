@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { type Config, configSchema } from '@aivi/core';
 import type { OpenCodeClient } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
@@ -87,20 +87,30 @@ interface Clocks {
   prepareMs?: number;
 }
 
+/** Every dispatcher these tests built: ended with the file, so the clocks it armed do not hold the process open. */
+const hosts: AbortController[] = [];
+after(() => {
+  for (const host of hosts) host.abort();
+});
+
 function harness(
   written: Record<string, unknown>,
   fake = fakeOpenCode(),
   clocks: Clocks = {},
   leases = new LeaseStore(new Store(':memory:')),
+  bound = true,
 ) {
   const ended: { id: string; reason: string; code?: string }[] = [];
   const { log, said, next } = recorder();
   let ending = Promise.withResolvers<void>();
+  const host = new AbortController();
+  if (bound) hosts.push(host);
   const dispatcher = new Dispatcher({
     leases,
     dispatcher: dispatcherConfig(written),
     idleMs: clocks.idleMs ?? 60_000,
     prepareMs: clocks.prepareMs ?? 300_000,
+    ...(bound ? { signal: host.signal } : {}),
     opencode: async () => {
       if (fake.down.value) throw new Error('No running OpenCode v2 service found');
       return fake.client;
@@ -297,6 +307,22 @@ test('expire kills before it frees: an unconfirmed kill holds the slot, the conf
   assert.deepEqual(ended, [{ id: provided.id, reason: 'idle beyond the timeout' }], 'the owner is told');
 });
 
+test('a dispatcher bound to no host gives its own calls to OpenCode a timeout: the kill and the boot pass still go out', async () => {
+  const { dispatcher, leases, ended, fake } = harness({}, fakeOpenCode(), {}, undefined, false);
+  const granted = dispatcher.request({ service: 'orchestrator' });
+  if (!('lease' in granted)) throw assert.fail('granted');
+  const provided = await dispatcher.provide(granted.lease.id, { agent: 'dev', directory: '/w' });
+
+  const done = await dispatcher.expire(provided.id, 'idle beyond the timeout');
+  assert.equal('ended' in done, true);
+  assert.deepEqual(fake.interrupted, [provided.sessionId], 'the kill went out');
+  assert.deepEqual(ended, [{ id: provided.id, reason: 'idle beyond the timeout' }]);
+
+  const pass = await dispatcher.reconcile();
+  assert.deepEqual(pass, { ended: [], deferred: false }, 'the boot pass read OpenCode and found nothing to end');
+  assert.equal(leases.all().length, 0, 'no lease is held');
+});
+
 test('a release mid-expiry confirms the kill first — an unconfirmed release never hands the slot to the queue', async () => {
   const { dispatcher, leases, ended, fake } = harness(
     { dispatcher: { pools: { default: { capacity: 1 } } } },
@@ -389,6 +415,29 @@ test('boot reconcile: gone sessions release, alive ones stand, expired kills con
   const deferred = await dispatcher.reconcile();
   assert.deepEqual(deferred, { ended: [], deferred: true });
   assert.equal(leases.get(alive.id)?.state, 'active', 'silence is not proof of death');
+});
+
+// Pinned as it stands today: docs/backlog (a pool the config no longer names) rules a different ending, the
+// worker stopped; this test then changes with it.
+test('boot reconcile ends the lease of a pool the config no longer names, and tells its owner why', async () => {
+  const before = harness({ dispatcher: { pools: { local: { capacity: 2 }, spare: { capacity: 2 } } } });
+  const held = mustGrant(before.dispatcher.request({ service: 'orchestrator', pool: 'spare' }));
+  await before.dispatcher.provide(held.id, { agent: 'dev', directory: '/w' });
+  const { dispatcher, ended } = harness(
+    { dispatcher: { pools: { local: { capacity: 2 } } } },
+    before.fake,
+    {},
+    before.leases,
+  );
+
+  const result = await dispatcher.reconcile();
+
+  assert.deepEqual(
+    result.ended.map(e => e.reason),
+    ['its pool is no longer configured'],
+  );
+  assert.deepEqual(ended, [{ id: held.id, reason: 'its pool is no longer configured' }]);
+  assert.equal(before.leases.held('spare'), 0, 'the slot is free');
 });
 
 test('a lease is provided once: a second session for the same lease is refused as loudly as a double release', async () => {

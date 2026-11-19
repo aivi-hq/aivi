@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type TestContext, test } from 'node:test';
+import { after, type TestContext, test } from 'node:test';
 import { promisify } from 'node:util';
 import { configSchema, type Logger, type ProjectLane, type PromptName, readPrompt } from '@aivi/core';
 import type { Tracker } from '@aivi/plugin';
@@ -222,6 +222,12 @@ function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boo
   return scripted;
 }
 
+/** Every host these tests built: ended with the file, so the clocks the units armed do not hold the process open. */
+const hosts: AbortController[] = [];
+after(() => {
+  for (const host of hosts) host.abort();
+});
+
 function harness(
   lanes: ProjectLane[],
   written: Record<string, unknown>,
@@ -233,6 +239,7 @@ function harness(
   prompt?: (name: PromptName) => Promise<string>,
   git?: OrchestratorGit,
 ) {
+  hosts.push(abort);
   // The unit's clocks, in ms: a test that watches the keep-alive expire
   // writes `clocks: { keepAliveMs: 30 }` into the harness block instead of
   // a config duration — the strings are the person's surface, numbers are
@@ -1011,12 +1018,7 @@ interface ReviewStore {
   reviews: unknown[];
 }
 
-function localForge(
-  origin: string,
-  seen: { pushes: { branch: string; lease?: string }[]; opens: string[] },
-  prs: Map<string, string>,
-  review?: ReviewStore,
-) {
+function localForge(origin: string, seen: { opens: string[] }, prs: Map<string, string>, review?: ReviewStore) {
   return {
     async repoFor(project: { id: string }) {
       return project.id === 'site' ? { id: 'acme/site', remote: origin } : undefined;
@@ -1033,18 +1035,6 @@ function localForge(
     },
     async fetchRefs(_repo: unknown, directory: string) {
       await exec('git', ['-C', directory, 'fetch', '-q', '--prune', origin, '+refs/heads/*:refs/remotes/origin/*']);
-    },
-    async push(_repo: unknown, directory: string, branch: string, options?: { lease?: string }) {
-      seen.pushes.push({ branch, ...(options?.lease ? { lease: options.lease } : {}) });
-      await exec('git', [
-        '-C',
-        directory,
-        'push',
-        '-q',
-        ...(options?.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
-        origin,
-        `HEAD:refs/heads/${branch}`,
-      ]);
     },
     async prForBranch(_repo: unknown, branch: string) {
       const state = prs.get(branch);
@@ -1670,7 +1660,7 @@ async function gateFixture(
     plain: [],
     reviews: [],
   };
-  const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
+  const seen = { opens: [] as string[] };
   forges.register(localForge(upstream, seen, new Map([['me/t-gate', 'open']]), review) as never);
   const { ledger, orchestrator } = harness(lanes, {}, work, fake, new AbortController(), forges, () => source, prompt);
   await orchestrator.wake('site');

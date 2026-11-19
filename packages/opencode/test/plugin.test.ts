@@ -375,12 +375,7 @@ test('the jobs envelope forwards the calling session and message so the host can
 test('remote mode: url and bearer come from the client config when options say nothing', async t => {
   const xdg = await hermeticXdg(t);
   withToken(t, undefined);
-  const url = 'http://127.0.0.1:4321';
   const token = `aivi-${'f'.repeat(32)}`;
-  await writeFile(
-    join(xdg, 'aivi', 'config.json'),
-    JSON.stringify({ configVersion: 1, url, person: { token, id: 'person-1', name: 'Ada', roles: ['operator'] } }),
-  );
   const server: Server = createServer((request, response) => {
     assert.equal(request.headers.authorization, `Bearer ${token}`, 'the cached person bearer is sent');
     response.setHeader('content-type', 'application/json');
@@ -390,9 +385,19 @@ test('remote mode: url and bearer come from the client config when options say n
     }
     response.end('{"counts":{},"version":"1.2.3"}');
   });
-  // The client config names this port, so the server must take it.
-  await new Promise<void>(resolve => server.listen(4321, '127.0.0.1', resolve));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  // The client config names the port the server took.
+  await writeFile(
+    join(xdg, 'aivi', 'config.json'),
+    JSON.stringify({
+      configVersion: 1,
+      url: `http://127.0.0.1:${address.port}`,
+      person: { token, id: 'person-1', name: 'Ada', roles: ['operator'] },
+    }),
+  );
   let status: RegisteredTool | undefined;
   const cleanup = await setupWith({}, tool => {
     if (tool.name === 'status') status = tool;
