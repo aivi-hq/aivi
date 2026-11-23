@@ -1,5 +1,17 @@
 # @aivi/cli
 
+## 1.1.0
+
+### Minor Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The Node floor moves from 26.1.0 to 26.12.0: `engines.node` is now `>=26.12.0 <27`. `aivi update` reads the target's `engines` and provisions a managed Node when the machine's own is below it.
+
+### Patch Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`ae7ef07`](https://github.com/aivi-hq/aivi/commit/ae7ef07cce0c87ac46ddbd8466d58c50af00215e) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Report the supported scripted setup forms when a required prompt has no interactive terminal. This failure now reaches the CLI's error handler with its instructions, instead of being treated as a cancelled answer and reduced to a generic “Setup stopped” message.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`c0e0cec`](https://github.com/aivi-hq/aivi/commit/c0e0cecc4e317c8584f0539d6ea54180dad82a52) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Preserve an existing `app/.npmrc` when running setup in a populated home. Setup now writes the default npm configuration only when that file is missing, instead of replacing the operator's registry and install settings.
+
 ## 1.0.1
 
 No changes in this release.

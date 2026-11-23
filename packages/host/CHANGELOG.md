@@ -1,5 +1,35 @@
 # @aivi/host
 
+## 1.1.0
+
+### Minor Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`ba42595`](https://github.com/aivi-hq/aivi/commit/ba42595bda61b5f5e2cda7f37c050c0268e30e4e) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Remove `requestId` from `DispatcherLease` and from the input of `LeaseStore.grant`. Nothing ever wrote it: the dispatcher's queue lives in memory only. The `request_id` column stays in existing databases, unused.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The Node floor moves from 26.1.0 to 26.12.0: `engines.node` is now `>=26.12.0 <27`. `aivi update` reads the target's `engines` and provisions a managed Node when the machine's own is below it.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`f5fbb58`](https://github.com/aivi-hq/aivi/commit/f5fbb58b35c43005e404b6b4dc20fdc2ab0266e9) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Continue a resumed session in the pool its caller asks for when the pool it was created in is no longer configured. The dispatcher refused such a resume with `pool-gone`, so a conversation or a worker waiting on an answer stayed stuck until the old pool name came back. It now warns `resume.pool-gone`, moves the session to the asked pool and leaves its model as it was. An asked pool that is not configured either is the same error as before. An answer to a worker's question now asks for the pool of the run's lane. The `pool-gone` refusal is removed from `DispatcherGrant` and `Refusal`.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`963b389`](https://github.com/aivi-hq/aivi/commit/963b389aad16197ecfe1959936cf65fd34f4e5c4) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Export `ProgressPacer` and `stopSwitch`, with their types `PacerOptions` and `StopSwitch`. `ProgressPacer` is the throttle, the render state and the one timer behind a visible progress line: a chat placeholder and a ticket's status line now share it instead of each keeping a copy. `stopSwitch` is the stop that every module running a `ChannelEngine` holds: it aborts the module's own signal and stops the engine the module builds once it is connected.
+
+### Patch Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Catch the failure to give back a slot after a lease could not be fulfilled. The orchestrator's `fulfill.failed` handler released the slot inside a `try` that cannot catch a promise, so a release that failed became an unhandled rejection. A lease that is already gone is an answer, not a failure, and is now taken as one.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Draw another link code when a new one collides with a live one. The retry checked for an error code that `node:sqlite` never sets, so `aivi link` ended with a database error on a collision instead of drawing again. The code is now inserted with `ON CONFLICT DO NOTHING`, and drawn again when nothing was inserted.
+
+- [#72](https://github.com/aivi-hq/aivi/pull/72) [`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Update the pinned OpenCode package family to 2.2.7.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Cancel the orchestrator's timers when the host shuts down, as the dispatcher already does. A parked run's keep-alive (5 minutes by default) and a pending turn-end wait kept running through shutdown and could fire into a host that was ending. No timer is started after the signal either. The boot pass starts the keep-alive of parked runs again, as before.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Fix `--project` on `aivi sources` and `aivi knowledge search`: the first `--project` value ended the command with an error, because the option's collector expected a list that commander does not hand over for the first value. It now starts the list.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`2b6e212`](https://github.com/aivi-hq/aivi/commit/2b6e212bb0b8f1b11fecd44d13ce80d0fa2a6dd7) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Remove `ConversationStore.pendingForIssue`. Its only callers were the GitHub and Linear trackers' code that was meant to stop an assistant turn when its ticket changed. That code never ran: it looked conversations up by issue, and an assistant conversation is bound without one.
+- Updated dependencies [[`bded24b`](https://github.com/aivi-hq/aivi/commit/bded24b5075a042fe9088f8e8c7ddee23eccf30b), [`cd09e32`](https://github.com/aivi-hq/aivi/commit/cd09e322eb251fe6beb212b7503c6e3e0a78d91b), [`55dd260`](https://github.com/aivi-hq/aivi/commit/55dd260197f7dad82f2291f26059df3899c3ebee), [`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d), [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991), [`f5fbb58`](https://github.com/aivi-hq/aivi/commit/f5fbb58b35c43005e404b6b4dc20fdc2ab0266e9), [`963b389`](https://github.com/aivi-hq/aivi/commit/963b389aad16197ecfe1959936cf65fd34f4e5c4)]:
+  - @aivi/core@1.1.0
+  - @aivi/plugin@1.1.0
+  - @aivi/knowledge@1.1.0
+
 ## 1.0.1
 
 ### Patch Changes

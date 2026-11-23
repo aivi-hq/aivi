@@ -1,5 +1,21 @@
 # @aivi/plugin
 
+## 1.1.0
+
+### Minor Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The Node floor moves from 26.1.0 to 26.12.0: `engines.node` is now `>=26.12.0 <27`. `aivi update` reads the target's `engines` and provisions a managed Node when the machine's own is below it.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`f5fbb58`](https://github.com/aivi-hq/aivi/commit/f5fbb58b35c43005e404b6b4dc20fdc2ab0266e9) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Continue a resumed session in the pool its caller asks for when the pool it was created in is no longer configured. The dispatcher refused such a resume with `pool-gone`, so a conversation or a worker waiting on an answer stayed stuck until the old pool name came back. It now warns `resume.pool-gone`, moves the session to the asked pool and leaves its model as it was. An asked pool that is not configured either is the same error as before. An answer to a worker's question now asks for the pool of the run's lane. The `pool-gone` refusal is removed from `DispatcherGrant` and `Refusal`.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`963b389`](https://github.com/aivi-hq/aivi/commit/963b389aad16197ecfe1959936cf65fd34f4e5c4) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Export `pollWithin`, `PollWindow` and `askAgentLane` for plugin setup flows. `pollWithin` waits for something another process writes: it looks at once, again after every pause, and ends when the read says it is done, when it throws, or when the window ends. `askAgentLane` asks what an `agent` lane adds to its kind: which OpenCode agent works it and, with a forge configured, whether that work happens on the ticket's branch.
+
+### Patch Changes
+
+- [#72](https://github.com/aivi-hq/aivi/pull/72) [`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Update the pinned OpenCode package family to 2.2.7.
+- Updated dependencies [[`bded24b`](https://github.com/aivi-hq/aivi/commit/bded24b5075a042fe9088f8e8c7ddee23eccf30b), [`cd09e32`](https://github.com/aivi-hq/aivi/commit/cd09e322eb251fe6beb212b7503c6e3e0a78d91b), [`55dd260`](https://github.com/aivi-hq/aivi/commit/55dd260197f7dad82f2291f26059df3899c3ebee), [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991)]:
+  - @aivi/core@1.1.0
+
 ## 1.0.1
 
 ### Patch Changes

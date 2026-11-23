@@ -1,5 +1,26 @@
 # @aivi/tracker-github
 
+## 1.1.0
+
+### Minor Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The Node floor moves from 26.1.0 to 26.12.0: `engines.node` is now `>=26.12.0 <27`. `aivi update` reads the target's `engines` and provisions a managed Node when the machine's own is below it.
+
+### Patch Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`4e75c8c`](https://github.com/aivi-hq/aivi/commit/4e75c8c44672a8870768be1f605f8c48a5914068) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Give back the webhook route and the event subscription when the module's start fails after it took them. The supervisor retries a failed start, and the route a half-started module left registered made every retry fail with "registered twice", so the module stayed degraded until the host restarted.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`4e75c8c`](https://github.com/aivi-hq/aivi/commit/4e75c8c44672a8870768be1f605f8c48a5914068) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Say a run's closing once when a wake arrives while it is being said. A wake used to start a second closing beside the one in flight; both asked GitHub before either had spoken, so the final comment could be posted twice. A wake now joins the closing already under way.
+
+- [#74](https://github.com/aivi-hq/aivi/pull/74) [`423feaf`](https://github.com/aivi-hq/aivi/commit/423feaf096b5e99c6dfc2737bf886e18596a55f9) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Stop GitHub setup's progress spinner when webhook verification or the request-diary store fails. The original error still propagates and no configuration is written, but the installer no longer leaves its progress animation running after the failure.
+
+- [#74](https://github.com/aivi-hq/aivi/pull/74) [`2199c40`](https://github.com/aivi-hq/aivi/commit/2199c40e2f94e50f798e237be587e83922ecc5c0) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Fix GitHub setup's webhook check so any correctly signed delivery to the configured endpoint counts as proof and completes the check immediately. Previously, non-installation events were logged but ignored by the result, so setup could falsely report that nothing arrived.
+- Updated dependencies [[`bded24b`](https://github.com/aivi-hq/aivi/commit/bded24b5075a042fe9088f8e8c7ddee23eccf30b), [`cd09e32`](https://github.com/aivi-hq/aivi/commit/cd09e322eb251fe6beb212b7503c6e3e0a78d91b), [`55dd260`](https://github.com/aivi-hq/aivi/commit/55dd260197f7dad82f2291f26059df3899c3ebee), [`ba42595`](https://github.com/aivi-hq/aivi/commit/ba42595bda61b5f5e2cda7f37c050c0268e30e4e), [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672), [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672), [`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d), [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672), [`efd7f56`](https://github.com/aivi-hq/aivi/commit/efd7f567facaf33364819598de8a5def2cdfc672), [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991), [`2b6e212`](https://github.com/aivi-hq/aivi/commit/2b6e212bb0b8f1b11fecd44d13ce80d0fa2a6dd7), [`f5fbb58`](https://github.com/aivi-hq/aivi/commit/f5fbb58b35c43005e404b6b4dc20fdc2ab0266e9), [`963b389`](https://github.com/aivi-hq/aivi/commit/963b389aad16197ecfe1959936cf65fd34f4e5c4), [`963b389`](https://github.com/aivi-hq/aivi/commit/963b389aad16197ecfe1959936cf65fd34f4e5c4)]:
+  - @aivi/core@1.1.0
+  - @aivi/host@1.1.0
+  - @aivi/plugin@1.1.0
+  - @aivi/github@1.1.0
+
 ## 1.0.0
 
 ### Major Changes
