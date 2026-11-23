@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} · aivi docs</title>
+  <meta name="description" content="{{description}}">
+  <meta property="og:title" content="{{title}} · aivi docs">
+  <meta property="og:description" content="{{description}}">
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e1c">
+  <link rel="icon" href="../aivi-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="../index.html" aria-label="aivi home"><img class="brand-mark" src="../aivi-mark.svg" alt="" width="34" height="30"><span>aivi</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html#work">See it work</a>
+        <a href="../index.html#roles">Ways to use it</a>
+        <a href="../index.html#runtime">How it works</a>
+        <a class="nav-current" href="index.html" aria-current="true">Docs</a>
+      </nav>
+      <a class="button button-small" href="first-five-minutes.html">Get started</a>
+    </div>
+  </header>
+
+  <div class="wrap docs-shell">
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      {{nav}}
+    </aside>
+
+    <main id="main" class="docs-main">
+      <article class="prose">
+        <p class="crumbs"><a href="index.html">Docs</a> / {{title}}</p>
+        <h1>{{title}}</h1>
+        <p class="lede">{{description}}</p>
+        {{content}}
+        <footer class="page-foot">
+          <a href="{{edit}}">{{editlabel}}</a>
+        </footer>
+      </article>
+
+      <nav class="page-nav" aria-label="Previous and next">
+        {{prevnext}}
+      </nav>
+    </main>
+
+    <aside class="docs-aside" aria-label="On this page">
+      {{toc}}
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <p class="brand-footer"><img class="footer-mark" src="../aivi-mark.svg" alt="" width="26" height="23"><span>aivi</span></p>
+        <p class="footer-copy">An always-on teammate built on OpenCode v2.</p>
+      </div>
+      <nav class="footer-links" aria-label="Elsewhere">
+        <a href="https://github.com/aivi-hq/aivi">GitHub</a>
+        <a href="index.html">Documentation</a>
+        <a href="first-five-minutes.html">First five minutes</a>
+        <a href="https://github.com/aivi-hq/aivi/blob/main/LICENSE">MIT license</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

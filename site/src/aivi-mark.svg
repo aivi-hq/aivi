@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="130 130 1080 950" role="img" aria-label="aivi">
+  <defs>
+    <linearGradient id="a-face-body" x1="340" y1="384" x2="884" y2="1044" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#37B9FB"/>
+      <stop offset=".4" stop-color="#3B82FF"/>
+      <stop offset=".72" stop-color="#484EFF"/>
+      <stop offset="1" stop-color="#582DFF"/>
+    </linearGradient>
+    <linearGradient id="a-face-bowl" x1="0" y1="506" x2="0" y2="1072" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2435F4"/>
+      <stop offset=".48" stop-color="#3677FF"/>
+      <stop offset="1" stop-color="#5832FF"/>
+    </linearGradient>
+    <radialGradient id="a-face-fold" cx="840" cy="850" r="460" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#222298" stop-opacity=".8"/>
+      <stop offset=".45" stop-color="#222298" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#222298" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="a-face-rays" x1="776" y1="160" x2="1112" y2="670" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#35BBFC"/>
+      <stop offset=".48" stop-color="#3B7CFF"/>
+      <stop offset="1" stop-color="#6134FF"/>
+    </linearGradient>
+    <linearGradient id="a-face-eyes" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#192A7E"/>
+      <stop offset="1" stop-color="#171B64"/>
+    </linearGradient>
+  </defs>
+  <path d="M 488 544 H 584 A 176 176 0 0 1 760 720 A 176 176 0 0 1 584 896 H 488 A 176 176 0 0 1 312 720 A 176 176 0 0 1 488 544 Z" fill="#DEE7F5"/>
+  <path fill="url(#a-face-body)" fill-rule="evenodd" d="M 488 376 A 344 344 0 0 0 144 720 A 344 344 0 0 0 488 1064 H 584 A 344 344 0 0 0 766.236874 1011.763126 A 84 84 0 0 0 928 980 V 720 A 344 344 0 0 0 584 376 H 488 Z M 488 544 H 584 A 176 176 0 0 1 760 720 A 176 176 0 0 1 584 896 H 488 A 176 176 0 0 1 312 720 A 176 176 0 0 1 488 544 Z"/>
+  <path fill="url(#a-face-bowl)" d="M 148 772.306787 C 164 618 288 506 418 506 C 477 506 529 522 576 544 H 488 A 176 176 0 0 0 312 720 A 176 176 0 0 0 488 896 H 584 A 176 176 0 0 0 760 720 V 980 A 84 84 0 0 0 766.236874 1011.763126 A 344 344 0 0 1 584 1064 H 488 A 344 344 0 0 1 148 772.306787 Z"/>
+  <path fill="url(#a-face-fold)" d="M 148 772.306787 C 164 618 288 506 418 506 C 477 506 529 522 576 544 H 488 A 176 176 0 0 0 312 720 A 176 176 0 0 0 488 896 H 584 A 176 176 0 0 0 760 720 V 980 A 84 84 0 0 0 766.236874 1011.763126 A 344 344 0 0 1 584 1064 H 488 A 344 344 0 0 1 148 772.306787 Z"/>
+  <g fill="url(#a-face-eyes)">
+    <rect x="402" y="676" width="76" height="100" rx="38"/>
+    <rect x="594" y="676" width="76" height="100" rx="38"/>
+  </g>
+  <g fill="url(#a-face-rays)">
+    <rect x="749.330003" y="146.635114" width="124" height="224" rx="62"/>
+    <path d="M 954.365054 430.639107 L 1025.075732 359.928428" stroke="url(#a-face-rays)" stroke-width="124" stroke-linecap="round"/>
+    <rect x="976.141696" y="536.940842" width="224" height="124" rx="62"/>
+  </g>
+</svg>

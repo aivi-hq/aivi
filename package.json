@@ -45,6 +45,8 @@
     "quality": "npx fallow --format codeclimate --fail-on-issues",
     "quality:h": "npx fallow",
     "agentic:verify": "npm run lint:fix && npm run check && npm run quality",
+    "site": "npm --prefix site run dev",
+    "site:build": "npm --prefix site run build",
     "prepare": "lefthook install"
   },
   "type": "module",

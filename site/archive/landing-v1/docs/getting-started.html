@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting started · aivi docs</title>
+  <meta name="description" content="Install aivi, create a server, and check that it answers.">
+  <meta property="og:title" content="Getting started · aivi docs">
+  <meta property="og:description" content="Install aivi, create a server, and check that it answers.">
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e1c">
+  <link rel="icon" href="../aivi-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="../index.html" aria-label="aivi home"><img class="brand-mark" src="../aivi-mark.svg" alt="" width="34" height="30"><span>aivi</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html#roles">Ways to use it</a>
+        <a href="../index.html#capabilities">What it does</a>
+        <a href="../index.html#runtime">How it works</a>
+        <a class="nav-current" href="index.html" aria-current="true">Docs</a>
+      </nav>
+      <a class="button button-small" href="getting-started.html">Get started</a>
+    </div>
+  </header>
+
+  <div class="wrap docs-shell">
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      <nav class="docs-nav" aria-label="Documentation">
+      <p class="docs-nav-title">Documentation</p>
+      <ol>
+        <li><a href="index.html">Overview</a></li>
+        <li><a class="active" aria-current="page" href="getting-started.html">Getting started</a></li>
+      <li><a href="ways.html">Ways to use aivi</a></li>
+      <li><a href="projects.html">Projects and tickets</a></li>
+      <li><a href="chat-knowledge.html">Chat and knowledge</a></li>
+      <li><a href="jobs-memory.html">Jobs and memory</a></li>
+      <li><a href="running.html">Running aivi</a></li>
+      </ol>
+    </nav>
+    </aside>
+
+    <main id="main" class="docs-main">
+      <article class="prose">
+        <p class="crumbs"><a href="index.html">Docs</a> / Getting started</p>
+        <h1>Getting started</h1>
+        <p class="lede">Install aivi, create a server, and check that it answers.</p>
+        <p>This guide takes a fresh machine to aivi answering questions and accepting work. You need about ten minutes, a terminal, and a machine that can stay on while people use it.</p>
+<h2 id="what-you-need">What you need</h2>
+<ul>
+<li>Node 26.12 or newer, below version 27, and npm.</li>
+<li>A macOS or Linux machine. A small Mac mini, a spare desktop or a Linux server all work.</li>
+<li>OpenCode v2 if you want to use the seeded agents in the editor. aivi can install the server without it, and setup will print the plugin commands to run later.</li>
+</ul>
+<p>The machine should stay awake. aivi runs jobs on its own schedule, and a sleeping laptop misses them.</p>
+<h2 id="install-the-cli-and-create-the-server">Install the CLI and create the server</h2>
+<pre><code class="language-sh">npm i -g @aivi/cli
+aivi setup
+</code></pre>
+<p>Setup is a short conversation. It asks whether this machine creates a new server or connects to one that already exists. For a new server it also asks for a name, whether this machine signs in as the operator, and whether the server should run in the background.</p>
+<p>Take the background service when the machine is meant to stay on. Setup installs it, waits for the server to answer, and ends with a verified line:</p>
+<pre><code class="language-text">Signed in as Ada. The server runs in the background; `aivi service logs` follows it.
+</code></pre>
+<p>If you choose the foreground instead, the same setup ends by telling you to run <code>aivi serve</code> in a terminal. Keep that terminal open while you use aivi.</p>
+<p>A headless server prints a URL and a token at the end. Take both to the machine where you use OpenCode and run <code>aivi setup</code> there, choosing the option to connect to an existing host.</p>
+<h2 id="check-that-it-runs">Check that it runs</h2>
+<pre><code class="language-sh">aivi status
+aivi whoami
+aivi jobs list
+</code></pre>
+<p><code>status</code> reports the host, its modules and the knowledge index. <code>whoami</code> shows the person this terminal signs in as. <code>jobs list</code> shows the schedules aivi owns, including the maintenance jobs it seeds for itself.</p>
+<p>If the server is in the background and something looks wrong, follow the log:</p>
+<pre><code class="language-sh">aivi service logs
+</code></pre>
+<h2 id="open-the-home-in-opencode">Open the home in OpenCode</h2>
+<p>Setup creates one home at <code>~/.aivi</code>. It holds the config, the database, the projects and the agents. It is also an OpenCode location, so you can open it directly:</p>
+<pre><code class="language-sh">opencode ~/.aivi
+</code></pre>
+<p>The seeded agents include <code>assistant</code>, <code>dreamer</code>, <code>product</code>, <code>dev</code> and <code>review</code>. They are ordinary OpenCode agent files in <code>~/.aivi/.opencode/agents/</code>. Edit them, add your own, or leave them alone until you have a reason to change them.</p>
+<p>Ask the assistant to list the projects and search the configured documents. With no project yet, it can still answer from the core knowledge sources.</p>
+<h2 id="add-a-project">Add a project</h2>
+<p>A project is a directory under <code>~/.aivi/projects/</code>. It can hold a git checkout, its own memory, and the worktrees aivi uses for ticket work.</p>
+<pre><code class="language-sh">aivi projects add
+</code></pre>
+<p>The command is interactive. It asks the configured forge to clone a repository and the configured tracker to map a board. With neither configured, it creates a repo-less project: a directory with memory and knowledge but no source checkout. That shape is useful for research work and for documents that do not live in a repository.</p>
+<p>Restart the server after adding or removing a project, because the host reads the projects directory at startup.</p>
+<pre><code class="language-sh">aivi service restart
+</code></pre>
+<h2 id="add-a-chat-channel">Add a chat channel</h2>
+<p>Discord and Slack are the two built-in chat channels. The plugin asks its own platform questions, verifies the tokens, and writes the config for you.</p>
+<pre><code class="language-sh">aivi add discord
+</code></pre>
+<p>The command prints how to create the Discord application and asks for the bot token and the channel IDs. When it finishes, the module is running. For Slack, run <code>aivi add slack</code> instead and use the manifest the CLI prints.</p>
+<p>People need a link before aivi will listen to them. Mint a code for yourself:</p>
+<pre><code class="language-sh">aivi link discord
+</code></pre>
+<p>Then send <code>/link &lt;code&gt;</code> to the bot on Discord. The code expires after 15 minutes and works once. The link is also the admission: linked people can DM aivi and are heard in the channels where it listens.</p>
+<h2 id="first-useful-things-to-ask">First useful things to ask</h2>
+<ul>
+<li>&quot;What did we decide about the database upgrade?&quot;</li>
+<li>&quot;Summarize the open work on the website project.&quot;</li>
+<li>&quot;Every Monday at 09:00, post a summary of last week&#39;s merged pull requests.&quot;</li>
+<li>&quot;Search the docs for the retry policy and show me the source.&quot;</li>
+</ul>
+<p>The assistant can create jobs, search knowledge and read project documents. Ticket work is separate, and it needs a tracker and a project with lanes.</p>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><a href="ways.html">Ways to use aivi</a> explains the three roles and how they combine.</li>
+<li><a href="projects.html">Projects and tickets</a> covers lanes, worktrees and delegation.</li>
+<li><a href="chat-knowledge.html">Chat and knowledge</a> covers channel commands and the search index.</li>
+<li><a href="jobs-memory.html">Jobs and memory</a> covers schedules and the nightly dreaming pass.</li>
+<li><a href="running.html">Running aivi</a> covers the service, logs, updates and recovery.</li>
+</ul>
+<p>The full reference lives in the repository. The <a href="https://github.com/aivi-hq/aivi/blob/main/docs/operations.md">operations guide</a> is the place to look when a run ends in <code>blocked</code> or a module stays <code>degraded</code>.</p>
+
+        <footer class="page-foot">
+          <a href="https://github.com/aivi-hq/aivi/edit/main/site/src/docs/getting-started.md">Edit this page on GitHub</a>
+        </footer>
+      </article>
+
+      <nav class="page-nav" aria-label="Previous and next">
+        <span></span><a class="page-nav-link page-nav-next" href="ways.html"><span>Next</span>Ways to use aivi</a>
+      </nav>
+    </main>
+
+    <aside class="docs-aside" aria-label="On this page">
+      <nav class="page-toc" aria-label="On this page">
+      <p class="page-toc-title">On this page</p>
+      <ul>
+        <li><a href="#what-you-need">What you need</a></li>
+        <li><a href="#install-the-cli-and-create-the-server">Install the CLI and create the server</a></li>
+        <li><a href="#check-that-it-runs">Check that it runs</a></li>
+        <li><a href="#open-the-home-in-opencode">Open the home in OpenCode</a></li>
+        <li><a href="#add-a-project">Add a project</a></li>
+        <li><a href="#add-a-chat-channel">Add a chat channel</a></li>
+        <li><a href="#first-useful-things-to-ask">First useful things to ask</a></li>
+        <li><a href="#where-to-go-next">Where to go next</a></li>
+      </ul>
+    </nav>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <p class="brand-footer"><img class="footer-mark" src="../aivi-mark.svg" alt="" width="26" height="23"><span>aivi</span></p>
+        <p class="footer-copy">An always-on teammate built on OpenCode v2.</p>
+      </div>
+      <nav class="footer-links" aria-label="Elsewhere">
+        <a href="https://github.com/aivi-hq/aivi">GitHub</a>
+        <a href="index.html">Documentation</a>
+        <a href="getting-started.html">Getting started</a>
+        <a href="https://github.com/aivi-hq/aivi/blob/main/LICENSE">MIT license</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

@@ -140,6 +140,8 @@ enables plugins), `projects/<id>/{source,memory,worktrees}` per project,
 `memory/` (org), `runtimes/<plugin>/` (installs a plugin owns, e.g. voice's
 python engine — an install is not state), and `state/` with `aivi.sqlite`,
 the QMD index, the editor schema cache, and dreaming transcripts.
+`site/` holds the public website: a hand-written landing page and Markdown
+documentation, built by `site/build.mjs`; `npm run site` serves it locally.
 `dev/` is a real development home, produced by `npm run aivi:cli setup` against
 the local build (only its README is tracked; everything else, including the
 app manifest setup writes, is generated or git-ignored). `npm run aivi:cli`

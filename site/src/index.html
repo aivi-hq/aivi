@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>aivi · A colleague who is already at work</title>
+  <meta name="description" content="aivi runs an always-on OpenCode agent for your team. Shared search, chat in Discord or Slack, ticket work, scheduled jobs, and memory on a machine you control.">
+  <meta property="og:title" content="aivi · A colleague who is already at work">
+  <meta property="og:description" content="An always-on OpenCode agent for your team: shared search, chat, ticket work, scheduled jobs, and memory on a machine you control.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e1c">
+  <link rel="icon" href="aivi-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="index.html" aria-label="aivi home"><img class="brand-mark" src="aivi-mark.svg" alt="" width="34" height="30"><span>aivi</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="#work">See it work</a>
+        <a href="#roles">Ways to use it</a>
+        <a href="#runtime">How it works</a>
+        <a href="docs/index.html">Docs</a>
+      </nav>
+      <a class="button button-small" href="docs/first-five-minutes.html">Get started</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <img class="hero-mark" src="aivi-mark.svg" alt="" width="84" height="74">
+          <p class="kicker">An always-on colleague for your team</p>
+          <h1>A colleague who is already at work.</h1>
+          <p class="lede">aivi answers from your own notes, joins the call, and works the next ticket. It runs on a machine you control, so the work stays yours.</p>
+          <div class="actions">
+            <a class="button" href="docs/first-five-minutes.html">Get started</a>
+            <a class="text-link" href="#work">See it work</a>
+          </div>
+          <p class="fineprint">Node 26.12 or newer. macOS or Linux. One background service.</p>
+        </div>
+
+        <figure class="day-panel" aria-label="A representation of aivi at work: a chat answer with its sources and a day of scheduled work">
+          <div class="panel-top">
+            <span class="panel-title">Tuesday, 09:41</span>
+            <span class="live"><span class="live-dot"></span>aivi on shift</span>
+          </div>
+          <div class="panel-body">
+            <div class="chat">
+              <div class="message">
+                <div class="who"><span class="avatar">MC</span><span>Maya Chen</span><time>09:38</time></div>
+                <p>Why did we drop the Redis cache from billing?</p>
+              </div>
+              <div class="message message-aivi">
+                <div class="who"><img class="avatar avatar-aivi" src="aivi-mark.svg" alt="" width="24" height="24"><span>aivi</span><time>09:38</time></div>
+                <p>It was removed on 14 October because the invalidation bugs cost more than the cache saved. The queue is Postgres-backed now.</p>
+                <div class="sources"><span>decision · billing.md</span><span>14 Oct</span></div>
+              </div>
+              <div class="message message-aivi">
+                <div class="who"><img class="avatar avatar-aivi" src="aivi-mark.svg" alt="" width="24" height="24"><span>aivi</span><time>09:41</time></div>
+                <p>INF-214 is in review. The branch is <code>inf-214/retry-backoff</code> and the tests pass. I left one question about the timeout default.</p>
+              </div>
+            </div>
+
+            <div class="shift">
+              <p class="shift-title">On the clock</p>
+              <ol class="shift-list">
+                <li class="done"><time>08:00</time><span>Morning brief<small>posted</small></span></li>
+                <li class="done"><time>09:30</time><span>INF-214<small>picked up</small></span></li>
+                <li><time>11:00</time><span>Standup notes<small>waiting</small></span></li>
+                <li><time>15:00</time><span>Review INF-214<small>queued</small></span></li>
+                <li><time>03:00</time><span>Dreaming<small>nightly</small></span></li>
+              </ol>
+            </div>
+          </div>
+          <div class="panel-foot"><span>A day with aivi</span><span>#billing · #general</span></div>
+        </figure>
+      </div>
+    </section>
+
+    <section class="glance" aria-label="At a glance">
+      <div class="wrap glance-grid">
+        <div class="glance-item">
+          <strong>Answers with a source</strong>
+          <span>Docs, decisions and old conversations</span>
+        </div>
+        <div class="glance-item">
+          <strong>Works the board</strong>
+          <span>Picks up tickets, posts progress</span>
+        </div>
+        <div class="glance-item">
+          <strong>Joins the room</strong>
+          <span>Discord, Slack and Meet</span>
+        </div>
+        <div class="glance-item">
+          <strong>Keeps the schedule</strong>
+          <span>Jobs, reminders, morning briefs</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section work" id="work">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">See it work</p>
+          <h2>Watch aivi take something off your plate.</h2>
+          <p class="section-intro">Pick a scene and press play. The board, the call and the calendar are the same colleague, with the same notes.</p>
+        </div>
+
+        <div class="work-tabs" role="tablist" aria-label="Aivi at work">
+          <button class="work-tab" type="button" id="tab-board" role="tab" aria-selected="true" aria-controls="demo-board" data-work-tab>On the board</button>
+          <button class="work-tab" type="button" id="tab-meeting" role="tab" aria-selected="false" aria-controls="demo-meeting" tabindex="-1" data-work-tab>In a meeting</button>
+          <button class="work-tab" type="button" id="tab-schedule" role="tab" aria-selected="false" aria-controls="demo-schedule" tabindex="-1" data-work-tab>On a schedule</button>
+        </div>
+
+        <div class="work-panel" id="demo-board" role="tabpanel" aria-labelledby="tab-board" data-board>
+          <div class="board-demo">
+            <div class="board-frame">
+              <div class="board-bar">
+                <span class="board-name">INF team board</span>
+                <span class="board-state"><span class="live-dot"></span>aivi on shift</span>
+              </div>
+              <div class="board-columns">
+                <section class="board-column" data-board-column="todo">
+                  <div class="board-column-head"><span>Todo</span><span class="board-count" data-count>2</span></div>
+                  <div class="board-cards">
+                    <article class="ticket ticket-quiet">
+                      <span class="ticket-id">INF-212</span>
+                      <p class="ticket-name">Update webhook docs</p>
+                      <span class="ticket-label">docs</span>
+                    </article>
+                    <article class="ticket ticket-live" data-board-ticket>
+                      <span class="ticket-id">INF-214</span>
+                      <p class="ticket-name">Retry backoff for webhooks</p>
+                      <span class="ticket-label">bug</span>
+                      <div class="ticket-foot"><img class="ticket-avatar" src="aivi-mark.svg" alt=""><span>aivi</span></div>
+                    </article>
+                  </div>
+                </section>
+
+                <section class="board-column" data-board-column="progress">
+                  <div class="board-column-head"><span>In progress</span><span class="board-count" data-count>1</span></div>
+                  <div class="board-cards">
+                    <article class="ticket ticket-quiet">
+                      <span class="ticket-id">INF-211</span>
+                      <p class="ticket-name">Fix login redirect</p>
+                      <span class="ticket-label">bug</span>
+                    </article>
+                  </div>
+                </section>
+                <section class="board-column" data-board-column="review">
+                  <div class="board-column-head"><span>Review</span><span class="board-count" data-count>1</span></div>
+                  <div class="board-cards">
+                    <article class="ticket ticket-quiet">
+                      <span class="ticket-id">INF-208</span>
+                      <p class="ticket-name">Billing copy review</p>
+                      <span class="ticket-label">copy</span>
+                    </article>
+                  </div>
+                </section>
+                <section class="board-column" data-board-column="done">
+                  <div class="board-column-head"><span>Done</span><span class="board-count" data-count>1</span></div>
+                  <div class="board-cards">
+                    <article class="ticket ticket-quiet">
+                      <span class="ticket-id">INF-209</span>
+                      <p class="ticket-name">Rate limit headers</p>
+                      <span class="ticket-label">shipped</span>
+                    </article>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div class="demo-bar">
+              <div class="demo-actions">
+                <button class="button demo-button" type="button" data-board-run>Run INF-214</button>
+                <button class="text-link demo-reset" type="button" data-board-reset>Reset</button>
+              </div>
+              <p class="demo-state" data-board-state aria-live="polite">Ready when you are.</p>
+            </div>
+          </div>
+
+          <aside class="run-log" aria-label="Run log">
+            <div class="run-head">
+              <p class="demo-log-title">Run log</p>
+              <span class="run-tag" data-board-tag>idle</span>
+            </div>
+            <ol class="run-list" data-board-log>
+              <li class="run-empty">Press Run INF-214 to watch the board.</li>
+            </ol>
+            <div class="run-question" data-board-question hidden>
+              <p class="run-question-title">Keep the 30 second default?</p>
+              <p class="run-question-copy">The old timeout was 30s. The new retry path can use 60s.</p>
+              <div class="run-answers">
+                <button class="button button-small" type="button" data-board-answer="30">Keep 30s</button>
+                <button class="button button-small button-quiet" type="button" data-board-answer="60">Use 60s</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="work-panel" id="demo-meeting" role="tabpanel" aria-labelledby="tab-meeting" data-meeting hidden>
+          <div class="meeting-demo">
+            <div class="meeting-frame">
+              <div class="meeting-bar">
+                <span class="meeting-name">Weekly sync</span>
+                <span class="meeting-state"><span class="live-dot"></span><span data-meeting-state-text>aivi is listening</span></span>
+              </div>
+              <div class="meeting-people">
+                <div class="meeting-person"><span class="person-initials">MC</span><span class="person-name">Maya</span></div>
+                <div class="meeting-person"><span class="person-initials">JD</span><span class="person-name">Jon</span></div>
+                <div class="meeting-person meeting-person-aivi"><img src="aivi-mark.svg" alt=""><span class="person-name">aivi</span></div>
+              </div>
+              <div class="meeting-transcript" data-meeting-transcript aria-live="polite">
+                <p class="transcript-empty">The call has not started.</p>
+              </div>
+            </div>
+
+            <aside class="meeting-notes" aria-label="Meeting notes">
+              <div class="run-head">
+                <p class="demo-log-title">What it keeps</p>
+                <span class="run-tag" data-meeting-tag>nothing yet</span>
+              </div>
+              <ul class="note-list" data-meeting-notes>
+                <li class="note-empty">Decisions and actions appear as people speak.</li>
+              </ul>
+              <div class="meeting-answer" data-meeting-answer hidden>
+                <p class="note-label">Ask after the call</p>
+                <p class="meeting-answer-quote">“What did we decide about the release?”</p>
+                <p class="meeting-answer-copy">Release is Thursday. Jon owns the migration, and support gets the new date today.</p>
+                <span class="source-chip">meeting · weekly sync</span>
+              </div>
+            </aside>
+          </div>
+
+          <div class="demo-bar">
+            <div class="demo-actions">
+              <button class="button demo-button" type="button" data-meeting-run>Join the demo call</button>
+              <button class="text-link demo-reset" type="button" data-meeting-reset>Reset</button>
+              <button class="text-link demo-reset" type="button" data-meeting-ask hidden>Ask about the call</button>
+            </div>
+            <p class="demo-state" data-meeting-status aria-live="polite">A short stand-up. Press play.</p>
+          </div>
+          <p class="demo-note">Optional voice and Meet modules. aivi joins as the face you see on the call.</p>
+        </div>
+
+        <div class="work-panel" id="demo-schedule" role="tabpanel" aria-labelledby="tab-schedule" data-schedule hidden>
+          <div class="schedule-demo">
+            <div class="schedule-chat">
+              <div class="chat-bubble chat-bubble-user">
+                <span class="chat-name">You</span>
+                <p>Every Monday at 9, post a summary of last week's merged pull requests.</p>
+              </div>
+              <div class="chat-bubble chat-bubble-aivi" data-schedule-reply hidden>
+                <span class="chat-name"><img src="aivi-mark.svg" alt="">aivi</span>
+                <p>Done. The next brief is Monday at 09:00. I'll post it in #general.</p>
+              </div>
+            </div>
+
+            <div class="schedule-cards">
+              <article class="job-card" data-schedule-weekly hidden>
+                <div class="job-top"><span class="job-label">Recurring</span><span class="job-state job-state-active">active</span></div>
+                <p class="job-title">Pull request brief</p>
+                <dl class="job-facts">
+                  <div><dt>When</dt><dd>Mondays, 09:00</dd></div>
+                  <div><dt>Next</dt><dd>in 2 days</dd></div>
+                  <div><dt>Report</dt><dd>#general</dd></div>
+                </dl>
+              </article>
+              <article class="job-card" data-schedule-reminder hidden>
+                <div class="job-top"><span class="job-label">One-off</span><span class="job-state job-state-queued">queued</span></div>
+                <p class="job-title">Release reminder</p>
+                <dl class="job-facts">
+                  <div><dt>When</dt><dd>Thursday, 08:30</dd></div>
+                  <div><dt>Report</dt><dd>DM</dd></div>
+                </dl>
+              </article>
+              <p class="schedule-empty" data-schedule-empty>No jobs yet. Ask for one.</p>
+            </div>
+          </div>
+
+          <div class="demo-bar">
+            <div class="demo-actions">
+              <button class="button demo-button" type="button" data-schedule-weekly-button>Create the weekly brief</button>
+              <button class="button button-quiet demo-button" type="button" data-schedule-reminder-button>Add a reminder</button>
+              <button class="text-link demo-reset" type="button" data-schedule-reset>Reset</button>
+            </div>
+            <p class="demo-state" data-schedule-status aria-live="polite">Two examples, one chat.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="roles">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">One colleague, three modes</p>
+          <h2>Three ways to work with the same aivi.</h2>
+          <p class="section-intro">Start with the role you need. The others are there when the work calls for them, and they share the same memory and capacity.</p>
+        </div>
+
+        <div class="role-grid">
+          <article class="role">
+            <p class="role-index">01</p>
+            <h3>With a team</h3>
+            <p>Ask in the channels you already use. It answers with the document and the date, then takes the next ticket from the board.</p>
+            <a class="text-link" href="docs/ways.html#team">Read the team setup</a>
+          </article>
+          <article class="role">
+            <p class="role-index">02</p>
+            <h3>On your own</h3>
+            <p>A private assistant on your machine. It remembers what changed, runs work on a schedule, and uses Chrome with your logins.</p>
+            <a class="text-link" href="docs/ways.html#personal">Read the personal setup</a>
+          </article>
+          <article class="role">
+            <p class="role-index">03</p>
+            <h3>As a colleague</h3>
+            <p>It works in its own checkout, posts progress, asks before it guesses, and hands the ticket back when a person needs to decide.</p>
+            <a class="text-link" href="docs/ways.html#colleague">Read how delegation works</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section box" id="box">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">Also in the box</p>
+          <h2>The small details that make aivi feel like a colleague.</h2>
+          <p class="section-intro">Every integration is a plugin, and nothing is on until you add it. Linear and GitHub ship today; a tracker or forge can arrive as a package.</p>
+        </div>
+
+        <div class="box-grid">
+          <article class="box-item">
+            <span class="box-label">Channels</span>
+            <h3>Discord and Slack</h3>
+            <p>DMs, threads, search and reminders.</p>
+          </article>
+          <article class="box-item">
+            <span class="box-label">Trackers and forges</span>
+            <h3>Your tracker and forge</h3>
+            <p>Linear and GitHub ship today. Boards, branches and pull requests; the roles are plugins.</p>
+          </article>
+          <article class="box-item">
+            <span class="box-label">Meetings</span>
+            <h3>Google Meet and voice</h3>
+            <p>Optional. Join a call, keep the transcript, answer when addressed.</p>
+          </article>
+          <article class="box-item">
+            <span class="box-label">Browser</span>
+            <h3>Chrome with your logins</h3>
+            <p>A persistent profile and one tab set per session.</p>
+          </article>
+          <article class="box-item">
+            <span class="box-label">Schedule</span>
+            <h3>Jobs and reminders</h3>
+            <p>Recurring or one-off, reported where you ask.</p>
+          </article>
+          <article class="box-item">
+            <span class="box-label">Memory</span>
+            <h3>Dreaming</h3>
+            <p>Nightly facts, an archive, and proposals for rules.</p>
+          </article>
+        </div>
+        <p class="box-link"><a class="text-link" href="docs/plugins.html">Browse the built-in plugins</a><span class="box-link-sep">·</span><a class="text-link" href="docs/index.html">Read the detailed guides</a></p>
+      </div>
+    </section>
+
+    <section class="section runtime" id="runtime">
+      <div class="wrap runtime-grid">
+        <div>
+          <p class="kicker">Under the hood</p>
+          <h2>OpenCode is the runtime. aivi is the shift around it.</h2>
+          <p>OpenCode owns sessions, models, tools and permissions. aivi keeps those sessions reachable from your day: search, schedules, chat, boards and memory. Channels, trackers and forges are plugins, so a fresh install is small and every integration is opt-in. The agents stay ordinary OpenCode agents, and you can always open the same work by hand.</p>
+          <a class="text-link" href="https://github.com/aivi-hq/aivi/blob/main/docs/architecture.md">Read the architecture notes</a>
+        </div>
+
+        <div class="boundary">
+          <div class="boundary-panel">
+            <div class="boundary-title"><span>OpenCode</span><span class="boundary-tag">the runtime</span></div>
+            <ul>
+              <li>Sessions and message history</li>
+              <li>Agents, skills and subagents</li>
+              <li>Models and providers</li>
+              <li>Permissions and tool limits</li>
+            </ul>
+          </div>
+          <div class="boundary-panel">
+            <div class="boundary-title"><span>aivi</span><span class="boundary-tag">the shift</span></div>
+            <ul>
+              <li>Knowledge index and search</li>
+              <li>Jobs, runs and reports</li>
+              <li>Channels, trackers, forges</li>
+              <li>Projects, worktrees and memory</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section start" id="start">
+      <div class="wrap start-grid">
+        <div>
+          <p class="kicker">Get started</p>
+          <h2>One install, then one command.</h2>
+          <p>You need Node 26.12 or newer and a macOS or Linux machine that can stay awake. Setup creates the server, seeds the agents and can install it as a background service.</p>
+          <ol class="steps">
+            <li><span>Install the CLI and run setup. It asks whether this machine creates a server or connects to one.</span></li>
+            <li><span>Take the background service if the machine stays on. Otherwise run <code>aivi serve</code> in a terminal.</span></li>
+            <li><span>Add a project or a chat channel when you are ready. The first five minutes guide covers both.</span></li>
+          </ol>
+          <p class="start-note">Search runs locally. Your documents stay in their own directories, and the index lives in the aivi home.</p>
+          <div class="actions">
+            <a class="button" href="docs/first-five-minutes.html">Open the first five minutes</a>
+          </div>
+        </div>
+
+        <div>
+          <pre class="code-block"><code><span class="code-comment"># install the command line</span>
+npm i -g @aivi/cli
+
+<span class="code-comment"># create the server or sign in to one</span>
+aivi setup
+
+<span class="code-comment"># keep it running in the foreground</span>
+aivi serve</code></pre>
+          <p class="code-caption">Setup can install the same server as a background service, so this last line becomes optional.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <p class="brand-footer"><img class="footer-mark" src="aivi-mark.svg" alt="" width="26" height="23"><span>aivi</span></p>
+        <p class="footer-copy">An always-on teammate built on OpenCode v2.</p>
+      </div>
+      <nav class="footer-links" aria-label="Elsewhere">
+        <a href="https://github.com/aivi-hq/aivi">GitHub</a>
+        <a href="docs/index.html">Documentation</a>
+        <a href="docs/first-five-minutes.html">First five minutes</a>
+        <a href="https://github.com/aivi-hq/aivi/blob/main/LICENSE">MIT license</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
