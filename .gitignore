@@ -28,6 +28,10 @@ dist/
 # plus c8's temporary V8 dumps.
 coverage/
 
+# The website build output. The site's sources are tracked; `npm run dev`
+# and the Pages workflow rebuild dist/ from them.
+site/dist/
+
 .fallow/
 tmp/
 # graft's local graph cache — regenerable, not committed (run `graft build`).

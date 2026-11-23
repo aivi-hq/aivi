@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Projects and tickets · aivi docs</title>
+  <meta name="description" content="How aivi stores a project, maps a board to lanes, and works a ticket without touching the clean checkout.">
+  <meta property="og:title" content="Projects and tickets · aivi docs">
+  <meta property="og:description" content="How aivi stores a project, maps a board to lanes, and works a ticket without touching the clean checkout.">
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e1c">
+  <link rel="icon" href="../aivi-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="../index.html" aria-label="aivi home"><img class="brand-mark" src="../aivi-mark.svg" alt="" width="34" height="30"><span>aivi</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html#roles">Ways to use it</a>
+        <a href="../index.html#capabilities">What it does</a>
+        <a href="../index.html#runtime">How it works</a>
+        <a class="nav-current" href="index.html" aria-current="true">Docs</a>
+      </nav>
+      <a class="button button-small" href="getting-started.html">Get started</a>
+    </div>
+  </header>
+
+  <div class="wrap docs-shell">
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      <nav class="docs-nav" aria-label="Documentation">
+      <p class="docs-nav-title">Documentation</p>
+      <ol>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+      <li><a href="ways.html">Ways to use aivi</a></li>
+      <li><a class="active" aria-current="page" href="projects.html">Projects and tickets</a></li>
+      <li><a href="chat-knowledge.html">Chat and knowledge</a></li>
+      <li><a href="jobs-memory.html">Jobs and memory</a></li>
+      <li><a href="running.html">Running aivi</a></li>
+      </ol>
+    </nav>
+    </aside>
+
+    <main id="main" class="docs-main">
+      <article class="prose">
+        <p class="crumbs"><a href="index.html">Docs</a> / Projects and tickets</p>
+        <h1>Projects and tickets</h1>
+        <p class="lede">How aivi stores a project, maps a board to lanes, and works a ticket without touching the clean checkout.</p>
+        <p>A project is the place where aivi does work. It holds a checkout, its own memory, and a set of worktrees. The tracker decides which ticket is ready. The project decides which agent works it and where the work happens.</p>
+<h2 id="what-a-project-is">What a project is</h2>
+<p>Everything about one project lives under the aivi home:</p>
+<pre><code class="language-text">~/.aivi/
+  projects/
+    shop/
+      source/       the clean git checkout
+      memory/       facts and proposals for this project
+      worktrees/    one worktree per worker that needs isolation
+</code></pre>
+<p>The directory name is the project id. It starts with a lowercase letter and may contain lowercase letters, digits, underscores and hyphens. A checkout is the registration: aivi discovers projects by reading the directories under <code>projects/</code>, and <code>aivi projects add</code> is the convenient way to create one.</p>
+<p>A project with memory but no <code>source/</code> is a repo-less project. It has knowledge and its own memory, which makes it useful for research, writing and decisions that do not belong to a repository.</p>
+<p>The checkout is ordinary git. aivi writes nothing inside it, and the repository works the same outside aivi. The <code>projects-sync</code> job fast-forwards the checked-out branch to its upstream and leaves local changes, detached heads and diverged histories alone.</p>
+<h2 id="add-list-and-remove">Add, list and remove</h2>
+<pre><code class="language-sh">aivi projects add
+aivi projects add website
+aivi projects list
+aivi projects remove website
+aivi projects purge website
+</code></pre>
+<p><code>projects add</code> is role-driven. Core asks the configured forge to clone the repository, then the configured tracker to map the board. Each plugin asks its own questions and writes its own section under the project. With no forge configured, the command creates a repo-less project and sets <code>sync: false</code> so the sync job stays away from it.</p>
+<p><code>projects remove</code> deletes the checkout and worktrees but keeps the project&#39;s memory. <code>projects purge</code> shows what it would delete and does nothing without <code>--confirm</code>.</p>
+<p>Restart the server after adding or removing a project:</p>
+<pre><code class="language-sh">aivi service restart
+</code></pre>
+<h2 id="lanes">Lanes</h2>
+<p>A lane is a board state with a job. The tracker&#39;s project section maps its states to lanes, and the order of the lanes is the priority order. Lanes further to the right are closer to done and are picked first when capacity frees up.</p>
+<table>
+<thead>
+<tr>
+<th>Lane type</th>
+<th>How to recognize it</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Worker lane</td>
+<td>It names an <code>agent</code></td>
+<td>A worker takes tickets here.</td>
+</tr>
+<tr>
+<td>Queue lane</td>
+<td>It sets <code>queue: true</code></td>
+<td>Tickets wait here until a worker lane has capacity.</td>
+</tr>
+<tr>
+<td>Human lane</td>
+<td>It names no agent and is not a queue</td>
+<td>Only a person moves tickets out.</td>
+</tr>
+<tr>
+<td>Closed lane</td>
+<td>The tracker marks it closed</td>
+<td>Nothing is picked up.</td>
+</tr>
+</tbody></table>
+<p>A lane cannot be both a worker lane and a queue lane. That combination fails loudly instead of choosing a behavior.</p>
+<p>The lane config belongs to the tracker plugin. For a Linear project it sits under <code>projects.&lt;id&gt;.tracker-linear</code>:</p>
+<pre><code class="language-json">{
+  &quot;projects&quot;: {
+    &quot;shop&quot;: {
+      &quot;tracker-linear&quot;: {
+        &quot;lanes&quot;: [
+          { &quot;name&quot;: &quot;Triage&quot;, &quot;agent&quot;: &quot;product&quot;, &quot;worktree&quot;: true },
+          { &quot;name&quot;: &quot;Backlog&quot; },
+          { &quot;name&quot;: &quot;Todo&quot;, &quot;queue&quot;: true },
+          { &quot;name&quot;: &quot;In Progress&quot;, &quot;agent&quot;: &quot;dev&quot;, &quot;worktree&quot;: true },
+          { &quot;name&quot;: &quot;Review&quot;, &quot;agent&quot;: &quot;review&quot;, &quot;worktree&quot;: true },
+          { &quot;name&quot;: &quot;Release&quot; }
+        ]
+      }
+    }
+  }
+}
+</code></pre>
+<p>The GitHub tracker writes its own section in the same place. The lane words are the board&#39;s states, so they differ between trackers.</p>
+<h3 id="what-the-lanes-produce">What the lanes produce</h3>
+<p>A ticket that enters a worker lane can start a run. The orchestrator checks the ticket&#39;s delegate, any human-needed marker, and whether another worker already owns it. If the ticket is eligible and the dispatcher grants a lease, the worker starts in the project.</p>
+<p>The run carries the lane&#39;s context. It does not change the agent named by the lane, and the worker cannot switch agents midway. It can still use the subagents its agent file allows.</p>
+<h2 id="worktrees-and-stopping">Worktrees and stopping</h2>
+<p>A lane with <code>worktree: true</code> gives the worker its own checkout:</p>
+<pre><code class="language-text">~/.aivi/projects/shop/worktrees/inf-214/
+</code></pre>
+<p>The worktree sits on the branch the tracker names for the ticket. This keeps concurrent workers apart and gives a stop a clear boundary.</p>
+<p>When a person stops a ticket, aivi interrupts the turn, posts one final activity, and ends the run. The worktree and its local commits are removed. Anything pushed to the remote stays. The OpenCode session stays available for inspection, so the transcript is still there.</p>
+<p>A stop that cannot be verified ends <code>blocked</code> instead. The ticket stays held until an operator looks at the session and resolves the run:</p>
+<pre><code class="language-sh">aivi runs show RUN_ID
+aivi runs resolve RUN_ID --outcome succeeded --reason &quot;Inspected the session&quot; --confirm-stopped
+</code></pre>
+<p>Do not resolve a blocked run just to clear the queue. Resolving it is a statement that you checked the external side.</p>
+<h2 id="a-human-can-always-take-over">A human can always take over</h2>
+<p>A human-needed label blocks automatic delegation. A hand delegation of that ticket is refused too, with an explanation in the tracker. A developer can open the project in plain OpenCode, do the work, and remove the label when the ticket is ready to return to the board.</p>
+<p>The board is the memory of what happened. aivi keeps its own run records for the audit trail, but the visible state of the work lives in the tracker.</p>
+<h2 id="what-to-read-next">What to read next</h2>
+<ul>
+<li><a href="https://github.com/aivi-hq/aivi/blob/main/docs/orchestrator.md">Orchestrator and dispatcher</a> for the full walk, capacity and recovery rules.</li>
+<li><a href="https://github.com/aivi-hq/aivi/blob/main/docs/linear.md">Linear</a> and <a href="https://github.com/aivi-hq/aivi/blob/main/packages/forge-github/docs/github.md">GitHub</a> for the tracker and forge setup.</li>
+<li><a href="https://github.com/aivi-hq/aivi/blob/main/docs/projects.md">Projects</a> for the directory layout and knowledge conventions.</li>
+</ul>
+
+        <footer class="page-foot">
+          <a href="https://github.com/aivi-hq/aivi/edit/main/site/src/docs/projects.md">Edit this page on GitHub</a>
+        </footer>
+      </article>
+
+      <nav class="page-nav" aria-label="Previous and next">
+        <a class="page-nav-link" href="ways.html"><span>Previous</span>Ways to use aivi</a><a class="page-nav-link page-nav-next" href="chat-knowledge.html"><span>Next</span>Chat and knowledge</a>
+      </nav>
+    </main>
+
+    <aside class="docs-aside" aria-label="On this page">
+      <nav class="page-toc" aria-label="On this page">
+      <p class="page-toc-title">On this page</p>
+      <ul>
+        <li><a href="#what-a-project-is">What a project is</a></li>
+        <li><a href="#add-list-and-remove">Add, list and remove</a></li>
+        <li><a href="#lanes">Lanes</a></li>
+        <li class="toc-sub"><a href="#what-the-lanes-produce">What the lanes produce</a></li>
+        <li><a href="#worktrees-and-stopping">Worktrees and stopping</a></li>
+        <li><a href="#a-human-can-always-take-over">A human can always take over</a></li>
+        <li><a href="#what-to-read-next">What to read next</a></li>
+      </ul>
+    </nav>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <p class="brand-footer"><img class="footer-mark" src="../aivi-mark.svg" alt="" width="26" height="23"><span>aivi</span></p>
+        <p class="footer-copy">An always-on teammate built on OpenCode v2.</p>
+      </div>
+      <nav class="footer-links" aria-label="Elsewhere">
+        <a href="https://github.com/aivi-hq/aivi">GitHub</a>
+        <a href="index.html">Documentation</a>
+        <a href="getting-started.html">Getting started</a>
+        <a href="https://github.com/aivi-hq/aivi/blob/main/LICENSE">MIT license</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

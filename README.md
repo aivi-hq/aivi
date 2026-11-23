@@ -58,6 +58,11 @@ real SQLite, real QMD and the real v2 client on a mock server, schema check,
 CLI and daemon smoke); its exit code is the verdict. Live gates:
 `npm run live:opencode`, `npm run smoke:browser`.
 
+The public site lives in [site](site/README.md). Install its dependencies once
+with `npm --prefix site install`, then run `npm run site` to build it and open
+it at <http://127.0.0.1:4173/>. The documentation pages are Markdown and the
+landing page is hand-written HTML.
+
 ## Packages
 
 | Package                 | Responsibility                                                                                                                                                                                                                                                                                        |

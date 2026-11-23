@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jobs and memory · aivi docs</title>
+  <meta name="description" content="Schedule work, read the run history, and let dreaming keep the memory tidy.">
+  <meta property="og:title" content="Jobs and memory · aivi docs">
+  <meta property="og:description" content="Schedule work, read the run history, and let dreaming keep the memory tidy.">
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e1c">
+  <link rel="icon" href="../aivi-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="../index.html" aria-label="aivi home"><img class="brand-mark" src="../aivi-mark.svg" alt="" width="34" height="30"><span>aivi</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html#roles">Ways to use it</a>
+        <a href="../index.html#capabilities">What it does</a>
+        <a href="../index.html#runtime">How it works</a>
+        <a class="nav-current" href="index.html" aria-current="true">Docs</a>
+      </nav>
+      <a class="button button-small" href="getting-started.html">Get started</a>
+    </div>
+  </header>
+
+  <div class="wrap docs-shell">
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      <nav class="docs-nav" aria-label="Documentation">
+      <p class="docs-nav-title">Documentation</p>
+      <ol>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+      <li><a href="ways.html">Ways to use aivi</a></li>
+      <li><a href="projects.html">Projects and tickets</a></li>
+      <li><a href="chat-knowledge.html">Chat and knowledge</a></li>
+      <li><a class="active" aria-current="page" href="jobs-memory.html">Jobs and memory</a></li>
+      <li><a href="running.html">Running aivi</a></li>
+      </ol>
+    </nav>
+    </aside>
+
+    <main id="main" class="docs-main">
+      <article class="prose">
+        <p class="crumbs"><a href="index.html">Docs</a> / Jobs and memory</p>
+        <h1>Jobs and memory</h1>
+        <p class="lede">Schedule work, read the run history, and let dreaming keep the memory tidy.</p>
+        <p>aivi can start work without a person in the room. A job says what to do and when. A run is one execution of that job, with its own record. Memory is what survives after the run ends.</p>
+<h2 id="jobs">Jobs</h2>
+<p>A job is a definition. It has a task and a schedule, either recurring or one-off. Jobs come from four places:</p>
+<ul>
+<li><code>config</code>, written in <code>config.json</code>.</li>
+<li><code>system</code>, seeded by the host for retention and project sync.</li>
+<li><code>agent</code>, created by the assistant through the <code>aivi_jobs</code> tool.</li>
+<li><code>operator</code>, created with <code>aivi jobs add</code>.</li>
+</ul>
+<p>A task is one of three kinds:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>prompt</code></td>
+<td>Runs one agent turn in a directory and waits for a verified answer.</td>
+</tr>
+<tr>
+<td><code>shell</code></td>
+<td>Runs an argv command. Exit 0 succeeds, another exit fails, a timeout blocks.</td>
+</tr>
+<tr>
+<td><code>invocation</code></td>
+<td>Runs a system operation by name, such as <code>knowledge.index</code>.</td>
+</tr>
+</tbody></table>
+<p>People and agents author <code>prompt</code> and <code>shell</code> tasks. <code>invocation</code> exists so the host and its modules can schedule their own operations with the same machinery.</p>
+<h3 id="a-configured-job">A configured job</h3>
+<pre><code class="language-json">{
+  &quot;jobs&quot;: [
+    {
+      &quot;id&quot;: &quot;morning-brief&quot;,
+      &quot;title&quot;: &quot;Morning brief&quot;,
+      &quot;cron&quot;: &quot;0 8 * * 1-5&quot;,
+      &quot;timezone&quot;: &quot;Europe/Amsterdam&quot;,
+      &quot;task&quot;: {
+        &quot;kind&quot;: &quot;prompt&quot;,
+        &quot;agent&quot;: &quot;assistant&quot;,
+        &quot;directory&quot;: &quot;/home/ada/.aivi&quot;,
+        &quot;prompt&quot;: &quot;Post a short brief: merged pull requests, open reviews that need a person, and anything that failed overnight.&quot;
+      },
+      &quot;report&quot;: {
+        &quot;to&quot;: &quot;channel&quot;,
+        &quot;module&quot;: &quot;discord&quot;,
+        &quot;channel&quot;: &quot;123456789&quot;,
+        &quot;on&quot;: &quot;always&quot;
+      }
+    }
+  ]
+}
+</code></pre>
+<p><code>report</code> decides where the outcome goes. A channel report posts to the platform the module names. A session report enters the session as a prompt, so the agent there can read the outcome and answer in its own words. <code>on</code> can be <code>always</code>, <code>failure</code> or <code>never</code>.</p>
+<p>Config changes take effect after a restart. Jobs created by an agent or by <code>aivi jobs add</code> are paused, resumed and removed through the CLI or the tool, and a config change never touches them.</p>
+<h3 id="jobs-from-a-file">Jobs from a file</h3>
+<pre><code class="language-sh">aivi jobs add brief.json --cron &quot;0 8 * * 1-5&quot; --timezone Europe/Amsterdam --title &quot;Morning brief&quot;
+aivi jobs add remind.json --at 2h
+aivi jobs list
+aivi jobs run morning-brief
+</code></pre>
+<p>The file holds a bare task, or <code>{ task, report?, resource? }</code>. With neither <code>--cron</code> nor <code>--at</code>, the job runs once as soon as capacity is free.</p>
+<h3 id="jobs-from-chat">Jobs from chat</h3>
+<p>Any agent with the aivi plugin gets the <code>aivi_jobs</code> tool. People can ask in ordinary language:</p>
+<blockquote>
+<p>Every Monday at 09:00, post a summary of last week&#39;s merged pull requests.</p>
+</blockquote>
+<p>The agent translates the time into a cron expression, checks that the report can be delivered, and creates the job. The tool returns the next occurrences so the agent can confirm what it made. A session that is itself a job cannot create another job, which keeps schedules from spawning more schedules.</p>
+<h2 id="runs">Runs</h2>
+<p>Every execution is a run with one row, one audit trail and one job id. The states are:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>queued</code></td>
+<td>Waiting for capacity.</td>
+</tr>
+<tr>
+<td><code>running</code></td>
+<td>The task is executing.</td>
+</tr>
+<tr>
+<td><code>succeeded</code></td>
+<td>The task finished.</td>
+</tr>
+<tr>
+<td><code>failed</code></td>
+<td>It ended before anything external happened. The next occurrence retries.</td>
+</tr>
+<tr>
+<td><code>blocked</code></td>
+<td>It ended without proof that the external side stopped. It keeps its capacity until a person resolves it.</td>
+</tr>
+<tr>
+<td><code>cancelled</code></td>
+<td>A queued run was cancelled.</td>
+</tr>
+<tr>
+<td><code>missed</code></td>
+<td>The occurrence was found after its misfire grace. It is recorded, never executed, and reported like a failure.</td>
+</tr>
+</tbody></table>
+<p>Inspect the recent ones:</p>
+<pre><code class="language-sh">aivi runs list
+aivi runs show RUN_ID
+aivi runs list --state blocked
+</code></pre>
+<p>A blocked run holds a model slot because aivi cannot prove that the session stopped doing work. Look at the session, then resolve it explicitly:</p>
+<pre><code class="language-sh">aivi runs resolve RUN_ID --outcome succeeded --reason &quot;Inspected the session&quot; --confirm-stopped
+</code></pre>
+<p><code>aivi runs cancel RUN_ID</code> only cancels a queued run. <code>aivi runs abort RUN_ID</code> asks the scheduler to stop a running run, which ends it <code>blocked</code> and leaves the same resolution step.</p>
+<h3 id="misfires">Misfires</h3>
+<p>When the host starts, it looks for occurrences it missed. If an occurrence is later than its grace period, aivi records one <code>missed</code> run for the gap and advances to the next occurrence. It does not replay every missed minute.</p>
+<p>A time-bound job, such as a 09:00 standup, can keep the default grace of 60 seconds. A job that should run whenever the server is back, such as a nightly index, sets a large grace in its own <code>misfire</code> block.</p>
+<h2 id="dreaming">Dreaming</h2>
+<p>Dreaming is a scheduled prompt that reads the conversations since its last run and distils what should be remembered. It writes plain Markdown into the memory homes, which are indexed like any other source.</p>
+<p>A typical schedule:</p>
+<pre><code class="language-json">{
+  &quot;jobs&quot;: [
+    {
+      &quot;id&quot;: &quot;dreaming&quot;,
+      &quot;cron&quot;: &quot;0 3 * * *&quot;,
+      &quot;timezone&quot;: &quot;Europe/Amsterdam&quot;,
+      &quot;task&quot;: {
+        &quot;kind&quot;: &quot;invocation&quot;,
+        &quot;name&quot;: &quot;dreaming&quot;,
+        &quot;args&quot;: { &quot;memoryDirectory&quot;: &quot;memory&quot; }
+      }
+    }
+  ]
+}
+</code></pre>
+<p>The job tracks a cursor for each memory home. It reviews sessions newer than the cursor whose origin is a channel or a voice room, and it never reviews its own runs. Nothing new means no model call.</p>
+<p>Each session gets its own dreamer turn and transcript. The transcript is deleted when the turn succeeds, because the OpenCode session is the record. A failed turn keeps its transcript for the post-mortem and leaves the cursor at the last session that finished, so the next run resumes with the failed one.</p>
+<h3 id="what-memory-looks-like">What memory looks like</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Written by</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>memory/facts.md</code></td>
+<td>dreaming</td>
+<td>Current truth, as dated and attributed bullets grouped by topic.</td>
+</tr>
+<tr>
+<td><code>memory/archive.md</code></td>
+<td>dreaming</td>
+<td>How things used to be. Superseded facts land here with their dates.</td>
+</tr>
+<tr>
+<td><code>memory/proposals/rules.md</code></td>
+<td>dreaming</td>
+<td>Conventions and red lines people stated, waiting for a person to approve them.</td>
+</tr>
+<tr>
+<td><code>memory/proposals/skills.md</code></td>
+<td>dreaming</td>
+<td>Repeatable tasks that could become skills.</td>
+</tr>
+<tr>
+<td><code>rules.md</code>, agent files, skills</td>
+<td>people</td>
+<td>The standing instructions. Dreaming cannot write here.</td>
+</tr>
+</tbody></table>
+<p>A project has the same structure under <code>projects/&lt;id&gt;/memory/</code>. The dreamer decides whether a fact belongs to the organization or to one project, and it reconciles against the current file before writing. A retry does not duplicate a fact.</p>
+<p>Reviewing proposals is a conversation. Open the memory files, read what the dreamer noticed, and move what should become a rule into the place where rules live. Dreaming only proposes changes; a person decides what becomes a rule.</p>
+<h2 id="retention">Retention</h2>
+<p>The host seeds a <code>retention</code> job that deletes finished runs and finished one-off jobs older than 30 days. Blocked and active runs are never touched, and recurring jobs stay. Change the window in <code>scheduler.retention</code>, or turn the job off with <code>false</code>.</p>
+<p>The request diary and other logs have their own command:</p>
+<pre><code class="language-sh">aivi host clear-logs --older-than 30d
+</code></pre>
+<h2 id="what-to-read-next">What to read next</h2>
+<ul>
+<li><a href="running.html">Running aivi</a> for the service, logs and recovery.</li>
+<li><a href="https://github.com/aivi-hq/aivi/blob/main/docs/dreaming.md">Dreaming</a> for the full memory contract.</li>
+<li><a href="https://github.com/aivi-hq/aivi/blob/main/packages/host/docs/configuration.md">Configuration</a> for every job field.</li>
+</ul>
+
+        <footer class="page-foot">
+          <a href="https://github.com/aivi-hq/aivi/edit/main/site/src/docs/jobs-memory.md">Edit this page on GitHub</a>
+        </footer>
+      </article>
+
+      <nav class="page-nav" aria-label="Previous and next">
+        <a class="page-nav-link" href="chat-knowledge.html"><span>Previous</span>Chat and knowledge</a><a class="page-nav-link page-nav-next" href="running.html"><span>Next</span>Running aivi</a>
+      </nav>
+    </main>
+
+    <aside class="docs-aside" aria-label="On this page">
+      <nav class="page-toc" aria-label="On this page">
+      <p class="page-toc-title">On this page</p>
+      <ul>
+        <li><a href="#jobs">Jobs</a></li>
+        <li class="toc-sub"><a href="#a-configured-job">A configured job</a></li>
+        <li class="toc-sub"><a href="#jobs-from-a-file">Jobs from a file</a></li>
+        <li class="toc-sub"><a href="#jobs-from-chat">Jobs from chat</a></li>
+        <li><a href="#runs">Runs</a></li>
+        <li class="toc-sub"><a href="#misfires">Misfires</a></li>
+        <li><a href="#dreaming">Dreaming</a></li>
+        <li class="toc-sub"><a href="#what-memory-looks-like">What memory looks like</a></li>
+        <li><a href="#retention">Retention</a></li>
+        <li><a href="#what-to-read-next">What to read next</a></li>
+      </ul>
+    </nav>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <p class="brand-footer"><img class="footer-mark" src="../aivi-mark.svg" alt="" width="26" height="23"><span>aivi</span></p>
+        <p class="footer-copy">An always-on teammate built on OpenCode v2.</p>
+      </div>
+      <nav class="footer-links" aria-label="Elsewhere">
+        <a href="https://github.com/aivi-hq/aivi">GitHub</a>
+        <a href="index.html">Documentation</a>
+        <a href="getting-started.html">Getting started</a>
+        <a href="https://github.com/aivi-hq/aivi/blob/main/LICENSE">MIT license</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

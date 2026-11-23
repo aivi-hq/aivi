@@ -8,6 +8,8 @@
       "packages/*/dist/**",
       "packages/*/test/**",
       "scripts/**",
+      "site/**",
+      "dev/**",
       "packages/host/src/api/env.ts",
       "packages/plugin/src/channel.ts",
       "packages/plugin/src/dispatcher.ts",

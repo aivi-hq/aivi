@@ -10,6 +10,8 @@
       "packages/*/src/**",
       "packages/*/test/**",
       "scripts/**",
+      "site/*.mjs",
+      "site/src/*.js",
       "*.json",
 
       "!schemas",

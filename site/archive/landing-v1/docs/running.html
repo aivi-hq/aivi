@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Running aivi · aivi docs</title>
+  <meta name="description" content="Keep the server healthy, read its logs, update it, and back up the home.">
+  <meta property="og:title" content="Running aivi · aivi docs">
+  <meta property="og:description" content="Keep the server healthy, read its logs, update it, and back up the home.">
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e1c">
+  <link rel="icon" href="../aivi-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="../index.html" aria-label="aivi home"><img class="brand-mark" src="../aivi-mark.svg" alt="" width="34" height="30"><span>aivi</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html#roles">Ways to use it</a>
+        <a href="../index.html#capabilities">What it does</a>
+        <a href="../index.html#runtime">How it works</a>
+        <a class="nav-current" href="index.html" aria-current="true">Docs</a>
+      </nav>
+      <a class="button button-small" href="getting-started.html">Get started</a>
+    </div>
+  </header>
+
+  <div class="wrap docs-shell">
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      <nav class="docs-nav" aria-label="Documentation">
+      <p class="docs-nav-title">Documentation</p>
+      <ol>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="getting-started.html">Getting started</a></li>
+      <li><a href="ways.html">Ways to use aivi</a></li>
+      <li><a href="projects.html">Projects and tickets</a></li>
+      <li><a href="chat-knowledge.html">Chat and knowledge</a></li>
+      <li><a href="jobs-memory.html">Jobs and memory</a></li>
+      <li><a class="active" aria-current="page" href="running.html">Running aivi</a></li>
+      </ol>
+    </nav>
+    </aside>
+
+    <main id="main" class="docs-main">
+      <article class="prose">
+        <p class="crumbs"><a href="index.html">Docs</a> / Running aivi</p>
+        <h1>Running aivi</h1>
+        <p class="lede">Keep the server healthy, read its logs, update it, and back up the home.</p>
+        <p>aivi is one long-running server. Most days it needs nothing more than a working service and a glance at the run history. This page covers the commands that keep it that way.</p>
+<h2 id="foreground-or-service">Foreground or service</h2>
+<p><code>aivi serve</code> runs the host in the foreground. Use it while setting things up, or when you want the log in front of you.</p>
+<p><code>aivi service install</code> writes a per-user service and starts it. On macOS it is a LaunchAgent with <code>KeepAlive</code>. On Linux it is a systemd user unit. The service runs the server&#39;s boot file directly, so it behaves the same as the foreground command.</p>
+<pre><code class="language-sh">aivi service install
+aivi service status
+aivi service restart
+aivi service stop
+aivi service logs
+</code></pre>
+<p>A headless Linux machine needs lingering enabled, or the user service stops when the session ends:</p>
+<pre><code class="language-sh">loginctl enable-linger &quot;$USER&quot;
+</code></pre>
+<p>Setup offers the service near the end. Taking it means the server comes back after a reboot and <code>aivi serve</code> becomes a debugging command.</p>
+<h2 id="status-and-health">Status and health</h2>
+<pre><code class="language-sh">aivi status
+aivi config check
+aivi jobs list
+aivi runs list
+</code></pre>
+<p><code>status</code> reports the host, the API, the knowledge index and each module. A module can be <code>starting</code>, <code>running</code>, <code>degraded</code> or <code>stopped</code>. A degraded module keeps retrying in the background with backoff, and the rest of the server stays up. Its last error and next retry are in the status output.</p>
+<p><code>config check</code> validates the live config without starting anything. It catches missing project directories, unknown pools, bad cron expressions and plugin blocks that belong to no listed plugin. A configuration error in a module is fatal for that module, not for the host.</p>
+<p>If the host itself will not start, check the paths first:</p>
+<pre><code class="language-sh">ls ~/.aivi
+aivi service logs
+</code></pre>
+<p>The home must contain a <code>config.json</code>. aivi never deletes a home without one, which protects against a wrong <code>AIVI_HOME</code>.</p>
+<h2 id="logs">Logs</h2>
+<p>Every command mirrors its log to stderr. On a terminal it is formatted for reading. When piped, it is one JSON object per line.</p>
+<p><code>aivi serve</code> also appends JSON lines to <code>~/.aivi/state/logs/aivi.log</code>. The file is rotated, so it does not grow without bound.</p>
+<pre><code class="language-sh">aivi service logs
+aivi serve --log-level debug
+</code></pre>
+<p>The log category shows where a line came from, such as <code>aivi.host</code>, <code>aivi.host.discord</code> or <code>aivi.knowledge</code>. The request diary is separate from the log. It records every request that reaches the host, including refused bearers and webhook calls, with credential headers marked <code>[present]</code> rather than stored.</p>
+<pre><code class="language-sh">aivi host clear-logs --older-than 30d
+</code></pre>
+<h2 id="updates">Updates</h2>
+<pre><code class="language-sh">aivi update
+aivi upgrade
+</code></pre>
+<p><code>aivi update</code> brings the installed server and plugins to the newest compatible releases. It checks the Node requirement, installs while the server keeps answering, restarts it, and probes health before it calls the update done. A plugin that cannot work with the new host stays on its current version and is logged as disabled.</p>
+<p><code>aivi upgrade</code> updates the CLI itself. The CLI, host and plugin kit share one version group, so the CLI&#39;s version is also the API version it speaks.</p>
+<p>There is no rollback command. Sessions survive because their state is in SQLite and OpenCode&#39;s own storage. If an update goes wrong, the log and the installed versions in <code>~/.aivi/app/package.json</code> are the first things to read.</p>
+<h2 id="backups">Backups</h2>
+<p>The home is the unit to back up. It holds the config, the database, the memory, the projects and the OpenCode agents.</p>
+<p>A cold copy is simplest:</p>
+<pre><code class="language-sh">aivi service stop
+cp -R ~/.aivi ~/backups/aivi-$(date +%F)
+aivi service start
+</code></pre>
+<p>The client config on a workstation is separate. It lives at <code>~/.config/aivi/config.json</code> and holds the host URL, the person&#39;s token and a cached identity. Back it up if losing the workstation would mean minting a new token.</p>
+<p>The search index and the editor schema are disposable. They can be rebuilt. The database, <code>config.json</code>, <code>.env</code>, <code>memory/</code> and the projects are the parts worth keeping.</p>
+<h2 id="secrets-and-access">Secrets and access</h2>
+<p>Channel tokens and other host secrets live in <code>~/.aivi/.env</code> with mode 0600. They are not written into conversation content, and shell tasks do not inherit them unless a task sets one in its own <code>env</code> map.</p>
+<p>The API answers on loopback by default. Changing <code>host.bind</code> to a LAN, tailnet or public address lets other machines reach it. Anyone who can reach the address can use the open commands, so put it behind a trusted network or a proxy. Set <code>host.public</code> to the address people should use in printed links.</p>
+<p>A bearer token identifies a person. It does not grant access by itself, with one exception: people management and the remote exec channel require the <code>operator</code> role. Keep the operator token on the server or in the client config, not in a chat message.</p>
+<h2 id="running-commands-remotely">Running commands remotely</h2>
+<p>From a signed-in workstation:</p>
+<pre><code class="language-sh">aivi -r status
+aivi -r jobs list
+aivi -r runs show RUN_ID
+</code></pre>
+<p><code>-r</code> opens the host&#39;s exec channel and runs the same CLI on the server. The command surface is not remapped, so help and flags are the server&#39;s own. Setup, configure, upgrade, serve, uninstall and a second <code>-r</code> are refused from a driven session because they act on the machine you type on.</p>
+<p>The exec channel requires an operator bearer. Every arrival, accepted or refused, writes one diary line with the person, the argv, the address and the exit code.</p>
+<h2 id="a-short-recovery-checklist">A short recovery checklist</h2>
+<ol>
+<li>Run <code>aivi status</code> and read which module is unhealthy.</li>
+<li>Run <code>aivi config check</code> if the problem started after an edit.</li>
+<li>Follow <code>aivi service logs</code> around the time of the failure.</li>
+<li>Check <code>aivi runs list --state blocked</code> before resolving anything. A blocked run is waiting for proof, not for a queue nudge.</li>
+<li>If the server will not start at all, verify the home path and that <code>config.json</code> is present and valid JSON.</li>
+<li>If a channel module is degraded, verify the platform tokens and that the bot still has access to the channels it is configured to use.</li>
+</ol>
+<p>The repository&#39;s <a href="https://github.com/aivi-hq/aivi/blob/main/docs/operations.md">operations guide</a> has the full startup, shutdown and dispatch behavior. The <a href="https://github.com/aivi-hq/aivi/blob/main/packages/host/docs/configuration.md">configuration reference</a> lists every field.</p>
+
+        <footer class="page-foot">
+          <a href="https://github.com/aivi-hq/aivi/edit/main/site/src/docs/running.md">Edit this page on GitHub</a>
+        </footer>
+      </article>
+
+      <nav class="page-nav" aria-label="Previous and next">
+        <a class="page-nav-link" href="jobs-memory.html"><span>Previous</span>Jobs and memory</a>
+      </nav>
+    </main>
+
+    <aside class="docs-aside" aria-label="On this page">
+      <nav class="page-toc" aria-label="On this page">
+      <p class="page-toc-title">On this page</p>
+      <ul>
+        <li><a href="#foreground-or-service">Foreground or service</a></li>
+        <li><a href="#status-and-health">Status and health</a></li>
+        <li><a href="#logs">Logs</a></li>
+        <li><a href="#updates">Updates</a></li>
+        <li><a href="#backups">Backups</a></li>
+        <li><a href="#secrets-and-access">Secrets and access</a></li>
+        <li><a href="#running-commands-remotely">Running commands remotely</a></li>
+        <li><a href="#a-short-recovery-checklist">A short recovery checklist</a></li>
+      </ul>
+    </nav>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <p class="brand-footer"><img class="footer-mark" src="../aivi-mark.svg" alt="" width="26" height="23"><span>aivi</span></p>
+        <p class="footer-copy">An always-on teammate built on OpenCode v2.</p>
+      </div>
+      <nav class="footer-links" aria-label="Elsewhere">
+        <a href="https://github.com/aivi-hq/aivi">GitHub</a>
+        <a href="index.html">Documentation</a>
+        <a href="getting-started.html">Getting started</a>
+        <a href="https://github.com/aivi-hq/aivi/blob/main/LICENSE">MIT license</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
