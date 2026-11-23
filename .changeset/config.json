@@ -3,6 +3,5 @@
   "commit": false,
   "access": "public",
   "baseBranch": "main",
-  "fixed": [["@aivi/cli", "@aivi/host", "@aivi/plugin"]],
-  "ignore": ["@aivi/voice", "@aivi/google-meet"]
+  "fixed": [["@aivi/cli", "@aivi/host", "@aivi/plugin"]]
 }
