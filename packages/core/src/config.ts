@@ -1285,6 +1285,20 @@ async function manualSources(base: string): Promise<KnowledgeSource[]> {
   return sources;
 }
 
+/** What one project adds to the knowledge: its docs (none once removed — the checkout is gone), its memory,
+ *  and that memory's archive. */
+function projectSources(
+  projectId: string,
+  layout: ReturnType<typeof projectLayout>,
+  docs: Config['knowledge'],
+): KnowledgeSource[] {
+  return [
+    ...docs.map((s): KnowledgeSource => ({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId })),
+    { id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId },
+    { id: ARCHIVE_SOURCE_ID, path: join(layout.memory, 'archive.md'), kind: 'archive', scope: 'project', projectId },
+  ];
+}
+
 export async function loadConfig(path: string, schema: z.ZodType<Config> = configSchema): Promise<LoadedConfig> {
   path = resolve(path);
   const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
@@ -1304,17 +1318,8 @@ export async function loadConfig(path: string, schema: z.ZodType<Config> = confi
     // was learned about it stays listed and searchable until `aivi projects purge`.
     if (!entry.enabled) continue;
     const layout = projectLayout(resolve(base, 'projects', projectId));
-    if (!removed)
-      for (const s of entry.knowledge ?? config.projectDefaults.knowledge)
-        sources.push({ ...s, path: absolute(layout.source, s.path), scope: 'project', projectId });
-    sources.push({ id: MEMORY_SOURCE_ID, path: layout.memory, kind: 'memory', scope: 'project', projectId });
-    sources.push({
-      id: ARCHIVE_SOURCE_ID,
-      path: join(layout.memory, 'archive.md'),
-      kind: 'archive',
-      scope: 'project',
-      projectId,
-    });
+    const docs = removed ? [] : (entry.knowledge ?? config.projectDefaults.knowledge);
+    sources.push(...projectSources(projectId, layout, docs));
     projects.push({
       id: projectId,
       directory: layout.source,

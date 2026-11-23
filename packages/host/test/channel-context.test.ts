@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
-import { describeConversation } from '../src/channel/context.ts';
+import type { OpenCodeClient } from '@aivi/plugin/module';
+import { describeConversation, describeSession } from '../src/channel/context.ts';
 import { ConversationStore } from '../src/channel/store.ts';
 import { connectOpenCode } from '../src/opencode.ts';
 import { Store } from '../src/store.ts';
@@ -163,5 +166,126 @@ test('/context describes the bound session from OpenCode: window, plugins, total
     '',
     '**Knowledge in scope** 2 core sources · projects: demo',
     '1 pending turn here: queued.',
+  ]);
+});
+
+/** The three reads `/context` makes, answered from the fixtures above unless a test says otherwise. */
+const wire = (reads: {
+  session?: Record<string, unknown>;
+  context?: unknown[];
+  plugins?: () => Promise<unknown>;
+  models?: () => Promise<unknown>;
+}) =>
+  ({
+    session: {
+      get: async () => ({ ...sessionData, ...reads.session }),
+      context: async () => reads.context ?? contextData,
+    },
+    plugin: { list: reads.plugins ?? (async () => ({ data: pluginData })) },
+    model: {
+      list:
+        reads.models ??
+        (async () => ({ data: [{ providerID: 'github-copilot', modelID: 'gpt-5.2', limit: { context: 128_000 } }] })),
+    },
+  }) as unknown as OpenCodeClient;
+const answered = (model: Record<string, string>) => [
+  {
+    type: 'assistant',
+    id: 'a1',
+    model,
+    tokens: { input: 800, output: 200, reasoning: 0, cache: { read: 500, write: 0 } },
+  },
+];
+const linesOf = async (client: OpenCodeClient, scope = loaded) =>
+  (await describeSession(client, 'ses_x', scope)).split('\n');
+
+test('the plugin section lists what OpenCode loaded beyond its built-ins, and says so when it cannot tell', async () => {
+  const refused = async () => {
+    throw new Error('connection refused');
+  };
+  const builtin = { id: 'opencode.tools', source: { type: 'builtin' }, state: { status: 'active' } };
+  const plugins = [
+    builtin,
+    {
+      id: 'checkout',
+      source: { type: 'local', path: join(homedir(), 'checkouts', 'aivi') },
+      state: { status: 'active' },
+    },
+    { id: 'plain', source: { type: 'package', target: 'plain' }, state: { status: 'active' } },
+    { source: { type: 'package', target: 'nameless', version: '1.0.0' }, state: { status: 'active' } },
+  ];
+  const section = async (list: () => Promise<unknown>) => {
+    const lines = await linesOf(wire({ plugins: list }));
+    return lines.slice(lines.indexOf('') + 1, lines.lastIndexOf(''));
+  };
+
+  assert.deepEqual(await section(refused), ['**Plugins** · OpenCode did not answer, so nothing here is claimed']);
+  assert.deepEqual(await section(async () => ({ data: [builtin] })), [
+    '**Plugins** · none beyond OpenCode’s built-ins — no aivi plugin in this OpenCode',
+  ]);
+  assert.deepEqual(await section(async () => ({ data: plugins })), [
+    '**Plugins**',
+    '- checkout: ~/checkouts/aivi',
+    '- plain',
+    '- unknown (v1.0.0): nameless',
+  ]);
+});
+
+test('the window section reads the last answer against the model’s limit, and says what it cannot know', async () => {
+  const model = { providerID: 'github-copilot', id: 'gpt-5.2' };
+  const window = async (reads: Parameters<typeof wire>[0]) => {
+    const lines = await linesOf(wire({ session: { cost: 0 }, ...reads }));
+    return lines.slice(
+      0,
+      lines.findIndex(line => line.startsWith('Input ')),
+    );
+  };
+  const header = '🧠 **Context** · `assistant` in `/home`';
+  const unbilled = 'Billed: no cost reported by the provider';
+
+  assert.deepEqual(await window({ context: [] }), [header, 'Model none yet', unbilled]);
+  assert.deepEqual(await window({ context: answered(model) }), [
+    header,
+    'Model `github-copilot/gpt-5.2` · window 128,000 tokens',
+    'In use 1,500 / 128,000 (1%)',
+    '░'.repeat(24),
+    'Headroom 126,500 tokens',
+    unbilled,
+  ]);
+  const catalogueDown = async () => {
+    throw new Error('connection refused');
+  };
+  assert.deepEqual(await window({ context: answered(model), models: catalogueDown }), [
+    header,
+    'Model `github-copilot/gpt-5.2` · window size unknown',
+    'In use 1,500 tokens at the last call',
+    unbilled,
+  ]);
+});
+
+test('a conversation bound to an agent that has no session yet says which agent its first message starts', async () => {
+  const store = {
+    sessionOf: () => ({
+      session: 'ses_1',
+      ready: false,
+      agent: 'developer',
+      directory: join(homedir(), 'work'),
+      model: null,
+      project: null,
+      issue: null,
+    }),
+    list: () => [{ state: 'queued' }, { state: 'running' }, { state: 'sent' }, { state: 'discarded' }],
+  } as unknown as ConversationStore;
+  const scope = { ...loaded, projects: [], sources: loaded.sources.slice(0, 1) };
+  const opencode = async () => {
+    throw new Error('without a session there is nothing to ask OpenCode');
+  };
+
+  assert.deepEqual((await describeConversation(store, 'dm-a', binding, scope, opencode)).split('\n'), [
+    '🧠 **Context** · no session yet',
+    'The next message starts one with agent `developer` in `~/work`.',
+    '',
+    '**Knowledge in scope** 1 core source · no projects',
+    '2 pending turns here: queued, running.',
   ]);
 });

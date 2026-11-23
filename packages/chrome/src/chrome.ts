@@ -55,6 +55,10 @@ const DEFAULT_ARGS = [
 ];
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 20_000;
+const DEFAULT_KILL_AFTER_MS = 5_000;
+const DEFAULT_PORT_POLL_MS = 50;
+const DEFAULT_VERSION_POLL_MS = 100;
+const DEFAULT_DEBUG_URL = 'http://127.0.0.1:9222';
 
 /** Find the browser binary: `AIVI_CHROME_PATH` if set (a set-but-wrong value
  *  is a loud error, not a silent miss), then the usual paths, then PATH.
@@ -87,6 +91,12 @@ export interface ChromeLaunchOptions {
   args?: string[];
   /** How long the browser gets to boot and answer. Default 20000. */
   startupTimeoutMs?: number;
+  /** How long the browser gets to end after SIGTERM before it is killed, when
+   *  it is closed or when its launch fails. Default 5000. */
+  killAfterMs?: number;
+  /** The pause between two looks while the browser boots: at its port file
+   *  (default 50) and at `/json/version` (default 100). */
+  pollMs?: number;
   commandMaxTime?: number;
 }
 
@@ -99,6 +109,8 @@ export interface ChromeAttachOptions {
   wsUrl?: string;
   /** How long to wait for the answer. Default 20000. */
   timeoutMs?: number;
+  /** The pause between two asks of `/json/version`. Default 100. */
+  pollMs?: number;
   commandMaxTime?: number;
 }
 
@@ -107,18 +119,26 @@ interface VersionInfo {
   webSocketDebuggerUrl?: string;
 }
 
+/** What discovery answers: a version that carries the browser's own websocket URL. */
+type Discovered = VersionInfo & { webSocketDebuggerUrl: string };
+
 function exited(child: ChildProcess): boolean {
   return child.exitCode !== null || child.signalCode !== null;
 }
 
 function exitCodeOf(child: ChildProcess): string {
-  return child.exitCode !== null ? String(child.exitCode) : (child.signalCode ?? '?');
+  return String(child.exitCode ?? child.signalCode);
 }
 
 /** Wait for the port file Chrome writes in the profile, watching the process
  *  so a browser that dies on a bad flag fails here with its code, not with a
  *  timeout much later. */
-async function readActivePort(portFile: string, child: ChildProcess, timeoutMs: number): Promise<number> {
+async function readActivePort(
+  portFile: string,
+  child: ChildProcess,
+  timeoutMs: number,
+  pollMs: number,
+): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   do {
     try {
@@ -130,7 +150,7 @@ async function readActivePort(portFile: string, child: ChildProcess, timeoutMs: 
     if (exited(child)) {
       throw new Error(`chrome exited before reporting a port (code ${exitCodeOf(child)}) — check the flags`);
     }
-    await sleep(50);
+    await sleep(pollMs);
   } while (Date.now() < deadline);
   throw new Error(`no DevToolsActivePort in the profile within ${timeoutMs} ms`);
 }
@@ -141,13 +161,19 @@ async function discoverVersion(
   baseUrl: string,
   deadline: number,
   child: ChildProcess | undefined,
-): Promise<VersionInfo> {
+  pollMs: number,
+): Promise<Discovered> {
   do {
     try {
-      const response = await fetch(`${baseUrl}/json/version`);
+      // one request may not outlast the time the caller gave
+      const response = await fetch(`${baseUrl}/json/version`, {
+        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      });
       if (response.ok) {
         const info = (await response.json()) as VersionInfo;
-        if (info.webSocketDebuggerUrl !== undefined) return info;
+        if (info.webSocketDebuggerUrl !== undefined) {
+          return { ...info, webSocketDebuggerUrl: info.webSocketDebuggerUrl };
+        }
       }
     } catch {
       // nothing listening yet
@@ -155,18 +181,18 @@ async function discoverVersion(
     if (child !== undefined && exited(child)) {
       throw new Error(`chrome exited before answering /json/version (code ${exitCodeOf(child)})`);
     }
-    await sleep(100);
+    await sleep(pollMs);
   } while (Date.now() < deadline);
   throw new Error(`the browser at ${baseUrl} never answered /json/version`);
 }
 
 /** SIGTERM so Chrome can flush the profile, SIGKILL only if it ignores
  *  that. One bounded wait either way. */
-async function killChild(child: ChildProcess): Promise<void> {
+async function killChild(child: ChildProcess, killAfterMs: number): Promise<void> {
   if (exited(child)) return;
   child.kill('SIGTERM');
   await new Promise<void>(resolve => {
-    const killer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+    const killer = setTimeout(() => child.kill('SIGKILL'), killAfterMs);
     child.once('exit', () => {
       clearTimeout(killer);
       resolve();
@@ -181,13 +207,21 @@ export class Chrome {
   /** The debug port, so an attach or a status line can name it. */
   readonly port: number;
   readonly #child: ChildProcess | undefined;
+  readonly #killAfterMs: number;
   #closed = false;
 
-  private constructor(connection: CdpConnection, info: VersionInfo, port: number, child: ChildProcess | undefined) {
+  private constructor(
+    connection: CdpConnection,
+    browser: string,
+    port: number,
+    child: ChildProcess | undefined,
+    killAfterMs: number,
+  ) {
     this.connection = connection;
-    this.browser = info.Browser ?? 'unknown';
+    this.browser = browser;
     this.port = port;
     this.#child = child;
+    this.#killAfterMs = killAfterMs;
   }
 
   /** Launch the installed Chrome as a child of this process. */
@@ -197,6 +231,7 @@ export class Chrome {
     if (options.profileDir === '')
       throw new Error('launch needs its own profileDir (Chrome ignores the debug port on the default profile)');
     const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    const killAfterMs = options.killAfterMs ?? DEFAULT_KILL_AFTER_MS;
     await mkdir(options.profileDir, { recursive: true });
     const portFile = join(options.profileDir, 'DevToolsActivePort');
     // a file from an earlier run would advertise a dead port
@@ -213,16 +248,28 @@ export class Chrome {
       'about:blank',
     ];
     const child = spawn(bin, flags, { stdio: 'ignore' });
+    // A binary that cannot be started (missing, not executable) is reported as
+    // an 'error' event on the child; with no listener Node ends the process.
+    let spawnError: Error | undefined;
+    child.on('error', error => {
+      spawnError ??= error;
+    });
     try {
-      const port = await readActivePort(portFile, child, startupTimeoutMs);
-      const info = await discoverVersion(`http://127.0.0.1:${port}`, Date.now() + startupTimeoutMs, child);
-      const connection = await CdpConnection.open(info.webSocketDebuggerUrl ?? '', {
+      const port = await readActivePort(portFile, child, startupTimeoutMs, options.pollMs ?? DEFAULT_PORT_POLL_MS);
+      const info = await discoverVersion(
+        `http://127.0.0.1:${port}`,
+        Date.now() + startupTimeoutMs,
+        child,
+        options.pollMs ?? DEFAULT_VERSION_POLL_MS,
+      );
+      const connection = await CdpConnection.open(info.webSocketDebuggerUrl, {
         ...(options.commandMaxTime === undefined ? {} : { commandMaxTime: options.commandMaxTime }),
       });
-      return new Chrome(connection, info, port, child);
+      return new Chrome(connection, info.Browser ?? 'unknown', port, child, killAfterMs);
     } catch (error) {
-      await killChild(child);
-      throw error;
+      await killChild(child, killAfterMs);
+      // why the browser never ran says more than the symptom it left
+      throw spawnError ?? error;
     }
   }
 
@@ -232,18 +279,25 @@ export class Chrome {
   static async attach(options: ChromeAttachOptions = {}): Promise<Chrome> {
     const timeoutMs = options.timeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     let info: VersionInfo = {};
-    let wsUrl = options.wsUrl;
-    if (wsUrl === undefined) {
-      const baseUrl = options.debugUrl ?? 'http://127.0.0.1:9222';
-      info = await discoverVersion(baseUrl, Date.now() + timeoutMs, undefined);
-      wsUrl = info.webSocketDebuggerUrl ?? '';
+    let wsUrl: string;
+    if (options.wsUrl === undefined) {
+      const found = await discoverVersion(
+        options.debugUrl ?? DEFAULT_DEBUG_URL,
+        Date.now() + timeoutMs,
+        undefined,
+        options.pollMs ?? DEFAULT_VERSION_POLL_MS,
+      );
+      info = found;
+      wsUrl = found.webSocketDebuggerUrl;
+    } else {
+      wsUrl = options.wsUrl;
     }
     // the answer carries the real host and port, so trust it over the question
     const port = Number(new URL(wsUrl).port);
     const connection = await CdpConnection.open(wsUrl, {
       ...(options.commandMaxTime === undefined ? {} : { commandMaxTime: options.commandMaxTime }),
     });
-    return new Chrome(connection, info, port, undefined);
+    return new Chrome(connection, info.Browser ?? 'unknown', port, undefined, DEFAULT_KILL_AFTER_MS);
   }
 
   /** True when this handle launched the browser and owns ending it. */
@@ -286,6 +340,6 @@ export class Chrome {
     if (this.#closed) return;
     this.#closed = true;
     this.connection.close();
-    if (this.#child !== undefined) await killChild(this.#child);
+    if (this.#child !== undefined) await killChild(this.#child, this.#killAfterMs);
   }
 }

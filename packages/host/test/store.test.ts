@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { jobSchema } from '@aivi/core';
 import { Store } from '../src/store.ts';
@@ -508,6 +510,24 @@ test('link codes: minted hashed, consumed once, already-bound refused without co
   store.close();
 });
 
+test('a link code that collides with one already minted is minted again', async t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const ada = store.createPerson({ name: 'Ada', roles: [] });
+  const bob = store.createPerson({ name: 'Bob', roles: [] });
+  // Bob holds 99% of the five-digit space: nearly every draw for Ada collides before one lands.
+  const hold = store.db.prepare('INSERT INTO link_codes(code_hash,person_id,created_at,expires_at) VALUES(?,?,?,?)');
+  store.db.exec('BEGIN');
+  for (let n = 0; n < 99_000; n++)
+    hold.run(createHash('sha256').update(String(n).padStart(5, '0')).digest('hex'), bob.id, start, start + 60_000);
+  store.db.exec('COMMIT');
+
+  const minted = store.mintLinkCode(ada.id, 15 * 60_000, start);
+
+  assert.match(minted.code, /^99\d{3}$/, 'the code is one nobody held');
+  assert.equal(store.redeemLinkCode(minted.code, 'discord', 'u1', start + 1).reason, 'bound');
+});
+
 test('the request diary reads oldest-first through its filters; clearRequests retires only the old', async t => {
   const store = new Store(':memory:');
   t.after(() => store.close());
@@ -547,4 +567,188 @@ test('the request diary reads oldest-first through its filters; clearRequests re
     [start + day],
   );
   assert.equal(store.clearRequests(start - 30 * day), 0, 'nothing left that old');
+});
+
+test('a database written by a newer host is refused, never opened', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-newer-'));
+  const path = join(root, 'queue.sqlite');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  new Store(path).close();
+  const raw = new DatabaseSync(path);
+  raw.exec('PRAGMA user_version=99');
+  raw.close();
+  assert.throws(() => new Store(path), /Database schema 99 is newer than this host/);
+});
+
+/** What schema v5 left behind: reports stored with an overloaded `channel`, definitions in `schedules`, executions in `jobs`. */
+const SCHEMA_V5 = `
+  CREATE TABLE schedules(id TEXT PRIMARY KEY, spec TEXT NOT NULL, fingerprint TEXT NOT NULL, next_at INTEGER NOT NULL,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), source TEXT NOT NULL DEFAULT 'config' CHECK(source IN ('config','agent')));
+  CREATE TABLE jobs(id TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, task TEXT NOT NULL,
+    resource TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, scheduled_for INTEGER NOT NULL,
+    started_at INTEGER, finished_at INTEGER, schedule_id TEXT, session_id TEXT, owner TEXT, result TEXT, error TEXT,
+    report TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE audit(seq INTEGER PRIMARY KEY, job_id TEXT NOT NULL, at INTEGER NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL);
+  PRAGMA user_version=5;
+`;
+
+test('reports stored before schema v6 are rewritten to the current shape, and the ones nobody can read are dropped', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-v5-migration-'));
+  const path = join(root, 'queue.sqlite');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const current = { to: 'channel', module: 'discord', channel: '9', on: 'always' };
+  const stored: [unknown, unknown][] = [
+    [
+      { to: 'discord', channel: '123', on: 'failure' },
+      { to: 'channel', module: 'discord', channel: '123', on: 'failure' },
+    ],
+    [
+      { to: 'session', channel: 'ses_1' },
+      { to: 'session', session: 'ses_1', on: 'always' },
+    ],
+    [current, current],
+    [{ to: 'discord' }, null],
+    [{ channel: 'c' }, null],
+    ['stray', null],
+    [null, null],
+  ];
+  const legacy = new DatabaseSync(path);
+  legacy.exec(SCHEMA_V5);
+  const insertRun = legacy.prepare(
+    `INSERT INTO jobs(id,dedupe_key,fingerprint,task,resource,state,created_at,scheduled_for,report)
+     VALUES(?,?,'f','{"kind":"invocation","name":"system.check"}','local-model','succeeded',${start},${start},?)`,
+  );
+  stored.forEach(([report], i) => {
+    insertRun.run(`run-${i}`, `key:${i}`, JSON.stringify(report));
+  });
+  const specOf = (id: string) =>
+    jobSchema.parse({ id, cron: '0 9 * * *', timezone: 'UTC', resource: 'local-model', task: check, report: current });
+  const { report: _none, ...quiet } = specOf('quiet');
+  const schedules: Record<string, unknown>[] = [specOf('moved'), quiet, specOf('dropped')].map(spec => ({ ...spec }));
+  schedules[0]!.report = { to: 'discord', channel: '123' };
+  schedules[2]!.report = { to: 'discord' };
+  const insertSchedule = legacy.prepare(
+    `INSERT INTO schedules(id,spec,fingerprint,next_at,enabled) VALUES(?,?,'stale',${start + 999},1)`,
+  );
+  for (const spec of schedules) insertSchedule.run(String(spec.id), JSON.stringify(spec));
+  legacy.close();
+
+  const upgraded = new Store(path);
+  t.after(() => upgraded.close());
+  assert.deepEqual(
+    stored.map((_, i) => upgraded.run(`run-${i}`).report),
+    stored.map(([, expected]) => expected),
+  );
+  assert.deepEqual(upgraded.job('moved').spec.report, {
+    to: 'channel',
+    module: 'discord',
+    channel: '123',
+    on: 'always',
+  });
+  assert.deepEqual(upgraded.job('quiet').spec, quiet);
+  assert.equal(Object.hasOwn(upgraded.job('dropped').spec, 'report'), false);
+  // The fingerprints follow the rewritten specs: the same schedules read from config next boot are no change.
+  const { report: _dropped, ...unreported } = specOf('dropped');
+  upgraded.syncJobs(
+    [jobSchema.parse({ ...specOf('moved'), report: upgraded.job('moved').spec.report }), jobSchema.parse(unreported)],
+    [],
+    start + 60_000,
+  );
+  assert.equal(upgraded.job('moved').nextAt, start + 999, 'a schedule whose report was rewritten keeps its anchor');
+  assert.equal(upgraded.job('dropped').nextAt, start + 999, 'so does one whose report was dropped');
+});
+
+test('a daemon row whose process is gone is replaced; one that cannot be probed still holds its claim', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const owner = () => store.db.prepare('SELECT owner,pid FROM daemon WHERE id=1').get();
+  store.acquireDaemon('old', 4242);
+  const kill = t.mock.method(process, 'kill', () => {
+    throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+  });
+  store.acquireDaemon('new', 4243);
+  assert.deepEqual(
+    kill.mock.calls.map(call => call.arguments),
+    [[4242, 0]],
+    'the old pid was only probed, never signalled',
+  );
+  assert.deepEqual({ ...owner() }, { owner: 'new', pid: 4243 });
+  kill.mock.mockImplementation(() => {
+    throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+  });
+  assert.throws(() => store.acquireDaemon('third', 4244), /A host already owns this database \(pid 4243\)/);
+  assert.deepEqual({ ...owner() }, { owner: 'new', pid: 4243 });
+});
+
+test('a run is changed only by its owner and while it is in the state the change needs', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const queued = store.enqueue(check, 'local-model', 'a', start);
+  assert.throws(() => store.attachSession(queued.id, 'host', 'ses_1'), /Lost run ownership while attaching session/);
+  assert.throws(() => store.resolveBlocked(queued.id, 'failed', 'looked'), /Only blocked runs can be resolved/);
+  store.claimRun(queued.id, 'host', start);
+  assert.throws(() => store.attachSession(queued.id, 'someone-else', 'ses_1'), /Lost run ownership while attaching/);
+  store.attachSession(queued.id, 'host', 'ses_1');
+  assert.equal(store.run(queued.id).sessionId, 'ses_1');
+});
+
+test('an enqueued one-off carries the report its outcome is posted to', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const report = { to: 'session', session: 'ses_1', on: 'always' } as const;
+  const run = store.enqueue(check, 'local-model', 'with-report', start, report);
+  assert.deepEqual(run.report, report);
+  assert.deepEqual(store.job(run.jobId).spec.report, report);
+});
+
+test('a one-off that is paused and resumed fires again for its instant; the cancelled run keeps the plain key', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const at = start + 3_600_000;
+  store.addJob(jobSchema.parse({ id: 'agent-1', at: iso(at), task: check }), 'agent', at);
+  store.setJobEnabled('agent-1', false, at + 1);
+  store.setJobEnabled('agent-1', true, at + 2);
+  assert.equal(store.materializeDue(at + 2).created, 1);
+  assert.deepEqual(
+    store.db
+      .prepare('SELECT dedupe_key,state FROM runs ORDER BY created_at,id')
+      .all()
+      .map(row => [row.dedupe_key, row.state]),
+    [
+      [`job:agent-1:${at}`, 'cancelled'],
+      [`job:agent-1:${at}:${at + 2}`, 'queued'],
+    ],
+  );
+});
+
+test('a one-off that comes due while a run of it is in flight is spent without a second run', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const at = start + 3_600_000;
+  store.addJob(jobSchema.parse({ id: 'agent-2', at: iso(at), task: check }), 'agent', start);
+  const manual = store.runJob('agent-2', start + 10);
+  assert.equal(store.materializeDue(at).created, 0);
+  assert.equal(store.runs({ jobId: 'agent-2' }).length, 1, 'the instant added no run');
+  assert.deepEqual(
+    [store.job('agent-2').state, store.job('agent-2').nextAt],
+    ['active', null],
+    'the occurrence is spent; the job waits for the run in flight',
+  );
+  store.finish(store.claimRun(manual.id, 'host', at)!.id, 'host', 'succeeded', null, 'done', at + 5);
+  assert.equal(store.job('agent-2').state, 'done');
+});
+
+test('syncing config keeps a disabled job paused and does not re-arm a one-off that already ran', t => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const once = jobSchema.parse({ id: 'once', at: iso(start + 60_000), task: check });
+  const config = [{ ...daily(), enabled: false }, once];
+  store.syncJobs(config, [], start);
+  assert.equal(store.job('daily').state, 'paused');
+  store.materializeDue(start + 60_000);
+  store.finish(claimOne(store, 'host', start + 60_000)!.id, 'host', 'succeeded', null, 'done', start + 61_000);
+  assert.equal(store.job('once').state, 'done');
+  store.syncJobs(config, [], start + 120_000);
+  assert.deepEqual([store.job('once').state, store.job('once').nextAt], ['done', null]);
+  assert.equal(store.runs({ jobId: 'once' }).length, 1, 'the next boot reads the same config and runs nothing again');
 });

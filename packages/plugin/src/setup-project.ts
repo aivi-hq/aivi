@@ -137,3 +137,40 @@ export function laneKindLines(note?: string): string[] {
     'A queue is where tickets wait while the working lanes are full: aivi moves the next ticket out of it as soon as a slot is free.',
   ];
 }
+
+/**
+ * What an `agent` lane asks beyond its kind: which OpenCode agent works it
+ * (a pick-list, never typing) and, when a forge is configured, whether that
+ * work happens on the ticket's branch. The worktree belongs to the branch,
+ * not to writing: a review lane changes nothing yet must read the pull
+ * request's branch, and that branch lives nowhere but a worktree — a run on
+ * a branch reuses the worktree already holding it. Only a yes comes back as
+ * `worktree` — core's default is false, and a key stating the default is
+ * noise. "No" means the project's own checkout; it is never a promise of
+ * read-only: that is the agent file's own deny, never aivi's. Without a
+ * forge there are no worktrees to promise, so nothing is asked — and
+ * nothing is asked of a lane no agent was named for.
+ */
+export async function askAgentLane(
+  ctx: ProjectSetupContext,
+  laneName: string,
+  agentNames: string[],
+): Promise<{ agent: string; worktree: boolean }> {
+  const answer = await ctx.prompts.autocomplete({
+    message: `Which OpenCode agent works the "${laneName}" lane?`,
+    options: agentNames.map(name => ({ value: name, label: name })),
+    maxItems: 12,
+  });
+  if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
+  const agent = String(answer).trim();
+  if (!agent || !ctx.forgeConfigured) return { agent, worktree: false };
+  const onBranch = await ctx.prompts.select({
+    message: `Does work in the "${laneName}" lane happen on the ticket's branch (git worktree)?`,
+    options: [
+      { value: 'yes', label: "yes — on the ticket's branch, in its own worktree" },
+      { value: 'no', label: 'no — in the project checkout itself' },
+    ],
+  });
+  if (ctx.prompts.isCancel(onBranch)) throw new PluginSetupCancelled('lane setup incomplete');
+  return { agent, worktree: onBranch === 'yes' };
+}

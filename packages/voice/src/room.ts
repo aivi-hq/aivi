@@ -43,7 +43,7 @@ import type { VoiceStore } from './store.ts';
 import type { TtsRun } from './tts.ts';
 import type { TurnsDeps } from './turns.ts';
 import { VoiceTurns } from './turns.ts';
-import { scanWake, stripWake } from './wake.ts';
+import { scanWake } from './wake.ts';
 
 const SR = 16000;
 const BUFFER_MAX_BYTES = SR * 2 * 60; // own-lane wait-for-engine buffer: 60 s, then oldest goes
@@ -213,16 +213,9 @@ export class HearingRoom implements VoiceRoom {
     } else void this.startEngine();
   }
 
-  /** Current engine state: a page that connects to a warm host is told the
-   *  truth at once, not a spinner for models that loaded an hour ago. */
-  currentEngineState(): EngineState {
-    return this.engineState;
-  }
-
   /** Own-lane rooms (file, mic) begin their own engine at once; push rooms
    *  never own one — the shared engine loads on the host's first audio. */
   private async startEngine(): Promise<void> {
-    if (this.engine) return;
     this.setEngineState('loading'); // the page says so; models take ~30 s
     const engine = new EngineRun(
       this.deps.engineSpec,
@@ -242,12 +235,14 @@ export class HearingRoom implements VoiceRoom {
     this.engine = engine;
     try {
       await engine.start();
+      if (this.stopped) return; // the room closed while the models loaded
       this.engineReady = true;
       this.setEngineState('ready');
       for (const buf of this.buffered) engine.write(buf); // audio that arrived first goes in order
       this.buffered = [];
       this.bufferedBytes = 0;
     } catch (error) {
+      if (this.stopped) return; // closing the room ended the load: that is not a failed start
       // Failed like stt/tts fail: not cached as a permanent no, the next
       // audio tries the load again.
       this.engine = null;
@@ -341,7 +336,7 @@ export class HearingRoom implements VoiceRoom {
     this.listeners.push(listener);
     // A page that joins a warm host sees the truth now, not a stale spinner:
     // the current engine state is replayed to the new listener.
-    listener({ ev: 'engine', state: this.engineState });
+    this.show(listener, { ev: 'engine', state: this.engineState });
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
     };
@@ -400,7 +395,7 @@ export class HearingRoom implements VoiceRoom {
       if (opts.wake) {
         this.deps.store.touchRoomSession(this.init.label); // the window restarts on every exchange
         this.turns.prompt({
-          text: `You were addressed by ${speaker || 'someone'} during a meeting (transcript ${this.transcript}, line ${id}). They said: "${stripWake(text, opts.wake)}". Use the aivi_voice_transcript tool to read back what was said around this moment.`,
+          text: `You were addressed by ${speaker || 'someone'} during a meeting (transcript ${this.transcript}, line ${id}). They said: "${text}". Use the aivi_voice_transcript tool to read back what was said around this moment.`,
           speakers: speaker === '' ? [] : [speaker],
           wake: opts.wake,
         });
@@ -408,6 +403,17 @@ export class HearingRoom implements VoiceRoom {
       return;
     }
     // Call: the session is the record. Caption the room, batch the words.
+    // A line worded after the room closed (an utterance still in the engine
+    // when everyone left) shares the fate of the closing batch: no flush
+    // may be armed on a room that is gone.
+    if (this.stopped) {
+      this.deps.log.info('voice.batch.dropped', {
+        room: this.init.label,
+        lines: 1,
+        hint: 'the room closed before this sentence was finished',
+      });
+      return;
+    }
     // Aivi's own voice never arrives as data: Discord separates streams
     // server-side, and the file/mic development lanes play nothing back —
     // so what is heard here is a person.
@@ -437,8 +443,9 @@ export class HearingRoom implements VoiceRoom {
     }, this.deps.finishWindowMs ?? CONVERSATION_GAP_MS);
   }
 
+  /** The window closed on a batch: it is only ever armed behind a line, and
+   *  a closing room takes the timer and the batch away together. */
   private flushBatch(): void {
-    if (!this.batch.length) return;
     const said = this.batch;
     this.batch = [];
     // Every line prefixes its speaker to the text when it has one: the
@@ -467,12 +474,16 @@ export class HearingRoom implements VoiceRoom {
   }
 
   private emit(event: Record<string, unknown>): void {
-    for (const l of this.listeners) {
-      try {
-        l(event);
-      } catch (error) {
-        this.deps.log.warn('voice.listener.failed', { room: this.init.label, error: String(error) });
-      }
+    for (const l of this.listeners) this.show(l, event);
+  }
+
+  /** One event to one watcher: a watcher that fails is said and never
+   *  reaches the room, the other watchers or whoever registered it. */
+  private show(listener: (event: Record<string, unknown>) => void, event: Record<string, unknown>): void {
+    try {
+      listener(event);
+    } catch (error) {
+      this.deps.log.warn('voice.listener.failed', { room: this.init.label, error: String(error) });
     }
   }
 

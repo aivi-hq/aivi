@@ -42,6 +42,7 @@ export function setupFixture(t: TestContext, answers: unknown[] = []) {
     text: ask,
     password: ask,
     select: ask,
+    confirm: ask,
     isCancel: (value: unknown) => value === cancelSetup,
     note,
     log: { message: log },

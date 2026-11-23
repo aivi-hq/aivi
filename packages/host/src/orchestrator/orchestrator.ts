@@ -186,13 +186,13 @@ export class Orchestrator implements OrchestratorApi {
     deps.dispatcher.registerCallback('orchestrator', (requestId, lease) => {
       void this.#fulfill(requestId, lease).catch(error => {
         this.deps.log.warn('fulfill.failed', { request: requestId, error });
-        try {
-          void this.deps.dispatcher.release(lease.id);
-        } catch {
-          // 'already gone': fulfill released it before failing elsewhere.
-        }
+        // 'Already gone' is an answer, not a failure: fulfill released it before failing elsewhere.
+        void this.deps.dispatcher.release(lease.id).catch(() => {});
       });
     });
+    // Shutting down: every armed clock goes with it, as in the dispatcher. Nothing fires into a host that is
+    // ending; the boot pass re-arms the parked runs.
+    deps.signal.addEventListener('abort', () => this.#disarmAll(), { once: true });
   }
 
   /**
@@ -293,17 +293,14 @@ export class Orchestrator implements OrchestratorApi {
       });
       return { runId: '', created: false, queued: grant.queued };
     }
-    const { run, created } = this.deps.ledger.request({
+    // Nothing awaits between the live check above and this claim: the ticket has no run, and now it has one.
+    const { run } = this.deps.ledger.request({
       projectId: request.projectId,
       trackerId: request.trackerId,
       ticketId: request.ticketId,
       lane: request.lane,
       agent: request.agent,
     });
-    if (!created) {
-      await this.deps.dispatcher.release(grant.lease.id);
-      return { runId: run.id, created: false };
-    }
     this.deps.ledger.setLease(run.id, grant.lease.id);
     // The push-shaped entry did its platform side already: the summary and
     // directory ride, initWork is not asked twice, and no move is owed.
@@ -544,7 +541,7 @@ export class Orchestrator implements OrchestratorApi {
       // An answer waiting for its slot: the run is the eligibility —
       // stopped or answered in the meantime, and the lease goes back.
       this.requested.delete(requestId); // the wait is over either way
-      const run = work.runId ? this.deps.ledger.get(work.runId) : undefined;
+      const run = this.deps.ledger.get(work.runId!); // an answer waiting for its slot always names its run
       if (run?.state !== 'awaiting_input' || !work.answer) {
         await this.deps.dispatcher.release(lease.id);
         return;
@@ -654,17 +651,16 @@ export class Orchestrator implements OrchestratorApi {
     await this.#fail(run.id, `The dispatcher ended the lease: ${reason}`, false, code);
   }
 
-  /** A run of this project just ended: work may be claimable now. */
+  /** A run of this project just ended: work may be claimable now. The pass says its own failure. */
   #wakeAfter(run: Run): void {
-    void this.#serialized(run.trackerId, run.projectId).catch(error =>
-      this.deps.log.warn('walk.after-end.failed', { project: run.projectId, error }),
-    );
+    void this.#serialized(run.trackerId, run.projectId);
   }
 
   /** Give back the slot a terminal run's claim held, if it still stands. */
   /** Aim the one clock of an open elicitation at its known instant. */
   #armElicitation(runId: string): void {
     this.#clearElicitation(runId);
+    if (this.deps.signal.aborted) return; // no clock for a host that is ending
     const handle = setTimeout(() => {
       this.elicitations.delete(runId);
       void this.#keepAliveExpired(runId).catch(error => this.deps.log.warn('keep-alive.failed', { run: runId, error }));
@@ -676,6 +672,14 @@ export class Orchestrator implements OrchestratorApi {
     const previous = this.elicitations.get(runId);
     if (previous) clearTimeout(previous);
     this.elicitations.delete(runId);
+  }
+
+  /** The host is ending: no clock of ours fires into it. */
+  #disarmAll(): void {
+    for (const handle of this.elicitations.values()) clearTimeout(handle);
+    for (const handle of this.turnEnds.values()) clearTimeout(handle);
+    this.elicitations.clear();
+    this.turnEnds.clear();
   }
 
   /**
@@ -717,7 +721,15 @@ export class Orchestrator implements OrchestratorApi {
         await this.#deliverAnswer(run, text, formId);
         return { resumed: true };
       }
-      const grant = this.deps.dispatcher.request({ service: 'orchestrator', resume: sessionId });
+      // The lane's pool as the config names it now: the session's own pool
+      // outranks it, and it is where the session continues when the config
+      // no longer names that one.
+      const lane = this.deps.lanes(run.projectId).find(l => l.name === run.lane);
+      const grant = this.deps.dispatcher.request({
+        service: 'orchestrator',
+        resume: sessionId,
+        ...(lane?.pool ? { pool: lane.pool } : {}),
+      });
       if ('refused' in grant) return { resumed: false, refused: grant.refused };
       if ('queued' in grant) {
         this.requested.set(grant.queued, {
@@ -881,6 +893,7 @@ export class Orchestrator implements OrchestratorApi {
    *  done session. One timer per session, never an interval. */
   #debounceTurnEnd(sessionId: string): void {
     this.#cancelTurnEnd(sessionId);
+    if (this.deps.signal.aborted) return; // no clock for a host that is ending
     const handle = setTimeout(() => {
       this.turnEnds.delete(sessionId);
       void this.#turnEnded(sessionId);
@@ -1041,8 +1054,7 @@ export class Orchestrator implements OrchestratorApi {
   async #prepare(runId: string, summary: string, directory: string, leaseId: string, branch?: string): Promise<void> {
     const log = this.deps.log.with({ run: runId });
     try {
-      const run = this.deps.ledger.get(runId);
-      if (!run) return;
+      const run = this.deps.ledger.get(runId)!;
       const owned = await this.deps.forges.owner({ id: run.projectId, directory });
       const dir = await this.#worktreeOrCheckout(run, directory, branch, owned, log);
       // The feedback gather at start; see #gatherFeedback. Warned, never
@@ -1284,7 +1296,7 @@ export class Orchestrator implements OrchestratorApi {
   async #feedbackGate(run: Run): Promise<void> {
     const feedback = run.feedback;
     if (!feedback?.openThreadIds.length) return; // started clean: nothing is ever owed
-    const directory = run.worktree ?? this.deps.directory(run.projectId);
+    const directory = run.worktree!; // a run found by its session has attached one
     const owned = await this.deps.forges.owner({ id: run.projectId, directory });
     const branch = await this.#localGit(directory, 'symbolic-ref', '--quiet', '--short', 'HEAD');
     if (!owned || !branch)
@@ -1306,9 +1318,9 @@ export class Orchestrator implements OrchestratorApi {
     const owed = facts.threads.filter(t => feedback.openThreadIds.includes(t.id));
     if (!owed.length) return; // every owed thread resolved — by the worker or by a person, both authoritative
     const counted = this.deps.ledger.countFeedback(run.id);
-    const strikes = counted.feedback?.attempts ?? 0;
+    const strikes = counted.feedback!.attempts;
     const list = owed.map(t => `- ${t.path ? `${t.path}: ` : ''}${clip(t.question)} (id ${t.id})`).join('\n');
-    if (strikes >= MAX_FEEDBACK_TRIES && !counted.feedback?.escalated) {
+    if (strikes >= MAX_FEEDBACK_TRIES && !counted.feedback!.escalated) {
       const question = fillPrompt(await this.prompt('escalation'), { pull: pr.url, list });
       try {
         const client = await this.deps.opencode();
@@ -1419,7 +1431,7 @@ export class Orchestrator implements OrchestratorApi {
     const run = this.deps.ledger.bySession(call.sessionId);
     if (!run) throw new ToolError(404, `This session is not an aivi run; ${tool} is not available here.`);
     if (isTerminal(run.state)) throw new ToolError(409, `This run already ended (${run.state}).`);
-    const directory = run.worktree ?? this.deps.directory(run.projectId);
+    const directory = run.worktree!; // a run found by its session has attached one
     const owned = await this.deps.forges.owner({ id: run.projectId, directory });
     if (!owned)
       throw new ToolError(409, `Project ${run.projectId} has no forge for its remote: aivi is the only way across.`);

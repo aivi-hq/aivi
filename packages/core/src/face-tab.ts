@@ -24,6 +24,7 @@
 import { join } from 'node:path';
 import { Chrome, type Tab } from '@aivi/chrome';
 import { faceScriptSource, readFaceHtml } from './face.ts';
+import { faceIsUp, playWav, setFace, setFaceWith, setTapOn, stopAllVoice } from './face-page.ts';
 
 /** The whole media story, in page words: the camera is the face, the mic
  *  is aivi's voice, and what the page hears flows back to core. Injected
@@ -274,21 +275,6 @@ export const MEDIA_SHIM = `(() => {
  *  mono), and the CDP event that carries it back to us. */
 const AUDIO_BINDING = '__aiviAudio';
 
-/** The face page as the callbacks below reach it: `tab.call` serializes a
- *  callback with `fn.toString()`, so this declaration is compile-time only
- *  — the bytes that travel carry plain `window` accesses, and the names are
- *  exactly the globals the shim and the face script above install. */
-declare const window: {
-  aiviFace?: { setState(name: string, detail?: unknown): void };
-  __aiviMic: {
-    /** Resolves in-page: true when the wav played through, false when a stop cut it. */
-    play(b64: string): boolean;
-    stopAll(): void;
-  };
-  __aiviTap?: boolean;
-  __aiviMute?: (on: boolean) => void;
-};
-
 /** The whole injection for one meeting page: shim first (it must own the
  *  devices before any page script can ask), then the face's script. */
 export async function faceInjection(home: string): Promise<string> {
@@ -303,7 +289,15 @@ let chromeUsers = 0;
 async function sharedChrome(stateDir: string, headless: boolean): Promise<Chrome> {
   chromePromise ??= Chrome.launch({ profileDir: join(stateDir, 'face-chrome'), headless });
   chromeUsers++;
-  return chromePromise;
+  try {
+    return await chromePromise;
+  } catch (error) {
+    // A launch that failed leaves nothing to share: without this the failed
+    // promise stayed, and every later open met the same stale error.
+    chromeUsers--;
+    if (chromeUsers === 0) chromePromise = null;
+    throw error;
+  }
 }
 async function releaseChrome(): Promise<void> {
   chromeUsers--;
@@ -402,7 +396,7 @@ export async function openFaceTab(options: FaceTabOptions): Promise<FaceTab> {
     // "Headless" in the first place, not have it patched after load
     await tab.hideHeadless();
     await tab.goto(options.url, { timeoutMs: options.readyTimeoutMs ?? 20_000 });
-    await tab.waitFor(() => typeof window.aiviFace === 'object', {
+    await tab.waitFor(faceIsUp, {
       timeoutMs: options.readyTimeoutMs ?? 20_000,
     });
   } catch (error) {
@@ -412,26 +406,19 @@ export async function openFaceTab(options: FaceTabOptions): Promise<FaceTab> {
   }
   let closed = false;
   const setFaceState = async (state: string, detail?: Record<string, unknown>): Promise<void> => {
-    if (detail === undefined) await tab!.call((name: string) => window.aiviFace?.setState(name), state);
-    else await tab!.call((name: string, d: unknown) => window.aiviFace?.setState(name, d), state, detail);
+    if (detail === undefined) await tab!.call(setFace, state);
+    else await tab!.call(setFaceWith, state, detail);
   };
   return {
     tab,
     cameraAsked: () => tab!.evaluate('window.__aiviCameraAsked'),
     setFaceState,
-    speak: wav => tab!.call((b64: string) => window.__aiviMic.play(b64), wav.toString('base64')),
+    speak: wav => tab!.call(playWav, wav.toString('base64')),
     stopSpeaking: async () => {
-      await tab!.call(() => window.__aiviMic.stopAll());
+      await tab!.call(stopAllVoice);
     },
     setTap: async (on, muteOutput = true) => {
-      await tab!.call(
-        (v: boolean, m: boolean) => {
-          window.__aiviTap = v;
-          if (typeof window.__aiviMute === 'function') window.__aiviMute(m);
-        },
-        on,
-        muteOutput,
-      );
+      await tab!.call(setTapOn, on, muteOutput);
     },
     onAudio: listener => {
       audioListeners.add(listener);
@@ -448,8 +435,13 @@ export async function openFaceTab(options: FaceTabOptions): Promise<FaceTab> {
     async close() {
       if (closed) return;
       closed = true;
-      await tab!.close();
-      await releaseChrome();
+      try {
+        await tab!.close();
+      } finally {
+        // A browser that died cannot close its tab. It must still be given
+        // back, or the next open reuses the dead browser.
+        await releaseChrome();
+      }
     },
   };
 }

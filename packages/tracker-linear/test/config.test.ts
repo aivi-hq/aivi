@@ -60,3 +60,8 @@ test('the plugin declaration is the registry entry: module id and schema', () =>
   assert.equal(plugin.configSchema, linearSchema);
   assert.equal(typeof plugin.createModule, 'function');
 });
+
+test('the plugin builds its module on demand, under the module id', async () => {
+  const module = await plugin.createModule(linearSchema.parse({ apps: { dev: {} } }), '/aivi');
+  assert.equal(module.id, 'tracker-linear');
+});

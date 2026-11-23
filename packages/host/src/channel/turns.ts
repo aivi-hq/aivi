@@ -1,7 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { LoadedConfig, Logger } from '@aivi/core';
-import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { LoadedConfig, Logger, Person } from '@aivi/core';
+import type { ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { Dispatcher } from '@aivi/plugin/dispatcher';
 import type { OpenCodeClient, SessionEvents, Store } from '@aivi/plugin/module';
 import { reentryPrompt } from '../reports.ts';
@@ -17,6 +17,57 @@ export const speakerLine = (platform: ChannelPlatform, speaker: { name: string; 
   platform.describeSpeaker
     ? platform.describeSpeaker(speaker)
     : `[${platform.label} message from ${speaker.name} (user ${speaker.user})]`;
+
+/** The prompt: who said it. A job's outcome re-enters as its own prompt, and a thread seeded with one (a script's output
+ *  posted before any session existed) carries it ahead of the first turn. */
+function promptText(platform: ChannelPlatform, turn: Turn, who: Person | null): string {
+  const said = `${speakerLine(platform, { name: who?.name ?? turn.name, user: turn.user })}\n${turn.text}`;
+  if (turn.kind === 'job') return reentryPrompt(turn.text);
+  if (!turn.ready && turn.seed)
+    return `[Earlier in this thread aivi posted this outcome of a scheduled job:]\n${turn.seed}\n\n${said}`;
+  return said;
+}
+
+/**
+ * What the lease's provide births the conversation's session from: the id the store pre-allocated is kept, the pool
+ * decides the model unless a `/model` pin names one, and the origin that dreaming reviews is stamped where the
+ * session is born.
+ */
+function sessionWork(platform: ChannelPlatform, turn: Turn, who: Person | null, agent: string, directory: string) {
+  return {
+    agent,
+    directory,
+    sessionId: turn.session,
+    create: !turn.ready,
+    title: `${platform.label} ${turn.channel}`,
+    metadata: { aivi: { origin: platform.id, channel: turn.channel, ...(who ? { person: who.id } : {}) } },
+    ...(turn.model
+      ? {
+          model: {
+            providerID: turn.model.providerID,
+            id: turn.model.modelID,
+            ...(turn.model.variant ? { variant: turn.model.variant } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+/** Where the prompt came from, for the memories and outcomes that must know. */
+function messageMetadata(platform: ChannelPlatform, turn: Turn, who: Person | null) {
+  return {
+    aivi:
+      turn.kind === 'job'
+        ? { origin: 'job-result', channel: turn.channel, run: turn.id.slice('run:'.length) }
+        : {
+            origin: platform.id,
+            channel: turn.channel,
+            user: turn.user,
+            sourceMessage: turn.id,
+            ...(who ? { person: who.id } : {}),
+          },
+  };
+}
 
 /**
  * One conversation turn = one verified turn of the configured agent's native session.
@@ -57,42 +108,15 @@ export async function createTurnRunner(
     // A linked channel account speaks as its aivi person, in the prompt and
     // in the metadata, so memories and outcomes know who it was.
     const who = turn.kind === 'message' ? store.identityFor(platform.id, turn.user) : null;
-    const said = `${speakerLine(platform, { name: who?.name ?? turn.name, user: turn.user })}\n${turn.text}`;
-    const text =
-      turn.kind === 'job'
-        ? reentryPrompt(turn.text)
-        : !turn.ready && turn.seed
-          ? `[Earlier in this thread aivi posted this outcome of a scheduled job:]\n${turn.seed}\n\n${said}`
-          : said;
-    const origin = { aivi: { origin: platform.id, channel: turn.channel, ...(who ? { person: who.id } : {}) } };
+    const text = promptText(platform, turn, who);
     if (!lease) throw new Error(`${platform.label} turn: no dispatcher slot; the engine grants one before asking`);
     if (lease.state === 'preparing') {
-      // The lease's provide births the conversation's session: the id the store
-      // pre-allocated is kept, the pool decides the model, and the origin that
-      // dreaming reviews is stamped where the session is born. A conversation
+      // The lease's provide births the conversation's session; a conversation
       // that already has its session resumes as it was. A provide that fails is
       // a turn that never started.
-      await dispatcher
-        .provide(lease.id, {
-          agent,
-          directory,
-          sessionId: turn.session,
-          create: !turn.ready,
-          title: `${platform.label} ${turn.channel}`,
-          metadata: origin,
-          ...(turn.model
-            ? {
-                model: {
-                  providerID: turn.model.providerID,
-                  id: turn.model.modelID,
-                  ...(turn.model.variant ? { variant: turn.model.variant } : {}),
-                },
-              }
-            : {}),
-        })
-        .catch(error => {
-          throw new TurnNotStarted(error);
-        });
+      await dispatcher.provide(lease.id, sessionWork(platform, turn, who, agent, directory)).catch(error => {
+        throw new TurnNotStarted(error);
+      });
       if (!turn.ready) ready();
     }
     const result = await runTurn(
@@ -106,18 +130,7 @@ export async function createTurnRunner(
         messageId: messageIdFor(platform, turn.id),
         // Role behaviour lives in the agent definition; the prompt only carries who said what.
         text,
-        messageMetadata: {
-          aivi:
-            turn.kind === 'job'
-              ? { origin: 'job-result', channel: turn.channel, run: turn.id.slice('run:'.length) }
-              : {
-                  origin: platform.id,
-                  channel: turn.channel,
-                  user: turn.user,
-                  sourceMessage: turn.id,
-                  ...(who ? { person: who.id } : {}),
-                },
-        },
+        messageMetadata: messageMetadata(platform, turn, who),
         // A `/model` pin outranks the pool's choice; prepareSession applies it to the session.
         ...(turn.model ? { model: turn.model } : {}),
       },

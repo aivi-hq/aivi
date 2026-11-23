@@ -15,7 +15,10 @@ interface Harness {
   blocks: { path: string[]; value: unknown }[];
   notes: string[];
   logs: string[];
+  /** The `validate` each prompt was drawn with, as the real prompt would call it on every answer. */
+  validators: { text: Validate[]; password: Validate[] };
 }
+type Validate = (value: string | undefined) => string | undefined;
 
 function harness(answers: string[], responses: { match: RegExp; status: number; body: unknown }[]): Harness {
   const queue = [...answers];
@@ -23,6 +26,7 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
   const blocks: { path: string[]; value: unknown }[] = [];
   const notes: string[] = [];
   const logs: string[] = [];
+  const validators: Harness['validators'] = { text: [], password: [] };
   const answered = async (
     validate?: ((value: string | undefined) => string | undefined) | undefined,
   ): Promise<string> => {
@@ -48,10 +52,14 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
       note: (lines = '', title = '') => {
         notes.push(`${title}: ${lines}`);
       },
-      text: async (options?: { validate?: (value: string | undefined) => string | undefined }) =>
-        answered(options?.validate),
-      password: async (options?: { validate?: (value: string | undefined) => string | undefined }) =>
-        answered(options?.validate),
+      text: async (options?: { validate?: Validate }) => {
+        if (options?.validate) validators.text.push(options.validate);
+        return answered(options?.validate);
+      },
+      password: async (options?: { validate?: Validate }) => {
+        if (options?.validate) validators.password.push(options.validate);
+        return answered(options?.validate);
+      },
       confirm: async () => (await answered()) === 'yes',
       select: async () => answered(),
       log: {
@@ -72,7 +80,7 @@ function harness(answers: string[], responses: { match: RegExp; status: number; 
       secrets.set(key, value);
     },
   };
-  return { ctx, secrets, blocks, notes, logs };
+  return { ctx, secrets, blocks, notes, logs, validators };
 }
 
 const BOT_OK = { match: /users\/@me/, status: 200, body: { id: '10000000000000001', username: 'clawd' } };
@@ -135,6 +143,39 @@ test('discord setup never writes on a refused token', async () => {
   await assert.rejects(setup(h.ctx), /refused that token/);
   assert.equal(h.blocks.length, 0);
   assert.equal(h.secrets.size, 0);
+});
+
+test('discord setup never writes when Discord answers with a failure that is not a refusal', async () => {
+  const h = harness(['tok'], [{ match: /users\/@me/, status: 503, body: {} }]);
+  await assert.rejects(setup(h.ctx), /Discord answered 503 — is the token pasted whole\?/);
+  assert.equal(h.blocks.length, 0);
+  assert.equal(h.secrets.size, 0);
+});
+
+test('the prompts refuse an empty token and any id that is not a Discord snowflake, and take an empty line as the end of the ids', async () => {
+  const h = harness(['tok', 'yes', '', 'no', 'no'], [BOT_OK]);
+  await setup(h.ctx);
+  const [token] = h.validators.password;
+  const [id] = h.validators.text;
+
+  assert.deepEqual(
+    [undefined, '', '   ', 'tok'].map(pasted => token!(pasted)),
+    ['Paste the token from Discord', 'Paste the token from Discord', 'Paste the token from Discord', undefined],
+  );
+  const refusal = 'A Discord id is 17–20 digits — or an empty line to stop';
+  assert.deepEqual(
+    [
+      undefined,
+      '',
+      '  ',
+      '1234567890123456',
+      '123456789012345678901',
+      'general',
+      '12345678901234567',
+      ' 12345678901234567890 ',
+    ].map(pasted => id!(pasted)),
+    [undefined, undefined, undefined, refusal, refusal, refusal, undefined, undefined],
+  );
 });
 
 test('discord setup stops on a cancelled prompt with nothing written', async () => {

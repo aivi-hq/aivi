@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { getLogger, loadConfig } from '@aivi/core';
+import { getLogger, type Logger, loadConfig } from '@aivi/core';
 import { GithubClient } from '../src/client.ts';
 import { githubSchema } from '../src/config.ts';
 import { githubBoard, issueDossier } from '../src/work.ts';
@@ -13,7 +13,11 @@ import { boardFieldsAnswer, connectApp, connectRoutes, graphql, issueNode, type 
 
 const log = getLogger(['aivi', 'test']);
 
-async function boardWith(routes: Record<string, (call: Seen) => any>, extraProject: Record<string, unknown> = {}) {
+async function boardWith(
+  routes: Record<string, (call: Seen) => any>,
+  extraProject: Record<string, unknown> = {},
+  logger: Logger = log,
+) {
   const root = await mkdtemp(join(tmpdir(), 'aivi-github-board-'));
   await mkdir(join(root, 'projects/site/source'), { recursive: true });
   const config = join(root, 'config.json');
@@ -29,7 +33,7 @@ async function boardWith(routes: Record<string, (call: Seen) => any>, extraProje
   const script = scripted(connectRoutes(routes));
   const client = new GithubClient(await connectApp(script.fetch));
   return {
-    board: githubBoard(githubSchema.parse({ humanLabel: 'needs-human' }), { loaded }, client, log),
+    board: githubBoard(githubSchema.parse({ humanLabel: 'needs-human' }), { loaded }, client, logger),
     script,
     root,
   };
@@ -67,6 +71,22 @@ test('a lane answers its tickets in order; delegates, human labels and closed ti
     { id: 'acme/shop#46', blocked: true },
   ]);
   assert.ok(!script.calls().some(c => c.startsWith('POST /repos')), 'the walk reads the board, not the comment trail');
+});
+
+test('a walk that fills the read cap says it was cut short, and still lists what it read', async t => {
+  const warn = t.mock.fn();
+  const full = Array.from({ length: 100 }, (_, n) => issueNode({ number: n + 1, lane: 'Todo' }));
+  const { board, root } = await boardWith(
+    { 'POST /graphql': graphql({ OpenIssues: () => ({ repository: { issues: { nodes: full } } }) }) },
+    {},
+    { warn } as unknown as Logger,
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.equal((await board.tickets('site', 'Todo')).length, 100);
+  assert.deepEqual(
+    warn.mock.calls.map(call => call.arguments),
+    [['walk.board.truncated', { project: 'site', lane: 'Todo', repo: 'acme/shop' }]],
+  );
 });
 
 test('a lane no repository feeds answers empty without asking GitHub at all', async t => {
@@ -107,6 +127,27 @@ test('the ticket’s words for the stages: identifier, team, and the lane on its
     stateName: 'Todo',
     branchName: '',
   });
+});
+
+test('a ticket off its board, or in a repository no project maps, reads with no lane', async t => {
+  for (const [name, id, node, team] of [
+    ['off its board', 'acme/shop#47', issueNode({ lane: null }), 'acme/shop'],
+    [
+      'in a repository no project maps',
+      'other/tools#5',
+      issueNode({ number: 5, lane: 'Todo' }, 'other', 'tools'),
+      'other/tools',
+    ],
+  ] as const)
+    await t.test(name, async t => {
+      const { board, root } = await boardWith({
+        'POST /graphql': graphql({ IssueFacts: () => ({ repository: { issue: node } }) }),
+      });
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const words = await board.issue(id);
+      assert.equal(words?.teamId, team);
+      assert.equal(words?.stateName, '');
+    });
 });
 
 test('a deleted ticket reads as gone, and the stage says so', async t => {

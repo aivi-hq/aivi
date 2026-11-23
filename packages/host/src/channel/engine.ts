@@ -84,13 +84,7 @@ export class ChannelEngine {
         return;
       }
       this.seat = undefined;
-      const turn = this.store.claimTurn(seat.turnId);
-      if (!turn) {
-        void this.release(lease.id);
-        this.tick();
-        return;
-      }
-      this.launch(turn, lease);
+      this.claim(seat.turnId, lease);
       this.tick(); // a granted place can free room for more than one waiting turn
     });
   }
@@ -102,44 +96,51 @@ export class ChannelEngine {
     while (!this.abort.signal.aborted && !this.seat) {
       const candidate = this.store.nextTurn();
       if (!candidate) break;
-      let grant: ReturnType<Dispatcher['request']>;
-      try {
-        grant = this.dispatcher.request({
-          service: this.store.platform.id,
-          pool: this.limits.pool,
-          ...(candidate.ready ? { resume: candidate.session } : {}),
-        });
-      } catch (error) {
-        this.warnPool(this.limits.pool, error);
-        break;
-      }
+      const grant = this.request(candidate);
+      if (!grant) break;
       if ('lease' in grant) {
-        const turn = this.store.claimTurn(candidate.id);
-        if (!turn) {
-          void this.release(grant.lease.id);
-          continue;
-        }
-        this.launch(turn, grant.lease);
+        this.claim(candidate.id, grant.lease);
         continue;
       }
-      if ('queued' in grant) {
-        this.seat = { id: grant.queued, turnId: candidate.id };
-        break;
-      }
-      if (grant.refused === 'pool-gone') this.warnPool(grant.pool);
-      // `waiting` means the place is held and its grant is coming; `full` means
-      // no callback — registering in the constructor is what makes a pool waitable.
+      // No slot now. `queued` took the pool's one queue place: its grant comes
+      // through the callback. A refusal asks for nothing: `waiting` means the
+      // place is held and its grant is coming; `full` means no callback —
+      // registering in the constructor is what makes a pool waitable.
+      if ('queued' in grant) this.seat = { id: grant.queued, turnId: candidate.id };
       break;
     }
   }
 
-  private warnPool(pool: string, error?: unknown): void {
+  /** Ask the dispatcher for the turn's slot. A pool it does not know is said
+   *  once and answers nothing: the turn waits for the configuration. */
+  private request(candidate: Turn): ReturnType<Dispatcher['request']> | undefined {
+    try {
+      return this.dispatcher.request({
+        service: this.store.platform.id,
+        pool: this.limits.pool,
+        ...(candidate.ready ? { resume: candidate.session } : {}),
+      });
+    } catch (error) {
+      this.warnPool(this.limits.pool, error);
+      return undefined;
+    }
+  }
+
+  /** The slot is ours: take the turn and start it. A turn that is no longer
+   *  there to take pays the slot straight back. */
+  private claim(turnId: string, lease: DispatcherLeaseRef): void {
+    const turn = this.store.claimTurn(turnId);
+    if (turn) this.launch(turn, lease);
+    else void this.release(lease.id);
+  }
+
+  private warnPool(pool: string, error: unknown): void {
     if (this.warned.has(pool)) return;
     this.warned.add(pool);
     this.log.warn('pool.unknown', {
       pool,
       hint: 'Queued turns wait until this pool is configured or they are cancelled.',
-      ...(error !== undefined ? { error: errorMessage(error) } : {}),
+      error: errorMessage(error),
     });
   }
 

@@ -42,9 +42,12 @@ export function brandStyle(
   stream?: NodeJS.WritableStream,
 ): string {
   const list = typeof formats === 'string' ? [formats] : formats;
+  // A brand colour is named by its BrandColor key and styleText wants its hex;
+  // styleText's own names ('bold') and hexes written out pass through.
+  const resolved = list.map(format => (Object.hasOwn(BRAND, format) ? BRAND[format as BrandColor] : format));
   // Hex codes are valid styleText formats at runtime (verified on Node 26), but
   // the typings only allow them as the whole format, not inside an array.
-  return styleText(list as Parameters<typeof styleText>[0], text, stream ? { stream } : {});
+  return styleText(resolved as Parameters<typeof styleText>[0], text, stream ? { stream } : {});
 }
 
 /** One right-hand line of the banner; the first is the title, the rest muted. */
@@ -77,7 +80,6 @@ export function brandBanner(
   for (let i = 0; i < Math.max(WORDMARK.length, lines.length); i++) {
     const glyph = i < WORDMARK.length ? brandStyle(mark, WORDMARK[i]!.padEnd(width), stream) : ' '.repeat(width);
     const line = lines[i];
-    if (!line && i >= WORDMARK.length) continue;
     const text =
       line === undefined ? '' : i === 0 || !line.muted ? line.text : brandStyle(BRAND.muted, line.text, stream);
     out.push(`  ${glyph}      ${text}`.trimEnd());

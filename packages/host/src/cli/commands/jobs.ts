@@ -53,18 +53,7 @@ export function registerJobs(program: Command): void {
     .option('--key <id>', 'deduplicates identical requests')
     .action(async (file, values) => {
       const { loaded, poke } = await context();
-      // A task file is either a bare task or { task, report?, resource? }.
-      const raw: unknown = JSON.parse(await readFile(resolve(file), 'utf8'));
-      const wrapped = jobFileSchema.safeParse(raw);
-      const {
-        task,
-        report,
-        resource: fileResource,
-      } = wrapped.success ? wrapped.data : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
-      // Paths in task files resolve against the home, like paths in config.json.
-      // Invocation args belong to the claimant: they resolve when the operation runs.
-      if (task.kind === 'prompt') task.directory = resolve(home(), task.directory);
-      if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home(), task.cwd);
+      const { task, report, resource: fileResource } = await readJobFile(file);
       const resource = values.resource ?? fileResource ?? 'default';
       const pools = loaded.config.dispatcher.pools ?? {};
       if (Object.keys(pools).length > 0 && !(resource in pools))
@@ -198,3 +187,16 @@ const jobFileSchema = z.strictObject({
   report: reportSchema.optional(),
   resource: z.string().min(1).optional(),
 });
+
+/** A task file is either a bare task or { task, report?, resource? }. Paths in it resolve against the home, like
+ *  paths in config.json; invocation args belong to the claimant: they resolve when the operation runs. */
+async function readJobFile(file: string) {
+  const raw: unknown = JSON.parse(await readFile(resolve(file), 'utf8'));
+  const wrapped = jobFileSchema.safeParse(raw);
+  const { task, report, resource } = wrapped.success
+    ? wrapped.data
+    : { task: taskSchema.parse(raw), report: undefined, resource: undefined };
+  if (task.kind === 'prompt') task.directory = resolve(home(), task.directory);
+  if (task.kind === 'shell' && task.cwd) task.cwd = resolve(home(), task.cwd);
+  return { task, report, resource };
+}

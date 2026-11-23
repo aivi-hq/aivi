@@ -122,6 +122,8 @@ const wizard = (
     probe?: { asked: string[]; statusSkipped?: boolean };
     /** A message the fake openProbe dies with — the probe never starts. */
     probeError?: string;
+    /** Members of the fake client to replace: refusals the options above cannot say. */
+    client?: Partial<GithubSetupClient>;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -147,7 +149,7 @@ const wizard = (
   // The live diary: history stands from the start, the probe's deliveries
   // land only as openProbe pays its mutations — never below the mark.
   const rows = [...(opts.history ?? [])];
-  const client: GithubSetupClient = {
+  const fake: GithubSetupClient = {
     delegate: 'aivi-agent',
     async readBoard(number): Promise<SetupBoard> {
       if (opts.boardError) throw new Error(opts.boardError);
@@ -203,6 +205,7 @@ const wizard = (
       return 'acme/shop#9 is closed (not planned), its card archived, its comment deleted — GitHub has no API to delete an issue';
     },
   };
+  const client: GithubSetupClient = { ...fake, ...opts.client };
   const ctx = {
     config: {},
     configPath,
@@ -343,6 +346,20 @@ test('the wizard walks the board in order: gate, board, repositories, name, one 
     said.some(line => line.startsWith('UNVERIFIED')),
     'continue-anyway says the unproved fact, never a claimed success',
   );
+});
+
+test('answering None to the queue question marks no lane', async t => {
+  const { contributor, ctx, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, '']);
+  t.after(cleanup);
+
+  const result = await contributor.setup(ctx);
+
+  assert.deepEqual(result.lanes, [
+    { name: 'Backlog', agent: 'developer' },
+    { name: 'Todo' },
+    { name: 'In Progress', agent: 'developer' },
+    { name: 'In Review' },
+  ]);
 });
 
 test('the board number question really defaults to 1: Enter — an empty answer — takes it', async t => {
@@ -532,6 +549,162 @@ test('a cancelled answer stops the wizard, and nothing further is written', asyn
   t.after(cleanup);
   await assert.rejects(contributor.setup(ctx), PluginSetupCancelled);
   assert.deepEqual(done, ['views:Main'], 'the views stand alone; the cancelled repositories wrote nothing else');
+});
+
+test('a cancelled answer stops the wizard at every question, in that question’s own words', async t => {
+  const named = ['skip', '1', ['acme/shop'], ''];
+  for (const [question, answers, opts, message] of [
+    ['the board number', ['skip', cancel], {}, 'no board given'],
+    [
+      'the forge’s repository',
+      ['skip', '1', cancel],
+      { forgeRepository: 'acme/shop' },
+      'no answer about the repository',
+    ],
+    ['the Agent field', ['skip', '1', cancel], { agentField: 'none' }, 'no answer about the Agent field'],
+    ['the project id', ['skip', '1', ['acme/shop'], cancel], {}, 'no project id given'],
+    ['a lane’s kind', [...named, cancel], {}, 'lane setup incomplete'],
+    ['a lane’s agent', [...named, 'agent', cancel], {}, 'lane setup incomplete'],
+    ['a lane’s branch', [...named, 'agent', 'developer', cancel], { forgeConfigured: true }, 'lane setup incomplete'],
+    ['the queue', [...named, ...KINDS, cancel], {}, 'lane setup incomplete'],
+  ] as const)
+    await t.test(question, async t => {
+      const { contributor, ctx, cleanup } = wizard([...answers], opts);
+      t.after(cleanup);
+      await assert.rejects(
+        contributor.setup(ctx),
+        error => error instanceof PluginSetupCancelled && error.message === message,
+      );
+    });
+});
+
+test('the board number question lets Enter through and refuses anything but a positive whole number', async t => {
+  const { contributor, ctx, asks, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo']);
+  t.after(cleanup);
+  await contributor.setup(ctx);
+  const question = asks.find(a => a.message.startsWith('The board number'))!;
+  const validate = (question.opts as { validate: (value: string | undefined) => string | undefined }).validate;
+  for (const accepted of [undefined, '', '  ', '1', ' 12 ']) assert.equal(validate(accepted), undefined, `${accepted}`);
+  for (const refused of ['0', '-1', '1.5', 'abc', '1 2'])
+    assert.equal(validate(refused), 'the number at the end of the board URL', refused);
+});
+
+test('a refusal that is not an Error stops the spinner with its words, and stands as it came', async t => {
+  const bare = 'GitHub said no';
+  const rateLimited = new Error('rate limited');
+  for (const [step, client, refusal, line] of [
+    [
+      'the board read',
+      {
+        readBoard: async (): Promise<SetupBoard> => {
+          throw bare;
+        },
+      },
+      bare,
+      bare,
+    ],
+    [
+      'the grant listing',
+      {
+        repositories: async (): Promise<{ id: string }[]> => {
+          throw bare;
+        },
+      },
+      bare,
+      bare,
+    ],
+    [
+      'the grant listing, with an Error',
+      {
+        repositories: async (): Promise<{ id: string }[]> => {
+          throw rateLimited;
+        },
+      },
+      rateLimited,
+      'rate limited',
+    ],
+  ] as const)
+    await t.test(step, async t => {
+      const { contributor, ctx, live, cleanup } = wizard(['skip', '1'], { client });
+      t.after(cleanup);
+      await assert.rejects(contributor.setup(ctx), error => error === refusal);
+      assert.ok(live.includes(line), `the spinner says it: ${live.join(' | ')}`);
+    });
+});
+
+test('a label refused with a bare value is said with its repository and its remedy', async t => {
+  const { contributor, ctx, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, 'Todo'], {
+    client: {
+      ensureLabel: async () => {
+        throw 'GitHub said no';
+      },
+    },
+  });
+  t.after(cleanup);
+  await assert.rejects(
+    contributor.setup(ctx),
+    /label “needs-human” could not be created in acme\/shop: GitHub said no — .*Issues: Read & write/,
+  );
+});
+
+test('the app’s grant is said in the plural when it holds several repositories', async t => {
+  const { contributor, ctx, live, cleanup } = wizard(['skip', '1', ['acme/shop', 'acme/tools'], '', ...KINDS, 'Todo'], {
+    repos: ['acme/shop', 'acme/tools'],
+  });
+  t.after(cleanup);
+  const result = await contributor.setup(ctx);
+  assert.ok(live.includes('The app can see 2 repositories'), live.join(' | '));
+  assert.deepEqual(result.section, { board: 1, repos: ['acme/shop', 'acme/tools'] });
+});
+
+test('an installation that holds no repositories ends the wizard with the remedy', async t => {
+  const { contributor, ctx, cleanup } = wizard(['skip', '1'], { repos: [] });
+  t.after(cleanup);
+  await assert.rejects(contributor.setup(ctx), /that installation holds no repositories: select the repositories/);
+});
+
+test('an Agent field that was created but is still not on the board ends the wizard', async t => {
+  const { contributor, ctx, done, cleanup } = wizard(['skip', '1', true], {
+    agentField: 'none',
+    client: { createAgentField: async () => {} }, // the board still answers no Agent field
+  });
+  t.after(cleanup);
+  await assert.rejects(contributor.setup(ctx), /the “Agent” field was created but the board still answers none/);
+  assert.deepEqual(done, [], 'nothing was written past the missing field');
+});
+
+test('a home with no OpenCode agents stops before the first lane question', async t => {
+  const { contributor, ctx, asked, cleanup } = wizard(['skip', '1', ['acme/shop'], ''], { agents: [] });
+  t.after(cleanup);
+  await assert.rejects(contributor.setup(ctx), /Unable to configure lanes: there appear to be no agents available/);
+  assert.ok(!asked.some(question => question.startsWith('What kind of lane')));
+});
+
+test('every option answered None writes no lanes, and the wizard says so', async t => {
+  const { contributor, ctx, asked, said, cleanup } = wizard([
+    'skip',
+    '1',
+    ['acme/shop'],
+    '',
+    ...statusOptions.map(() => 'none'),
+  ]);
+  t.after(cleanup);
+  const result = await contributor.setup(ctx);
+  assert.equal('lanes' in result, false, 'no lanes key: the project keeps the lanes it has');
+  assert.ok(said.some(line => line.startsWith('no lanes were written')));
+  assert.ok(!asked.some(question => question.startsWith('Which lane waits')), 'no lane, no queue question');
+});
+
+test('answering the queue question None leaves the workflow without a queue lane', async t => {
+  const { contributor, ctx, cleanup } = wizard(['skip', '1', ['acme/shop'], '', ...KINDS, '']);
+  t.after(cleanup);
+  const result = await contributor.setup(ctx);
+  assert.deepEqual(result.lanes, [
+    { name: 'Backlog', agent: 'developer' },
+    { name: 'Todo' },
+    { name: 'In Progress', agent: 'developer' },
+    { name: 'In Review' },
+  ]);
 });
 
 /** The probe's diary rows, signed the way GitHub signs: the wizard verifies
@@ -746,6 +919,30 @@ test('a board with one Status option skips the Status signal — skipped is said
   );
 });
 
+test('a test card that cannot be laid to rest is said with how to close it by hand; the verdict stands', async t => {
+  secrets(t, { [GITHUB_WEBHOOK_SECRET_ENV]: PROBE_SECRET });
+  const { contributor, ctx, said, live, cleanup } = wizard(QUESTIONS, {
+    health: 'up',
+    rows: FIVE,
+    probe: { asked: ALL_ASKED },
+    client: {
+      closeProbe: async () => {
+        throw new Error('GitHub is down');
+      },
+    },
+  });
+  t.after(cleanup);
+  await contributor.setup(ctx);
+  assert.ok(
+    said.includes('the test card could not be cleaned up: GitHub is down — close it by hand: acme/shop#9'),
+    said.join(' | '),
+  );
+  assert.ok(
+    live.some(line => line.startsWith('the board speaks')),
+    'the verdict is the probe’s, not the cleanup’s',
+  );
+});
+
 // ——— the production probe client, against the scripted GitHub ———
 
 /** The board BoardSetupClient reads: Status options in board order (the
@@ -849,16 +1046,26 @@ test('a reaction that does not land stops the probe with the permission named', 
   await assert.rejects(client.openProbe('acme/shop', board), /the eyes reaction did not land/);
 });
 
-test('cleanup reports GitHub’s own close when a workflow closed the test card', async () => {
-  const { client, calls } = await setupClient(
-    probeRoutes({}, { state: 'closed', state_reason: 'completed' }), // GitHub answers the card already closed
-  );
-  const board = await client.readBoard(1);
-  const probe = await client.openProbe('acme/shop', board);
-  const rest = await client.closeProbe(probe);
-  assert.match(rest, /rests closed by GitHub itself \(completed\)/, "GitHub's answer is said, not aivi's intent");
-  assert.ok(!calls().includes('PATCH /repos/acme/shop/issues/9'), 'aivi closes nothing GitHub already closed');
-  assert.ok(calls().includes('DELETE /repos/acme/shop/issues/9/reactions/501'), 'the eyes is taken off');
+test('cleanup reports GitHub’s own close when a workflow closed the test card', async t => {
+  for (const [reason, said] of [
+    ['completed', 'completed'],
+    [null, 'closed'], // GitHub gave no reason: the state is all there is to say
+  ] as const)
+    await t.test(`with ${reason ?? 'no'} reason`, async () => {
+      const { client, calls } = await setupClient(
+        probeRoutes({}, { state: 'closed', state_reason: reason }), // GitHub answers the card already closed
+      );
+      const board = await client.readBoard(1);
+      const probe = await client.openProbe('acme/shop', board);
+      const rest = await client.closeProbe(probe);
+      assert.match(
+        rest,
+        new RegExp(`rests closed by GitHub itself \\(${said}\\)`),
+        "GitHub's answer is said, not aivi's intent",
+      );
+      assert.ok(!calls().includes('PATCH /repos/acme/shop/issues/9'), 'aivi closes nothing GitHub already closed');
+      assert.ok(calls().includes('DELETE /repos/acme/shop/issues/9/reactions/501'), 'the eyes is taken off');
+    });
 });
 
 test('cleanup closes the card itself when GitHub left it open', async () => {
@@ -870,4 +1077,171 @@ test('cleanup closes the card itself when GitHub left it open', async () => {
   assert.ok(calls().includes('PATCH /repos/acme/shop/issues/9'), 'aivi paid the close itself');
   const patch = bodies('/repos/acme/shop/issues/9').find(b => b.state === 'closed');
   assert.equal(patch?.state_reason, 'not_planned', 'closed as not planned, the honest reason for a test card');
+});
+
+test('the probe refuses a board with no Agent field before it touches GitHub', async () => {
+  const { client, calls } = await setupClient(probeRoutes());
+  const { agentFieldId: _none, ...bare } = await client.readBoard(1);
+  const before = calls().length;
+  await assert.rejects(client.openProbe('acme/shop', bare), /the board has no Agent field: the wizard creates one/);
+  assert.equal(calls().length, before, 'no test card was opened');
+});
+
+test('the probe says so when the Agent field has no option for the app, with the remedy', async () => {
+  const { client } = await setupClient(probeRoutes());
+  const board = await client.readBoard(1);
+  await assert.rejects(
+    client.openProbe('acme/shop', { ...board, agentOptions: [{ id: 'opt_x', name: 'someone-else' }] }),
+    /the “Agent” field on board “aivi HQ board” has no option “aivi-agent” — the app cannot be delegated there/,
+  );
+});
+
+// ——— the rest of the production client: what the wizard asks of the board ———
+
+const bareBoard: SetupBoard = {
+  id: 'PVT_1',
+  number: 1,
+  orgId: 'O_1',
+  title: 'aivi HQ board',
+  statusOptions: [],
+  statusFieldId: 'F_status',
+  agentOptions: [],
+};
+
+test('a board the installation cannot read is said in the words of what is missing', async t => {
+  const plain = { id: 'PVT_1', title: 'Plain board' };
+  for (const [name, answer, expected] of [
+    [
+      'an organization that answers nothing',
+      { organization: null },
+      /answers nothing for the app: the installation is not on that organization/,
+    ],
+    [
+      'a board that is not visible',
+      { organization: { id: 'O_1', projectV2: null } },
+      /board 1 is not visible to the app in aivi-hq.*Organization projects: Read & write/,
+    ],
+    [
+      'a board with no fields',
+      { organization: { id: 'O_1', projectV2: plain } },
+      /board “Plain board” has no “Status” single-select field/,
+    ],
+    [
+      'a board whose only field is not Status',
+      { organization: { id: 'O_1', projectV2: { ...plain, fields: { nodes: [null, { id: 'F', name: 'Agent' }] } } } },
+      /board “Plain board” has no “Status” single-select field/,
+    ],
+  ] as const)
+    await t.test(name, async () => {
+      const { client } = await setupClient(connectRoutes({ 'POST /graphql': graphql({ BoardSetup: () => answer }) }));
+      await assert.rejects(client.readBoard(1), expected);
+    });
+});
+
+test('a board with a Status field and nothing else reads with no options and no Agent field', async () => {
+  const { client } = await setupClient(
+    connectRoutes({
+      'POST /graphql': graphql({
+        BoardSetup: () => ({
+          organization: {
+            id: 'O_1',
+            projectV2: { id: 'PVT_1', title: 'aivi HQ board', fields: { nodes: [{ id: 'F_status', name: 'Status' }] } },
+          },
+        }),
+      }),
+    }),
+  );
+  assert.deepEqual(await client.readBoard(1), bareBoard);
+});
+
+test('the Agent field is created in the board’s organization, with the app’s own name as its option', async () => {
+  const asked: unknown[] = [];
+  const { client } = await setupClient(
+    connectRoutes({
+      'POST /graphql': graphql({
+        CreateAgentField: variables => {
+          asked.push(variables);
+          return { createProjectV2Field: { projectV2Field: { id: 'F_agent', name: 'Agent' } } };
+        },
+      }),
+    }),
+  );
+  await client.createAgentField(bareBoard, 'aivi-agent');
+  assert.deepEqual(asked, [{ ownerId: 'O_1', option: 'aivi-agent' }]);
+});
+
+test('the Agent field is appended to every view that lacks it, and views that show it are left alone', async () => {
+  const written: unknown[] = [];
+  const { client } = await setupClient(
+    connectRoutes({
+      'POST /graphql': graphql({
+        BoardViews: () => ({
+          organization: {
+            projectV2: {
+              views: {
+                nodes: [
+                  { id: 'V_main', name: 'Main', fields: { nodes: [{ id: 'F_status' }, { id: null }, null] } },
+                  { id: 'V_shown', name: 'Shown', fields: { nodes: [{ id: 'F_agent' }] } },
+                  null,
+                  { id: 'V_bare', name: null },
+                ],
+              },
+            },
+          },
+        }),
+        ShowAgentField: variables => {
+          written.push(variables);
+          return { updateProjectV2View: { projectV2View: { id: 'V' } } };
+        },
+      }),
+    }),
+  );
+  assert.deepEqual(
+    await client.showAgentOnViews(bareBoard, 'F_agent'),
+    ['Main', 'V_bare'],
+    'a nameless view is its id',
+  );
+  assert.deepEqual(written, [
+    { viewId: 'V_main', visibleFieldIds: ['F_status', 'F_agent'] },
+    { viewId: 'V_bare', visibleFieldIds: ['F_agent'] },
+  ]);
+});
+
+test('a board that answers no views is written to nowhere', async () => {
+  const { client } = await setupClient(
+    connectRoutes({ 'POST /graphql': graphql({ BoardViews: () => ({ organization: null }) }) }),
+  );
+  assert.deepEqual(await client.showAgentOnViews(bareBoard, 'F_agent'), []);
+});
+
+test('the repositories the wizard offers are the installation’s own grant', async () => {
+  const { client } = await setupClient(
+    connectRoutes({
+      'GET /installation/repositories': () => ({
+        status: 200,
+        body: {
+          total_count: 2,
+          repositories: [
+            { full_name: 'acme/shop', default_branch: 'main' },
+            { full_name: 'acme/tools', default_branch: 'trunk' },
+          ],
+        },
+      }),
+    }),
+  );
+  assert.deepEqual(
+    (await client.repositories()).map(repo => repo.id),
+    ['acme/shop', 'acme/tools'],
+  );
+});
+
+test('the human label is created in the repository that lacks it', async () => {
+  const { client, bodies } = await setupClient(
+    connectRoutes({
+      'GET /repos/acme/shop/labels/needs-human': () => ({ status: 404, body: { message: 'Not Found' } }),
+      'POST /repos/acme/shop/labels': () => ({ status: 201, body: {} }),
+    }),
+  );
+  await client.ensureLabel('acme/shop', 'needs-human');
+  assert.deepEqual(bodies('/repos/acme/shop/labels'), [{ name: 'needs-human', color: 'ededed' }]);
 });

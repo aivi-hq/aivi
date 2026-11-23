@@ -1,24 +1,11 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { CHAT_COMMANDS } from '@aivi/host';
-import type { VoiceRoom } from '@aivi/plugin/voice';
-import { type VoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { ApplicationCommandOptionType, ChannelType } from 'discord.js';
 import { authorized, discordConfigSchema, reaches } from '../src/config.ts';
 import { DISCORD, discordCommands } from '../src/module.ts';
-import { type DiscordVoiceConfig, resample16, type VoiceWatchDeps, watchVoice, wavToOpus } from '../src/voice.ts';
-
-// the same placement the source uses: native opus seen through this package
-const require = createRequire(import.meta.url);
-const { OpusEncoder } = require('@discordjs/opus') as {
-  OpusEncoder: new (rate: number, channels: number) => { encode(buf: Buffer): Buffer; decode(buf: Buffer): Buffer };
-};
-
-// the wire's silence, and the wire's patience, in test units
-const SILENCE_FRAME = Buffer.from([248, 255, 254]);
-const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+import { resample16, watchVoice, wavToOpus } from '../src/voice.ts';
+import { codec, sineWav, sleep, voiceHarness } from './voice-fixture.ts';
 
 const config = discordConfigSchema.parse({
   applicationId: '10000000000000001',
@@ -186,226 +173,6 @@ test('resample16: exact 3:1 box average, ASR grade and honest length', () => {
   assert.ok(Math.abs(pcm[0]! - 0.6) < 1e-6);
   assert.ok(Math.abs(pcm[1]! + 0.6) < 1e-6);
 });
-
-/** Presence-driven voice: the watcher joins where a linked person sits and
- *  leaves where none remains. Everything is faked — no Discord, no engine. */
-function voiceHarness(
-  options: { linked?: string[]; openRoom?: () => VoiceRoom | null; playGate?: () => Promise<void> } = {},
-) {
-  const guildId = '123456789012345678';
-  const channelId = '223456789012345678';
-  const otherId = '323456789012345678';
-  const linked = new Set(options.linked ?? ['u-link']);
-  const members = new Map<string, { user: { bot: boolean } }>();
-  const otherMembers = new Map<string, { user: { bot: boolean } }>();
-  const channel = {
-    type: ChannelType.GuildVoice,
-    // the real guild member manager answers through .cache; the map is both
-    members: Object.assign(members, { cache: members }),
-  };
-  const otherChannel = {
-    type: ChannelType.GuildVoice,
-    members: Object.assign(otherMembers, { cache: otherMembers }),
-  };
-  const client = Object.assign(new EventEmitter(), {
-    channels: {
-      cache: new Map<string, unknown>([
-        [channelId, channel],
-        [otherId, otherChannel],
-      ]),
-    },
-    guilds: {
-      cache: new Map<string, unknown>([
-        [
-          guildId,
-          { voiceAdapterCreator: () => ({}), members: { cache: new Map([['u-stranger', { displayName: 'forger' }]]) } },
-        ],
-      ]),
-    },
-  });
-  const joins: string[] = [];
-  const played: number[] = [];
-  const logs: string[] = [];
-  const log = {
-    debug: (msg: string) => logs.push(`debug ${msg}`),
-    info: (msg: string) => logs.push(`info ${msg}`),
-    warn: (msg: string) => logs.push(`warn ${msg}`),
-    error: (msg: string) => logs.push(`error ${msg}`),
-  };
-  let roomStops = 0;
-  const mouthPlays: Array<(wav: Buffer) => boolean | Promise<boolean>> = [];
-  const mouthStops: Array<() => void> = [];
-  const mouthFlushes: Array<() => void> = [];
-  const mouth = { regs: 0, unregs: 0 };
-  const barges: string[] = [];
-  // Live lanes hear() opens: tests inspect who got one, whether they were
-  // marked a person, and what became of their audio.
-  interface FakeLane {
-    init: { speaker: string; user: string; person?: boolean; channel?: string };
-    pushed: number;
-    ended: boolean;
-    aborted: boolean;
-  }
-  const lanes: FakeLane[] = [];
-  const utteranceStreams: EventEmitter[] = [];
-  // the receiver's per-user subscription map, as the real one keeps it
-  const subscriptions = new Map<string, EventEmitter>();
-  // the receiver's speaking lane, wired for real: hear() subscribes here,
-  // and a test can put words (or interruptions) in the room by emitting
-  const speaking = new EventEmitter();
-  const fakeRoom = {
-    feed: async () => {},
-    heard: async () => '',
-    lane: (init: { speaker: string; user: string; person?: boolean; channel?: string }) => {
-      const l: FakeLane = { init, pushed: 0, ended: false, aborted: false };
-      lanes.push(l);
-      return {
-        push: (pcm: Float32Array) => {
-          l.pushed += pcm.length;
-        },
-        end: async () => {
-          l.ended = true;
-          return '';
-        },
-        abort: () => {
-          l.aborted = true;
-        },
-      };
-    },
-    mouth: (play: (wav: Buffer) => boolean, stop?: () => void, flush?: () => void) => {
-      mouth.regs++;
-      mouthPlays.push(play);
-      if (stop) mouthStops.push(stop);
-      if (flush) mouthFlushes.push(flush);
-      return () => {
-        mouth.unregs++;
-      };
-    },
-    bargeIn: () => {
-      barges.push('barge');
-    },
-    onEvent: () => {},
-    stop: async () => {
-      roomStops++;
-    },
-  } as unknown as VoiceRoom;
-  let openCalls = 0;
-  const deps: VoiceWatchDeps = {
-    client: client as unknown as VoiceWatchDeps['client'],
-    config: {
-      guild: guildId,
-      channels: [channelId, otherId],
-      silenceMs: 500,
-    } satisfies DiscordVoiceConfig,
-    openRoom:
-      options.openRoom ??
-      (() => {
-        openCalls++;
-        return fakeRoom;
-      }),
-    personName: userId => (linked.has(userId) ? `person-${userId}` : undefined),
-    log,
-    join: channelIdArg => {
-      joins.push(channelIdArg);
-      const connection = new EventEmitter() as EventEmitter & {
-        state: { status: VoiceConnectionStatus };
-        destroyed: boolean;
-        destroy(): void;
-        receiver: unknown;
-        subscribe: unknown;
-      };
-      connection.state = { status: VoiceConnectionStatus.Ready };
-      connection.destroyed = false;
-      connection.destroy = () => {
-        connection.destroyed = true;
-      };
-      connection.receiver = {
-        speaking: {
-          on: (event: string, fn: (userId: string) => void) => {
-            speaking.on(event, fn);
-          },
-        },
-        // faithful to the real receiver: while a user's stream is open,
-        // subscribe hands back THAT SAME STREAM, and 'close' (which follows
-        // 'end' the way autoDestroy does) frees the user for a new one.
-        subscribe: (userId: string) => {
-          const existing = subscriptions.get(userId);
-          if (existing) return existing;
-          const stream = new EventEmitter();
-          subscriptions.set(userId, stream);
-          stream.once('end', () => stream.emit('close'));
-          stream.once('close', () => {
-            if (subscriptions.get(userId) === stream) subscriptions.delete(userId);
-          });
-          utteranceStreams.push(stream);
-          return stream;
-        },
-      };
-      connection.subscribe = () => () => {}; // the audio player's seat
-      return connection as unknown as VoiceConnection;
-    },
-    ready: async () => {},
-    // the real player state machine wants a live connection; here the play
-    // drains ONE ANSWER's band like the wire does: pull packets until the
-    // flush drains dry (or a barge kills the band), counting real audio —
-    // one call per answer is itself the proof that chunks share a resource
-    play: async (_player, band) => {
-      if (options.playGate) await options.playGate();
-      let n = 0;
-      while (!band.drained()) {
-        const p = band.pull(SILENCE_FRAME);
-        if (p === null) break; // the answer died: the resource is over
-        if (p !== SILENCE_FRAME) {
-          n++;
-          continue;
-        }
-        await sleep(1); // on air, feeding silence while the next chunk lands
-      }
-      if (n > 0) played.push(n);
-    },
-  };
-  const settle = () => new Promise(resolve => setImmediate(resolve));
-  const enter = (target: string, userId: string, bot = false) => {
-    (client.channels.cache.get(target) as { members: Map<string, { user: { bot: boolean } }> }).members.set(userId, {
-      user: { bot },
-    });
-    client.emit('voiceStateUpdate');
-  };
-  const exit = (target: string, userId: string) => {
-    (client.channels.cache.get(target) as { members: Map<string, unknown> }).members.delete(userId);
-    client.emit('voiceStateUpdate');
-  };
-  const move = (from: string, to: string, userId: string) => {
-    // Discord says “moved” in one event: the meeting must survive the walk.
-    (client.channels.cache.get(from) as { members: Map<string, unknown> }).members.delete(userId);
-    (client.channels.cache.get(to) as { members: Map<string, { user: { bot: boolean } }> }).members.set(userId, {
-      user: { bot: false },
-    });
-    client.emit('voiceStateUpdate');
-  };
-  return {
-    deps,
-    joins,
-    played,
-    logs,
-    settle,
-    enter,
-    exit,
-    move,
-    mouthPlays,
-    mouthStops,
-    mouthFlushes,
-    barges: () => barges.length,
-    lanes: () => lanes,
-    streams: () => utteranceStreams,
-    speaking,
-    mouthCounts: () => ({ ...mouth }),
-    roomStops: () => roomStops,
-    openCalls: () => openCalls,
-    channelId,
-    otherId,
-  };
-}
 
 test('voice presence: nobody in, nothing born — no room, no join, no transcript', async () => {
   const h = voiceHarness();
@@ -628,8 +395,7 @@ test('the TTS wav becomes 20 ms stereo opus that decodes back', () => {
   const packets = wavToOpus(sineWav(24000, 0.1), log);
   assert.equal(packets.length, 5, '0.1 s at 24 kHz → five 20 ms frames at 48 kHz');
   assert.deepEqual(logs, [], 'a clean wav costs no complaint');
-  const decoder = new OpusEncoder(48000, 2);
-  const back: Buffer = decoder.decode(packets[0]!);
+  const back: Buffer = codec().decode(packets[0]!);
   assert.equal(back.length / 2, 1920, 'one frame: 960 samples per channel, stereo');
 });
 
@@ -639,10 +405,10 @@ test('a corrupted packet is caught and the decoder lives', () => {
   // subsystem — hearing and speaking both "memory access out of bounds"
   // until restart. Native libopus: the bad packet throws catchably and
   // everything after it still decodes.
-  const codec = new OpusEncoder(48000, 2);
-  const good = codec.encode(Buffer.alloc(960 * 2 * 2));
-  assert.throws(() => codec.decode(Buffer.from([0xff, 0xfe, 0xfd, 0xfc, 0xde, 0xad, 0xbe, 0xef])));
-  assert.equal(codec.decode(good).length, 3840, 'the decoder survived the corruption');
+  const opus = codec();
+  const good = opus.encode(Buffer.alloc(960 * 2 * 2));
+  assert.throws(() => opus.decode(Buffer.from([0xff, 0xfe, 0xfd, 0xfc, 0xde, 0xad, 0xbe, 0xef])));
+  assert.equal(opus.decode(good).length, 3840, 'the decoder survived the corruption');
 });
 
 test('a wav that is not PCM is said, not swallowed', () => {
@@ -651,25 +417,3 @@ test('a wav that is not PCM is said, not swallowed', () => {
   assert.equal(wavToOpus(Buffer.alloc(44), log).length, 0);
   assert.ok(logs.includes('voice.discord.wav-unreadable'));
 });
-
-/** One second-fraction of 440 Hz sine as a s16le mono wav, header by hand. */
-function sineWav(rate: number, seconds: number): Buffer {
-  const n = Math.round(rate * seconds);
-  const wav = Buffer.alloc(44 + n * 2);
-  wav.write('RIFF', 0);
-  wav.writeUInt32LE(36 + n * 2, 4);
-  wav.write('WAVEfmt ', 8);
-  wav.writeUInt32LE(16, 16);
-  wav.writeUInt16LE(1, 20);
-  wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(rate, 24);
-  wav.writeUInt32LE(rate * 2, 28);
-  wav.writeUInt16LE(2, 32);
-  wav.writeUInt16LE(16, 34);
-  wav.write('data', 36);
-  wav.writeUInt32LE(n * 2, 40);
-  for (let i = 0; i < n; i++) {
-    wav.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * (i / rate)) * 8000), 44 + 2 * i);
-  }
-  return wav;
-}

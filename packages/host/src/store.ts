@@ -89,7 +89,7 @@ const person = (r: Row): Person => ({
   id: String(r.id),
   name: String(r.name),
   email: r.email === null ? null : String(r.email),
-  roles: JSON.parse(String(r.roles ?? '[]')) as string[],
+  roles: JSON.parse(String(r.roles)) as string[],
   createdAt: Number(r.created_at),
 });
 const token = (r: Row): PersonToken => ({
@@ -850,19 +850,12 @@ export class Store implements StoreContract {
    */
   mintToken(personId: string, label: string, now = Date.now()): { token: PersonToken; secret: string } {
     if (!this.person(personId)) throw new Error(`Unknown person ${personId}`);
-    for (;;) {
-      const secret = `aivi-${randomBytes(16).toString('hex')}`;
-      const digest = createHash('sha256').update(secret).digest('hex');
-      try {
-        this.db
-          .prepare('INSERT INTO tokens(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
-          .run(digest, personId, label, now);
-        return { token: { hash: digest, personId, label, createdAt: now }, secret };
-      } catch (error) {
-        // A hash collision is a 2^-128 coincidence; mint again.
-        if ((error as { code?: string }).code !== 'SQLITE_CONSTRAINT_UNIQUE') throw error;
-      }
-    }
+    const secret = `aivi-${randomBytes(16).toString('hex')}`;
+    const digest = createHash('sha256').update(secret).digest('hex');
+    this.db
+      .prepare('INSERT INTO tokens(token_hash,person_id,label,created_at) VALUES(?,?,?,?)')
+      .run(digest, personId, label, now);
+    return { token: { hash: digest, personId, label, createdAt: now }, secret };
   }
   /** The lookup behind every request: a known bearer names its person; unknown or absent stays anonymous. */
   personForToken(secret: string): { person: Person; token: PersonToken } | null {
@@ -881,7 +874,7 @@ export class Store implements StoreContract {
         id: String(row.person_id),
         name: row.person_name,
         email: row.person_email,
-        roles: JSON.parse(String(row.person_roles ?? '[]')) as string[],
+        roles: JSON.parse(row.person_roles) as string[],
         createdAt: row.person_created,
       },
       token: token(row),
@@ -900,15 +893,13 @@ export class Store implements StoreContract {
     for (;;) {
       const code = String(randomInt(0, 100_000)).padStart(5, '0');
       const digest = createHash('sha256').update(code).digest('hex');
-      try {
-        this.db
-          .prepare('INSERT INTO link_codes(code_hash,person_id,created_at,expires_at) VALUES(?,?,?,?)')
-          .run(digest, personId, now, now + ttlMs);
-        return { code, expiresAt: now + ttlMs };
-      } catch (error) {
-        // A 5-digit space collides occasionally; mint again.
-        if ((error as { code?: string }).code !== 'SQLITE_CONSTRAINT_UNIQUE') throw error;
-      }
+      const added = this.db
+        .prepare(
+          'INSERT INTO link_codes(code_hash,person_id,created_at,expires_at) VALUES(?,?,?,?) ON CONFLICT DO NOTHING',
+        )
+        .run(digest, personId, now, now + ttlMs);
+      if (Number(added.changes) === 1) return { code, expiresAt: now + ttlMs };
+      // A 5-digit space collides occasionally; mint again.
     }
   }
   /**
@@ -937,8 +928,7 @@ export class Store implements StoreContract {
       if (!row) return { reason: 'unknown' };
       this.db.prepare('DELETE FROM link_codes WHERE code_hash=?').run(digest);
       if (Number(row.expires_at) <= now) return { reason: 'expired' };
-      const who = this.person(String(row.person_id));
-      if (!who) return { reason: 'unknown' };
+      const who = this.person(String(row.person_id))!; // the foreign key cascades a person's codes away with them
       this.db
         .prepare('INSERT INTO channel_identities(channel,user_id,person_id,created_at) VALUES(?,?,?,?)')
         .run(channel, userId, who.id, now);

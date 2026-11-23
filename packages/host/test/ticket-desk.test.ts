@@ -15,6 +15,7 @@ import type { RunView } from '@aivi/plugin/run';
 import type { TicketDesk, Tracker } from '@aivi/plugin/tracker';
 import { createTicketDesk, type DeskTool } from '../src/ticket-desk.ts';
 import { ToolError } from '../src/tools.ts';
+import { recorder } from './support.ts';
 
 const quiet = {
   info: () => {},
@@ -73,7 +74,7 @@ class FakeDesk {
   }
 }
 
-const harness = () => {
+const harness = (options: { wake?: (projectId: string) => Promise<void>; log?: Logger } = {}) => {
   const runs = new Map<string, RunView>();
   const desks = new Map<string, FakeDesk>();
   const trackers = new Map<string, Tracker>();
@@ -88,9 +89,9 @@ const harness = () => {
     {
       runBySession: session => runs.get(session),
       tracker: id => trackers.get(id),
-      wake: async projectId => void wakes.push(projectId),
+      wake: options.wake ?? (async projectId => void wakes.push(projectId)),
     },
-    quiet,
+    options.log ?? quiet,
   );
   const byId = new Map<string, DeskTool>(tools.map(t => [`${t.descriptor.namespace}_${t.descriptor.name}`, t]));
   return {
@@ -192,6 +193,20 @@ test('edit validates the hand before the tracker is asked', async () => {
   assert.deepEqual(desk.edited, [{ title: 'Sharper' }], 'the description was never mentioned, never touched');
 });
 
+test('edit takes the description alone, or both words, and refuses an empty description', async () => {
+  const owned = harness();
+  const desk = owned.register('tracker-linear');
+  owned.startRun();
+  await owned.call('aivi_ticket_edit', { description: 'The whole body, rewritten.' });
+  await owned.call('aivi_ticket_edit', { title: 'Sharper', description: 'And its body.' });
+  assert.deepEqual(desk.edited, [
+    { description: 'The whole body, rewritten.' },
+    { title: 'Sharper', description: 'And its body.' },
+  ]);
+  await assert.rejects(() => owned.call('aivi_ticket_edit', { description: ' ' }), /description must be a non-empty/);
+  assert.equal(desk.edited.length, 2, 'the refused call never reached the tracker');
+});
+
 test('labels: the catalogue answers, add and remove are one operation each', async () => {
   const owned = harness();
   const desk = owned.register('tracker-linear');
@@ -222,5 +237,26 @@ test('create wakes the walk itself, webhook or no webhook', async () => {
   await assert.rejects(
     () => owned.call('aivi_ticket_create', { title: '', description: 'x' }),
     /title must be a non-empty string/,
+  );
+});
+
+test('a wake that fails is said, and the ticket it followed is still created', async () => {
+  const { log, said } = recorder();
+  const owned = harness({
+    log,
+    wake: async () => {
+      throw new Error('the walk is busy');
+    },
+  });
+  const desk = owned.register('tracker-linear');
+  owned.startRun();
+  assert.deepEqual(
+    await owned.call('aivi_ticket_create', { title: 'A separate thing', description: 'Found while sharpening X-1.' }),
+    { identifier: 'X-9', url: 'https://x/9', lane: 'Triage' },
+  );
+  assert.equal(desk.created.length, 1);
+  assert.deepEqual(
+    said('warn').map(line => [line.event, line.run, (line.error as Error).message]),
+    [['ticket.create.wake.failed', 'run_1', 'the walk is busy']],
   );
 });

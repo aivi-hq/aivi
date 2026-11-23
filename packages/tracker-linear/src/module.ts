@@ -29,6 +29,7 @@ import {
   createTurnRunner,
   isTerminal,
   stopTurn as stopRunningTurn,
+  stopSwitch,
 } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
 import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
@@ -38,7 +39,6 @@ import type { LinearConfig } from './config.ts';
 import { assistantAgent, MODULE_ID, primaryLinearApp } from './config.ts';
 import { createLinearDesk } from './desk.ts';
 import { RunLinks } from './links.ts';
-import type { LinearMcp } from './mcp.ts';
 import { linearTeamCollisions, projectForIssue, projectLinear } from './projects.ts';
 import { RunProgress } from './runprogress.ts';
 import { createLinearPlatform } from './tracker.ts';
@@ -153,22 +153,15 @@ async function startLinear(
   // an agent file that works tickets allows the ones it speaks (docs/linear.md).
   const desk = createLinearDesk(services.loaded, config, tracker);
 
-  const abort = new AbortController();
   let engine: ChannelEngine | undefined;
-  const stop = () => {
-    abort.abort();
-    engine?.stop();
-  };
-  services.signal.addEventListener('abort', stop, { once: true });
-  let mcp: LinearMcp | undefined;
+  const halt = stopSwitch(services.signal, () => engine);
   const teardown = async () => {
-    stop();
+    halt.stop();
     for (const follower of runProgress.values()) void follower.stop();
     try {
       await engine?.shutdown();
     } finally {
-      await mcp?.stop();
-      services.signal.removeEventListener('abort', stop);
+      halt.release();
     }
   };
 
@@ -497,16 +490,6 @@ async function startLinear(
       );
     };
 
-    /** End the assistant turn in `conversation` because the person asked; the session stays. */
-    const stopAssistant = async (conversation: string, why: string) => {
-      const result = await stopRunningTurn(engine!, services.opencode, conversation);
-      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-      // The engine's stopped notice follows for a running turn; queued-only conversations hear this one.
-      if (!result.stopped) await say(conversation, why, 'outcome');
-      else await say(conversation, why, 'note');
-      log.info('assistant.stopped', { conversation, why });
-    };
-
     /**
      * A session started. Routing is deterministic, from the issue re-read:
      * a redelivery finds the pair we recorded, the live run, or the bound
@@ -720,37 +703,10 @@ async function startLinear(
       );
     };
 
-    /** The assistant conversations the update orphaned: the HITL label, a
-     *  lane move or a delegate change each stops only its own kind of change. */
-    const stopOrphans = async (
-      pending: string[],
-      issue: TrackerIssue,
-      lane: ProjectLane | undefined,
-      human: boolean,
-      changed: TrackerChange[],
-    ) => {
-      for (const conversation of pending) {
-        const workerAgent = store.sessionOf(conversation)?.agent;
-        if (issue.archived && changed.includes('archive'))
-          await stopAssistant(conversation, `Stopped: ${issue.identifier} was deleted; there is no work to do.`);
-        else if (human && changed.includes('labels'))
-          await stopAssistant(
-            conversation,
-            `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
-          );
-        else if (changed.includes('state') && lane?.agent !== workerAgent)
-          await stopAssistant(
-            conversation,
-            `Stopped: ${issue.identifier} moved to "${issue.state.name}", which is not my lane.`,
-          );
-        else if (changed.includes('delegate') && issue.delegateId !== tracker.ownerOf(conversation))
-          await stopAssistant(conversation, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
-      }
-    };
-
-    /** The run the update orphaned — same three reasons: interrupt the
-     *  worker and end the run cancelled; the ending's catch-up says so in
-     *  Linear's own activity. */
+    /** The run the update orphaned — the ticket was deleted, the HITL label
+     *  was added, the ticket moved to a lane that is not the worker's, or the
+     *  delegate changed: interrupt the worker and end the run cancelled; the
+     *  ending's catch-up says so in Linear's own activity. */
     const stopOrphanRun = async (
       issue: TrackerIssue,
       lane: ProjectLane | undefined,
@@ -797,8 +753,6 @@ async function startLinear(
       const lane = laneOf(routed.project, issue.state.name);
       const human = issue.labels.some(l => l.name === config.humanLabel);
       await stopOrphanRun(issue, lane, human, event.changed);
-      const pending = store.pendingForIssue(issue.id);
-      await stopOrphans(pending, issue, lane, human, event.changed);
       // Anything a person does to a ticket's place or standing wakes the
       // walk — **unless the ticket sits where aivi does not look**: a human
       // lane that is not the queue, or a state not in the array at all.
@@ -818,7 +772,7 @@ async function startLinear(
      *  acknowledged already, so a retry would only replay what failed. */
     const unsubscribeEvents = tracker.events(async event => {
       try {
-        if (abort.signal.aborted) return;
+        if (halt.signal.aborted) return;
         if (event.kind === 'started') await onStarted(event.conversation, event.issueId, event.promptContext);
         else if (event.kind === 'prompted') await onPrompted(event);
         else await onIssue(event);

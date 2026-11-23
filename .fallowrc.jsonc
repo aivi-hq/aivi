@@ -16,18 +16,24 @@
     "packages/host/src/cli/commands/knowledge.ts"
   ],
   // dev/ is the generated development home (an installed app, its own
-  // package.json, worktrees) — not this repo's source. scripts/ is dev
-  // tooling run against the tree (ruled 2026-10-20): its use of the root's
-  // devDependencies is not worth analyzing, and the checks that gate the
-  // product (smoke) reach the tree through spawned paths, not imports.
+  // package.json, worktrees) — not this repo's source; it is git-ignored,
+  // which Fallow already respects. scripts/ is dev tooling run against the
+  // tree (ruled 2026-10-20): its use of the root's devDependencies is not
+  // worth analyzing, and the checks that gate the product (smoke) reach the
+  // tree through spawned paths, not imports.
   "ignorePatterns": [
-    "dev/**",
     "scripts/**"
   ],
   // @discordjs/voice requires its sodium implementation at runtime; the
   // declaration is what supplies it, and no import in our sources names it.
   "ignoreDependencies": [
     "libsodium-wrappers"
+  ],
+  // The OpenCode CLI is the user's own install, not a package of this repo:
+  // `aivi setup` and `aivi uninstall` spawn it by name (the operator,
+  // 2026-11-19).
+  "ignoreBinaries": [
+    "opencode"
   ],
   "workspaces": {
     "patterns": [
@@ -55,15 +61,10 @@
     "@aivi/chrome"
   ],
   "health": {
-    // Istanbul coverage from `npm run test:cov`, so CRAP scores are measured, not estimated.
-    "coverage": "./coverage/coverage-final.json",
-    // 30 → 350 for now. c8 drops nameless inline callbacks from its function
-    // map, so fallow estimates CRAP = cc²+cc for code that ran; the round's
-    // 114 complexity findings are all fixed and the 77 estimates left are
-    // all of that kind. Complexity thresholds stay at their defaults — those
-    // are the real gate. Swap the coverage producer for one that records
-    // anonymous functions (vitest does) and this can drop back to 30.
-    "maxCrap": 350
+    // V8 coverage from `npm run test:cov` (the folder Node's test runner
+    // writes), so CRAP scores are measured, not estimated. Every function is
+    // in it, anonymous callbacks included.
+    "coverage": "./coverage/v8"
   },
   "rules": {}
 }

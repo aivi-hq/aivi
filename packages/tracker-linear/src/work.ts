@@ -71,7 +71,7 @@ export function linearBoard(
   openClient: (app: string) => LinearClient = app => clientFor(config, app, log),
 ): LinearBoard {
   let reader: LinearClient | undefined;
-  const read = (): LinearClient => (reader ??= openClient(primaryLinearApp(config) ?? ''));
+  const read = (): LinearClient => (reader ??= openClient(primaryLinearApp(config)!));
   let board: LinearTeam[] | undefined;
   const teams = async (): Promise<LinearTeam[]> => (board ??= await read().listTeams());
   /** A ticket the walk may start: not deleted between the listing and this

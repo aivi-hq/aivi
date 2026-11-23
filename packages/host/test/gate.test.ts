@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { negotiate } from '../src/api/gate.ts';
+import { negotiate, pathHead } from '../src/api/gate.ts';
 
 // The rule over two version strings — fixed on both sides, because the
 // server's real version moves with every release and the rule does not.
@@ -42,4 +42,13 @@ test('a different major is a broken contract, and silence names no version at al
   const garbage = negotiate('weird', '0.6.0');
   assert.ok(!garbage.ok);
   assert.equal(garbage.code, 'client_version_unsupported');
+});
+
+test('the gate keys on the first segment of a path, and the root is its own head', () => {
+  for (const [path, head] of [
+    ['/', '/'],
+    ['/status', '/status'],
+    ['/people/person-1/tokens', '/people'],
+  ] as const)
+    assert.equal(pathHead(path), head, path);
 });

@@ -24,7 +24,7 @@ import { registerServer } from './cli/commands/server.ts';
 import { home } from './cli/context.ts';
 
 // Set once serve's preAction hook configured logging; the collector's exit path flushes sinks.
-let closeLogging: () => Promise<void> = async () => {};
+let closeLogging!: () => Promise<void>;
 
 /** Hang the operator commands on a commander tree and keep their logging.
  *  The machine's state arrives as an argument: whoever provides commands
@@ -54,15 +54,12 @@ export async function registerCommands(program: Command, machine: MachineStatus)
   // additionally appends JSON lines to state/logs/aivi.log whatever the
   // console does. stdout stays reserved for output. The rest of the CLI
   // answers through clack and print and needs no logger of its own.
-  const serve = program.commands.find(command => command.name() === 'serve');
-  if (!serve) return;
+  const serve = program.commands.find(command => command.name() === 'serve')!; // registerServer made it above
   serve
     .option('--log-level <level>', 'debug|info|warn|error', 'info')
     .option('--log-format <format>', 'auto|pretty|json (auto: pretty on a terminal, JSON lines when piped)', 'auto')
     .hook('preAction', async (_owner: Command, actionCommand: Command) => {
-      const values = actionCommand.opts<{ logLevel?: string; logFormat?: string }>();
-      const level = values.logLevel ?? 'info';
-      const format = values.logFormat ?? 'auto';
+      const { logLevel: level, logFormat: format } = actionCommand.opts<{ logLevel: string; logFormat: string }>();
       if (!['debug', 'info', 'warn', 'error'].includes(level))
         throw new Error(`Unknown log level: ${level}. Use debug, info, warn, or error.`);
       if (!['auto', 'pretty', 'json'].includes(format))

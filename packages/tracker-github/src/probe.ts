@@ -17,7 +17,7 @@
  */
 import { hostUrl } from '@aivi/core';
 import { verifyWebhookSignature } from '@aivi/github';
-import type { PluginSetupContext, Store } from '@aivi/plugin';
+import { type PluginSetupContext, pollWithin, type Store } from '@aivi/plugin';
 
 /** How long the diary is watched when a check cannot pass: silence is a
  *  result too, and only a waited-out silence proves it. Tests shorten the
@@ -167,71 +167,31 @@ export async function waitDiary(
   let mine = 0;
   let others = 0;
   let last = cursor;
-  await new Promise<void>((settledPromise, failed) => {
-    let done = false;
-    let poll: ReturnType<typeof setTimeout> | undefined;
-    let expiry: ReturnType<typeof setTimeout> | undefined;
-    const read = (): void => {
-      // `aivi host clear-logs` can empty the diary and restart its ids below
-      // our cursor; when that happens, follow the fresh diary, not the mark.
-      if (latestId(store) < last) last = 0;
-      for (const row of store.requests({ method: 'POST', path, sinceId: last })) {
-        last = row.id;
-        if (row.truncated)
-          throw new Error(
-            `a delivery arrived but its body is not readable JSON — the diary cut it off (row ${row.id}) — verification needs the whole body.`,
-          );
-        const payload = verifiedRow(secret, row);
-        const event = row.headers['x-github-event'] ?? '';
-        say(`Heard: ${describeDelivery(event, payload)}`); // every delivery, the moment it lands
-        if (!about(event, payload)) {
-          others++;
-          stop();
-          return;
-        }
-        // The proof is in: a passed wait is nobody's waiting room, and the
-        // stop's own read finishes nothing this loop has left to say.
-        if (accepts(event, payload)) {
-          mine++;
-          stop();
-          return;
-        }
-      }
-    };
-    const stop = (error?: Error): void => {
-      if (done) return;
-      done = true;
-      if (poll !== undefined) clearTimeout(poll);
-      if (expiry !== undefined) clearTimeout(expiry);
-      if (error === undefined) {
-        try {
-          read(); // the deadline read: complete even if a tick was late
-        } catch (cause) {
-          failed(cause as Error);
-          return;
-        }
-        settledPromise();
-      } else failed(error);
-    };
-    const tick = (): void => {
-      try {
-        read();
-      } catch (cause) {
-        stop(cause as Error);
+  await pollWithin({ windowMs, pollMs: POLL_MS }, stop => {
+    // `aivi host clear-logs` can empty the diary and restart its ids below
+    // our cursor; when that happens, follow the fresh diary, not the mark.
+    if (latestId(store) < last) last = 0;
+    for (const row of store.requests({ method: 'POST', path, sinceId: last })) {
+      last = row.id;
+      if (row.truncated)
+        throw new Error(
+          `a delivery arrived but its body is not readable JSON — the diary cut it off (row ${row.id}) — verification needs the whole body.`,
+        );
+      const payload = verifiedRow(secret, row);
+      const event = row.headers['x-github-event'] ?? '';
+      say(`Heard: ${describeDelivery(event, payload)}`); // every delivery, the moment it lands
+      if (!about(event, payload)) {
+        others++;
+        stop();
         return;
       }
-      // Self-rescheduling: one pending timer, always, and a slow read
-      // cannot pile up behind itself. And a read that ended the wait is
-      // never re-armed: no timer outlives the verdict.
-      if (done) return;
-      poll = setTimeout(tick, POLL_MS);
-    };
-    poll = setTimeout(tick, POLL_MS); // the reliable arrival signal across processes: a re-read
-    expiry = setTimeout(() => stop(), windowMs); // the window's end: a known instant
-    try {
-      read(); // whatever already arrived before the watching began
-    } catch (cause) {
-      stop(cause as Error);
+      // The proof is in: a passed wait is nobody's waiting room, and the
+      // stop's own read finishes nothing this loop has left to say.
+      if (accepts(event, payload)) {
+        mine++;
+        stop();
+        return;
+      }
     }
   });
   return { mine, others, last };
@@ -254,6 +214,18 @@ const BOARD_SIGNALS: Record<string, (event: string, payload: ProbePayload) => bo
   'comment posted': (event, payload) => event === 'issue_comment' && payload?.action === 'created',
 };
 
+/** Note which of the `asked` signals this delivery proves; true once every one has landed. A signal already
+ *  landed is never counted twice. */
+function land(asked: string[], landed: Set<string>, event: string, payload: ProbePayload): boolean {
+  for (const name of asked) {
+    if (!landed.has(name) && BOARD_SIGNALS[name]!(event, payload)) {
+      landed.add(name);
+      if (landed.size === asked.length) return true;
+    }
+  }
+  return false;
+}
+
 /** Watch for the board probe's signals on one issue until all `asked` have
  *  landed or the window passes. Each landing is said the moment it arrives —
  *  the live line names what just came in. A signal already landed is never
@@ -273,66 +245,24 @@ export async function waitForSignals(
   const { path, secret, windowMs, asked, about } = watch;
   const landed = new Set<string>();
   let last = cursor;
-  await new Promise<void>((settledPromise, failed) => {
-    let done = false;
-    let poll: ReturnType<typeof setTimeout> | undefined;
-    let expiry: ReturnType<typeof setTimeout> | undefined;
-    const read = (): void => {
-      if (latestId(store) < last) last = 0;
-      const rows = store.requests({ method: 'POST', path, sinceId: last });
-      if (rows.length) last = rows[rows.length - 1]!.id;
-      // Newest first: the probe's own deliveries are the freshest rows
-      // above the cursor. A truncated row is skipped before parsing — a
-      // cut body cannot be parsed, and its seal could never verify.
-      for (const row of rows.reverse()) {
-        if (row.truncated) continue;
-        const payload = JSON.parse(row.body ?? '{}');
-        const event = row.headers['x-github-event'] ?? '';
-        if (!about(event, payload)) continue; // about another issue: this test is not about it
-        if (!verifyRow(secret, row)) throw badSeal(row);
-        say(`Heard: ${describeDelivery(event, payload)}`);
-        for (const name of asked) {
-          if (!landed.has(name) && BOARD_SIGNALS[name]!(event, payload)) {
-            landed.add(name);
-            if (landed.size === asked.length) {
-              stop();
-              return;
-            }
-          }
-        }
-      }
-    };
-    const stop = (error?: Error): void => {
-      if (done) return;
-      done = true;
-      if (poll !== undefined) clearTimeout(poll);
-      if (expiry !== undefined) clearTimeout(expiry);
-      if (error === undefined) {
-        try {
-          read();
-        } catch (cause) {
-          failed(cause as Error);
-          return;
-        }
-        settledPromise();
-      } else failed(error);
-    };
-    const tick = (): void => {
-      try {
-        read();
-      } catch (cause) {
-        stop(cause as Error);
+  await pollWithin({ windowMs, pollMs: POLL_MS }, stop => {
+    if (latestId(store) < last) last = 0;
+    const rows = store.requests({ method: 'POST', path, sinceId: last });
+    if (rows.length) last = rows[rows.length - 1]!.id;
+    // Newest first: the probe's own deliveries are the freshest rows
+    // above the cursor. A truncated row is skipped before parsing — a
+    // cut body cannot be parsed, and its seal could never verify.
+    for (const row of rows.reverse()) {
+      if (row.truncated) continue;
+      const payload = JSON.parse(row.body ?? '{}');
+      const event = row.headers['x-github-event'] ?? '';
+      if (!about(event, payload)) continue; // about another issue: this test is not about it
+      if (!verifyRow(secret, row)) throw badSeal(row);
+      say(`Heard: ${describeDelivery(event, payload)}`);
+      if (land(asked, landed, event, payload)) {
+        stop();
         return;
       }
-      if (done) return;
-      poll = setTimeout(tick, POLL_MS);
-    };
-    poll = setTimeout(tick, POLL_MS);
-    expiry = setTimeout(() => stop(), windowMs);
-    try {
-      read();
-    } catch (cause) {
-      stop(cause as Error);
     }
   });
   return { landed, last };

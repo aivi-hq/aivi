@@ -27,9 +27,8 @@ export type { DispatcherLease };
 /** Why a request did not get a slot — and did not get a queue place
  *  either. `full` is ordinary pressure from a service nobody registered
  *  to hear (an un-waitable refusal); `waiting` says this service already
- *  holds the pool's one queue place; `pool-gone` is a config that outran
- *  reality and says so. */
-export type Refusal = 'full' | 'pool-gone' | 'waiting';
+ *  holds the pool's one queue place. */
+export type Refusal = 'full' | 'waiting';
 
 /** A lease request waiting in the pool's in-memory queue: not a lease,
  *  holding no capacity, deliberate to lose — a restart simply lets the
@@ -77,6 +76,13 @@ const parseModelSpec = (spec: string): NativeModel => {
 
 /** The session-create body, as the SDK types it; the lease's provide builds one. */
 type SessionCreate = NonNullable<Parameters<OpenCodeClient['session']['create']>[0]>;
+
+/** What a lease's session is for, as `provide` is told. */
+type SessionWork = Parameters<Dispatcher['provide']>[1];
+
+/** Is this session that work: its agent, in its directory? */
+const runs = (session: Awaited<ReturnType<OpenCodeClient['session']['get']>>, work: SessionWork): boolean =>
+  session.agent === work.agent && session.location.directory === work.directory;
 
 export class Dispatcher {
   readonly leases: LeaseStore;
@@ -168,8 +174,8 @@ export class Dispatcher {
    * timer and interrupts again.
    */
   async #due(leaseId: string): Promise<void> {
-    const lease = this.leases.get(leaseId);
-    if (!lease) return; // ended while the clock flew: nothing is due twice
+    // A clock dies with its lease (`#free` disarms it): the lease is there.
+    const lease = this.leases.require(leaseId);
     if (!lease.sessionId) {
       // The prepare clock needs no cap: there is nothing to kill.
       await this.expire(leaseId, 'no session was provided within the prepare timeout');
@@ -221,7 +227,8 @@ export class Dispatcher {
    * sessions only. A **resume** (the session is known here) must return to
    * the pool that session was created in: running it elsewhere would change
    * its model and lose its prefill cache, so a full original pool waits in
-   * that pool's queue even when a fallback has room.
+   * that pool's queue even when a fallback has room. Only a pool the config
+   * no longer names lets a session go: see `#ownPool`.
    *
    * A full pool **accepts** the request into its queue — `queued` with the
    * id that cancels it — because a queued request is the answer to
@@ -237,25 +244,49 @@ export class Dispatcher {
     now = Date.now(),
   ): { lease: DispatcherLease } | { queued: string } | { refused: Refusal; pool: string } {
     if (!this.moderated) return this.#grantUnlimited(input, now);
-    // A session's own pool outranks whatever the caller asks for; only when
-    // the session is unknown here does the asked-for pool decide, and an
-    // unknown *name* is a caller bug said as such, not pressure.
-    const recorded = input.resume ? this.leases.sessionPool(input.resume) : undefined;
-    if (recorded !== undefined && !(recorded in this.pools)) return { refused: 'pool-gone', pool: recorded };
     const asked = input.pool ?? 'default';
-    if (recorded === undefined && !(asked in this.pools))
-      throw new Error(
-        `pool "${asked}" is not configured; name one of ${Object.keys(this.pools).join(', ')} or configure a "default"`,
-      );
+    // A session's own pool outranks whatever the caller asks for; only when
+    // the session has none here does the asked-for pool decide, and an
+    // unknown *name* is a caller bug said as such, not pressure.
+    const own = input.resume ? this.#ownPool(input.resume, asked) : undefined;
+    if (own === undefined && !(asked in this.pools)) throw this.#unknownPool(asked);
     // A resume gets its session's own pool and nothing else; a new session
     // walks the fallback chain, which the config load proved cycle-free.
-    const targets = input.resume ? [recorded ?? asked] : this.#chain(asked);
+    const targets = input.resume ? [own ?? asked] : this.#chain(asked);
     const lease = this.#grantOnTargets(input, targets, now);
     if (lease) {
       if (input.resume) this.leases.record(input.resume, lease.pool, now);
       return { lease };
     }
-    return this.#queue(input.service, recorded ?? asked, input.resume);
+    return this.#queue(input.service, own ?? asked, input.resume);
+  }
+
+  /**
+   * The pool a resumed session returns to: the one it was created in, for
+   * as long as the config names it — that is what keeps its model and its
+   * prefill cache. A recorded pool the config dropped is the first try
+   * failing (ruled 2026-11-18): it is said, and the session belongs to the
+   * pool its caller asks for from here on. Its model is left as it was. An
+   * asked-for pool the config does not name either is the error.
+   */
+  #ownPool(sessionId: string, asked: string): string | undefined {
+    const recorded = this.leases.sessionPool(sessionId);
+    if (recorded === undefined || recorded in this.pools) return recorded;
+    if (!(asked in this.pools)) throw this.#unknownPool(asked);
+    this.log.warn('resume.pool-gone', {
+      session: sessionId,
+      pool: recorded,
+      moved: asked,
+      hint: 'The config no longer names the pool this session was created in; it continues in the pool its caller asks for.',
+    });
+    this.leases.move(sessionId, asked);
+    return asked;
+  }
+
+  #unknownPool(asked: string): Error {
+    return new Error(
+      `pool "${asked}" is not configured; name one of ${Object.keys(this.pools).join(', ')} or configure a "default"`,
+    );
   }
 
   /** The first pool on the targets that has a slot: grant it and arm the
@@ -339,10 +370,10 @@ export class Dispatcher {
     const request = this.pending.get(requestId);
     if (!request) return;
     this.pending.delete(requestId);
-    const waiting = this.waiting.get(request.pool);
-    if (!waiting) return;
-    const at = waiting.findIndex(request => request.id === requestId);
-    if (at >= 0) waiting.splice(at, 1);
+    // A pending request stands in its pool's line: `#queue` puts it in both
+    // and `#drain` takes it out of both.
+    const waiting = this.waiting.get(request.pool)!;
+    waiting.splice(waiting.indexOf(request), 1);
     if (waiting.length === 0) this.waiting.delete(request.pool);
   }
 
@@ -387,8 +418,8 @@ export class Dispatcher {
       if (waiting.length === 0) this.waiting.delete(pool);
       this.pending.delete(next.id);
       if (next.resume) this.leases.record(next.resume, granted.pool);
-      const callback = this.callbacks.get(next.service);
-      if (!callback) continue; // granted blind: the reconcile pass is its net
+      // `#queue` takes a request only from a service that registered to hear.
+      const callback = this.callbacks.get(next.service)!;
       void Promise.resolve(callback(next.id, granted)).catch(error =>
         this.log.warn('callback.failed', { service: next.service, request: next.id, error }),
       );
@@ -424,49 +455,66 @@ export class Dispatcher {
       throw new Error(`lease ${leaseId} is ${lease.state}; only a preparing lease is provided with a session`);
     const client = await this.deps.opencode();
     const request = { signal: this.deps.signal ?? AbortSignal.timeout(30_000) };
-    let sessionId = work.sessionId;
-    let existing: Awaited<ReturnType<OpenCodeClient['session']['get']>> | undefined;
-    if (sessionId && !work.create) {
-      const found = await client.session.get({ sessionID: sessionId }, request);
-      if (found.agent !== work.agent || found.location.directory !== work.directory)
-        throw new Error(`session ${sessionId} no longer runs agent ${work.agent} in ${work.directory}`);
-      existing = found;
-    }
-    if (!existing) {
-      // The id names the service: whose worker a session is stays readable
-      // in OpenCode's own list, and tests can point at one kind of session.
-      const id = sessionId ?? `ses_${lease.service}_${randomBytes(10).toString('hex')}`;
-      const spec = this.pools[lease.pool]?.model;
-      // A pin the caller carries beats the pool, which beats the agent file:
-      // a session is born with the model its conversation was already promised.
-      const model =
-        work.model ?? (spec ? parseModelSpec(spec) : await agentModel(client, work.agent, work.directory, request));
-      try {
-        await client.session.create(
-          {
-            id,
-            agent: work.agent,
-            location: { directory: work.directory },
-            ...(model ? { model } : {}),
-            ...(work.title ? { title: work.title } : {}),
-            ...(work.metadata ? { metadata: work.metadata as NonNullable<SessionCreate['metadata']> } : {}),
-          },
-          request,
-        );
-      } catch (error) {
-        // A create that failed may still have landed (a lost response). If the
-        // session exists under this id running this agent in this directory,
-        // it is kept — a pre-allocated id is never re-imagined into a new one.
-        const found = await client.session.get({ sessionID: id }, request).catch(() => undefined);
-        if (!found || found.agent !== work.agent || found.location.directory !== work.directory) throw error;
-      }
-      sessionId = id;
-    }
-    const born = sessionId!; // a resume brought its own id; a create made one
+    // A resume brings its own id; a create makes one.
+    const born =
+      work.sessionId && !work.create
+        ? await this.#resumed(client, work.sessionId, work, request)
+        : await this.#created(client, lease, work, request);
     const attached = this.leases.attach(leaseId, born);
     this.leases.record(born, attached.pool);
     this.#armFrom(attached); // the idle clock starts where the provide ends
     return attached;
+  }
+
+  /** The session a caller brings by id: it must still be this work. */
+  async #resumed(
+    client: OpenCodeClient,
+    sessionId: string,
+    work: SessionWork,
+    request: { signal: AbortSignal },
+  ): Promise<string> {
+    const found = await client.session.get({ sessionID: sessionId }, request);
+    if (!runs(found, work))
+      throw new Error(`session ${sessionId} no longer runs agent ${work.agent} in ${work.directory}`);
+    return sessionId;
+  }
+
+  /** Make the lease's session real, under the caller's id when it brings
+   *  one, with the model the pool decides. */
+  async #created(
+    client: OpenCodeClient,
+    lease: DispatcherLease,
+    work: SessionWork,
+    request: { signal: AbortSignal },
+  ): Promise<string> {
+    // The id names the service: whose worker a session is stays readable
+    // in OpenCode's own list, and tests can point at one kind of session.
+    const id = work.sessionId ?? `ses_${lease.service}_${randomBytes(10).toString('hex')}`;
+    const spec = this.pools[lease.pool]?.model;
+    // A pin the caller carries beats the pool, which beats the agent file:
+    // a session is born with the model its conversation was already promised.
+    const model =
+      work.model ?? (spec ? parseModelSpec(spec) : await agentModel(client, work.agent, work.directory, request));
+    try {
+      await client.session.create(
+        {
+          id,
+          agent: work.agent,
+          location: { directory: work.directory },
+          ...(model ? { model } : {}),
+          ...(work.title ? { title: work.title } : {}),
+          ...(work.metadata ? { metadata: work.metadata as NonNullable<SessionCreate['metadata']> } : {}),
+        },
+        request,
+      );
+    } catch (error) {
+      // A create that failed may still have landed (a lost response). If the
+      // session exists under this id running this agent in this directory,
+      // it is kept — a pre-allocated id is never re-imagined into a new one.
+      const found = await client.session.get({ sessionID: id }, request).catch(() => undefined);
+      if (!found || !runs(found, work)) throw error;
+    }
+    return id;
   }
 
   /**

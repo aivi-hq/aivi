@@ -4,9 +4,10 @@ import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { configSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { DispatcherLeaseRef } from '@aivi/plugin/dispatcher';
 import type { OpenCodeClient } from '@aivi/plugin/module';
 import { createTurnRunner, messageIdFor } from '../src/channel/turns.ts';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
@@ -462,4 +463,57 @@ test('a linked channel account speaks as its aivi person, in the prompt and the 
   const stranger = requests.filter(r => r.path.endsWith('/prompt')).at(-1)!.body;
   assert.equal(stranger.text, '[Discord message from Name (user stranger)]\nQuestion');
   assert.equal(stranger.metadata.aivi.person, undefined);
+});
+
+const bare = { config: configSchema.parse({ version: 1 }), path: '/config', projects: [], sources: [] };
+const idle = async () => ({}) as OpenCodeClient;
+
+test('a turn asked without a dispatcher slot is refused before anything is sent', async () => {
+  const ask = await createTurnRunner(platform, config, bare, idle, quiet, memory(), {} as Dispatcher);
+  await assert.rejects(
+    ask(turn, AbortSignal.timeout(3000), () => {}),
+    /Discord turn: no dispatcher slot; the engine grants one before asking/,
+  );
+});
+
+test('a slot whose session cannot be provided is a turn that never started; the dispatcher is asked for the conversation’s own session and model', async () => {
+  const provide = mock.fn(async (_leaseId: string, _work: object): Promise<DispatcherLeaseRef> => {
+    throw new Error('session create refused');
+  });
+  const ask = await createTurnRunner(platform, config, bare, idle, quiet, memory(), {
+    provide,
+  } as unknown as Dispatcher);
+  const preparing = { id: 'lease_1', pool: 'local-model', state: 'preparing' } as const;
+  const pins = [
+    [null, {}],
+    [{ providerID: 'openai', modelID: 'o9' }, { model: { providerID: 'openai', id: 'o9' } }],
+    [
+      { providerID: 'openai', modelID: 'o9', variant: 'high' },
+      { model: { providerID: 'openai', id: 'o9', variant: 'high' } },
+    ],
+  ] as const;
+  let ready = 0;
+
+  for (const [model] of pins)
+    await assert.rejects(
+      ask({ ...turn, model }, AbortSignal.timeout(3000), () => void ready++, preparing),
+      (error: unknown) => error instanceof TurnNotStarted && error.message === 'session create refused',
+    );
+
+  assert.equal(ready, 0, 'the conversation is not marked as started');
+  assert.deepEqual(
+    provide.mock.calls.map(call => call.arguments),
+    pins.map(([, pinned]) => [
+      'lease_1',
+      {
+        agent: 'assistant',
+        directory: '/assistant',
+        sessionId: 'ses_discord_test',
+        create: true,
+        title: 'Discord dm',
+        metadata: { aivi: { origin: 'discord', channel: 'dm' } },
+        ...pinned,
+      },
+    ]),
+  );
 });

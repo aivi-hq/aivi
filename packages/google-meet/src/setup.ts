@@ -39,8 +39,9 @@ const setup: PluginSetup = async (ctx): Promise<PluginSetupResult> => {
     mode: 'call',
     ...(headed ? { headless: false } : {}),
   };
-  const parsed = meetConfigSchema.safeParse(block);
-  if (!parsed.success) throw new Error('The Meet block aivi writes does not load its own schema; this is a bug.');
+  // The block aivi writes must load its own schema: a mismatch is a bug
+  // here, and it throws before anything is written.
+  meetConfigSchema.parse(block);
   await ctx.writeConfigBlock(['plugins', MODULE_ID], block);
   const voiceReady = (plugins: unknown) => typeof plugins === 'object' && plugins !== null && 'voice' in plugins;
   return {

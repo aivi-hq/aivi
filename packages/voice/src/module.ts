@@ -31,7 +31,7 @@ import type { VoiceAdapter } from '@aivi/plugin/voice';
 import { BatchEngineRun } from './batch.ts';
 import type { VoiceConfig } from './config.ts';
 import type { AudioSource, EngineSpec } from './engine.ts';
-import { HearingRoom, type RoomDeps } from './room.ts';
+import { HearingRoom, type RoomDeps, type RoomInit } from './room.ts';
 import { SharedEngine } from './shared.ts';
 import { VoiceStore } from './store.ts';
 import { TtsRun } from './tts.ts';
@@ -77,7 +77,69 @@ const transcriptTool: ToolDescriptor = {
   },
 };
 
-export function createVoiceModule(config: VoiceConfig): AiviModule {
+/** Own a speech process from construction, not only after its ready marker.
+ *  Shutdown and a late ready answer transfer that ownership exactly once.
+ *  A loaded process that died is not kept as a permanent no: like a failed
+ *  load, the next request starts a fresh one. */
+function lazySpeechEngine<T extends { start(): Promise<void>; stop(): Promise<void>; readonly alive: boolean }>(
+  create: () => T,
+  failed: (error: unknown) => void,
+) {
+  let active: T | null = null;
+  let ready = false;
+  let starting: Promise<T | null> | null = null;
+  let stopped = false;
+  const take = () => {
+    const run = active;
+    active = null;
+    ready = false;
+    return run;
+  };
+  const load = async (): Promise<T | null> => {
+    try {
+      const run = create();
+      active = run;
+      await run.start();
+      if (stopped) {
+        // stop() already took the process; readiness cannot return it to a caller.
+        return null;
+      }
+      if (!run.alive) {
+        // Ready and gone in one breath: the client said it exited, and a
+        // dead process is nothing to hand out.
+        take();
+        return null;
+      }
+      ready = true;
+      return run;
+    } catch (error) {
+      await take()?.stop();
+      if (!stopped) failed(error);
+      return null;
+    }
+  };
+  return {
+    get(): Promise<T | null> {
+      if (stopped) return Promise.resolve(null);
+      const loaded = ready ? active : null;
+      if (loaded?.alive) return Promise.resolve(loaded);
+      if (loaded) take(); // it died after loading: this request loads its replacement
+      starting ??= load().finally(() => {
+        starting = null;
+      });
+      return starting;
+    },
+    async stop(): Promise<void> {
+      stopped = true;
+      await take()?.stop();
+    },
+  };
+}
+
+export function createVoiceModule(
+  config: VoiceConfig,
+  createRoom: (init: RoomInit, deps: RoomDeps) => HearingRoom = (init, deps) => new HearingRoom(init, deps),
+): AiviModule {
   return {
     id: 'voice',
     async start(services) {
@@ -86,7 +148,12 @@ export function createVoiceModule(config: VoiceConfig): AiviModule {
       // Leases voice held across a restart are unverified: their turns died
       // with the process, so the slots go straight back (a voice turn has no
       // ticket to block, unlike a channel turn).
-      await VoiceTurns.recover(store.roomLeases(), id => services.dispatcher.release(id), log);
+      await VoiceTurns.recover(
+        store.roomLeases(),
+        id => services.dispatcher.release(id),
+        label => store.setRoomLease(label, null),
+        log,
+      );
 
       const embedder = config.identity
         ? new sherpa.SpeakerEmbeddingExtractor({
@@ -133,49 +200,18 @@ export function createVoiceModule(config: VoiceConfig): AiviModule {
       // once a room actually asks. Absent the `stt` block there is no
       // second process at all: the streaming engine answers batch requests
       // in its own process (one engine per host, one set of weights).
-      let stt: BatchEngineRun | null = null;
-      let sttStarting: Promise<BatchEngineRun | null> | null = null;
-      const getStt = (): Promise<BatchEngineRun | null> => {
-        const spec = config.stt;
-        if (stt) return Promise.resolve(stt);
-        if (!spec) return Promise.resolve(null);
-        sttStarting ??= (async () => {
-          try {
-            const run = new BatchEngineRun(spec, log);
-            await run.start();
-            stt = run;
-            return stt;
-          } catch (error) {
-            // A failed load is not cached as a permanent no: the next
-            // request tries the endpoint again.
-            log.warn('voice.stt.start-failed', { error: String(error) });
-            return null;
-          } finally {
-            sttStarting = null;
-          }
-        })();
-        return sttStarting;
-      };
-      let tts: TtsRun | null = null;
-      let ttsStarting: Promise<TtsRun | null> | null = null;
-      const getTts = (): Promise<TtsRun | null> => {
-        if (!config.tts) return Promise.resolve(null);
-        if (tts) return Promise.resolve(tts);
-        ttsStarting ??= (async () => {
-          const run = new TtsRun(config.tts!, log);
-          try {
-            await run.start();
-            tts = run;
-            return tts;
-          } catch (error) {
-            log.warn('voice.tts.start-failed', { error: String(error) });
-            return null;
-          } finally {
-            ttsStarting = null;
-          }
-        })();
-        return ttsStarting;
-      };
+      const stt = config.stt
+        ? lazySpeechEngine(
+            () => new BatchEngineRun(config.stt!, log),
+            error => log.warn('voice.stt.start-failed', { error: String(error) }),
+          )
+        : null;
+      const tts = config.tts
+        ? lazySpeechEngine(
+            () => new TtsRun(config.tts!, log),
+            error => log.warn('voice.tts.start-failed', { error: String(error) }),
+          )
+        : null;
 
       // The dispatcher's callback namespace, filled once for all rooms: a
       // queue place carries the room it belongs to, and every voice release
@@ -210,8 +246,8 @@ export function createVoiceModule(config: VoiceConfig): AiviModule {
         embedder,
         store,
         sharedEngine,
-        getStt,
-        getTts,
+        getStt: () => stt?.get() ?? Promise.resolve(null),
+        getTts: () => tts?.get() ?? Promise.resolve(null),
         dispatcher: services.dispatcher,
         opencode: services.opencode,
         runTurn: (client, input, options) => runTurn(client, input as never, options as never),
@@ -236,7 +272,7 @@ export function createVoiceModule(config: VoiceConfig): AiviModule {
           // call deserves a clean start; 2026-10-15: and a meeting category
           // may sit on its own pool)
           const { resumeMinutes, pool, ...init } = options;
-          const room = new HearingRoom(
+          const room = createRoom(
             { ...init, engineInput: { type: 'push' } as AudioSource },
             {
               ...baseDeps,
@@ -256,7 +292,7 @@ export function createVoiceModule(config: VoiceConfig): AiviModule {
       // through its own engine process, declaring its kind like any room.
       let own: HearingRoom | null = null;
       if (config.room) {
-        own = new HearingRoom(
+        own = createRoom(
           {
             id: 'voice',
             label: config.room.type === 'file' ? config.room.path : `mic:${config.room.device ?? 'default'}`,

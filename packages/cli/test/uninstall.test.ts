@@ -202,6 +202,41 @@ test('a machine aivi never touched is not an error', async () => {
   assert.deepEqual(calls.removed, []);
 });
 
+test('OpenCode off PATH names the attribution plugin too when it was asked for', async () => {
+  const home = homeOf();
+  const { io, calls } = fakeIo({ exists: path => path === configOf(home), detectMethod: () => 'npm' });
+  await uninstall({ home, confirm: true, withAttribution: true }, io);
+  assert.match(
+    calls.warns.join('\n'),
+    new RegExp(`opencode plugin remove ${AIVI_PLUGIN} && opencode plugin remove ${ATTRIBUTION_PLUGIN}`),
+  );
+});
+
+test('when no install method answers and none was recorded, the leftover says only that', async () => {
+  const home = homeOf();
+  const { io, calls } = fakeIo({ exists: path => path === configOf(home) });
+  assert.equal(await uninstall({ home, confirm: true, withAttribution: false }, io), false);
+  assert.match(
+    calls.warns.join('\n'),
+    /No install method aivi knows answers; remove the CLI the way you installed it\./,
+  );
+});
+
+test('a plugin that OpenCode refuses with something that is not an Error is still named', async () => {
+  const home = homeOf();
+  const { io, calls } = fakeIo({
+    exists: path => path === configOf(home),
+    opencodeOnPath: () => true,
+    pluginList: () => AIVI_PLUGIN,
+    pluginRemove: () => {
+      throw 'exit 1';
+    },
+    detectMethod: () => 'npm',
+  });
+  await uninstall({ home, confirm: true, withAttribution: false }, io);
+  assert.match(calls.warns.join('\n'), /Could not remove the @aivi\/opencode plugin \(exit 1\)\. Remove it by hand/);
+});
+
 test('the deletion is real: the home and the client config leave the disk', async () => {
   const home = homeOf();
   mkdirSync(join(home, 'state'), { recursive: true });

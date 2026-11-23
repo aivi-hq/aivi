@@ -26,20 +26,15 @@
  * channels reform.
  */
 import { errorMessage, laneOf, type Project, type ProjectLane } from '@aivi/core';
-import {
-  ChannelEngine,
-  ConversationStore,
-  createTurnRunner,
-  isTerminal,
-  stopTurn as stopRunningTurn,
-} from '@aivi/host';
+import { ChannelEngine, ConversationStore, createTurnRunner, isTerminal, stopSwitch } from '@aivi/host';
 import type { AiviModule, AiviServices, RunView, Store, Tracker } from '@aivi/plugin';
-import type { ChannelDelivery, ChannelPlatform, Turn } from '@aivi/plugin/channel';
+import type { ChannelPlatform, Turn } from '@aivi/plugin/channel';
 import type { TrackerChange, TrackerCommentKind, TrackerEvent, TrackerIssue } from '@aivi/plugin/tracker';
 import type { GithubClient } from './client.ts';
 import { githubClient, isGoneError } from './client.ts';
 import type { GithubConfig } from './config.ts';
 import { assistantAgent, MODULE_ID } from './config.ts';
+import { githubDelivery } from './delivery.ts';
 import { createGithubDesk } from './desk.ts';
 import { RunLinks } from './links.ts';
 import { githubRepoCollisions, projectForIssue, projectGithub } from './projects.ts';
@@ -92,25 +87,31 @@ export type MakeTracker = (services: AiviServices) => Promise<GithubPlatform>;
  *  lanes the way it hands its own tracker. */
 export type MakeBoard = (services: AiviServices, tracker: GithubPlatform) => GithubBoard;
 
-export function createGithubModule(config: GithubConfig, makeTracker?: MakeTracker, makeBoard?: MakeBoard): AiviModule {
-  return {
-    id: MODULE_ID,
-    start: services =>
-      startGithub(
-        config,
-        services,
-        makeTracker ??
-          (async ({ loaded, log }) => {
-            const { client, webhookSecret } = await githubClient(log.getChild(MODULE_ID));
-            const platform = new GithubPlatform(loaded, client, webhookSecret, log.getChild(MODULE_ID), config.trust);
-            // Boards first: a missing `Status` or `Agent` field is said now,
-            // with the remedy, not mid-run.
-            await platform.warm();
-            return platform;
-          }),
-        makeBoard ?? ((s, tracker) => githubBoard(config, s, tracker.client, s.log.getChild(MODULE_ID))),
-      ),
+/** GitHub's tracker by default: the adapter over the home's one app — the
+ *  connection and the webhook secret `githubClient` reads, with the boards
+ *  warmed first, so a missing `Status` or `Agent` field is said now, with the
+ *  remedy, not mid-run. `connect` is the connection's seam: a test answers it. */
+export const githubTracker =
+  (config: GithubConfig, connect: typeof githubClient = githubClient): MakeTracker =>
+  async ({ loaded, log }) => {
+    const { client, webhookSecret } = await connect(log.getChild(MODULE_ID));
+    const platform = new GithubPlatform(loaded, client, webhookSecret, log.getChild(MODULE_ID), config.trust);
+    await platform.warm();
+    return platform;
   };
+
+/** The board by default: the config's projects, read through the tracker's own client. */
+const githubBoardOf =
+  (config: GithubConfig): MakeBoard =>
+  (services, tracker) =>
+    githubBoard(config, services, tracker.client, services.log.getChild(MODULE_ID));
+
+export function createGithubModule(
+  config: GithubConfig,
+  makeTracker: MakeTracker = githubTracker(config),
+  makeBoard: MakeBoard = githubBoardOf(config),
+): AiviModule {
+  return { id: MODULE_ID, start: services => startGithub(config, services, makeTracker, makeBoard) };
 }
 
 /** The branch a ticket works on (D8): GitHub names none, so the tracker
@@ -161,20 +162,22 @@ async function startGithub(
   // agent, and an agent file that works tickets allows the ones it speaks.
   const desk = createGithubDesk(services.loaded, config, tracker);
 
-  const abort = new AbortController();
   let engine: ChannelEngine | undefined;
-  const stop = () => {
-    abort.abort();
-    engine?.stop();
-  };
-  services.signal.addEventListener('abort', stop, { once: true });
+  const halt = stopSwitch(services.signal, () => engine);
+  /** What the start takes from the host and the platform — the event
+   *  subscription, the route, the channel entry, the wake listener — each
+   *  given back by the one teardown, whether the module stops or its start
+   *  fails halfway. The supervisor retries a failed start: a route left
+   *  registered would fail every retry. */
+  const held: (() => void)[] = [];
   const teardown = async () => {
-    stop();
+    for (const give of held.splice(0)) give();
+    halt.stop();
     for (const follower of runProgress.values()) void follower.stop();
     try {
       await engine?.shutdown();
     } finally {
-      services.signal.removeEventListener('abort', stop);
+      halt.release();
     }
   };
 
@@ -196,38 +199,7 @@ async function startGithub(
       services.dispatcher,
       services.log,
     );
-    // A real comment the engine can edit by id and delete when the answer
-    // lands is GitHub's honest stand-in for Linear's ephemeral activity: the
-    // placeholder comment lives while the turn runs and is gone when it ends.
-    const delivery: ChannelDelivery = {
-      send: async (conversation, text) => {
-        const id = await tracker.comment(conversation, text, 'answer');
-        // The assistant's marks (D10): the rocket replaces the eyes once the
-        // answer lands. A status surface only — no run state rides it, and
-        // GitHub makes the pair idempotent per reactor.
-        const ref = tracker.ticketOf(conversation);
-        if (ref)
-          await Promise.all([
-            client.addReaction(ref, 'rocket').catch(error => log.warn('reaction.failed', { error })),
-            client.removeOwnReaction(ref, 'eyes').catch(error => log.warn('reaction.failed', { error })),
-          ]);
-        return id;
-      },
-      placeholder: async (conversation, text) => tracker.comment(conversation, text, 'progress'),
-      edit: async (conversation, id, text) => {
-        const ref = tracker.ticketOf(conversation);
-        if (!ref) return;
-        await client.updateComment(ref, Number(id), text);
-      },
-      delete: async (conversation, id) => {
-        const ref = tracker.ticketOf(conversation);
-        if (!ref) return;
-        await client.deleteComment(ref, Number(id));
-      },
-      notice: async (conversation, text) => {
-        await tracker.comment(conversation, text, 'outcome');
-      },
-    };
+    const delivery = githubDelivery(tracker, log);
     engine = new ChannelEngine(store, { pool: config.pool }, services.dispatcher, ask, delivery, {
       log, // the module's own child, so engine records carry the module category
       onRelease: services.wake,
@@ -315,7 +287,7 @@ async function startGithub(
      * move is not here: it is the orchestrator's decision and its debt,
      * performed through `moveTo` after this returns.
      */
-    const driveClosing = async (runId: string): Promise<void> => {
+    const attemptClosing = async (runId: string): Promise<void> => {
       const entry = closings.get(runId);
       if (!entry) return;
       const link = entry.sessionId ? links.byOpencodeSession(entry.sessionId) : undefined;
@@ -363,6 +335,18 @@ async function startGithub(
         } else log.warn('closing.retry.failed', { run: runId, error });
         throw error;
       }
+    };
+
+    /** The attempts in flight, one per run: a wake that finds a closing
+     *  mid-air joins it. Two attempts at once would each ask GitHub before
+     *  either had spoken, and say the final comment twice. */
+    const attempts = new Map<string, Promise<void>>();
+    const driveClosing = (runId: string): Promise<void> => {
+      const flying = attempts.get(runId);
+      if (flying) return flying;
+      const attempt = attemptClosing(runId).finally(() => attempts.delete(runId));
+      attempts.set(runId, attempt);
+      return attempt;
     };
 
     const retryClosings = async (): Promise<void> => {
@@ -446,7 +430,7 @@ async function startGithub(
         if (!links.attach(run.ticketId, run.sessionId)) log.debug('ready.replayed', { run: run.id });
         // The progress stream starts with the pair it can speak through:
         // while the run works, its session is the one edited status line.
-        if (config.progress === 'silent' || !tracker.progress) return;
+        if (config.progress === 'silent') return;
         const follower =
           runProgress.get(run.id) ??
           new RunProgress(tracker, conversationOf(run), run.sessionId, {
@@ -517,16 +501,6 @@ async function startGithub(
       );
     };
 
-    /** End the assistant turn in `conversation` because the person asked; the session stays. */
-    const stopAssistant = async (conversation: string, why: string) => {
-      const result = await stopRunningTurn(engine!, services.opencode, conversation);
-      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-      // The engine's stopped notice follows for a running turn; queued-only conversations hear this one.
-      if (!result.stopped) await say(conversation, why, 'outcome');
-      else await say(conversation, why, 'note');
-      log.info('assistant.stopped', { conversation, why });
-    };
-
     /**
      * A ticket brought to us with nothing known about it. Routing is
      * deterministic, from the issue re-read: a redelivery finds the bound
@@ -544,7 +518,6 @@ async function startGithub(
       if (store.has(conversation) || (issueId && services.orchestrator.activeRun(MODULE_ID, issueId))) return; // a redelivery
       if (!issueId) return refuse(conversation, 'I only work on issues; this has none.');
       const issue = await tracker.issue(GITHUB_FEED, issueId);
-      if (issue.archived) return log.debug('session.archived', { issue: issue.identifier });
       if (issue.labels.some(l => l.name === config.humanLabel))
         return refuse(
           conversation,
@@ -573,27 +546,6 @@ async function startGithub(
         said ? `${issueDossier(issue)}\n\nThe person wrote on the ticket: ${said}` : undefined,
       );
       engine?.tick();
-    };
-
-    /** A stop signal: the run's stop goes to a person's hands on the board
-     *  *before* the run ends (ruled 2026-10-03) — "not that one again" is
-     *  the human label's memory, never one in a database — and the ending
-     *  clears the `Agent` value and wakes the walk in the same breath. A
-     *  stop with no run stops the assistant's own turn, if one is running. */
-    const onStopSignal = async (conversation: string, run: RunView | undefined): Promise<void> => {
-      if (run) {
-        await markForHuman(GITHUB_FEED, run.ticketId);
-        await services.orchestrator.stop(run.id, `A person asked to stop ${run.ticketId} from the ticket.`);
-        return;
-      }
-      if (!store.has(conversation))
-        return refuse(
-          conversation,
-          'I do not know this conversation (it started before aivi did, or its state is gone). Comment on the ticket again.',
-        );
-      const result = await stopRunningTurn(engine!, services.opencode, conversation);
-      if (result.error) log.warn('stop.interrupt_failed', { error: result.error });
-      if (!result.stopped) await say(conversation, 'Nothing is running right now.', 'answer');
     };
 
     /** An answer to a pending form: the orchestrator owns its delivery — the
@@ -714,7 +666,6 @@ async function startGithub(
       // finished one is the assistant's ground: a message into a completed
       // conversation is a follow-up, not an answer or an interjection.
       const run = record && !isTerminal(record.state) ? record : undefined;
-      if (event.signal === 'stop') return onStopSignal(conversation, run);
       const text = event.body?.trim();
       if (!text) return;
       if (run?.sessionId) {
@@ -737,37 +688,9 @@ async function startGithub(
       return onBrought(conversation, ref, text);
     };
 
-    /** The assistant conversations the update orphaned: the human label, a
-     *  lane move or an `Agent` change each stops only its own kind of change. */
-    const stopOrphans = async (
-      pending: string[],
-      issue: TrackerIssue,
-      lane: ProjectLane | undefined,
-      human: boolean,
-      changed: TrackerChange[],
-    ) => {
-      for (const conversation of pending) {
-        const workerAgent = store.sessionOf(conversation)?.agent;
-        if (issue.archived && changed.includes('archive'))
-          await stopAssistant(conversation, `Stopped: ${issue.identifier} was deleted; there is no work to do.`);
-        else if (human && changed.includes('labels'))
-          await stopAssistant(
-            conversation,
-            `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
-          );
-        else if (changed.includes('state') && lane?.agent !== workerAgent)
-          await stopAssistant(
-            conversation,
-            `Stopped: ${issue.identifier} moved to "${issue.state.name}", which is not my lane.`,
-          );
-        else if (changed.includes('delegate') && issue.delegateId !== tracker.ownerOf(GITHUB_FEED))
-          await stopAssistant(conversation, `Stopped: I am no longer the delegate of ${issue.identifier}.`);
-      }
-    };
-
-    /** The run the update orphaned — same three reasons: interrupt the
-     *  worker and end the run cancelled; the ending's catch-up says so in
-     *  the status comment. */
+    /** The run the update orphaned — the human label, a lane move or an
+     *  `Agent` change: interrupt the worker and end the run cancelled; the
+     *  ending's catch-up says so in the status comment. */
     const stopOrphanRun = async (
       issue: TrackerIssue,
       lane: ProjectLane | undefined,
@@ -777,9 +700,7 @@ async function startGithub(
       const run = services.orchestrator.activeRun(MODULE_ID, issue.id);
       if (!run) return;
       const link = run.sessionId ? links.byOpencodeSession(run.sessionId) : undefined;
-      if (issue.archived && changed.includes('archive'))
-        await services.orchestrator.stop(run.id, `Stopped: ${issue.identifier} was deleted; there is no work.`);
-      else if (human && changed.includes('labels'))
+      if (human && changed.includes('labels'))
         await services.orchestrator.stop(
           run.id,
           `Stopped: \`${config.humanLabel}\` was added to ${issue.identifier}; a person takes over.`,
@@ -799,6 +720,25 @@ async function startGithub(
       }
     };
 
+    /** A `deleted` delivery and a ticket that answers nothing are the same
+     *  fact: whatever still works it stops. */
+    const stopDeleted = async (issueId: string) => {
+      const run = services.orchestrator.activeRun(MODULE_ID, issueId);
+      if (run) await services.orchestrator.stop(run.id, `Stopped: ${issueId} was deleted; there is no work.`);
+    };
+
+    /** Anything a person does to a ticket's place or standing wakes the
+     *  walk — **unless the ticket sits where aivi does not look**: a human
+     *  lane that is not the queue, or a Status option not in the array at
+     *  all. Out of sight, out of mind — the event is ignored, not failed. A
+     *  run the move stranded was already stopped, and a stop wakes the walk
+     *  itself. */
+    const wakeAfterMove = (projectId: string, issueId: string, lane: ProjectLane | undefined) => {
+      services.orchestrator.cancelWaiting(MODULE_ID, issueId); // a person's move cancels a waiting request
+      if (lane === undefined || (lane.agent === undefined && !lane.queue)) return;
+      void services.orchestrator.wake(projectId); // a lane move is a wake and nothing more
+    };
+
     const onIssue = async (event: Extract<TrackerEvent, { kind: 'updated' }>) => {
       if (!event.changed.length) return;
       let issue: TrackerIssue;
@@ -806,13 +746,7 @@ async function startGithub(
         issue = await tracker.issue(GITHUB_FEED, event.issueId);
       } catch (error) {
         if (!isGoneError(error)) throw error;
-        // A `deleted` delivery and a ticket that answers nothing are the
-        // same fact: whatever still works it stops.
-        const run = services.orchestrator.activeRun(MODULE_ID, event.issueId);
-        if (run) await services.orchestrator.stop(run.id, `Stopped: ${event.issueId} was deleted; there is no work.`);
-        for (const conversation of store.pendingForIssue(event.issueId))
-          await stopAssistant(conversation, `Stopped: ${event.issueId} was deleted; there is no work to do.`);
-        return;
+        return stopDeleted(event.issueId);
       }
       const routed = projectForIssue(services.loaded, { repo: issue.teamId });
       if (!routed) return;
@@ -826,44 +760,33 @@ async function startGithub(
         event.changed.includes('delegate') &&
         issue.delegateId === tracker.ownerOf(GITHUB_FEED) &&
         !services.orchestrator.activeRun(MODULE_ID, issue.id)
-      ) {
-        await unclaimed(
+      )
+        return unclaimed(
           issue,
           'work reaches me through the board, not through the `Agent` field: I start a worker myself once the ticket sits in a lane I work.',
         );
-        return;
-      }
       await stopOrphanRun(issue, lane, human, event.changed);
-      const pending = store.pendingForIssue(issue.id);
-      await stopOrphans(pending, issue, lane, human, event.changed);
-      // Anything a person does to a ticket's place or standing wakes the
-      // walk — **unless the ticket sits where aivi does not look**: a human
-      // lane that is not the queue, or a Status option not in the array at
-      // all. Out of sight, out of mind — the event is ignored, not failed.
-      // A run the move stranded was already stopped above, and a stop wakes
-      // the walk itself.
-      if (event.changed.includes('state') || event.changed.includes('labels')) {
-        services.orchestrator.cancelWaiting(MODULE_ID, issue.id); // a person's move cancels a waiting request
-        if (lane === undefined || (lane.agent === undefined && !lane.queue)) return;
-        void services.orchestrator.wake(routed.project.id); // a lane move is a wake and nothing more
-      }
+      if (event.changed.includes('state') || event.changed.includes('labels'))
+        wakeAfterMove(routed.project.id, issue.id, lane);
     };
 
     /** Everything downstream keys off the adapter's normalized events — the
      *  endpoint, the signature and the acknowledgement are the adapter's.
      *  A handler that throws is logged and dropped: the delivery was
      *  acknowledged already, so a retry would only replay what failed. */
-    const unsubscribeEvents = tracker.events(async event => {
-      try {
-        if (abort.signal.aborted) return;
-        if (event.kind === 'started') await onBrought(event.conversation, event.issueId, event.promptContext);
-        else if (event.kind === 'prompted') await onPrompted(event);
-        else await onIssue(event);
-      } catch (error) {
-        log.warn('event.failed', { error });
-      }
-    });
-    const unregisterRoute = registerWebhookRoute(services.routes, tracker, log);
+    held.push(
+      tracker.events(async event => {
+        try {
+          if (halt.signal.aborted) return;
+          if (event.kind === 'started') await onBrought(event.conversation, event.issueId, event.promptContext);
+          else if (event.kind === 'prompted') await onPrompted(event);
+          else await onIssue(event);
+        } catch (error) {
+          log.warn('event.failed', { error });
+        }
+      }),
+    );
+    held.push(registerWebhookRoute(services.routes, tracker, log));
 
     // An assistant turn interrupted by a restart is blocked (nobody knows whether the agent stopped); say so on its ticket.
     for (const turn of interrupted)
@@ -887,35 +810,31 @@ async function startGithub(
       }
     }
 
-    const unregister = services.channels.register({
-      id: GITHUB.id,
-      accepts: () => false,
-      ownsSession: session => store.channelOf(session) !== null,
-      channelOf: async () => undefined,
-      async reenter(session, text, context) {
-        store.enqueueJobResult(context.run.id, session, text, 100);
-        engine?.tick();
-      },
-      async post() {
-        throw new Error('GitHub is not a report destination; report to a chat channel instead');
-      },
-    });
-    const unsubscribeWake = services.onWake(() => {
-      engine!.tick();
-      void retryClosings();
-    });
+    held.push(
+      services.channels.register({
+        id: GITHUB.id,
+        accepts: () => false,
+        ownsSession: session => store.channelOf(session) !== null,
+        channelOf: async () => undefined,
+        async reenter(session, text, context) {
+          store.enqueueJobResult(context.run.id, session, text, 100);
+          engine?.tick();
+        },
+        async post() {
+          throw new Error('GitHub is not a report destination; report to a chat channel instead');
+        },
+      }),
+    );
+    held.push(
+      services.onWake(() => {
+        engine!.tick();
+        void retryClosings();
+      }),
+    );
     engine.tick();
     log.info('ready', { org: client.org, app: client.delegateName });
 
-    return {
-      async stop() {
-        unsubscribeEvents();
-        unregisterRoute();
-        unregister();
-        unsubscribeWake();
-        await teardown();
-      },
-    };
+    return { stop: teardown };
   } catch (error) {
     await teardown();
     throw error;

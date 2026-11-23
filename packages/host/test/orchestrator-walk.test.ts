@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type TestContext, test } from 'node:test';
+import { after, type TestContext, test } from 'node:test';
 import { promisify } from 'node:util';
 import { configSchema, type Logger, type ProjectLane, type PromptName, readPrompt } from '@aivi/core';
 import type { Tracker } from '@aivi/plugin';
@@ -222,6 +222,12 @@ function boardFeed(fake: Fake, board: Record<string, { id: string; blocked?: boo
   return scripted;
 }
 
+/** Every host these tests built: ended with the file, so the clocks the units armed do not hold the process open. */
+const hosts: AbortController[] = [];
+after(() => {
+  for (const host of hosts) host.abort();
+});
+
 function harness(
   lanes: ProjectLane[],
   written: Record<string, unknown>,
@@ -233,6 +239,7 @@ function harness(
   prompt?: (name: PromptName) => Promise<string>,
   git?: OrchestratorGit,
 ) {
+  hosts.push(abort);
   // The unit's clocks, in ms: a test that watches the keep-alive expire
   // writes `clocks: { keepAliveMs: 30 }` into the harness block instead of
   // a config duration — the strings are the person's surface, numbers are
@@ -799,6 +806,55 @@ test('the answer reacquires capacity in its own pool and waits there — the fal
   assert.equal(dispatcher.leases.held('b'), 0, 'and still nobody moved pools');
 });
 
+test('an answer for a session whose pool the config dropped resumes in the pool its lane names now', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fake = fakeOpenCode();
+  const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
+  const started = Promise.withResolvers<void>();
+  feed.startWork = () => started.resolve();
+  const { ledger, dispatcher, orchestrator } = harness(
+    [lane('Doing', { agent: 'dev', pool: 'a' })],
+    { dispatcher: { pools: { a: { capacity: 1 } } }, clocks: { keepAliveMs: 1_000 } },
+    feed,
+    fake,
+  );
+  const { runId } = await orchestrator.requestWork({
+    projectId: 'p',
+    trackerId: 'test-tracker',
+    ticketId: 't-1',
+    lane: 'Doing',
+    agent: 'dev',
+    directory: '/checkout',
+    summary: 'do t-1 in Doing',
+  });
+  await started.promise;
+  const sessionId = ledger.get(runId)!.sessionId!;
+  await orchestrator.askTool({ sessionId, input: { question: 'Which shade?' } });
+
+  // The keep-alive rings and the slot goes. The walk it wakes last is the sign that it is done.
+  const woken = Promise.withResolvers<void>();
+  const tickets = feed.tickets;
+  feed.tickets = (...read) => {
+    woken.resolve();
+    return tickets(...read);
+  };
+  t.mock.timers.tick(1_000);
+  await woken.promise;
+  assert.equal(dispatcher.leases.held('a'), 0);
+
+  // The operator renamed the pools while the question stood: the session's
+  // record names a pool that the config no longer has.
+  dispatcher.leases.move(sessionId, 'renamed-away');
+  const form = fake.forms.find(f => f.sessionID === sessionId)!;
+  assert.deepEqual(await orchestrator.answer(sessionId, 'the deep one', form.id), { resumed: true });
+  assert.equal(
+    dispatcher.leases.require(ledger.get(runId)!.leaseId!).pool,
+    'a',
+    'the lane’s pool is the current config for this run',
+  );
+  assert.equal(dispatcher.leases.sessionPool(sessionId), 'a', 'and the session belongs to it from here on');
+});
+
 test('an answer OpenCode will not take leaves the run parked: the books did not move, and the answer is giveable again', async () => {
   const fake = fakeOpenCode();
   const feed = boardFeed(fake, { Doing: [{ id: 't-1' }] });
@@ -962,12 +1018,7 @@ interface ReviewStore {
   reviews: unknown[];
 }
 
-function localForge(
-  origin: string,
-  seen: { pushes: { branch: string; lease?: string }[]; opens: string[] },
-  prs: Map<string, string>,
-  review?: ReviewStore,
-) {
+function localForge(origin: string, seen: { opens: string[] }, prs: Map<string, string>, review?: ReviewStore) {
   return {
     async repoFor(project: { id: string }) {
       return project.id === 'site' ? { id: 'acme/site', remote: origin } : undefined;
@@ -984,18 +1035,6 @@ function localForge(
     },
     async fetchRefs(_repo: unknown, directory: string) {
       await exec('git', ['-C', directory, 'fetch', '-q', '--prune', origin, '+refs/heads/*:refs/remotes/origin/*']);
-    },
-    async push(_repo: unknown, directory: string, branch: string, options?: { lease?: string }) {
-      seen.pushes.push({ branch, ...(options?.lease ? { lease: options.lease } : {}) });
-      await exec('git', [
-        '-C',
-        directory,
-        'push',
-        '-q',
-        ...(options?.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
-        origin,
-        `HEAD:refs/heads/${branch}`,
-      ]);
     },
     async prForBranch(_repo: unknown, branch: string) {
       const state = prs.get(branch);
@@ -1621,7 +1660,7 @@ async function gateFixture(
     plain: [],
     reviews: [],
   };
-  const seen = { pushes: [] as { branch: string; lease?: string }[], opens: [] as string[] };
+  const seen = { opens: [] as string[] };
   forges.register(localForge(upstream, seen, new Map([['me/t-gate', 'open']]), review) as never);
   const { ledger, orchestrator } = harness(lanes, {}, work, fake, new AbortController(), forges, () => source, prompt);
   await orchestrator.wake('site');

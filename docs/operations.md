@@ -111,7 +111,11 @@ look. `aivi runs abort ID` does the same to one run while the host keeps
 running (reason "Aborted by operator"); every run has its own abort signal
 combined with the host's. Modules are then stopped in reverse startup order, the aborted runs are
 awaited so their outcomes are recorded and reported, HTTP requests finish, the
-browser/MCP and QMD close, and ownership is released. A grace period that lets
+browser/MCP and QMD close, and ownership is released. Timers go with the
+signal: the dispatcher's lease clocks and the orchestrator's keep-alives and
+turn-end waits are cancelled the moment it fires, and none starts after it, so
+nothing fires into a host that is ending. The boot starts the keep-alive of a
+parked run again. A grace period that lets
 work finish first is a design choice not yet made
 ([shutdown-hooks](backlog/shutdown-hooks.md)).
 

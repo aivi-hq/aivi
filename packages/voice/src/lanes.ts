@@ -146,7 +146,9 @@ export class LaneBook {
             this.deps.log.warn('voice.lane.lost', { room: this.deps.label, speaker: lane.speaker });
             return null;
           }
-        } else if (live && !lane.gotEnd) {
+        } else if (lane.run && !lane.gotEnd) {
+          // The lane was live and its tail never came: the engine died while
+          // the person spoke, or while this waited for the last words.
           this.deps.log.warn('voice.lane.partial', {
             room: this.deps.label,
             speaker: lane.speaker,
@@ -179,14 +181,15 @@ export class LaneBook {
 
   private onLaneEvent(lane: LaneState, e: EngineEvent): void {
     if (e.ev === 'delta') {
-      if (lane.text === '') {
+      const word = /[\p{L}\p{N}]/u.test(e.text);
+      if (word && !/[\p{L}\p{N}]/u.test(lane.text)) {
         // The number barge-in speed lives and dies by: wall latency from the
         // person's first pushed packet to the first recognized word. Live
         // proof for the logs without reading event timestamps off a page.
         this.deps.log.debug('voice.lane.firstword', {
           room: this.deps.label,
           speaker: lane.speaker,
-          ms: Math.round(Date.now() / 1000 - lane.openedAt),
+          ms: Math.round(Date.now() - lane.openedAt * 1000),
           hint: 'words this late into the utterance; a barge can only be this fast',
         });
       }
@@ -194,7 +197,7 @@ export class LaneBook {
       // A recognized word from a LINKED person while aivi speaks is the
       // interruption — the whole point of the live lane: barge-in verified
       // on the first word, not on a speaking start or a finished clip.
-      if (this.deps.mode === 'call' && lane.person && this.deps.speaking()) this.deps.barge();
+      if (word && this.deps.mode === 'call' && lane.person && this.deps.speaking()) this.deps.barge();
     } else if (e.ev === 'lane_end') {
       lane.gotEnd = true;
       lane.endWait?.();

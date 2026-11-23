@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import type { RequestListener } from 'node:http';
 import { createServer } from 'node:http';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { jobSchema } from '@aivi/core';
 import type { ChannelPlatform } from '@aivi/plugin/channel';
+import type { OpenCodeClient } from '@aivi/plugin/module';
 import {
   CHAT_COMMANDS,
+  chatCommand,
   describeJobs,
   helpText,
   interject,
@@ -149,6 +151,8 @@ test('the command table feeds /help and the platform manifests: names, one usage
   assert.equal(isChatCommand('agent'), false);
   assert.equal(usageHint(CHAT_COMMANDS.find(c => c.name === 'search')!), 'QUERY [project]');
   assert.equal(usageHint(CHAT_COMMANDS.find(c => c.name === 'new')!), '');
+  assert.equal(chatCommand('stop').conversation, true, 'a command is found by its name: /stop acts on a conversation');
+  assert.equal(chatCommand('help').conversation, false, '/help acts on none');
   const help = helpText(name => `/aivi-${name}`);
   assert.equal(help.split('\n').length, CHAT_COMMANDS.length);
   assert.match(help, /^`\/aivi-new` — Start a fresh conversation\n/);
@@ -190,6 +194,11 @@ test('/jobs lists the next five occurrences and the last ten runs from the host 
   assert.equal(lines.length - 4, 10, 'the last ten runs only');
   assert.match(lines[4]!, /^- ❌ `job-.*` failed · 2026-09-15 12:00 UTC$/);
   assert.match(lines[5]!, /^- ✅ `job-.*` succeeded · /);
+  // Once the occurrence has come, the job is due now.
+  assert.match(
+    describeJobs(core, Date.parse('2026-09-16T09:00:01Z')).split('\n')[1]!,
+    /^- `digest` — Morning digest · due now \(2026-09-16 09:00 UTC\)$/,
+  );
 });
 
 test('the model catalogue: `provider/model@variant` spelling, prefix-first matching, exact or unique resolution', async t => {
@@ -360,5 +369,59 @@ test('redeemLink answers in words; the host decides and the module only sends', 
   assert.match(redeemLink(store, 'discord', 'u1', second.code), /already linked to Ada/);
   // The refused relink did not consume: the code still works for another account.
   assert.match(redeemLink(store, 'discord', 'u2', second.code), /belongs to Ada/);
+  // A code past its 15 minutes is refused.
+  const stale = store.mintLinkCode(ada.id, 1, Date.now() - 60_000);
+  assert.match(redeemLink(store, 'discord', 'u3', stale.code), /That code expired\. Run `aivi link` for a new one/);
   store.close();
+});
+
+/** The two ways OpenCode can refuse the one call a command makes: no client to be had, or a call that rejects. */
+const refusals = (call: 'interrupt' | 'prompt') => {
+  const error = new Error('OpenCode refused');
+  const noClient = async (): Promise<OpenCodeClient> => {
+    throw error;
+  };
+  const refusingCall = async () =>
+    ({
+      session: {
+        [call]: async () => {
+          throw error;
+        },
+      },
+    }) as unknown as OpenCodeClient;
+  return { error, opencodes: [noClient, refusingCall] };
+};
+
+test('/stop on a turn whose session is still being created stops it without asking OpenCode', async () => {
+  const opencode = mock.fn(async (): Promise<OpenCodeClient> => {
+    throw new Error('there is no prompt to interrupt');
+  });
+  const engine = { stopTurn: () => ({ ready: false, session: 'ses_1' }) } as unknown as ChannelEngine;
+
+  assert.deepEqual(await stopTurn(engine, opencode, 'dm-a'), { text: 'Stopped.', stopped: true });
+  assert.equal(opencode.mock.callCount(), 0);
+});
+
+test('/stop still stops the turn when OpenCode cannot be told, and says the agent may finish on its own', async () => {
+  const engine = { stopTurn: () => ({ ready: true, session: 'ses_1' }) } as unknown as ChannelEngine;
+  const { error, opencodes } = refusals('interrupt');
+
+  for (const opencode of opencodes)
+    assert.deepEqual(await stopTurn(engine, opencode, 'dm-a'), {
+      text: 'Stopped here, but I could not tell OpenCode to interrupt the agent; it may finish on its own in the background.',
+      stopped: true,
+      error,
+    });
+});
+
+test('an interjection that OpenCode refuses is not steered and carries the error, so the caller queues the message', async () => {
+  const store = { running: () => ({ ready: true, session: 'ses_1', id: 'one' }) } as unknown as ConversationStore;
+  const people = { identityFor: () => null } as unknown as Store;
+  const { error, opencodes } = refusals('prompt');
+
+  for (const opencode of opencodes)
+    assert.deepEqual(
+      await interject(people, store, platform, opencode, 'dm-a', { name: 'Me', user: 'u1' }, 'also this'),
+      { steered: false, error },
+    );
 });

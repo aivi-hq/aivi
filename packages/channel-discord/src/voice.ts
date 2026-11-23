@@ -204,10 +204,7 @@ export function watchVoice(deps: VoiceWatchDeps): VoiceWatcher {
     if (!band || band.dead || Array.from(band.bands.values(), pb => pb.isFlushed).every(Boolean)) band = openBand();
     const current = band;
     const settled = Promise.all(
-      Array.from(
-        current.bands.values(),
-        pb => new Promise<boolean>(res => (current.dead ? res(false) : pb.add(packets, res))),
-      ),
+      Array.from(current.bands.values(), pb => new Promise<boolean>(res => pb.add(packets, res))),
     ).then(played => {
       const ok = played.length > 0 && played.every(Boolean);
       if (ok) log.debug('voice.discord.spoken', { seconds, channels: played.length });
@@ -315,8 +312,7 @@ export function watchVoice(deps: VoiceWatchDeps): VoiceWatcher {
   }
   const personHasName = (userId: string) => deps.personName(userId) !== undefined;
 
-  async function joinChannel(channelId: string): Promise<void> {
-    if (!room) return; // the meeting closed while this was queued
+  async function joinChannel(channelId: string, meeting: VoiceRoom): Promise<void> {
     joining.add(channelId);
     try {
       const connection = join(channelId);
@@ -328,10 +324,9 @@ export function watchVoice(deps: VoiceWatchDeps): VoiceWatcher {
         log.warn('voice.discord.disconnected', { channelId });
       });
       await ready(connection);
-      if (connections.get(channelId) !== connection) return; // already left or replaced
       const guild = client.guilds.cache.get(config.guild as Snowflake);
       if (!guild) throw new Error(`voice: guild ${config.guild} not found for the bot token`);
-      hear(connection, guild, config, channelId, room, deps.personName, log);
+      hear(connection, guild, config, channelId, meeting, deps.personName, log);
       log.info('voice.discord.joined', { channelId });
     } catch (error) {
       log.warn('voice.discord.join-failed', { channelId, error: String(error) });
@@ -370,6 +365,23 @@ export function watchVoice(deps: VoiceWatchDeps): VoiceWatcher {
       .then(reconcileNow)
       .catch(error => log.warn('voice.discord.reconcile-failed', { error: String(error) }));
   }
+  /** The meeting room the voice plugin gives, with aivi's answers given a voice; null (said once) when it is not loaded. */
+  function openMeeting(): VoiceRoom | null {
+    const opened = deps.openRoom();
+    if (!opened) {
+      if (!notLoadedSaid) {
+        notLoadedSaid = true;
+        log.error('voice.not-loaded', {
+          hint: 'a voice block is configured but the voice plugin is not loaded: aivi add @aivi/voice',
+        });
+      }
+      return null;
+    }
+    room = opened;
+    mouthOff = opened.mouth(wav => speak(wav), stopAllPlayers, flushBand); // aivi's answers get a voice, a way to be silenced, and an end of answer
+    log.info('voice.discord.meeting-open');
+    return opened;
+  }
   async function reconcileNow(): Promise<void> {
     if (closed) return;
     const present = config.channels.filter(channelId => listeners(channelId).length > 0);
@@ -377,23 +389,10 @@ export function watchVoice(deps: VoiceWatchDeps): VoiceWatcher {
       if (room) await closeMeeting();
       return;
     }
-    if (!room) {
-      const opened = deps.openRoom();
-      if (!opened) {
-        if (!notLoadedSaid) {
-          notLoadedSaid = true;
-          log.error('voice.not-loaded', {
-            hint: 'a voice block is configured but the voice plugin is not loaded: aivi add @aivi/voice',
-          });
-        }
-        return;
-      }
-      room = opened;
-      mouthOff = room.mouth(wav => speak(wav), stopAllPlayers, flushBand); // aivi's answers get a voice, a way to be silenced, and an end of answer
-      log.info('voice.discord.meeting-open');
-    }
+    const meeting = room ?? openMeeting();
+    if (!meeting) return;
     for (const channelId of present)
-      if (!connections.has(channelId) && !joining.has(channelId)) await joinChannel(channelId);
+      if (!connections.has(channelId) && !joining.has(channelId)) await joinChannel(channelId, meeting);
     for (const channelId of [...connections.keys()]) if (!present.includes(channelId)) leave(channelId);
   }
 
@@ -635,11 +634,6 @@ export class PacketBand {
     return this.dead || (this.flushed && this.queue.length === 0);
   }
 
-  /** Packets still waiting for the wire (a drainer waits, not spins). */
-  hasPending(): boolean {
-    return this.queue.length > 0;
-  }
-
   /** Barge: everything unheard dies now, the player stops, the resource ends. */
   kill(): void {
     if (this.dead) return;
@@ -703,7 +697,7 @@ function resample48(x: Int16Array, rate: number): Int16Array {
     const pos = (i * rate) / 48000;
     const i0 = Math.floor(pos);
     const frac = pos - i0;
-    const a = x[i0] ?? 0;
+    const a = x[i0]!;
     const b = x[i0 + 1] ?? a;
     out[i] = Math.round(a + (b - a) * frac);
   }

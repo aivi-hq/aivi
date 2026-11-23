@@ -61,50 +61,31 @@ function mockOpenCode(agent = 'dreamer', directory = '/lib', options: { failProm
   const requests: { method: string; path: string; body: Record<string, any> }[] = [];
   let promptId = '';
   let promptCount = 0;
-  const respond: RequestListener = async (req, res) => {
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
-    const body = raw ? JSON.parse(raw) : {};
-    const url = new URL(req.url!, 'http://x');
-    requests.push({ method: req.method!, path: url.pathname, body });
-    res.setHeader('content-type', 'application/json');
-    if (url.pathname === '/api/session' && req.method === 'GET') {
+  /** What the dream reads: the session list, a session's messages, the agents. */
+  const library = (method: string, path: string): unknown => {
+    if (path === '/api/session' && method === 'GET') {
       const sorted = [...sessions]
         .sort((a, b) => b.updated - a.updated)
         .map(s => ({ ...s, time: { created: s.updated - 100, updated: s.updated }, location: { directory: '/lib' } }));
-      res.end(JSON.stringify({ data: sorted, cursor: { next: null } }));
-      return;
+      return { data: sorted, cursor: { next: null } };
     }
-    const m = url.pathname.match(/^\/api\/session\/([^/]+)\/message$/);
-    if (m && req.method === 'GET') {
-      res.end(JSON.stringify({ data: messages[m[1]!] ?? [], cursor: { next: null } }));
-      return;
-    }
-    if (url.pathname === '/api/agent')
-      return void res.end(JSON.stringify({ data: [{ id: 'assistant', name: 'assistant' }] }));
-    if (req.method === 'PATCH' || url.pathname.endsWith('/wait')) {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-    if (url.pathname.endsWith('/permission') && req.method === 'GET') {
-      res.end('{"data":[]}');
-      return;
-    }
-    if (url.pathname.endsWith('/prompt')) {
+    const m = path.match(/^\/api\/session\/([^/]+)\/message$/);
+    if (m && method === 'GET') return { data: messages[m[1]!] ?? [], cursor: { next: null } };
+    if (path === '/api/agent') return { data: [{ id: 'assistant', name: 'assistant' }] };
+    return undefined;
+  };
+  /** The dreamer's one prompt, and the context that answers it. */
+  const turn = (path: string, body: Record<string, any>): { status: number; json: unknown } | undefined => {
+    if (path.endsWith('/prompt')) {
       promptCount++;
-      if (options.failPromptAt === promptCount) {
-        res.writeHead(500);
-        res.end(JSON.stringify({ error: 'mock model failure' }));
-        return;
-      }
+      if (options.failPromptAt === promptCount) return { status: 500, json: { error: 'mock model failure' } };
       promptId = body.id;
-      res.end(JSON.stringify({ data: { id: body.id } }));
-      return;
+      return { status: 200, json: { data: { id: body.id } } };
     }
-    if (url.pathname.endsWith('/context')) {
-      res.end(
-        JSON.stringify({
+    if (path.endsWith('/context'))
+      return {
+        status: 200,
+        json: {
           data: [
             { type: 'user', id: promptId, text: 'q', time: { created: 1 } },
             {
@@ -117,11 +98,32 @@ function mockOpenCode(agent = 'dreamer', directory = '/lib', options: { failProm
             },
             { type: 'idle', id: 'i', outcome: 'succeeded', time: { created: 4 } },
           ],
-        }),
-      );
-      return;
-    }
-    res.end(JSON.stringify({ data: { id: body.id ?? 'ses_aivi_x', agent, location: { directory } } }));
+        },
+      };
+    return undefined;
+  };
+  const answer = (method: string, path: string, body: Record<string, any>): { status: number; json?: unknown } => {
+    const read = library(method, path);
+    if (read) return { status: 200, json: read };
+    if (method === 'PATCH' || path.endsWith('/wait')) return { status: 204 };
+    if (path.endsWith('/permission') && method === 'GET') return { status: 200, json: { data: [] } };
+    return (
+      turn(path, body) ?? {
+        status: 200,
+        json: { data: { id: body.id ?? 'ses_aivi_x', agent, location: { directory } } },
+      }
+    );
+  };
+  const respond: RequestListener = async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = raw ? JSON.parse(raw) : {};
+    const url = new URL(req.url!, 'http://x');
+    requests.push({ method: req.method!, path: url.pathname, body });
+    res.setHeader('content-type', 'application/json');
+    const { status, json } = answer(req.method!, url.pathname, body);
+    res.writeHead(status);
+    res.end(json === undefined ? undefined : JSON.stringify(json));
   };
   const server = createServer(respond);
   return { server, requests };

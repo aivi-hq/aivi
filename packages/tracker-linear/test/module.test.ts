@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { promisify } from 'node:util';
 import type { KnowledgeService, LoadedConfig } from '@aivi/core';
 import { configSchema, getLogger } from '@aivi/core';
@@ -509,10 +509,18 @@ const until = async (check: () => boolean, what: string) => {
 };
 const knowledge: KnowledgeService = { search: async () => [], index: async () => ({}), close: async () => {} };
 
+/** Every host these tests built: ended with the file, so the clocks the real orchestrator and dispatcher armed do
+ *  not hold the process open. */
+const hosts: AbortController[] = [];
+after(() => {
+  for (const host of hosts) host.abort();
+});
+
 /** The services a module starts with: the **real** orchestrator over the same
  *  Store, watching nothing (no live turn ends; the tools drive the run). The
  *  boot-reconcile test passes the same orchestrator to a second module. */
 function makeServices(loaded: LoadedConfig, store: Store, abort: AbortController, git?: OrchestratorGit): AiviServices {
+  hosts.push(abort);
   const opencode = () => connectOpenCode(loaded.config.opencode, {});
   // No pools configured here: the dispatcher tracks every lease and grants
   // every request — the same capacity the tests always had. Clocks in ms:

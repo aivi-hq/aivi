@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { type Config, configSchema } from '@aivi/core';
 import type { OpenCodeClient } from '@aivi/plugin/module';
 import { Dispatcher } from '../src/dispatcher/dispatcher.ts';
 import { LeaseStore, UNLIMITED } from '../src/dispatcher/leases.ts';
 import { Store } from '../src/store.ts';
+import { recorder } from './support.ts';
 
 /** The dispatcher's whole client surface is create, get, active, interrupt
  *  and the agent file's model — so the fake is those five, honestly. */
@@ -19,6 +20,13 @@ interface Fake {
   /** false: the interrupt lands but the session keeps spending (unconfirmed). */
   killWorks: { value: boolean };
   created: { id: string; model?: unknown }[];
+  /** What a create does: `lost` makes the session and loses the answer;
+   *  `refused` makes nothing. */
+  creates: { value: 'answered' | 'lost' | 'refused' };
+  /** Every create waits for this first: the window a revoke can land in. */
+  createGate: { value?: Promise<void> };
+  /** true: no client can be built at all (nothing to point at), the way `opencode()` rejects. */
+  down: { value: boolean };
 }
 
 function fakeOpenCode(agentModel: unknown = { providerID: 'agentprov', id: 'agentmodel' }): Fake {
@@ -32,17 +40,23 @@ function fakeOpenCode(agentModel: unknown = { providerID: 'agentprov', id: 'agen
     reachable: { value: true },
     killWorks: { value: true },
     created: [],
+    creates: { value: 'answered' },
+    createGate: {},
+    down: { value: false },
   };
   fake.client = {
     agent: { list: async () => ({ data: [{ id: 'dev', ...(agentModel ? { model: agentModel } : {}) }] }) },
     session: {
       create: async (body: { id: string; agent: string; location: { directory: string }; model?: unknown }) => {
+        await fake.createGate.value;
+        if (fake.creates.value === 'refused') throw new Error('create refused');
         sessions.set(body.id, {
           agent: body.agent,
           directory: body.location.directory,
           ...(body.model ? { model: body.model } : {}),
         });
         fake.created.push({ id: body.id, ...(body.model ? { model: body.model } : {}) });
+        if (fake.creates.value === 'lost') throw new Error('socket hang up');
       },
       get: async ({ sessionID }: { sessionID: string }) => {
         if (!fake.reachable.value) throw new Error('ECONNREFUSED');
@@ -73,18 +87,46 @@ interface Clocks {
   prepareMs?: number;
 }
 
-function harness(written: Record<string, unknown>, fake = fakeOpenCode(), clocks: Clocks = {}) {
-  const leases = new LeaseStore(new Store(':memory:'));
+/** Every dispatcher these tests built: ended with the file, so the clocks it armed do not hold the process open. */
+const hosts: AbortController[] = [];
+after(() => {
+  for (const host of hosts) host.abort();
+});
+
+function harness(
+  written: Record<string, unknown>,
+  fake = fakeOpenCode(),
+  clocks: Clocks = {},
+  leases = new LeaseStore(new Store(':memory:')),
+  bound = true,
+) {
   const ended: { id: string; reason: string; code?: string }[] = [];
+  const { log, said, next } = recorder();
+  let ending = Promise.withResolvers<void>();
+  const host = new AbortController();
+  if (bound) hosts.push(host);
   const dispatcher = new Dispatcher({
     leases,
     dispatcher: dispatcherConfig(written),
     idleMs: clocks.idleMs ?? 60_000,
     prepareMs: clocks.prepareMs ?? 300_000,
-    opencode: async () => fake.client,
-    onEnded: (lease, reason, code) => ended.push({ id: lease.id, reason, ...(code ? { code } : {}) }),
+    ...(bound ? { signal: host.signal } : {}),
+    opencode: async () => {
+      if (fake.down.value) throw new Error('No running OpenCode v2 service found');
+      return fake.client;
+    },
+    log,
+    onEnded: (lease, reason, code) => {
+      ended.push({ id: lease.id, reason, ...(code ? { code } : {}) });
+      ending.resolve();
+      ending = Promise.withResolvers<void>();
+    },
   });
-  return { leases, dispatcher, ended, fake };
+  /** Settles when the dispatcher next tells an owner that a lease ended. Take it before the clock moves. */
+  const nextEnding = () => ending.promise;
+  /** Every warning the dispatcher said so far, with its fields. */
+  const warned = () => said('warn');
+  return { leases, dispatcher, ended, warned, nextEnding, nextLine: next, fake };
 }
 
 test('unlimited mode grants everything, and the agent file alone decides the model', async () => {
@@ -189,18 +231,57 @@ test('a session keeps its pool for life: a resume returns to the original pool e
   assert.equal(leases.sessionPool(sessionId), 'home');
 });
 
-test('a resume recorded in a pool that no longer exists is refused by name, not re-homed', () => {
-  const born = harness({ dispatcher: { pools: { a: { capacity: 1 } } } });
-  const first = born.dispatcher.request({ service: 'orchestrator', pool: 'a' });
-  if (!('lease' in first)) throw assert.fail('granted');
-  const sessionId = 'ses_born';
-  born.leases.record(sessionId, 'a');
+test('a resume whose pool the config dropped is said, and the session continues in the pool its caller asks for', async () => {
+  // The session was created in pool "a". The operator renamed the pools since.
+  const { dispatcher, leases, warned } = harness({
+    dispatcher: { pools: { b: { capacity: 1 }, c: { capacity: 3 } } },
+  });
+  leases.record('ses_born', 'a');
 
-  // The operator renames the pools; the session's memory says "a".
-  const moved = harness({ dispatcher: { pools: { b: { capacity: 3 } } } }, born.fake);
-  moved.leases.record(sessionId, 'a');
-  const resume = moved.dispatcher.request({ service: 'orchestrator', resume: sessionId });
-  assert.deepEqual(resume, { refused: 'pool-gone', pool: 'a' });
+  const resumed = mustGrant(dispatcher.request({ service: 'orchestrator', pool: 'b', resume: 'ses_born' }));
+  assert.equal(resumed.pool, 'b', 'the first try failed on its pool: the second runs on the config as it is now');
+  assert.equal(resumed.state, 'active', 'still a resume: the session rides the grant');
+  assert.equal(resumed.sessionId, 'ses_born');
+  assert.equal(leases.sessionPool('ses_born'), 'b', 'the session belongs to that pool from here on');
+  assert.deepEqual(
+    warned().map(w => [w.event, w.session, w.pool, w.moved]),
+    [['resume.pool-gone', 'ses_born', 'a', 'b']],
+    'a config that outran a session is said',
+  );
+
+  // From here it is an ordinary resume: its own pool outranks what is asked, and nothing is said twice.
+  await dispatcher.release(resumed.id);
+  const again = mustGrant(dispatcher.request({ service: 'orchestrator', pool: 'c', resume: 'ses_born' }));
+  assert.equal(again.pool, 'b');
+  assert.equal(warned().length, 1);
+});
+
+test('a moved resume waits in the queue of its new pool like any other resume', async () => {
+  const { dispatcher, leases } = harness({ dispatcher: { pools: { b: { capacity: 1 } } } });
+  const told = registrar(dispatcher, 'orchestrator');
+  leases.record('ses_born', 'a');
+  const holder = mustGrant(dispatcher.request({ service: 'other', pool: 'b' }));
+
+  const waiting = dispatcher.request({ service: 'orchestrator', pool: 'b', resume: 'ses_born' });
+  assert.ok('queued' in waiting, 'the pool it moved to is full: it waits there');
+  await dispatcher.release(holder.id);
+  assert.deepEqual(
+    told.map(t => t.pool),
+    ['b'],
+  );
+  assert.equal(leases.sessionPool('ses_born'), 'b');
+});
+
+test('a resume whose pool is gone, asked into a pool the config does not name either, is an error', () => {
+  const { dispatcher, leases, warned } = harness({ dispatcher: { pools: { b: { capacity: 1 } } } });
+  leases.record('ses_born', 'a');
+  assert.throws(
+    () => dispatcher.request({ service: 'orchestrator', resume: 'ses_born' }),
+    /pool "default" is not configured; name one of b/,
+    'the second try fails too: that is the error',
+  );
+  assert.equal(leases.sessionPool('ses_born'), 'a', 'nothing moved');
+  assert.deepEqual(warned(), [], 'and no move is said that did not happen');
 });
 
 test('expire kills before it frees: an unconfirmed kill holds the slot, the confirmation releases it and tells the owner', async () => {
@@ -224,6 +305,22 @@ test('expire kills before it frees: an unconfirmed kill holds the slot, the conf
   assert.equal('ended' in done, true);
   assert.equal(leases.held('default'), 0);
   assert.deepEqual(ended, [{ id: provided.id, reason: 'idle beyond the timeout' }], 'the owner is told');
+});
+
+test('a dispatcher bound to no host gives its own calls to OpenCode a timeout: the kill and the boot pass still go out', async () => {
+  const { dispatcher, leases, ended, fake } = harness({}, fakeOpenCode(), {}, undefined, false);
+  const granted = dispatcher.request({ service: 'orchestrator' });
+  if (!('lease' in granted)) throw assert.fail('granted');
+  const provided = await dispatcher.provide(granted.lease.id, { agent: 'dev', directory: '/w' });
+
+  const done = await dispatcher.expire(provided.id, 'idle beyond the timeout');
+  assert.equal('ended' in done, true);
+  assert.deepEqual(fake.interrupted, [provided.sessionId], 'the kill went out');
+  assert.deepEqual(ended, [{ id: provided.id, reason: 'idle beyond the timeout' }]);
+
+  const pass = await dispatcher.reconcile();
+  assert.deepEqual(pass, { ended: [], deferred: false }, 'the boot pass read OpenCode and found nothing to end');
+  assert.equal(leases.all().length, 0, 'no lease is held');
 });
 
 test('a release mid-expiry confirms the kill first — an unconfirmed release never hands the slot to the queue', async () => {
@@ -318,6 +415,29 @@ test('boot reconcile: gone sessions release, alive ones stand, expired kills con
   const deferred = await dispatcher.reconcile();
   assert.deepEqual(deferred, { ended: [], deferred: true });
   assert.equal(leases.get(alive.id)?.state, 'active', 'silence is not proof of death');
+});
+
+// Pinned as it stands today: docs/backlog (a pool the config no longer names) rules a different ending, the
+// worker stopped; this test then changes with it.
+test('boot reconcile ends the lease of a pool the config no longer names, and tells its owner why', async () => {
+  const before = harness({ dispatcher: { pools: { local: { capacity: 2 }, spare: { capacity: 2 } } } });
+  const held = mustGrant(before.dispatcher.request({ service: 'orchestrator', pool: 'spare' }));
+  await before.dispatcher.provide(held.id, { agent: 'dev', directory: '/w' });
+  const { dispatcher, ended } = harness(
+    { dispatcher: { pools: { local: { capacity: 2 } } } },
+    before.fake,
+    {},
+    before.leases,
+  );
+
+  const result = await dispatcher.reconcile();
+
+  assert.deepEqual(
+    result.ended.map(e => e.reason),
+    ['its pool is no longer configured'],
+  );
+  assert.deepEqual(ended, [{ id: held.id, reason: 'its pool is no longer configured' }]);
+  assert.equal(before.leases.held('spare'), 0, 'the slot is free');
 });
 
 test('a lease is provided once: a second session for the same lease is refused as loudly as a double release', async () => {
@@ -509,4 +629,294 @@ test('activity re-arms the clock: a worker that keeps talking never dies of sile
   }
   assert.deepEqual(ended, [], 'the worker lived through every instant the clock once pointed at');
   await until(() => ended.length === 1, 'and it strikes once the signs stop');
+});
+
+/** A lease with its session attached, in the default pool. */
+const working = async (dispatcher: Dispatcher, service = 'orchestrator') =>
+  dispatcher.provide(mustGrant(dispatcher.request({ service })).id, { agent: 'dev', directory: '/w' });
+
+test('a session the dispatcher has never seen resumes in the pool its caller asks for, at once or from the queue', async () => {
+  const { dispatcher, leases } = harness({ dispatcher: { pools: { a: { capacity: 1 } } } });
+  const told = registrar(dispatcher, 'discord');
+  const first = mustGrant(dispatcher.request({ service: 'discord', pool: 'a', resume: 'ses_adopted' }));
+  assert.equal(first.pool, 'a');
+  assert.equal(first.state, 'active', 'a resume: the session rides the grant');
+  assert.equal(leases.sessionPool('ses_adopted'), 'a', 'its first appearance here is the pool it keeps');
+
+  const waiting = dispatcher.request({ service: 'discord', pool: 'a', resume: 'ses_other' });
+  assert.ok('queued' in waiting, 'the pool is full: the unknown session waits where it was asked');
+  await dispatcher.release(first.id);
+  assert.deepEqual(
+    told.map(t => t.pool),
+    ['a'],
+  );
+  assert.equal(leases.sessionPool('ses_other'), 'a');
+});
+
+test('a pool model that names no variant is passed on without one', async () => {
+  const { dispatcher, fake } = harness({
+    dispatcher: { pools: { default: { capacity: 1, model: 'poolprov/poolmodel' } } },
+  });
+  await working(dispatcher);
+  assert.deepEqual(fake.created[0]!.model, { providerID: 'poolprov', id: 'poolmodel' });
+});
+
+test('provide attaches a session its caller brings by id without creating one, and refuses a session that is not that work', async () => {
+  const { dispatcher, leases, fake } = harness({ dispatcher: { pools: { default: { capacity: 3 } } } });
+  fake.sessions.set('ses_kept', { agent: 'dev', directory: '/w' });
+
+  const granted = mustGrant(dispatcher.request({ service: 'plugin' }));
+  const attached = await dispatcher.provide(granted.id, { agent: 'dev', directory: '/w', sessionId: 'ses_kept' });
+  assert.equal(attached.state, 'active');
+  assert.equal(attached.sessionId, 'ses_kept');
+  assert.deepEqual(fake.created, [], 'the session existed: nothing was created and no model was decided again');
+  assert.equal(leases.sessionPool('ses_kept'), 'default', 'its pool is recorded where it first appears');
+
+  const other = mustGrant(dispatcher.request({ service: 'plugin' }));
+  await assert.rejects(
+    dispatcher.provide(other.id, { agent: 'review', directory: '/w', sessionId: 'ses_kept' }),
+    /session ses_kept no longer runs agent review in \/w/,
+  );
+  await assert.rejects(
+    dispatcher.provide(other.id, { agent: 'dev', directory: '/elsewhere', sessionId: 'ses_kept' }),
+    /session ses_kept no longer runs agent dev in \/elsewhere/,
+  );
+  await assert.rejects(
+    dispatcher.provide(other.id, { agent: 'dev', directory: '/w', sessionId: 'ses_missing' }),
+    /session ses_missing not found/,
+    'a session OpenCode does not have is the caller’s error, never a quiet create',
+  );
+  assert.equal(leases.require(other.id).state, 'preparing', 'a refused provide leaves the lease as it was');
+  await assert.rejects(
+    dispatcher.provide('lease_unknown', { agent: 'dev', directory: '/w' }),
+    /No lease lease_unknown/,
+  );
+});
+
+test('a create whose answer was lost keeps the session that landed; a create that made nothing is the caller’s error', async () => {
+  const { dispatcher, leases, fake } = harness({ dispatcher: { pools: { default: { capacity: 3 } } } });
+  fake.creates.value = 'lost';
+  const landed = mustGrant(dispatcher.request({ service: 'jobs' }));
+  const attached = await dispatcher.provide(landed.id, {
+    agent: 'dev',
+    directory: '/w',
+    sessionId: 'ses_job',
+    create: true,
+  });
+  assert.equal(attached.sessionId, 'ses_job', 'the id the caller allocated is kept, not re-imagined');
+  assert.equal(attached.state, 'active');
+
+  fake.creates.value = 'refused';
+  const refused = mustGrant(dispatcher.request({ service: 'jobs' }));
+  const create = (sessionId: string) =>
+    dispatcher.provide(refused.id, { agent: 'dev', directory: '/w', sessionId, create: true });
+  await assert.rejects(create('ses_never'), /create refused/);
+  // The id exists, but as other work: a failed create is never answered with somebody else's session.
+  fake.sessions.set('ses_reviewing', { agent: 'review', directory: '/w' });
+  await assert.rejects(create('ses_reviewing'), /create refused/);
+  fake.sessions.set('ses_elsewhere', { agent: 'dev', directory: '/elsewhere' });
+  await assert.rejects(create('ses_elsewhere'), /create refused/);
+  assert.equal(leases.require(refused.id).state, 'preparing');
+});
+
+test('a session born for a lease that was revoked in the meantime is not attached', async () => {
+  const { dispatcher, leases, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const gate = Promise.withResolvers<void>();
+  fake.createGate.value = gate.promise;
+  const granted = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  const providing = dispatcher.provide(granted.id, { agent: 'dev', directory: '/w' });
+  // The prepare window closes while the create is still on the wire.
+  await dispatcher.expire(granted.id, 'no session was provided within the prepare timeout');
+  gate.resolve();
+  await assert.rejects(providing, /was not preparing; nothing attached/);
+  assert.equal(leases.held('default'), 0, 'the revoked slot stays free');
+});
+
+test('the lease store refuses to act on a lease that is not there', () => {
+  const { leases } = harness({});
+  const lease = leases.grant({ kind: 'session', service: 'direct', pool: 'p' })!;
+  leases.attach(lease.id, 'ses_1');
+  assert.throws(() => leases.attach(lease.id, 'ses_2'), /was not preparing; nothing attached/);
+  leases.release(lease.id);
+  assert.throws(() => leases.release(lease.id), /was already gone/);
+  assert.throws(() => leases.beginExpiry(lease.id), /was already gone/);
+  assert.equal(leases.get(lease.id), undefined);
+});
+
+test('a release of a lease whose kill was pending ends it once the kill confirms', async () => {
+  const { dispatcher, leases, ended, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const provided = await working(dispatcher);
+  fake.busy.add(provided.sessionId!);
+  fake.killWorks.value = false;
+  await dispatcher.expire(provided.id, 'idle beyond the timeout');
+  fake.killWorks.value = true; // the worker gives in by the time its owner lets go
+
+  const outcome = await dispatcher.release(provided.id);
+  assert.ok('ended' in outcome, 'confirmed: the release ends the lease');
+  assert.equal(leases.held('default'), 0);
+  assert.deepEqual(fake.interrupted, [provided.sessionId, provided.sessionId], 'it struck again before it freed');
+  assert.equal(ended.length, 1, 'the owner is told once');
+});
+
+test('boot pass: a kill that is still unconfirmed is struck again — confirmed on that retry it ends, otherwise it stands', async () => {
+  const { dispatcher, leases, fake } = harness({ dispatcher: { pools: { default: { capacity: 2 } } } });
+  const stubborn = await working(dispatcher);
+  fake.busy.add(stubborn.sessionId!);
+  fake.killWorks.value = false;
+  await dispatcher.expire(stubborn.id, 'idle beyond the timeout');
+
+  // The host restarts. The session is still spending and still will not die.
+  assert.deepEqual(await dispatcher.reconcile(), { ended: [], deferred: false });
+  assert.equal(leases.require(stubborn.id).state, 'expiring', 'unconfirmed: the slot stays held');
+  assert.equal(fake.interrupted.length, 2, 'the boot pass struck again');
+
+  fake.killWorks.value = true; // the next boot's strike lands
+  const done = await dispatcher.reconcile();
+  assert.deepEqual(
+    done.ended.map(e => e.reason),
+    ['the kill was confirmed on retry'],
+  );
+  assert.equal(leases.held('default'), 0);
+});
+
+test('boot pass: a lease still inside its prepare window stands', async () => {
+  const { dispatcher, leases } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const fresh = mustGrant(dispatcher.request({ service: 'orchestrator' }));
+  assert.deepEqual(await dispatcher.reconcile(), { ended: [], deferred: false });
+  assert.equal(leases.require(fresh.id).state, 'preparing', 'its caller still has time to bring the session');
+});
+
+test('an active set that cannot be read is never a confirmation', async () => {
+  const { dispatcher, leases, ended, warned, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const provided = await working(dispatcher);
+  fake.reachable.value = false; // the interrupt goes out, but nobody can say what still runs
+
+  const outcome = await dispatcher.expire(provided.id, 'idle beyond the timeout');
+  assert.ok('pending' in outcome);
+  assert.equal(leases.require(provided.id).state, 'expiring');
+  assert.equal(leases.held('default'), 1, 'the slot stays held rather than risk a double booking');
+  assert.deepEqual(ended, []);
+  assert.deepEqual(
+    warned().map(w => w.event),
+    ['active.set.unreadable', 'expire.unconfirmed'],
+  );
+});
+
+test('one freed slot serves the first in line; the next keeps waiting for its own', async () => {
+  const { dispatcher } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const first = registrar(dispatcher, 'first');
+  const second = registrar(dispatcher, 'second');
+  const holder = mustGrant(dispatcher.request({ service: 'holder' }));
+  assert.ok('queued' in dispatcher.request({ service: 'first' }));
+  assert.ok('queued' in dispatcher.request({ service: 'second' }));
+
+  await dispatcher.release(holder.id);
+  assert.equal(first.length, 1, 'the first to ask walks in');
+  assert.deepEqual(second, [], 'the pool is full again: the next in line waits on');
+  await dispatcher.release(first[0]!.lease);
+  assert.equal(second.length, 1, 'and gets the slot after that');
+});
+
+test('cancelling the only waiting request empties the line; an id nobody holds is nothing', async () => {
+  const { dispatcher } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const told = registrar(dispatcher, 'caller');
+  const holder = mustGrant(dispatcher.request({ service: 'holder' }));
+  const waiting = dispatcher.request({ service: 'caller' });
+  assert.ok('queued' in waiting, 'the pool is full: the ask waits');
+  dispatcher.cancel('req_from_before_a_restart'); // the queue is ephemeral: an unknown id was already lost
+  dispatcher.cancel(waiting.queued);
+  dispatcher.cancel(waiting.queued); // twice is once
+
+  await dispatcher.release(holder.id);
+  assert.deepEqual(told, [], 'nobody is handed a slot they stopped waiting for');
+  assert.equal(dispatcher.held(), 0);
+  assert.ok('lease' in dispatcher.request({ service: 'caller' }), 'and the slot is there to ask for again');
+});
+
+test('one strike is all a session gets when the config says so, and the ending counts it in the singular', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { dispatcher, ended, nextEnding, fake } = harness(
+    { dispatcher: { pools: { default: { capacity: 1 } }, killAttempts: 1 } },
+    undefined,
+    { idleMs: 1_000 },
+  );
+  const provided = await working(dispatcher);
+  fake.busy.add(provided.sessionId!);
+  fake.killWorks.value = false; // the session will not die
+
+  const ending = nextEnding();
+  t.mock.timers.tick(1_000);
+  await ending;
+  assert.deepEqual(ended, [
+    { id: provided.id, reason: 'the session did not stop after 1 kill attempt', code: 'kill-unconfirmed' },
+  ]);
+  assert.deepEqual(fake.interrupted, [provided.sessionId]);
+  assert.equal(dispatcher.held(), 0, 'the slot comes back even though the session did not');
+});
+
+test('an interrupt that fails is said, and the active set alone decides whether the slot comes back', async () => {
+  const { dispatcher, leases, ended, warned, fake } = harness({ dispatcher: { pools: { default: { capacity: 2 } } } });
+  const stopped = await working(dispatcher);
+  const spending = await working(dispatcher);
+  fake.busy.add(spending.sessionId!);
+  fake.client.session.interrupt = async () => {
+    throw new Error('interrupt refused');
+  };
+
+  assert.ok(
+    'ended' in (await dispatcher.expire(stopped.id, 'idle beyond the timeout')),
+    'a session not listed as active',
+  );
+  assert.ok('pending' in (await dispatcher.expire(spending.id, 'idle beyond the timeout')), 'a session still listed');
+  assert.deepEqual(
+    warned()
+      .filter(line => line.event === 'expire.interrupt.failed')
+      .map(line => [line.lease, (line.error as Error).message]),
+    [
+      [stopped.id, 'interrupt refused'],
+      [spending.id, 'interrupt refused'],
+    ],
+  );
+  assert.equal(leases.held('default'), 1, 'only the session that stopped spending gave its slot back');
+  assert.deepEqual(
+    ended.map(entry => entry.id),
+    [stopped.id],
+  );
+});
+
+test('an idle clock that strikes while no OpenCode can be reached is said as a monitor failure', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { dispatcher, nextLine, fake } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } }, undefined, {
+    idleMs: 1_000,
+  });
+  const provided = await working(dispatcher);
+  fake.down.value = true;
+
+  const monitor = nextLine('monitor.failed');
+  t.mock.timers.tick(1_000);
+  const line = await monitor;
+  assert.equal(line.level, 'warn');
+  assert.equal(line.lease, provided.id);
+  assert.equal((line.error as Error).message, 'No running OpenCode v2 service found');
+});
+
+test('a service callback that rejects is said, and the release that woke it still completes', async () => {
+  const { dispatcher, nextLine } = harness({ dispatcher: { pools: { default: { capacity: 1 } } } });
+  const failure = new Error('the store failed');
+  dispatcher.registerCallback('caller', async () => {
+    throw failure;
+  });
+  const holder = mustGrant(dispatcher.request({ service: 'holder' }));
+  const waiting = dispatcher.request({ service: 'caller' });
+  assert.ok('queued' in waiting, 'the pool is full: the ask waits');
+
+  assert.ok('ended' in (await dispatcher.release(holder.id)));
+  const line = await nextLine('callback.failed');
+  assert.deepEqual(line, {
+    level: 'warn',
+    event: 'callback.failed',
+    service: 'caller',
+    request: queuedId(waiting),
+    error: failure,
+  });
 });

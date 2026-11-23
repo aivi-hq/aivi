@@ -37,9 +37,17 @@ orchestration around it, all started by one `aivi serve`.
   `NODE_OPTIONS` so CLI children spawned by tests resolve sources too). Keep
   to erasable TypeScript syntax and `.ts` import specifiers — Node must run
   the sources directly.
+- Test-runner options live in `node.config.json`; the `test` scripts read it
+  with `--config-file`. Coverage has no include glob on purpose: with one,
+  Node counts a copy of every mocked file (see
+  [docs/testing.md](docs/testing.md), "Module mocks").
 - Test lifecycle, persistence, and configuration changes at the actual
   boundaries they affect. Live OpenCode, Discord and macOS Chrome
   verification are separate gates; mock tests do not establish those.
+- A unit test mocks what the unit reaches: prompts, clients, git, the
+  config. Before adding a `mock.module`, read
+  [docs/testing.md](docs/testing.md): it holds the rules and the register
+  that every use goes in.
 - Before finishing work, run `npm run agentic:verify`. The exit code is the
   verdict: 0 passed, anything else did not. Its output is one JSON blob —
   read it once and fix what it names. Do not run it again just to re-read

@@ -17,6 +17,7 @@ import { test } from 'node:test';
 import type { Logger } from '@aivi/core';
 import { GitHubApp, type GitRunner } from '@aivi/github';
 import type { RepoRef } from '@aivi/plugin/forge';
+import { recorder } from '../../host/test/support.ts';
 import { createGitHubForge, type GitHubForge } from '../src/forge.ts';
 import type { Answer, Seen } from './github-api.ts';
 import { installationToken, scripted } from './github-api.ts';
@@ -687,4 +688,151 @@ test('a push that the remote refuses is said with git’s words, not swallowed',
     () => forge.push(REPO, '/checkout', 'main'),
     /pushing main to acme\/widget failed: remote: Permission/,
   );
+});
+
+test('a repository the forge did not name is refused before GitHub is asked anything', async () => {
+  const api = await forgeWith({});
+
+  for (const id of ['widget', 'acme/', '/widget'])
+    await assert.rejects(
+      api.forge.prForBranch({ id, remote: REPO.remote }, 'feat/retry'),
+      /is not a repository this forge named/,
+      id,
+    );
+
+  assert.deepEqual(
+    api.calls().filter(call => call.includes('/pulls')),
+    [],
+  );
+});
+
+const PR = { id: '12', url: 'x', title: 't', state: 'open', branch: 'feat/retry' };
+
+test('a deleted account is read as one, and a thread with no path or no comments is still a thread', async () => {
+  const answer = structuredClone(REVIEW_ANSWER);
+  const pull = answer.repository.pullRequest;
+  pull.reviews.nodes[0]!.author = null as never;
+  pull.comments.nodes[0]!.author = null as never;
+  pull.reviewThreads.nodes.push({
+    id: 'PRRT_4',
+    isResolved: false,
+    isOutdated: false,
+    path: null as never,
+    comments: { nodes: [] },
+  });
+  const api = await forgeWith({ 'POST /graphql': () => ({ status: 200, body: { data: answer } }) });
+
+  const facts = await api.forge.reviewFeedback(REPO, PR);
+
+  assert.deepEqual(facts.reviews[0]!.author, { login: 'deleted', bot: false });
+  assert.deepEqual(facts.comments[0]!.author, { login: 'deleted', bot: false });
+  assert.deepEqual(facts.threads.at(-1), { id: 'PRRT_4', state: 'open', question: '', replies: [] });
+});
+
+test('GitHub’s mergeability is said in aivi’s three words: clean, dirty, or unknown while it is still computed', async () => {
+  for (const [github, aivi] of [
+    ['MERGEABLE', 'clean'],
+    ['CONFLICTING', 'dirty'],
+    ['UNKNOWN', 'unknown'],
+    [null, 'unknown'],
+  ] as const) {
+    const answer = structuredClone(REVIEW_ANSWER);
+    answer.repository.pullRequest.mergeable = github as never;
+    const api = await forgeWith({ 'POST /graphql': () => ({ status: 200, body: { data: answer } }) });
+
+    assert.equal((await api.forge.reviewFeedback(REPO, PR)).pr.mergeable, aivi, `${github}`);
+  }
+});
+
+test('a review read cut short says what was cut: the comments alone, or the threads beside them', async () => {
+  for (const [threads, comments, held] of [
+    [false, true, 'conversation comments'],
+    [true, true, 'review threads and conversation comments'],
+  ] as const) {
+    const lines = recorder();
+    const cut = structuredClone(REVIEW_ANSWER);
+    cut.repository.pullRequest.reviewThreads.pageInfo.hasNextPage = threads;
+    cut.repository.pullRequest.comments.pageInfo.hasNextPage = comments;
+    const api = await forgeWith(
+      { 'POST /graphql': () => ({ status: 200, body: { data: cut } }) },
+      undefined,
+      lines.log,
+    );
+
+    await api.forge.reviewFeedback(REPO, PR);
+
+    assert.deepEqual(
+      lines.said('warn').map(line => [line.event, line.held]),
+      [['review.facts.truncated', held]],
+    );
+  }
+});
+
+test('a repository that came with no remote cannot be transferred, and git is never run', async () => {
+  const { git, calls } = scriptedGit(() => undefined);
+  const forge = (await forgeWith({}, git)).forge;
+  const unreachable: RepoRef = { id: 'acme/widget', remote: '' };
+
+  for (const transfer of [
+    () => forge.fetchBranch(unreachable, '/checkout', 'main'),
+    () => forge.push(unreachable, '/checkout', 'main'),
+    () => forge.fetchRefs(unreachable, '/checkout'),
+  ])
+    await assert.rejects(transfer, /acme\/widget came with no remote to reach/);
+
+  assert.deepEqual(calls, []);
+});
+
+test('every step of a sync that goes wrong holds the checkout with its reason, and moves nothing', async () => {
+  const { source } = await checkoutDir();
+  const answers: Record<string, string> = {
+    'symbolic-ref': 'main',
+    status: '',
+    fetch: '',
+    'rev-parse HEAD': 'aaa111',
+    'rev-parse tip': 'bbb222',
+    'merge-base': '',
+    merge: '',
+  };
+  const sync =
+    (failing: string) =>
+    (_directory: string, args: string[]): GitReply => {
+      const step = args[0] === 'rev-parse' ? `rev-parse ${args[1] === 'HEAD' ? 'HEAD' : 'tip'}` : args[0]!;
+      return step === failing ? { fail: `${step} refused` } : answers[step]!;
+    };
+
+  for (const [failing, reason] of [
+    ['status', 'status refused'],
+    ['fetch', 'fetch failed: fetch refused'],
+    ['rev-parse HEAD', 'rev-parse HEAD refused'],
+    ['rev-parse tip', 'branch main has no upstream'],
+    ['merge', 'merge refused'],
+  ] as const) {
+    const { git, calls } = scriptedGit(sync(failing));
+    const forge = (await forgeWith({}, git)).forge;
+
+    assert.deepEqual(await held(forge, REPO, source), ['held', reason], failing);
+    assert.equal(
+      calls.some(call => call.args.join(' ') === 'merge --ff-only --quiet refs/remotes/origin/main'),
+      failing === 'merge',
+      'the checkout is only merged once everything before it held',
+    );
+  }
+});
+
+test('a failed fetch of every branch is an error with git’s words, not a silent stale view', async () => {
+  const { git } = scriptedGit(() => ({ fail: 'fatal: unable to access the remote' }));
+  const forge = (await forgeWith({}, git)).forge;
+
+  await assert.rejects(forge.fetchRefs(REPO, '/checkout'), /fetching acme\/widget failed: fatal: unable to access/);
+});
+
+test('a pull request is not opened over a repository the installation cannot read', async () => {
+  const api = await forgeWith({ 'GET /repos/acme/widget': () => ({ status: 404, body: { message: 'Not Found' } }) });
+
+  await assert.rejects(
+    api.forge.openPr(REPO, 'feat/retry', { author: 'implement', title: 'Retry', body: 'again' }),
+    /acme\/widget is not readable through installation #99, so a pull request has no base/,
+  );
+  assert.ok(!api.calls().includes('POST /repos/acme/widget/pulls'), 'nothing was opened');
 });

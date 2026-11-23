@@ -5,14 +5,18 @@
  *  The answer streams off OpenCode's event bus (`session.text.started` /
  *  `.delta`, the same events the channels' progress reads). It cuts at every
  *  clause end — `. , ; : ! ? …` followed by whitespace, and every line break
- *  ("3.5", "2,5", "Mr." survive uncut). A clause goes to the voice at once
- *  when the wire is free — so the FIRST sound waits for one clause, comma
- *  included — and while the voice speaks, later clauses wait and leave as
- *  ONE chunk: the voice gets long natural text, not sentence confetti. The
- *  last block's unspoken tail (no punctuation to cut on) goes out when the
- *  answer ends. A barge raises playGen; clauses buffered or synthesizing
- *  under the old answerGen die, and the model's reconsidered message (a new
- *  id) re-arms the generation so the reconsidered answer is heard.
+ *  ("3.5" and "2,5" survive uncut; "Mr. Smith" does not: a period before a
+ *  space is a clause end). A mark with nothing after it yet ends nothing:
+ *  the next character decides, so a number split over two deltas stays one
+ *  number. A clause goes to the voice at once when the wire is free — so
+ *  the FIRST sound waits for one clause, comma included — and while the
+ *  voice speaks, later clauses wait and leave as ONE chunk: the voice gets
+ *  long natural text, not sentence confetti. No timer waits on text: the
+ *  last block's unspoken tail (its closing sentence, or words with no
+ *  punctuation to cut on) goes out when the answer ends. A barge raises
+ *  playGen; clauses buffered or synthesizing under the old answerGen die,
+ *  and the model's reconsidered message (a new id) re-arms the generation
+ *  so the reconsidered answer is heard.
  */
 import type { Logger } from '@aivi/core';
 import type { TtsRun } from './tts.ts';
@@ -30,6 +34,21 @@ export interface SpeechDeps {
   getTts: () => Promise<TtsRun | null>;
   /** The room's event fan-out: `stop_audio` rides it. */
   emit(event: Record<string, unknown>): void;
+}
+
+/** One step of the clause scan at `at`: where the scan goes on, and whether
+ *  the text before that point is a finished clause. A line break ends one;
+ *  a mark ends one when whitespace follows it and any closing quotes —
+ *  "3.5" and "2,5" carry their marks inside a word. A mark at the end of
+ *  what was written so far ends nothing yet: the scan comes back to it when
+ *  more text arrives, and the end of the answer speaks whatever is left. */
+function scanClause(src: string, at: number): { next: number; clause: boolean } {
+  const c = src.charAt(at);
+  if (c === '\n') return { next: at + 1, clause: true };
+  if (!'.,;:!?…'.includes(c)) return { next: at + 1, clause: false };
+  let end = at + 1;
+  while (end < src.length && '"\'”’)」』'.includes(src.charAt(end))) end++;
+  return { next: end, clause: end < src.length && ' \n\t'.includes(src.charAt(end)) };
 }
 
 export class SpeechOut {
@@ -117,8 +136,10 @@ export class SpeechOut {
       this.spokenChars = 0;
     }
     this.speakMsg = id;
-    this.sawText = true;
+    // A block that only opened has streamed nothing yet: if its deltas never
+    // arrive, the finished answer still has to be spoken whole.
     if (ev.kind === 'start') return;
+    this.sawText = true;
     this.speakRaw += ev.delta;
     this.cutClauses();
   }
@@ -139,29 +160,12 @@ export class SpeechOut {
   }
 
   private cutClauses(): void {
-    const src = this.speakRaw;
-    let i = this.spokenChars;
-    while (i < src.length) {
-      const c = src[i];
-      if (c === '\n') {
-        // A line break cuts — and must ADVANCE — like every other clause end.
-        if (this.feedSpeech(i + 1)) this.spokenChars = i + 1;
-        i++;
-        continue;
-      }
-      if (c !== undefined && '.,;:!?…'.includes(c)) {
-        let end = i + 1;
-        while (end < src.length && '"\'")」』'.includes(src[end]!)) end++;
-        const after = end < src.length ? src[end]! : ' ';
-        if (after === ' ' || after === '\n' || after === '\t') {
-          if (this.feedSpeech(end)) this.spokenChars = end;
-          i = end;
-          continue;
-        }
-        i = end; // "3.5", "2,5", "Mr." — not a clause end
-        continue;
-      }
-      i++;
+    for (let i = this.spokenChars; i < this.speakRaw.length; ) {
+      const { next, clause } = scanClause(this.speakRaw, i);
+      // A cut must ADVANCE, line breaks included; a refused scrap stays
+      // behind and joins the next cut.
+      if (clause && this.feedSpeech(next)) this.spokenChars = next;
+      i = next;
     }
   }
 
@@ -214,12 +218,22 @@ export class SpeechOut {
     }
   }
 
+  /** Tell every mouth the answer is over; one that fails is said, not fatal. */
+  private closeAnswer(): void {
+    for (const m of this.mouths) {
+      try {
+        m.flush?.();
+      } catch (error) {
+        this.deps.log.warn('voice.mouth.flush-failed', { room: this.deps.label, error: String(error) });
+      }
+    }
+  }
+
   /** One stretch of text to the voice: the voice speaks WHILE it
    *  synthesizes — wav chunks land and play as they are generated — under
    *  the answer's generation. A barge that raised playGen kills the stretch
    *  where it stands: the playing chunk is stopped, the rest goes unheard. */
   private async speakOne(text: string): Promise<void> {
-    if (!this.mouths.length) return;
     const gen = this.answerGen;
     const tts = await this.deps.getTts();
     if (!tts) {
@@ -265,15 +279,9 @@ export class SpeechOut {
       }
       // Last chunk handed over: close the mouth's answer. A mouth that plays
       // one continuous band (Discord) needs the end of answer to drain its
-      // player back to Idle; the barge path never gets here — its stop
+      // player back to Idle. A barged stretch is not closed again: its stop
       // already killed the band.
-      for (const m of this.mouths) {
-        try {
-          m.flush?.();
-        } catch (error) {
-          this.deps.log.warn('voice.mouth.flush-failed', { room: this.deps.label, error: String(error) });
-        }
-      }
+      if (!interrupted) this.closeAnswer();
       await Promise.all(tails); // the answer is not over while its audio still plays
     } finally {
       this.speakingCount--;

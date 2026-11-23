@@ -124,3 +124,59 @@ test('remove with no service installed says the next serve will not run it', asy
   assert.equal(calls.restarts, 0);
   assert.match(calls.logs.at(-1)!, /next `aivi serve` will not run it/);
 });
+
+test('remove finds a listed package when the name carries a version', async () => {
+  addPluginName(appDir, '@acme/aivi-teams');
+  const { io, calls } = harness(false);
+  await remove(['@acme/aivi-teams@1.0.0'], options(), io);
+  assert.deepEqual(calls.blocks, ['@acme/aivi-teams']);
+  assert.deepEqual(pluginNames(appDir), []);
+});
+
+test('remove says how many sections of the plugin left the config, in the singular or the plural', async () => {
+  const said: [number, RegExp][] = [
+    [1, /its plugins\.discord block is gone; its 1 section under projects and projectDefaults is gone\./],
+    [2, /its plugins\.discord block is gone; its 2 sections under projects and projectDefaults are gone\./],
+  ];
+  for (const [sectionsRemoved, line] of said) {
+    addPluginName(appDir, '@aivi/channel-discord');
+    const { io, calls } = harness();
+    io.removeBlock = async () => ({ moduleId: 'discord', blockRemoved: true, sectionsRemoved });
+    await remove(['discord'], options(), io);
+    assert.match(calls.logs[0]!, line);
+  }
+});
+
+test('an npm that fails with something that is not an Error is still said, and the package stays inert', async () => {
+  addPluginName(appDir, '@aivi/browser');
+  const { io, calls } = harness();
+  io.uninstall = () => {
+    throw 'npm is not on this machine';
+  };
+  await remove(['browser'], options(), io);
+  assert.match(
+    calls.logs.find(message => message.startsWith('warn: '))!,
+    /^warn: npm is not on this machine — the package stays/,
+  );
+  assert.deepEqual(pluginNames(appDir), []);
+});
+
+test('a schema that cannot rebuild is a warning that names the usual cause, an Error or not', async () => {
+  const failures: [() => Promise<void>, RegExp][] = [
+    [
+      async () => {
+        throw new Error('config.json did not load');
+      },
+      /not rebuilt \(config\.json did not load\): config\.json does not load\. A section of a plugin that is no longer listed/,
+    ],
+    [() => Promise.reject('disk full'), /not rebuilt \(disk full\): config\.json does not load/],
+  ];
+  for (const [rebuildSchema, warning] of failures) {
+    addPluginName(appDir, '@aivi/channel-discord');
+    const { io, calls } = harness();
+    io.rebuildSchema = rebuildSchema;
+    await remove(['discord'], options(), io);
+    assert.match(calls.logs.find(message => message.startsWith('warn: '))!, warning);
+    assert.equal(calls.restarts, 1, 'the server still comes back without the module');
+  }
+});

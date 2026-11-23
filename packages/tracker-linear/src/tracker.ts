@@ -100,7 +100,7 @@ export function neutralIssue(issue: Awaited<ReturnType<LinearClient['issue']>>):
     identifier: issue.identifier,
     title: issue.title,
     description: issue.description,
-    branchName: issue.branchName ?? '',
+    branchName: issue.branchName,
     url: issue.url,
     state: issue.state,
     teamId: issue.team.id,
@@ -378,7 +378,6 @@ export class LinearPlatform implements Platform {
       const labelId = await client.labelIdForTeam(issue.team.id, update.label);
       return update.on ? client.addLabel(issueId, labelId) : client.removeLabel(issueId, labelId);
     }
-    if (update.kind !== 'move') throw new Error('Linear cannot apply this update yet');
     const client = this.of(conversation).client;
     const issue = await client.issue(issueId);
     const teams = await client.listTeams();
@@ -395,8 +394,6 @@ export class LinearPlatform implements Platform {
    *  dropped, audible per `linear.logMisroutes`. */
   events(sink: (event: TrackerEvent) => Promise<void>): () => void {
     const dispatch = async (appId: string, payload: LinearWebhook): Promise<void> => {
-      const app = this.apps.get(appId);
-      if (!app) return this.log.warn('webhook.unknown-app', { app: appId, type: payload.type, action: payload.action });
       if (isAgentSessionEvent(payload)) return this.sessionEvent(appId, payload, sink);
       if (isIssueEvent(payload)) {
         if (appId !== this.primaryId) return this.misroute(appId, payload);

@@ -130,33 +130,44 @@ function nestIgnores(sources: Map<string, CollectionEntry>, collections: Record<
   }
 }
 
+/** Memory and archive sources are aivi's own: they are made on disk, so that
+ *  they are indexed from the start and dreaming has a file to fill as facts
+ *  retire. A repository without the conventional directory is normal, and is
+ *  not made. */
+async function ensureOwnSource(source: KnowledgeSource): Promise<void> {
+  if (source.kind === 'memory') await mkdir(source.path, { recursive: true });
+  if (source.kind === 'archive') {
+    await mkdir(dirname(source.path), { recursive: true });
+    await writeFile(source.path, '', { flag: 'a' });
+  }
+}
+
+/** A source as QMD indexes it: the folder it walks and the pattern that picks
+ *  the files. A single file is its folder, with its own name as the pattern
+ *  (`file` says so). Null when nothing is there. */
+async function locate(path: string): Promise<{ root: string; pattern: string; file?: string } | null> {
+  const canonical = await realpath(path).catch(() => null);
+  if (!canonical) return null;
+  if ((await stat(canonical)).isDirectory()) return { root: canonical, pattern: '**/*.md' };
+  const pattern = basename(canonical);
+  if (/[[\]{}*?!(),]/.test(pattern)) throw new Error('Single-file knowledge source contains glob characters');
+  return { root: dirname(canonical), pattern, file: canonical };
+}
+
 /** What the configured sources look like on disk right now, as QMD collections. */
 async function surveySources(loaded: LoadedConfig, log?: Logger) {
   const collections: Record<string, { path: string; pattern: string; ignore?: string[] }> = {};
   const sources = new Map<string, CollectionEntry>();
   for (const source of loaded.sources) {
-    // Memory directories are aivi's own and appear once dreaming writes; create them so they
-    // are indexed from the start. A repository without the conventional directory is normal.
-    if (source.kind === 'memory') await mkdir(source.path, { recursive: true });
-    // Archives are aivi's own too: touch the file so the source exists from the
-    // start; dreaming fills it as facts retire.
-    if (source.kind === 'archive') {
-      await mkdir(dirname(source.path), { recursive: true });
-      await writeFile(source.path, '', { flag: 'a' });
-    }
-    const canonical = await realpath(source.path).catch(() => null);
-    if (!canonical) {
+    await ensureOwnSource(source);
+    const found = await locate(source.path);
+    if (!found) {
       log?.warn('knowledge.missing', { source: source.id, projectId: source.projectId, path: source.path });
       continue;
     }
-    const directory = (await stat(canonical)).isDirectory();
-    const root = directory ? canonical : dirname(canonical);
-    const pattern = directory ? '**/*.md' : basename(canonical);
-    if (!directory && /[[\]{}*?!(),]/.test(pattern))
-      throw new Error('Single-file knowledge source contains glob characters');
     const id = collectionID(source);
-    collections[id] = { path: root, pattern };
-    sources.set(id, { source, root, ...(!directory ? { file: canonical } : {}) });
+    collections[id] = { path: found.root, pattern: found.pattern };
+    sources.set(id, { source, root: found.root, ...(found.file ? { file: found.file } : {}) });
   }
   nestIgnores(sources, collections);
   return { collections, sources };
@@ -219,6 +230,81 @@ function namedModels(models: SearchModels | undefined) {
   return entries.length ? { models: Object.fromEntries(entries) } : {};
 }
 
+/** What a search needs of the service it runs in. */
+interface Backend {
+  store: QmdStore;
+  sdk: QmdSDK;
+  sources: Map<string, CollectionEntry>;
+  warned: Set<string>;
+  log: Logger | undefined;
+}
+
+const outOfScope = () => new Error('QMD returned an out-of-scope collection');
+
+/** The full pipeline's hits: expansion, vectors and reranking fused and
+ *  re-scored. Undefined when the pipeline fails (said once), so that keyword
+ *  search answers. An empty answer is an answer. */
+async function semanticHits(
+  backend: Backend,
+  request: { query: string; limit: number },
+  ids: string[],
+): Promise<SearchHit[] | undefined> {
+  const { store, sdk, sources, warned, log } = backend;
+  let found: Awaited<ReturnType<QmdStore['search']>>;
+  try {
+    found = await store.search({ query: request.query, limit: request.limit, collections: ids });
+  } catch (error) {
+    if (!warned.has('semantic')) {
+      warned.add('semantic');
+      log?.warn('knowledge.semantic.failed', { error, hint: 'answering with keyword search' });
+    }
+    return undefined;
+  }
+  const hits: SearchHit[] = [];
+  for (const result of found) {
+    const collection = /^qmd:\/\/([^/]+)\//.exec(result.file)?.[1];
+    if (!collection || !ids.includes(collection)) throw outOfScope();
+    const hit = await toHit(
+      sources.get(collection)!,
+      {
+        collectionName: collection,
+        filepath: result.file,
+        displayPath: result.displayPath,
+        title: result.title,
+        score: result.score,
+        // The reranker's chunk is the excerpt; the whole body and the
+        // chunk's offset tell QMD's snippet where the passage sits.
+        body: result.bestChunk || result.body,
+      },
+      request.query,
+      sdk,
+      warned,
+      log,
+      result.body || undefined,
+      result.bestChunkPos,
+    );
+    if (hit) hits.push(hit);
+  }
+  return hits;
+}
+
+/** QMD's keyword search: the answer when the models are not all home. */
+async function keywordHits(
+  backend: Backend,
+  request: { query: string; limit: number },
+  ids: string[],
+): Promise<SearchHit[]> {
+  const { store, sdk, sources, warned, log } = backend;
+  const results = await store.searchLex(request.query, { limit: request.limit, collection: ids });
+  const hits: SearchHit[] = [];
+  for (const result of results) {
+    if (!ids.includes(result.collectionName)) throw outOfScope();
+    const hit = await toHit(sources.get(result.collectionName)!, result, request.query, sdk, warned, log);
+    if (hit) hits.push(hit);
+  }
+  return hits;
+}
+
 export async function createKnowledgeService(
   loaded: LoadedConfig,
   loader: () => Promise<QmdSDK> = async () => defaultSDK,
@@ -246,6 +332,7 @@ export async function createKnowledgeService(
     config: { collections, ...namedModels(models) },
   });
   let closed = false;
+  const backend: Backend = { store, sdk, sources, warned, log };
   // Searches never wait: QMD reads are synchronous SQLite on a WAL database,
   // which the database itself serializes at millisecond granularity — an
   // aivi-side queue could only add delay. Indexing owns its own lock (the
@@ -300,59 +387,15 @@ export async function createKnowledgeService(
         .filter(id => sources.has(id));
       // Never pass an empty filter: QMD interprets it as an unscoped query.
       if (!ids.length) return [];
-      // Semantic when the models are home: expansion, vectors and reranking fused
-      // and re-scored. A pipeline failure answers with keyword search, and says
-      // it once; the scope guard below falls through to neither.
       // The semantic pipeline serves only when all three models are on disk: a
       // person's search never waits on a download. `aivi knowledge warm` brings
-      // the models; until then QMD's keyword search answers alone.
+      // the models; until then QMD's keyword search answers alone. A pipeline
+      // failure answers with keyword search too, and says it once.
       if ((['embed', 'rerank', 'generate'] as const).every(probe)) {
-        let found: Awaited<ReturnType<QmdStore['search']>> | undefined;
-        try {
-          found = await store.search({ query: request.query, limit: request.limit, collections: ids });
-        } catch (error) {
-          if (!warned.has('semantic')) {
-            warned.add('semantic');
-            log?.warn('knowledge.semantic.failed', { error, hint: 'answering with keyword search' });
-          }
-        }
-        if (found) {
-          const hits: SearchHit[] = [];
-          for (const result of found) {
-            const collection = /^qmd:\/\/([^/]+)\//.exec(result.file)?.[1];
-            if (!collection || !ids.includes(collection)) throw new Error('QMD returned an out-of-scope collection');
-            const hit = await toHit(
-              sources.get(collection)!,
-              {
-                collectionName: collection,
-                filepath: result.file,
-                displayPath: result.displayPath,
-                title: result.title,
-                score: result.score,
-                // The reranker's chunk is the excerpt; the whole body and the
-                // chunk's offset tell QMD's snippet where the passage sits.
-                body: result.bestChunk || result.body,
-              },
-              request.query,
-              sdk,
-              warned,
-              log,
-              result.body || undefined,
-              result.bestChunkPos,
-            );
-            if (hit) hits.push(hit);
-          }
-          return hits;
-        }
+        const hits = await semanticHits(backend, request, ids);
+        if (hits) return hits;
       }
-      const results = await store.searchLex(request.query, { limit: request.limit, collection: ids });
-      const hits: SearchHit[] = [];
-      for (const result of results) {
-        if (!ids.includes(result.collectionName)) throw new Error('QMD returned an out-of-scope collection');
-        const hit = await toHit(sources.get(result.collectionName)!, result, request.query, sdk, warned, log);
-        if (hit) hits.push(hit);
-      }
-      return hits;
+      return keywordHits(backend, request, ids);
     },
     index,
     async close() {

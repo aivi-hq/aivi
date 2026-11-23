@@ -85,8 +85,7 @@ export function parseStatus(body: string): StatusBody {
     }
     rest = body.slice(0, found.index).trimEnd();
   }
-  const lines = rest.split('\n');
-  const head = lines.shift() ?? '';
+  const [head, ...lines] = rest.split('\n') as [string, ...string[]];
   const planLines: string[] = [];
   const at = lines.indexOf('### Plan');
   if (at >= 0) for (const line of lines.slice(at + 1)) if (line.startsWith('- ')) planLines.push(line);
@@ -274,10 +273,7 @@ export class GithubPlatform implements Platform {
    *  closing is the last word, and a trailing in-flight edit never speaks
    *  after it. */
   async progress(conversation: string, line: TrackerProgressLine): Promise<void> {
-    const { ref, commentId } = this.runOf(conversation);
-    const body = await this.client.getComment(ref, commentId);
-    if (body === undefined) throw gone(`the status comment of ${ref}`);
-    const standing = parseStatus(body);
+    const { ref, commentId, standing } = await this.standingOf(conversation);
     if (standing.meta.kind === 'done') return;
     const tool = line.tool ? ` · \`${line.tool.name}${line.tool.detail ? ` ${line.tool.detail}` : ''}\`` : '';
     await this.client.updateComment(
@@ -326,10 +322,7 @@ export class GithubPlatform implements Platform {
   /** Show the worker's plan: the whole checklist, replacing what stood, in
    *  the status comment's own plan section. */
   async plan(conversation: string, plan: RunPlan): Promise<void> {
-    const { ref, commentId } = this.runOf(conversation);
-    const body = await this.client.getComment(ref, commentId);
-    if (body === undefined) throw gone(`the status comment of ${ref}`);
-    const standing = parseStatus(body);
+    const { ref, commentId, standing } = await this.standingOf(conversation);
     await this.client.updateComment(
       ref,
       commentId,
@@ -399,10 +392,7 @@ export class GithubPlatform implements Platform {
    *  stands. Idempotent — a retry lands on an already-frozen comment as
    *  nothing. */
   async freezeStatus(conversation: string, head: string): Promise<void> {
-    const { ref, commentId } = this.runOf(conversation);
-    const body = await this.client.getComment(ref, commentId);
-    if (body === undefined) throw gone(`the status comment of ${ref}`);
-    const standing = parseStatus(body);
+    const { ref, commentId, standing } = await this.standingOf(conversation);
     if (standing.meta.kind === 'done') return;
     await this.client.updateComment(
       ref,
@@ -445,63 +435,52 @@ export class GithubPlatform implements Platform {
    *  itself), and every action outside the routing set are noise (live,
    *  2026-10-07). */
   private async dispatch(event: string, payload: unknown): Promise<void> {
-    if (event === 'issue_comment') {
-      const p = payload as IssueCommentPayload;
-      if (p.action !== 'created' || isBotAuthor(p.comment?.user) || p.issue?.number === undefined) return;
-      // The divider line (ruled 2026-10-07): on a public repository anyone may
-      // comment, but only a trusted author reaches a worker or the assistant.
-      // An untrusted one is dropped here — the one gate for all three paths
-      // (form answer, steer, assistant) — with no reply (silence does not
-      // advertise the bot) and no log line (drive-by comments are a public
-      // repo's weather). A lane or label move needs board write access GitHub
-      // itself enforces, so the other two events need no gate.
-      if (!trustedAuthor(p.comment?.author_association, this.trust)) return;
-      await this.emit({
-        kind: 'prompted',
-        id: `comment:${p.comment.id}`,
-        conversation: this.idFor(`${p.repository.full_name}#${p.issue.number}`),
-        ...(p.comment.body === null ? {} : { body: p.comment.body }),
-      });
-      return;
-    }
-    if (event === 'issues') {
-      const p = payload as IssuesPayload;
-      // The number is inside `issue` — a top-level one is undefined, and an
-      // id built from undefined is the failure the live ledger caught.
-      if (p.issue?.number === undefined) return;
-      const changed = issueChanges(p.action);
-      if (!changed.length) return;
-      await this.emit({
-        kind: 'updated',
-        conversation: GITHUB_FEED,
-        issueId: `${p.repository.full_name}#${p.issue.number}`,
-        changed,
-      });
-      return;
-    }
-    if (event === 'projects_v2_item') {
-      const p = payload as ProjectsV2ItemPayload;
-      const item = p.projects_v2_item;
-      if (!item) return;
-      const boardNumber = this.boardNodes.get(item.project_node_id);
-      if (boardNumber === undefined) return; // a board aivi does not speak
-      let changed: TrackerChange[];
-      if (p.action === 'created')
-        changed = ['state']; // added to the board: the walk should look
-      else if (p.action === 'edited') {
-        const field = editedFieldName(p.changes);
-        if (field === undefined) return;
-        changed = field === 'Status' ? ['state'] : field === 'Agent' ? ['delegate'] : [];
-      } else return; // reordered, archived, moved: noise or nothing routing keys on
-      if (!changed.length) return;
-      const nodeId = item.content_node_id;
-      if (!nodeId) return;
-      const ref = await this.client.nodeRef(nodeId);
-      if (!ref) return; // a draft or a pull request: not a ticket
-      await this.emit({ kind: 'updated', conversation: GITHUB_FEED, issueId: ref, changed });
-      return;
-    }
+    if (event === 'issue_comment') return this.onComment(payload as IssueCommentPayload);
+    if (event === 'issues') return this.onIssues(payload as IssuesPayload);
+    if (event === 'projects_v2_item') return this.onBoardItem(payload as ProjectsV2ItemPayload);
     // ping, installation, repository events and everything else: nothing.
+  }
+
+  private async onComment(p: IssueCommentPayload): Promise<void> {
+    if (p.action !== 'created' || isBotAuthor(p.comment?.user) || p.issue?.number === undefined) return;
+    // The divider line (ruled 2026-10-07): on a public repository anyone may
+    // comment, but only a trusted author reaches a worker or the assistant.
+    // An untrusted one is dropped here — the one gate for all three paths
+    // (form answer, steer, assistant) — with no reply (silence does not
+    // advertise the bot) and no log line (drive-by comments are a public
+    // repo's weather). A lane or label move needs board write access GitHub
+    // itself enforces, so the other two events need no gate.
+    if (!trustedAuthor(p.comment?.author_association, this.trust)) return;
+    await this.emit({
+      kind: 'prompted',
+      id: `comment:${p.comment.id}`,
+      conversation: this.idFor(`${p.repository.full_name}#${p.issue.number}`),
+      ...(p.comment.body === null ? {} : { body: p.comment.body }),
+    });
+  }
+
+  private async onIssues(p: IssuesPayload): Promise<void> {
+    // The number is inside `issue` — a top-level one is undefined, and an
+    // id built from undefined is the failure the live ledger caught.
+    if (p.issue?.number === undefined) return;
+    const changed = issueChanges(p.action);
+    if (!changed.length) return;
+    await this.emit({
+      kind: 'updated',
+      conversation: GITHUB_FEED,
+      issueId: `${p.repository.full_name}#${p.issue.number}`,
+      changed,
+    });
+  }
+
+  private async onBoardItem(p: ProjectsV2ItemPayload): Promise<void> {
+    const item = p.projects_v2_item;
+    if (!item || !this.boardNodes.has(item.project_node_id)) return; // a board aivi does not speak is noise
+    const changed = itemChanges(p);
+    if (!changed.length || !item.content_node_id) return;
+    const ref = await this.client.nodeRef(item.content_node_id);
+    if (!ref) return; // a draft or a pull request: not a ticket
+    await this.emit({ kind: 'updated', conversation: GITHUB_FEED, issueId: ref, changed });
   }
 
   private async emit(event: TrackerEvent): Promise<void> {
@@ -538,6 +517,15 @@ export class GithubPlatform implements Platform {
     };
   }
 
+  /** The run's status comment as it stands: its ticket, its id and its body
+   *  read into parts — or `gone` when the comment is not there. */
+  private async standingOf(conversation: string): Promise<{ ref: string; commentId: number; standing: StatusBody }> {
+    const { ref, commentId } = this.runOf(conversation);
+    const body = await this.client.getComment(ref, commentId);
+    if (body === undefined) throw gone(`the status comment of ${ref}`);
+    return { ref, commentId, standing: parseStatus(body) };
+  }
+
   /** The ticket and status-comment id behind a run conversation, or the
    *  plain error that this conversation is not one. */
   runOf(conversation: string): { ref: string; commentId: number } {
@@ -562,6 +550,17 @@ export function issueChanges(action: string): TrackerChange[] {
   if (action === 'closed' || action === 'reopened') return ['state'];
   if (action === 'deleted') return ['archive'];
   return [];
+}
+
+/** The neutral changes a board item delivery carries, or none: an item
+ *  added to the board says the walk should look; an edit names its field,
+ *  and only the two aivi keys on count. Reordered, archived and moved items
+ *  are noise. */
+function itemChanges(p: ProjectsV2ItemPayload): TrackerChange[] {
+  if (p.action === 'created') return ['state'];
+  if (p.action !== 'edited') return [];
+  const field = editedFieldName(p.changes);
+  return field === 'Status' ? ['state'] : field === 'Agent' ? ['delegate'] : [];
 }
 
 /** The public route GitHub is pointed at — no `/app` tail: the seal and the

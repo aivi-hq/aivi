@@ -48,7 +48,9 @@ test('the refusal names the way across, never a bare no', () => {
     "the plan's line, verbatim",
   );
   assert.match(redirectMessage('fetch'), /aivi_sync/);
+  assert.match(redirectMessage('pull'), /aivi_sync/);
   assert.match(redirectMessage('clone'), /aivi_ask/);
+  assert.match(redirectMessage('remote'), /aivi_sync, aivi_push, aivi_pr.*aivi_ask/);
 });
 
 test('the hook denies only aivi’s runs: a person’s session is never touched', async () => {

@@ -1,6 +1,6 @@
 import { existsSync, type FSWatcher, readFileSync, watch } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { clientConfigPath, type ServedTool } from '@aivi/core';
+import { clientConfigPath, errorMessage, type ServedTool } from '@aivi/core';
 import { createHostClient } from '@aivi/plugin/api';
 import { Plugin } from '@opencode/plugin';
 import { makeRedirect } from './redirect.ts';
@@ -90,7 +90,7 @@ export default Plugin.define({
       served = await client.listTools();
     } catch (error) {
       console.error(
-        `aivi plugin: loaded no tools from ${baseUrl}: ${error instanceof Error ? error.message : String(error)}. ` +
+        `aivi plugin: loaded no tools from ${baseUrl}: ${errorMessage(error)}. ` +
           'Reload OpenCode once the host is running to pick them up.',
       );
     }
@@ -111,7 +111,7 @@ export default Plugin.define({
             await client.health();
             reachable = true;
           } catch (error) {
-            failure = error instanceof Error ? error.message : String(error);
+            failure = errorMessage(error);
           }
           const version = reachable
             ? await client

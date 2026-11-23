@@ -106,3 +106,47 @@ test('the config loads after the removal — the composed schema has nothing lef
   assert.equal(raw.projectDefaults['tracker-linear'], undefined);
   assert.equal(raw.plugins['tracker-linear'], undefined);
 });
+
+test('a home with no projects still loses the plugin block, and no section goes with it', async () => {
+  writeFileSync(configPath(), `${JSON.stringify({ version: 1, plugins: { 'channel-slack': {}, browser: {} } })}\n`);
+  const removed = await pluginRemove('@aivi/channel-slack', { configPath: configPath() });
+  assert.deepEqual(removed, { moduleId: 'channel-slack', blockRemoved: true, sectionsRemoved: 0 });
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(configPath(), 'utf8')).plugins), ['browser']);
+});
+
+test('a package that declares no ./config here leaves the config alone and says what to do by hand', async () => {
+  seedHome();
+  const before = readFileSync(configPath(), 'utf8');
+  // `@aivi/core` is installed and exports no ./config; `@acme/nowhere` is not installed at all.
+  for (const name of ['@aivi/core', '@acme/nowhere'])
+    await assert.rejects(
+      pluginRemove(name, { configPath: configPath() }),
+      new Error(
+        `${name} declares no ./config here, so its module id is unknown; drop its block from config.json by hand if it has one, and its list entry from app/package.json.`,
+      ),
+    );
+  assert.equal(readFileSync(configPath(), 'utf8'), before);
+});
+
+// A package name is only the front of the `./config` specifier, so a `data:`
+// module stands in for a plugin whose declaration is odd or fails to load.
+test('a ./config that fails while loading is not "no config": the failure comes through untouched', async () => {
+  seedHome();
+  await assert.rejects(
+    pluginRemove("data:text/javascript,throw new TypeError('the declaration blew up');//", {
+      configPath: configPath(),
+    }),
+    new TypeError('the declaration blew up'),
+  );
+});
+
+test('a ./config that declares no string module id removes nothing', async () => {
+  seedHome();
+  const before = readFileSync(configPath(), 'utf8');
+  for (const declaration of ['export const plugin = { id: 42 };', 'export const other = 1;'])
+    await assert.rejects(
+      pluginRemove(`data:text/javascript,${declaration}//`, { configPath: configPath() }),
+      /\/config declares no module id; drop its block from config\.json by hand if it has one\.$/,
+    );
+  assert.equal(readFileSync(configPath(), 'utf8'), before);
+});

@@ -198,3 +198,20 @@ test('no primary app means no desk, said as a configuration refusal', () => {
     (e: unknown) => e instanceof ToolError && e.status === 409 && /no primary Linear app/.test(e.message),
   );
 });
+
+test('the comment trail is the ticket’s own, read through the app’s feed', async () => {
+  const { platform, desk } = harness();
+  platform.comments['t-1'] = [{ author: 'Robin', body: 'first', at: '2026-10-06' }];
+  assert.deepEqual(await desk.comments(run()), [{ author: 'Robin', body: 'first', at: '2026-10-06' }]);
+});
+
+test('a first lane no team carries lands the ticket where Linear’s own default sends it, with no lane named', async () => {
+  const { platform, desk } = harness({ project: { teams: ['team-1'] } });
+  platform.teamStates['team-1'] = ['Backlog', 'Todo'];
+  await desk.create(run(), { title: 'x', description: 'y' });
+  assert.deepEqual(
+    platform.created,
+    [{ teamId: 'team-1', title: 'x', description: 'y' }],
+    'the first configured lane, Triage, is no state of the team: the team’s own default takes the ticket',
+  );
+});

@@ -95,7 +95,7 @@ export function createExecutor(loaded: LoadedConfig, deps: ExecutorDeps): Execut
     async (run, context) => {
       let args: A;
       try {
-        args = schema.parse(run.task.kind === 'invocation' ? (run.task.args ?? {}) : {});
+        args = schema.parse((run.task as Extract<Task, { kind: 'invocation' }>).args ?? {});
       } catch (error) {
         return { state: 'failed', result: null, reason: `Bad args for ${name}: ${errorMessage(error)}` };
       }

@@ -364,3 +364,150 @@ test('a typed key path belongs to the directory the person ran the command from'
   assert.equal(resolveKeyPath('  /abs/b.pem  '), '/abs/b.pem', 'an absolute path is already a place; spaces are noise');
   assert.equal(resolveKeyPath('~/c.pem'), join(homedir(), 'c.pem'), '~ is the operator’s home');
 });
+
+/** One installation, granted to aivi-hq: what the reads below connect through. */
+const GRANT = {
+  'GET /app': () => ({ status: 200, body: { id: 7, slug: 'aivi-agent' } }),
+  'GET /app/installations': () => ({ status: 200, body: [{ id: 99, account: { login: 'aivi-hq' } }] }),
+  'POST /app/installations/99/access_tokens': () => installationToken(),
+};
+
+const repos = (from: number, count: number) =>
+  Array.from({ length: count }, (_, at) => ({ full_name: `acme/repo-${from + at}`, default_branch: 'main' }));
+
+test('the repositories a grant reaches are read a page at a time, until a short page or the cap', async () => {
+  const asked: string[] = [];
+  const pages: Record<string, unknown[]> = { 1: repos(0, 100), 2: repos(100, 100), 3: repos(200, 5) };
+  const { fetch } = scripted({
+    ...GRANT,
+    'GET /installation/repositories': call => {
+      const query = new URL(`http://x${call.search}`).searchParams;
+      asked.push(`${query.get('per_page')}/${query.get('page')}`);
+      return { status: 200, body: { total_count: 205, repositories: pages[query.get('page')!] } };
+    },
+  });
+  const app = await GitHubApp.connect({ fetch });
+
+  const everything = await app.repositories();
+
+  assert.equal(everything.length, 205);
+  assert.deepEqual(everything[0], { id: 'acme/repo-0', defaultBranch: 'main' });
+  assert.deepEqual(everything.at(-1), { id: 'acme/repo-204', defaultBranch: 'main' });
+  assert.deepEqual(asked, ['100/1', '100/2', '100/3'], 'a short page is the last one');
+
+  asked.length = 0;
+  assert.equal((await app.repositories(150)).length, 150);
+  assert.deepEqual(asked, ['100/1', '100/2'], 'the cap ends the paging too');
+});
+
+test('a grant whose answer lists no repositories reaches none', async () => {
+  const { fetch } = scripted({
+    ...GRANT,
+    'GET /installation/repositories': () => ({ status: 200, body: { total_count: 0 } }),
+  });
+
+  assert.deepEqual(await (await GitHubApp.connect({ fetch })).repositories(), []);
+});
+
+test('a repository GitHub will not show is absent, and any other failure is an error to see', async () => {
+  const { fetch, seen } = scripted({
+    ...GRANT,
+    'GET /repos/acme/forbidden': () => ({ status: 403, body: { message: 'Resource not accessible by integration' } }),
+    'GET /repos/acme/broken': () => ({ status: 500, body: { message: 'Server Error' } }),
+  });
+  const app = await GitHubApp.connect({ fetch, retry: { enabled: false } });
+
+  assert.equal(await app.repository('acme', 'forbidden'), undefined);
+  await assert.rejects(
+    app.repository('acme', 'broken'),
+    (error: unknown) => (error as { status?: number }).status === 500,
+  );
+
+  assert.equal(
+    seen.filter(call => call.path === '/repos/acme/broken').length,
+    1,
+    'retries are off, so it was asked once',
+  );
+});
+
+test('an answer that names no app is a refused credential', async () => {
+  const { fetch } = scripted({ 'GET /app': () => ({ status: 200, body: { id: 7 } }) });
+
+  await assert.rejects(GitHubApp.connect({ fetch }), (error: unknown) => {
+    assert.ok(error instanceof ConfigurationError);
+    assert.match((error as Error).message, /refused the credential for app 7.*GitHub answered with no app/);
+    return true;
+  });
+});
+
+test('installations are named by their account login, else the account id, else as unknown', async () => {
+  const { fetch } = scripted({
+    'GET /app': () => ({ status: 200, body: { id: 7, slug: 'aivi-agent' } }),
+    'GET /app/installations': () => ({
+      status: 200,
+      body: [{ id: 99, account: { login: 'aivi-hq' } }, { id: 100, account: { id: 55 } }, { id: 101 }],
+    }),
+  });
+
+  await assert.rejects(GitHubApp.connect({ fetch }), /installed 3 times \(aivi-hq #99, 55 #100, \? #101\)/);
+});
+
+test('an installation that shows no account login is named by its id', async () => {
+  const { fetch } = scripted({
+    ...GRANT,
+    'GET /app/installations': () => ({ status: 200, body: [{ id: 99 }] }),
+  });
+
+  assert.equal((await GitHubApp.connect({ fetch })).accountLogin, '99');
+});
+
+test('with no fetch of its own, the connection reaches GitHub through the global one', async t => {
+  const { fetch, calls } = scripted(GRANT);
+  t.mock.method(globalThis, 'fetch', fetch);
+
+  const app = await GitHubApp.connect();
+
+  assert.equal(app.appSlug, 'aivi-agent');
+  assert.deepEqual(calls(), ['GET /app', 'GET /app/installations']);
+});
+
+test('a mint that answers with no token is an error naming the installation, not an empty credential', async () => {
+  const { fetch } = scripted({
+    ...GRANT,
+    'POST /app/installations/99/access_tokens': () => ({
+      status: 201,
+      body: {
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        permissions: {},
+        repository_selection: 'all',
+      },
+    }),
+  });
+
+  await assert.rejects(
+    (await GitHubApp.connect({ fetch })).gitToken(),
+    /octokit answered with no installation token for #99/,
+  );
+});
+
+test('a grant that records no permissions or events says none, and a hook that says nothing has no url and is not insecure', async () => {
+  let hook: Record<string, unknown> = {};
+  const { fetch } = scripted({
+    ...GRANT,
+    'GET /app/installations/99': () => ({ status: 200, body: { id: 99 } }),
+    'GET /app/hook/config': () => ({ status: 200, body: hook }),
+  });
+  const app = await GitHubApp.connect({ fetch });
+
+  assert.deepEqual(await app.grantFacts(), { events: [], permissions: {} });
+  assert.deepEqual(await app.webhookConfig(), { url: '', insecureSsl: false });
+  for (const [insecure, downgraded] of [
+    [0, false],
+    ['0', false],
+    [1, true],
+    ['1', true],
+  ] as const) {
+    hook = { url: 'https://my-machine.ts.net/github/webhooks', insecure_ssl: insecure };
+    assert.equal((await app.webhookConfig()).insecureSsl, downgraded, `insecure_ssl ${JSON.stringify(insecure)}`);
+  }
+});

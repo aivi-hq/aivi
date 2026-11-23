@@ -77,31 +77,7 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   const verify = await gateHost(ctx.prompts, () => hostIsUp(ctx.fetch, config.host));
 
   // 2. The URL GitHub can reach this aivi at, asked once and saved.
-  let base = config.host.public;
-  if (!base) {
-    ctx.prompts.note(
-      [
-        'GitHub posts webhooks to this aivi, so it needs a URL GitHub can reach.',
-        'A tunnel is the usual answer — a Tailscale Funnel or similar pointed at aivi.',
-        'aivi cannot discover this URL itself, so the setup asks once and saves it;',
-        'later runs will not ask.',
-      ].join('\n'),
-      'GitHub reaches aivi',
-    );
-    base = settled(
-      ctx,
-      await ctx.prompts.text({
-        message: 'The public URL GitHub can reach this aivi at',
-        placeholder: 'e.g. https://my-machine.ts.net',
-        validate: value =>
-          value !== undefined && /^https?:\/\//.test(value)
-            ? value.endsWith('/')
-              ? 'no trailing /'
-              : undefined
-            : 'an http(s) URL, like https://my-machine.ts.net',
-      }),
-    );
-  }
+  const base = await publicUrl(ctx, config.host.public);
   const webhookUrl = `${base}${GITHUB_WEBHOOK_PATH}`;
 
   // 3. The app's identity — the home's, shared with the forge (D3). The guide
@@ -131,6 +107,67 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
   // 4. What the grant says it allows, read with the app's own JWT. A tracker
   //    that went on past a missing permission would fail at the first lane
   //    move with someone else's error message.
+  await assertGrant(app);
+
+  // 5. Where the hook points — also the app's own JWT. A URL that points at
+  //    another machine is said now, not waited out there.
+  const history = await checkHook(ctx, app, webhookUrl);
+
+  // 6. The secret — the home's when it holds one (D3's rule again: the module
+  //    reads this variable from the environment anyway, so asking again would
+  //    only invite a paste that disagrees with the bytes the server verifies
+  //    with). The wait below proves it either way, pasted or held.
+  const { secret: webhookSecret, held: heldSecret } = await webhookSecretOf(ctx);
+
+  let probe: { name: string; pass: boolean; detail: string } | undefined;
+  if (verify) probe = await probeInstallation(ctx, app, webhookUrl, webhookSecret, history);
+
+  // 7. Only now is anything written: `host.public` if the installer asked for
+  //    it, the webhook secret when the home did not hold one, and the
+  //    `tracker-github` block — empty by design, its fields all have defaults;
+  //    the byte only marks the tracker as configured. Nothing was written at
+  //    GitHub: the board probe lives in `aivi projects add`, where the board
+  //    id is in hand.
+  if (!config.host.public) await ctx.writeConfigBlock(['host', 'public'], base);
+  if (!heldSecret) await ctx.writeSecret(GITHUB_WEBHOOK_SECRET_ENV, webhookSecret);
+  await ctx.writeConfigBlock(['plugins', MODULE_ID], { ...existingBlock });
+
+  return {
+    module: MODULE_ID,
+    summary: `The GitHub tracker is configured: ${outcomeOf(probe, verify)}.`,
+  };
+};
+
+/** The URL GitHub can reach this aivi at: the home's when it holds one, else asked. */
+async function publicUrl(ctx: PluginSetupContext, known: string | undefined): Promise<string> {
+  if (known) return known;
+  ctx.prompts.note(
+    [
+      'GitHub posts webhooks to this aivi, so it needs a URL GitHub can reach.',
+      'A tunnel is the usual answer — a Tailscale Funnel or similar pointed at aivi.',
+      'aivi cannot discover this URL itself, so the setup asks once and saves it;',
+      'later runs will not ask.',
+    ].join('\n'),
+    'GitHub reaches aivi',
+  );
+  return settled(
+    ctx,
+    await ctx.prompts.text({
+      message: 'The public URL GitHub can reach this aivi at',
+      placeholder: 'e.g. https://my-machine.ts.net',
+      validate: value =>
+        value !== undefined && /^https?:\/\//.test(value)
+          ? value.endsWith('/')
+            ? 'no trailing /'
+            : undefined
+          : 'an http(s) URL, like https://my-machine.ts.net',
+    }),
+  );
+}
+
+/** The grant must allow Issues and Projects (the desk and the board) and the webhook must subscribe to
+ *  every event the tracker listens for; either gap stops the setup, said by name. */
+async function assertGrant(app: GitHubApp): Promise<void> {
   const grant = await app.grantFacts();
   const lacking: string[] = [];
   if (grant.permissions.issues !== 'write')
@@ -150,9 +187,15 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
       `the app’s webhook does not subscribe ${unheard.map(event => `${event} (${REQUIRED_EVENTS[event]})`).join('; ')}. ` +
         'Tick them under "Subscribe to events" on the app’s settings page.',
     );
+}
 
-  // 5. Where the hook points — also the app's own JWT. A URL that points at
-  //    another machine is said now, not waited out there.
+/** The hook must point at this aivi; the delivery history is read and its newest entry said. Returns the history,
+ *  from which the wait's trigger is chosen. */
+async function checkHook(
+  ctx: PluginSetupContext,
+  app: GitHubApp,
+  webhookUrl: string,
+): Promise<Awaited<ReturnType<GitHubApp['webhookDeliveries']>>> {
   const hook = await app.webhookConfig();
   if (!hook.url)
     throw new Error(
@@ -175,51 +218,36 @@ const setup: PluginSetup = async (ctx: PluginSetupContext): Promise<PluginSetupR
     await ctx.prompts.log.message(
       `The last delivery (${last.event}) was answered ${last.statusCode} — before a restart the route is not listening yet, so this is expected; after one it is the thing to chase.`,
     );
+  return history;
+}
 
-  // 6. The secret — the home's when it holds one (D3's rule again: the module
-  //    reads this variable from the environment anyway, so asking again would
-  //    only invite a paste that disagrees with the bytes the server verifies
-  //    with). The wait below proves it either way, pasted or held.
-  const heldSecret = process.env[GITHUB_WEBHOOK_SECRET_ENV];
-  let webhookSecret: string;
-  if (heldSecret) {
-    webhookSecret = heldSecret;
+/** The webhook's secret, and whether the home already held it (then nothing is asked and nothing is written). */
+async function webhookSecretOf(ctx: PluginSetupContext): Promise<{ secret: string; held: boolean }> {
+  const held = process.env[GITHUB_WEBHOOK_SECRET_ENV];
+  if (held) {
     await ctx.prompts.log.message(
       'The home already holds the webhook’s secret — nothing is asked, and the wait below proves it.',
     );
-  } else {
-    webhookSecret = settled(
-      ctx,
-      await ctx.prompts.password({
-        message: 'The webhook’s Secret, from the app’s settings page',
-        validate: value => (value ? undefined : 'Paste the Secret from the webhook section'),
-      }),
-    );
+    return { secret: held, held: true };
   }
+  const secret = settled(
+    ctx,
+    await ctx.prompts.password({
+      message: 'The webhook’s Secret, from the app’s settings page',
+      validate: value => (value ? undefined : 'Paste the Secret from the webhook section'),
+    }),
+  );
+  return { secret, held: false };
+}
 
-  let probe: { name: string; pass: boolean; detail: string } | undefined;
-  if (verify) probe = await probeInstallation(ctx, app, webhookUrl, webhookSecret, history);
-
-  // 7. Only now is anything written: `host.public` if the installer asked for
-  //    it, the webhook secret when the home did not hold one, and the
-  //    `tracker-github` block — empty by design, its fields all have defaults;
-  //    the byte only marks the tracker as configured. Nothing was written at
-  //    GitHub: the board probe lives in `aivi projects add`, where the board
-  //    id is in hand.
-  if (!config.host.public) await ctx.writeConfigBlock(['host', 'public'], base);
-  if (!heldSecret) await ctx.writeSecret(GITHUB_WEBHOOK_SECRET_ENV, webhookSecret);
-  await ctx.writeConfigBlock(['plugins', MODULE_ID], { ...existingBlock });
-
-  const outcome = probe
-    ? probe.pass
-      ? `${probe.detail}. Restart aivi to load the tracker`
-      : `FAILED — ${probe.detail}. Fix that and run the install again`
-    : `UNVERIFIED — ${verify ? 'the webhook wait was skipped' : 'no live aivi watched'}, so “GitHub can reach this machine” was not proved. Restart aivi to load the tracker`;
-  return {
-    module: MODULE_ID,
-    summary: `The GitHub tracker is configured: ${outcome}.`,
-  };
-};
+/** The verified last line: what the wait proved, failed, or — never run — could not prove. */
+function outcomeOf(probe: Awaited<ReturnType<typeof probeInstallation>>, verify: boolean): string {
+  if (!probe)
+    return `UNVERIFIED — ${verify ? 'the webhook wait was skipped' : 'no live aivi watched'}, so “GitHub can reach this machine” was not proved. Restart aivi to load the tracker`;
+  return probe.pass
+    ? `${probe.detail}. Restart aivi to load the tracker`
+    : `FAILED — ${probe.detail}. Fix that and run the install again`;
+}
 
 /** The fork when no trigger can come: the person reinstalls the app (the
  *  install posts `installation`; lighter, toggling a repository on the

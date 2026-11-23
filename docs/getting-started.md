@@ -5,7 +5,7 @@ you set up yourself.
 
 ## Run it
 
-Use Node 26 and npm. From the repository root:
+Use Node 26.12 or newer (below 27) and npm. From the repository root:
 
 ```sh
 npm ci

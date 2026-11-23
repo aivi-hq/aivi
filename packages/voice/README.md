@@ -38,7 +38,7 @@ Call is the default because it is the common case and loads the least.
   over); that record is what a meeting *is*. The wake phrase (`wake.phrases`,
   scanned mechanically on streaming text, case- and diacritic-insensitive,
   whole words) is the only thing that activates the session: the addressed
-  sentence (phrase stripped) plus the `aivi_voice_transcript` tool to read
+  sentence, as it was said, plus the `aivi_voice_transcript` tool to read
   the meeting back. Meetings are polite: answers play to the end, barge-in
   does nothing. A streaming room without `identity` is refused — a meeting
   with one anonymous speaker is a monologue.
@@ -49,8 +49,10 @@ The answer is spoken **sentence by sentence, while the model is still writing
 it** — the first sound waits for the first sentence, not the whole reply.
 Voice watches the same OpenCode events the channels' progress reads
 (`session.text.started` / `.delta` for the room's session), cuts complete
-sentences off the front, and sends each to the voice at once; the last
-clause, if it has no closing punctuation, goes out when the answer ends.
+clauses off the front — a `. , ; : ! ? …` followed by a space or a line
+break, so `3.5` stays one number — and sends each to the voice at once.
+Nothing waits on a timer: whatever is left, the closing sentence included,
+goes out when the answer ends.
 `@discordjs/voice` plays the sentences back to back in order.
 And each sentence speaks **while it synthesizes** too (`tts.stream`, default
 on): Voxtral TTS yields audio chunks as it generates them — its own interval,
@@ -169,7 +171,9 @@ Processes that actually start, by what you use: file/mic lane → one
 engine (ASR loads, the diarizer only in meeting mode on first mixed audio);
 Discord → one engine (ASR only, live lanes); TTS → its own process, and
 only once a room has a mouth and an answer to speak. Nothing idles that
-nothing asks of it.
+nothing asks of it. A process that dies is not kept as a permanent no: the
+streaming engine loads again on the next audio, a separate `stt` or `tts`
+endpoint on the next request.
 
 **Engine warmth is the module's job**: the streaming engine is born at the
 host's first audio — from any room — and stays loaded until the module stops.

@@ -5,8 +5,7 @@
  *  is kept as exactly the shape that ran there. */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { meetConfigSchema, plugin } from '../src/config.ts';
-import { createMeetModule } from '../src/module.ts';
+import { createMeetModule, meetConfigSchema, plugin } from '../src/index.ts';
 
 test('the plugin declaration and the block defaults answer themselves', () => {
   assert.equal(plugin.id, 'google-meet');
@@ -21,6 +20,13 @@ test('the plugin declaration and the block defaults answer themselves', () => {
   assert.equal(meetConfigSchema.parse({ name: 'Clawd' }).name, 'Clawd');
   assert.equal(meetConfigSchema.parse({ mode: 'meeting' }).mode, 'meeting');
   assert.equal(meetConfigSchema.parse({ headless: false }).headless, false);
+});
+
+test('the plugin builds its module from the block, and refuses a block that does not parse', async () => {
+  const module = await plugin.createModule({ name: 'Clawd' }, '/home');
+
+  assert.equal(module.id, 'google-meet');
+  await assert.rejects(async () => plugin.createModule({ name: '' }, '/home'));
 });
 
 test('the module claims its operations at start and releases them at stop', async () => {

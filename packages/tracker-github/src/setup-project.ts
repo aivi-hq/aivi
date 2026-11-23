@@ -31,6 +31,7 @@ import { readFile } from 'node:fs/promises';
 import { errorMessage, getLogger, type Logger, type ProjectLaneInput } from '@aivi/core';
 import { GITHUB_WEBHOOK_SECRET_ENV, type GitHubApp, githubApp } from '@aivi/github';
 import {
+  askAgentLane,
   LANE_KIND,
   type LaneKind,
   laneKindLines,
@@ -309,7 +310,7 @@ export class BoardSetupClient implements GithubSetupClient {
       projectId: board.id,
       contentId: issue.id,
     });
-    const itemId: string = addProjectV2ItemById?.item?.id ?? '';
+    const itemId: string = addProjectV2ItemById!.item!.id;
     const asked = ['issue opened', 'card added', 'Agent set', 'comment posted'];
     // Status: the next option in board order the card is not already on —
     // there is no open/closed notion, GitHub has none. A mutation that
@@ -385,7 +386,7 @@ export class BoardSetupClient implements GithubSetupClient {
     await this.app.octokit.graphql(PROBE_ARCHIVE_ITEM, { projectId: handles.projectId, itemId: handles.itemId });
     await this.tracker.removeOwnReaction(handles.ref, 'eyes');
     const [owner = '', rest = ''] = handles.ref.split('/');
-    const repo = rest.split('#')[0] ?? '';
+    const repo = rest.split('#')[0]!;
     await this.tracker.deleteComment(handles.ref, handles.commentId);
     // Report GitHub's answer, not aivi's intent: a workflow wired to the
     // Status option the probe picked may have closed the card already —
@@ -473,30 +474,12 @@ async function askLanes(
     // "None": the option stays out of the array — aivi never reads it and
     // never moves a ticket into it.
     if (kind === LANE_KIND.none.value) continue;
-    let agent = '';
-    let worktree = false;
-    if (kind === LANE_KIND.agent.value) {
-      const answer = await ctx.prompts.autocomplete({
-        message: `Which OpenCode agent works the "${option.name}" lane?`,
-        options: agentNames.map(name => ({ value: name, label: name })),
-        maxItems: 12,
-      });
-      if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
-      agent = String(answer).trim();
-      if (agent && ctx.forgeConfigured) {
-        const onBranch = await ctx.prompts.select({
-          message: `Does work in the "${option.name}" lane happen on the ticket's branch (git worktree)?`,
-          options: [
-            { value: 'yes', label: "yes — on the ticket's branch, in its own worktree" },
-            { value: 'no', label: 'no — in the project checkout itself' },
-          ],
-        });
-        if (ctx.prompts.isCancel(onBranch)) throw new PluginSetupCancelled('lane setup incomplete');
-        worktree = onBranch === 'yes';
-      }
-    }
     // "Human": a bare lane. The orchestrator works nobody here; a finished
     // run may still move a ticket in, and after that aivi never touches it.
+    const { agent, worktree } =
+      kind === LANE_KIND.agent.value
+        ? await askAgentLane(ctx, option.name, agentNames)
+        : { agent: '', worktree: false };
     lanes.push({ name: option.name, ...(agent ? { agent } : {}), ...(worktree ? { worktree } : {}) });
   }
   return lanes;
@@ -517,7 +500,7 @@ async function askQueue(ctx: ProjectSetupContext, lanes: ProjectLaneInput[]): Pr
     });
     if (ctx.prompts.isCancel(answer)) throw new PluginSetupCancelled('lane setup incomplete');
     const chosen = String(answer).trim();
-    for (const line of chosen ? markQueue(lanes, chosen) : []) await ctx.prompts.log.message(line);
+    if (chosen) markQueue(lanes, chosen); // a candidate works nobody, so there is no agent to say goodbye to
   } else if (lanes.length)
     await ctx.prompts.log.message(
       'no lane sits before a working lane, so nothing can wait for a slot — a queue lane comes later with a worker lane',
@@ -797,6 +780,7 @@ function makeContributor(makeClient: MakeSetupClient = productionClient): Projec
   };
 }
 
-export const contributor = makeContributor();
+const contributor = makeContributor();
+
 export { makeContributor };
 export default contributor;

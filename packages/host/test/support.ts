@@ -1,4 +1,35 @@
+import type { Logger } from '@aivi/core';
 import type { Dispatcher, DispatcherGrant, DispatcherLeaseRef } from '@aivi/plugin/dispatcher';
+
+/**
+ * A logger that keeps what was said: one entry per line, its fields beside
+ * its `level` and `event`. `next(event)` settles with the first line of that
+ * event, said already or still to come: the boundary to wait on when a
+ * detached step is the one that speaks.
+ */
+export function recorder() {
+  const lines: Record<string, unknown>[] = [];
+  const firsts = new Map<string, PromiseWithResolvers<Record<string, unknown>>>();
+  const first = (event: string) => firsts.get(event) ?? firsts.set(event, Promise.withResolvers()).get(event)!;
+  const at = (level: string) => (event: string, fields?: Record<string, unknown>) => {
+    const line = { ...fields, level, event };
+    lines.push(line);
+    first(event).resolve(line);
+  };
+  const log = {
+    debug: at('debug'),
+    info: at('info'),
+    warn: at('warn'),
+    error: at('error'),
+    getChild: () => log,
+    with: () => log,
+  } as unknown as Logger;
+  return {
+    log,
+    said: (level: string) => lines.filter(line => line.level === level),
+    next: (event: string) => first(event).promise,
+  };
+}
 
 /**
  * The dispatcher's contract as a test stand-in: a pool of `capacity` slots.
@@ -17,8 +48,6 @@ export class TestCapacity implements Dispatcher {
   readonly provided: { leaseId: string; agent: string; directory: string; sessionId?: string; create?: boolean }[] = [];
   /** Pools whose name throws, like a pool absent from the config. */
   readonly throwing = new Set<string>();
-  /** Pools a resume is refused from, like a pool the config dropped. */
-  readonly gone = new Set<string>();
   /** Slots a service may hold at once. */
   readonly capacity: number;
   private held = 0;
@@ -39,7 +68,6 @@ export class TestCapacity implements Dispatcher {
   request(input: { service: string; pool?: string; resume?: string }): DispatcherGrant {
     const pool = input.pool ?? 'default';
     if (this.throwing.has(pool)) throw new Error(`pool "${pool}" is not configured`);
-    if (input.resume && this.gone.has(pool)) return { refused: 'pool-gone', pool };
     if (this.held < this.capacity) {
       this.held++;
       return { lease: this.lease(input.service, pool, input.resume) };

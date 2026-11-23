@@ -44,7 +44,7 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
       throw new JobRefused('Agent-created jobs are disabled by the operator (scheduler.agentSchedules is false).', 403);
     switch (request.action) {
       case 'create':
-        return create(request);
+        return create(request, settings);
       case 'list':
         return { summary: describeList(items()), items: items() };
       case 'pause':
@@ -190,8 +190,7 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
     };
   }
 
-  async function create(input: CreateInput): Promise<JobResponse> {
-    if (!settings) throw new Error('unreachable');
+  async function create(input: CreateInput, limits: Exclude<typeof settings, false>): Promise<JobResponse> {
     if ((input.prompt === undefined) === (input.command === undefined))
       throw new JobRefused('Give exactly one of prompt (an agent job) or command (a script job).');
     if ((input.at === undefined) === (input.cron === undefined))
@@ -219,11 +218,11 @@ export function createJobHandler(deps: JobHandlerDeps): JobHandler {
     const dedupeKey = `agent:${input.sessionId}:${input.messageId ?? randomUUID()}`;
     const agents = agentJobs();
     const existing = agents.filter(j => j.state === 'active' || j.state === 'paused').length;
-    if (existing >= settings.max && !agents.some(j => j.dedupeKey === dedupeKey))
-      throw new JobRefused(`The limit of ${settings.max} agent-created jobs is reached; remove one first.`, 409);
+    if (existing >= limits.max && !agents.some(j => j.dedupeKey === dedupeKey))
+      throw new JobRefused(`The limit of ${limits.max} agent-created jobs is reached; remove one first.`, 409);
 
     const at = now();
-    const base = draft(input, task, report, systemPool(loaded.config, settings.resource) ?? 'default');
+    const base = draft(input, task, report, systemPool(loaded.config, limits.resource) ?? 'default');
     return input.at !== undefined ? addOneOff(input, base, at, dedupeKey) : addRecurring(input, base, at);
   }
 

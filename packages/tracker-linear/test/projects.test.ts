@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { laneOf, loadConfig } from '@aivi/core';
-import { linearTeamCollisions, projectLinear, writeProjectLinear } from '../src/projects.ts';
+import { type LoadedConfig, laneOf, loadConfig } from '@aivi/core';
+import { linearTeamCollisions, projectForIssue, projectLinear, writeProjectLinear } from '../src/projects.ts';
 
 test('writeProjectLinear writes teams, keeps everything else, and restores a config that stops loading', async t => {
   const root = await mkdtemp(join(tmpdir(), 'aivi-projects-linear-'));
@@ -157,4 +157,81 @@ test('a Linear team belongs to exactly one project; the collision is said for ev
     () => assert.fail('a colliding write should be refused'),
     () => {},
   );
+});
+
+/** The config as the routing reads it: projects, and the Linear section each one wrote. */
+const routing = (projects: { id: string; removed?: true; linear?: Record<string, unknown> }[]) =>
+  ({
+    projects: projects.map(({ id, removed }) => ({
+      id,
+      directory: `/projects/${id}`,
+      ...(removed ? { removed } : {}),
+    })),
+    config: {
+      projects: Object.fromEntries(projects.map(({ id, linear }) => [id, linear ? { 'tracker-linear': linear } : {}])),
+      projectDefaults: {},
+    },
+  }) as unknown as LoadedConfig;
+
+test('an issue goes to the first live project whose teams hold its team and whose workspace, when it names one, is the issue’s own', () => {
+  const loaded = routing([
+    { id: 'old', removed: true, linear: { teams: ['t-1'] } },
+    { id: 'plain' },
+    { id: 'eu', linear: { teams: ['t-1'], workspaceId: 'ws-eu' } },
+    { id: 'us', linear: { teams: ['t-1'], workspaceId: 'ws-us' } },
+    { id: 'any', linear: { teams: ['t-2'] } },
+  ]);
+  const routed = (teamId: string, organizationId: string) =>
+    projectForIssue(loaded, { teamId, organizationId })?.project.id;
+  assert.equal(routed('t-1', 'ws-us'), 'us', 'the workspace tells two projects of one team apart');
+  assert.equal(routed('t-1', 'ws-eu'), 'eu');
+  assert.equal(
+    routed('t-1', 'ws-other'),
+    undefined,
+    'a removed project routes nothing, and no workspace here is the issue’s',
+  );
+  assert.equal(routed('t-2', 'ws-any'), 'any', 'a project that names no workspace takes any');
+  assert.equal(routed('t-9', 'ws-eu'), undefined);
+});
+
+test('a team claimed by several projects is said for every clash, and a project with no Linear section claims none', () => {
+  const collisions = linearTeamCollisions(
+    routing([
+      { id: 'plain' },
+      { id: 'site', linear: { teams: ['t-1'] } },
+      { id: 'docs', linear: { teams: ['t-1'] } },
+      { id: 'api', linear: { teams: ['t-1', 't-2'] } },
+    ]),
+  );
+  assert.equal(collisions.length, 2, 'docs and api each claim a team that is taken');
+  assert.equal(collisions[0], 'projects.docs.tracker-linear.teams: this Linear team is already mapped to project site');
+  assert.match(collisions[1]!, /^projects\.api\.tracker-linear\.teams: this Linear team is already mapped to project /);
+});
+
+test('a team another project already holds refuses the write, and the config is exactly as it was', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aivi-linear-claimed-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const project of ['site', 'docs', 'plain'])
+    await mkdir(join(root, 'projects', project, 'source'), { recursive: true });
+  const config = join(root, 'config.json');
+  await writeFile(
+    config,
+    JSON.stringify({
+      version: 1,
+      projects: { site: { 'tracker-linear': { teams: ['t-1', 't-2'] } }, docs: {}, plain: {} },
+    }),
+  );
+  const before = await readFile(config, 'utf8');
+  await assert.rejects(
+    writeProjectLinear(config, 'docs', { teams: ['t-2', 't-3'] }),
+    /Linear team t-2 is already mapped to project site; a team belongs to one project/,
+  );
+  assert.equal(await readFile(config, 'utf8'), before, 'the refused write is taken back');
+  await assert.rejects(
+    writeProjectLinear(config, 'Not A Name', { teams: ['t-9'] }),
+    /Project id "Not A Name" must match/,
+  );
+  assert.equal(await readFile(config, 'utf8'), before, 'a name core would not take writes nothing');
+  assert.deepEqual(await writeProjectLinear(config, 'plain', { teams: ['t-9'] }), { id: 'plain', teams: ['t-9'] });
+  assert.deepEqual(JSON.parse(await readFile(config, 'utf8')).projects.plain, { 'tracker-linear': { teams: ['t-9'] } });
 });
