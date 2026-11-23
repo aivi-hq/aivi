@@ -1,5 +1,17 @@
 # @aivi/github
 
+## 1.1.0
+
+### Minor Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The Node floor moves from 26.1.0 to 26.12.0: `engines.node` is now `>=26.12.0 <27`. `aivi update` reads the target's `engines` and provisions a managed Node when the machine's own is below it.
+
+### Patch Changes
+
+- Updated dependencies [[`bded24b`](https://github.com/aivi-hq/aivi/commit/bded24b5075a042fe9088f8e8c7ddee23eccf30b), [`cd09e32`](https://github.com/aivi-hq/aivi/commit/cd09e322eb251fe6beb212b7503c6e3e0a78d91b), [`55dd260`](https://github.com/aivi-hq/aivi/commit/55dd260197f7dad82f2291f26059df3899c3ebee), [`060271e`](https://github.com/aivi-hq/aivi/commit/060271eb384b3441725b3625818553248c25b56d), [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991), [`f5fbb58`](https://github.com/aivi-hq/aivi/commit/f5fbb58b35c43005e404b6b4dc20fdc2ab0266e9), [`963b389`](https://github.com/aivi-hq/aivi/commit/963b389aad16197ecfe1959936cf65fd34f4e5c4)]:
+  - @aivi/core@1.1.0
+  - @aivi/plugin@1.1.0
+
 ## 1.0.0
 
 ### Major Changes

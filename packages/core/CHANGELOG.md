@@ -1,5 +1,21 @@
 # @aivi/core
 
+## 1.1.0
+
+### Minor Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - The Node floor moves from 26.1.0 to 26.12.0: `engines.node` is now `>=26.12.0 <27`. `aivi update` reads the target's `engines` and provisions a managed Node when the machine's own is below it.
+
+### Patch Changes
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`bded24b`](https://github.com/aivi-hq/aivi/commit/bded24b5075a042fe9088f8e8c7ddee23eccf30b) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Give the shared browser back when a face tab cannot be closed. `FaceTab.close()` closed its tab and only then released the browser. A browser that had crashed cannot close a tab, so the close rejected and the release never ran: the dead browser stayed registered, and every later `openFaceTab` reused it and failed, until the host restarted. The browser is released whether or not the tab closes, and the caller still gets the close error.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`cd09e32`](https://github.com/aivi-hq/aivi/commit/cd09e322eb251fe6beb212b7503c6e3e0a78d91b) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Stop a failed browser launch from poisoning every later face tab. The shared browser is one promise that the face tabs reuse; when `Chrome.launch` rejected (no Chrome installed, a boot that timed out), that rejected promise stayed in place and its user count stayed up, so every later `openFaceTab` met the same stale error until the host restarted, even after the cause was fixed. A launch that fails now leaves nothing behind, and the next open launches again.
+
+- [#76](https://github.com/aivi-hq/aivi/pull/76) [`55dd260`](https://github.com/aivi-hq/aivi/commit/55dd260197f7dad82f2291f26059df3899c3ebee) Thanks [@RWOverdijk](https://github.com/RWOverdijk)! - Fix `brandBanner` and `brandStyle` throwing on a colour terminal. `brandStyle` documents that a brand colour can be named (`'primary'`, `'remote'`, `'muted'`…), but it passed the name straight to `styleText`, which accepts only hex codes and its own formats and threw `ERR_INVALID_ARG_VALUE`. `brandBanner` names its colours, so it threw on every stream that could show colour. A brand colour name now resolves to its hex; names that `styleText` knows (`'bold'`) and hex codes written out pass through as before.
+- Updated dependencies [[`5b230e0`](https://github.com/aivi-hq/aivi/commit/5b230e0e59bf8fa8fe27f0a22cfdb9312b69230b), [`5b230e0`](https://github.com/aivi-hq/aivi/commit/5b230e0e59bf8fa8fe27f0a22cfdb9312b69230b), [`c9f4ef7`](https://github.com/aivi-hq/aivi/commit/c9f4ef7b0b0ba4468f96af1984f1f503c77917f1), [`c9f4ef7`](https://github.com/aivi-hq/aivi/commit/c9f4ef7b0b0ba4468f96af1984f1f503c77917f1), [`5b230e0`](https://github.com/aivi-hq/aivi/commit/5b230e0e59bf8fa8fe27f0a22cfdb9312b69230b), [`04084b5`](https://github.com/aivi-hq/aivi/commit/04084b586a14269ea03712edd72d9b9d8b78e991), [`c9f4ef7`](https://github.com/aivi-hq/aivi/commit/c9f4ef7b0b0ba4468f96af1984f1f503c77917f1)]:
+  - @aivi/chrome@1.1.0
+
 ## 1.0.0
 
 ### Major Changes
